@@ -375,6 +375,11 @@ class Sequencer
 
         uint8_t midiInVoiceMode = midiInVoiceMode_sequencer;
 
+        // Per-track MIDI in: last instrument that sounded on each sample track
+        // (-1 = none yet) and the note currently held there by MIDI in.
+        int8_t trackLastInstrument[kSampleTracks] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+        int8_t trackMidiInNote[kSampleTracks] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+
         struct strPerformance
         {
             int16_t patternLength = -1;
@@ -898,6 +903,11 @@ class Sequencer
 
     void handleNoteOn(byte channel, byte pitch, int8_t volume, int16_t source);
     void handleNoteOff(byte channel, byte pitch, byte volume, int16_t source);
+
+    // Per-track MIDI in: play/stop a note directly on a track's voice using the
+    // instrument that last sounded on that track.
+    void handleTrackMidiNoteOn(uint8_t track, uint8_t note, uint8_t velocity);
+    void handleTrackMidiNoteOff(uint8_t track);
     void updateTrackLengths(strPattern* pattern);
 
     uint8_t noMoreRecOpen();
