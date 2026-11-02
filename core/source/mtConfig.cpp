@@ -336,6 +336,14 @@ void checkConfig()
     mtConfig.midi.slaveClockComp =
       clamp(mtConfig.midi.slaveClockComp, (uint8_t)0, (uint8_t)kExternalClockCompMaxVal);
 
+    for (int i = 0; i < kSampleTracks; i++)
+    {
+        if (mtConfig.midi.trackNotesInChannel[i] > 16)
+        {
+            mtConfig.midi.trackNotesInChannel[i] = 0;
+        }
+    }
+
     // VALUES CHECK  --------------------
     if (mtConfig.values.padsLightBack > 31)
         mtConfig.values.padsLightBack = PADS_LIGHT_BACK_DEFAULT;
@@ -521,6 +529,10 @@ void resetConfig()
     mtConfig.midi.ccInChannel = 0;
     mtConfig.midi.middleC = 2;
     mtConfig.midi.slaveClockComp = kExternalClockCompDefaultVal;
+    for (int i = 0; i < kSampleTracks; i++)
+    {
+        mtConfig.midi.trackNotesInChannel[i] = 0;
+    }
 
     // values ----------------------------------------
     mtConfig.values.padsLightBack = PADS_LIGHT_BACK_DEFAULT;

@@ -87,6 +87,78 @@ uint8_t isIncomingChannelDesired(uint8_t chan)
     return (mtConfig.midi.notesInChannel == chan || mtConfig.midi.notesInChannel == 0);
 }
 
+// ---- Per-track MIDI in (Config > MIDI > Track N in channel) ----------------
+// Note currently held on each track's voice by MIDI in, -1 = none.
+static int8_t trackMidiHeldNote[kSampleTracks] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+
+static bool isAnyTrackListeningOn(uint8_t channel)
+{
+    // Only route per track from the sequencer/pattern context; sample editor,
+    // sample playback and recorder screens keep their own MIDI preview behaviour.
+    if (sequencer.getMidiInVoiceMode() != Sequencer::midiInVoiceMode_sequencer)
+        return false;
+
+    for (int tr = 0; tr < kSampleTracks; tr++)
+    {
+        if (mtConfig.midi.trackNotesInChannel[tr] == channel)
+            return true;
+    }
+    return false;
+}
+
+static int8_t transposeIncomingPitch(uint8_t pitch)
+{
+    int8_t transp = 12 * (mtConfig.midi.middleC - 2);
+    return clamp(pitch + transp, 0, 127);
+}
+
+// Returns true if the note was consumed by per-track routing.
+static bool handleTrackMidiNoteOn(uint8_t channel, uint8_t pitch, uint8_t velocity)
+{
+    if (!isAnyTrackListeningOn(channel))
+        return false;
+
+    pitch = transposeIncomingPitch(pitch);
+
+    // Prefer a listening track whose voice is free; otherwise steal the first one.
+    int8_t target = -1;
+    for (int tr = 0; tr < kSampleTracks; tr++)
+    {
+        if (mtConfig.midi.trackNotesInChannel[tr] != channel)
+            continue;
+        if (target < 0)
+            target = tr;
+        if (trackMidiHeldNote[tr] < 0)
+        {
+            target = tr;
+            break;
+        }
+    }
+
+    trackMidiHeldNote[target] = pitch;
+    sequencer.handleTrackMidiNoteOn(target, pitch, velocity);
+    return true;
+}
+
+static bool handleTrackMidiNoteOff(uint8_t channel, uint8_t pitch)
+{
+    if (!isAnyTrackListeningOn(channel))
+        return false;
+
+    pitch = transposeIncomingPitch(pitch);
+
+    for (int tr = 0; tr < kSampleTracks; tr++)
+    {
+        if (mtConfig.midi.trackNotesInChannel[tr] == channel && trackMidiHeldNote[tr] == pitch)
+        {
+            trackMidiHeldNote[tr] = -1;
+            sequencer.handleTrackMidiNoteOff(tr);
+            break;
+        }
+    }
+    return true;
+}
+
 void handleJackNoteOn(byte channel, byte pitch, byte velocity)
 {
     //	Serial.printf("ON\tch: %d, pitch: %d, velo: %d \r\n", channel, pitch,
@@ -102,6 +174,8 @@ void handleJackNoteOn(byte channel, byte pitch, byte velocity)
     if (mtConfig.midi.notesInMode == notesIn_jack ||
         mtConfig.midi.notesInMode == notesIn_usb_and_jack)
     {
+        if (handleTrackMidiNoteOn(channel, pitch, velocity))
+            return;
 
         if (isIncomingChannelDesired(channel))
         {
@@ -148,6 +222,9 @@ void handleUsbNoteOn(byte channel, byte pitch, byte velocity)
     if (mtConfig.midi.notesInMode == notesIn_usb ||
         mtConfig.midi.notesInMode == notesIn_usb_and_jack)
     {
+        if (handleTrackMidiNoteOn(channel, pitch, velocity))
+            return;
+
         if (isIncomingChannelDesired(channel))
         {
             int8_t transp = 12 * (mtConfig.midi.middleC - 2);
@@ -187,6 +264,9 @@ void handleJackNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
     if (mtConfig.midi.notesInMode == notesIn_jack ||
         mtConfig.midi.notesInMode == notesIn_usb_and_jack)
     {
+        if (handleTrackMidiNoteOff(channel, pitch))
+            return;
+
         if (isIncomingChannelDesired(channel))
         {
             int8_t transp = 12 * (mtConfig.midi.middleC - 2);
@@ -233,6 +313,9 @@ void handleUsbNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
     if (mtConfig.midi.notesInMode == notesIn_usb ||
         mtConfig.midi.notesInMode == notesIn_usb_and_jack)
     {
+        if (handleTrackMidiNoteOff(channel, pitch))
+            return;
+
         if (isIncomingChannelDesired(channel))
         {
             int8_t transp = 12 * (mtConfig.midi.middleC - 2);

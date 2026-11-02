@@ -1093,6 +1093,7 @@ struct strMtConfig
         uint8_t ccInChannel;
         uint8_t middleC;
         uint8_t slaveClockComp;
+        uint8_t trackNotesInChannel[kSampleTracks]; // per-track MIDI in: 0 = off, 1..16 = channel
     } midi;
 
     struct strGlobalValues

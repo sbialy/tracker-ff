@@ -2468,6 +2468,11 @@ void Sequencer::sendMidiChordOff([[maybe_unused]] uint8_t track,
 AUDIO_CORE_RAM void Sequencer::sendNoteOn(uint8_t track,
                                           strPlayer::strPlayerTrack::strSendStep* step)
 {
+    if (track < kSampleTracks)
+    {
+        player.trackLastInstrument[track] = step->instrument;
+    }
+
     bool toMidi = isMidiInstrument(step->instrument);
     bool toSynth = isSynthInstrument(step->instrument);
 
@@ -2655,6 +2660,7 @@ AUDIO_CORE_FLASH void Sequencer::handleNoteOn(
         }
         else if (isSampleTrack(sel->firstTrack))
         {
+            player.trackLastInstrument[sel->firstTrack] = step->instrument;
             instrumentPlayer[sel->firstTrack].noteOff();
             instrumentPlayer[sel->firstTrack].noteOn(step->instrument,
                                                      step->note,
@@ -2794,6 +2800,10 @@ AUDIO_CORE_FLASH void Sequencer::handleNoteOn(
 
                 player.track[tr].stepSent.note = note;
                 player.track[tr].stepSent.instrument = inst;
+                if (tr < kSampleTracks)
+                {
+                    player.trackLastInstrument[tr] = inst;
+                }
 
                 if (doPreview)
                 {
@@ -2850,6 +2860,10 @@ AUDIO_CORE_FLASH void Sequencer::handleNoteOn(
 
                 player.track[trackIdx].stepSent.note = note;
                 player.track[trackIdx].stepSent.instrument = instrument;
+                if (trackIdx < kSampleTracks)
+                {
+                    player.trackLastInstrument[trackIdx] = instrument;
+                }
 
                 velocity = mapClamped<int>(velocity, 0, 127, 0, getInstrumentVelo(instrument));
                 bool isMidi = isMidiInstrument(instrument);
@@ -2903,6 +2917,65 @@ AUDIO_CORE_FLASH void Sequencer::handleNoteOn(
         newFileManager.setActualPatternStructChanged();
     }
 }
+void Sequencer::handleTrackMidiNoteOn(uint8_t track, uint8_t note, uint8_t velocity)
+{
+    if (track >= kSampleTracks || isTrackEngineMuted(track))
+        return;
+
+    if (!isPlay() && !player.preRecMetronomeActive)
+    {
+        engine.endAllFx(true);
+    }
+
+    // Nothing has sounded on this track yet: fall back to instrument N for track N.
+    int instrument =
+      player.trackLastInstrument[track] >= 0 ? player.trackLastInstrument[track] : track;
+    player.trackMidiInNote[track] = note;
+
+    int velo = mapClamped<int>(velocity, 0, 127, 0, getInstrumentVelo(instrument));
+    bool isMidi = isMidiInstrument(instrument);
+    bool isSynth = isSynthInstrument(instrument);
+
+    if (isMidi || isSynth)
+    {
+        sendMidiNoteOn(note, velo, instrumentIdxToMidiChannel(instrument), isSynth);
+    }
+    else
+    {
+        instrumentPlayer[track].noteOff();
+        instrumentPlayer[track].noteOn(
+          instrument, note, velocityToVolume(velo), fx.FX_TYPE_VOLUME, 0, 0, 0);
+
+        engine.setLastUsedVoice(track);
+    }
+}
+
+void Sequencer::handleTrackMidiNoteOff(uint8_t track)
+{
+    if (track >= kSampleTracks)
+        return;
+
+    if (player.trackMidiInNote[track] < 0)
+        return;
+
+    int instrument =
+      player.trackLastInstrument[track] >= 0 ? player.trackLastInstrument[track] : track;
+    int8_t note = player.trackMidiInNote[track];
+    player.trackMidiInNote[track] = -1;
+
+    bool isMidi = isMidiInstrument(instrument);
+    bool isSynth = isSynthInstrument(instrument);
+
+    if (isMidi || isSynth)
+    {
+        sendMidiNoteOff(note, 0, instrumentIdxToMidiChannel(instrument), isSynth);
+    }
+    else
+    {
+        instrumentPlayer[track].noteOff();
+    }
+}
+
 void Sequencer::handleNoteOff(byte channel, // pochodzenie grida np. GRID_OUTSIDE_PATTERN itd
                               byte note,
                               [[maybe_unused]] byte velocity,

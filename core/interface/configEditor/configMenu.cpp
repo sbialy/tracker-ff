@@ -43,7 +43,7 @@ cMenuGroup menuBase(menuBase, 0, baseMenuGroupCount);
 
 cMenuGroup menuProject(menuBase, "Project Settings", projectMenuGroupCount);
 cMenuGroup menuGeneral(menuBase, "General", generalMenuGroupCount);
-cMenuGroup menuMidi(menuBase, "MIDI", 11);
+cMenuGroup menuMidi(menuBase, "MIDI", 11 + kSampleTracks);
 
 #ifdef PLATFORM_IMX
 cMenuGroup menuUsb(menuBase, "USB", 2);
@@ -234,6 +234,26 @@ cMenuItem melNotesInChannel(menuMidi,
                             nullptr,
                             menuTypeItemListText,
                             &notesInChanneletup);
+const strItemTypeListText trackNotesInChannelSetup[kSampleTracks] = {
+    { &mtConfig.midi.trackNotesInChannel[0], 17, trackNotesInChannel },
+    { &mtConfig.midi.trackNotesInChannel[1], 17, trackNotesInChannel },
+    { &mtConfig.midi.trackNotesInChannel[2], 17, trackNotesInChannel },
+    { &mtConfig.midi.trackNotesInChannel[3], 17, trackNotesInChannel },
+    { &mtConfig.midi.trackNotesInChannel[4], 17, trackNotesInChannel },
+    { &mtConfig.midi.trackNotesInChannel[5], 17, trackNotesInChannel },
+    { &mtConfig.midi.trackNotesInChannel[6], 17, trackNotesInChannel },
+    { &mtConfig.midi.trackNotesInChannel[7], 17, trackNotesInChannel },
+};
+static const char* const trackNotesInDesc =
+  "Notes received on this channel play directly on this track, using the instrument that last sounded there. Overrides 'Notes in channel' for that channel.";
+cMenuItem melTrack1NotesIn(menuMidi, "Track 1 in channel", trackNotesInDesc, menuTypeItemListText, &trackNotesInChannelSetup[0]);
+cMenuItem melTrack2NotesIn(menuMidi, "Track 2 in channel", trackNotesInDesc, menuTypeItemListText, &trackNotesInChannelSetup[1]);
+cMenuItem melTrack3NotesIn(menuMidi, "Track 3 in channel", trackNotesInDesc, menuTypeItemListText, &trackNotesInChannelSetup[2]);
+cMenuItem melTrack4NotesIn(menuMidi, "Track 4 in channel", trackNotesInDesc, menuTypeItemListText, &trackNotesInChannelSetup[3]);
+cMenuItem melTrack5NotesIn(menuMidi, "Track 5 in channel", trackNotesInDesc, menuTypeItemListText, &trackNotesInChannelSetup[4]);
+cMenuItem melTrack6NotesIn(menuMidi, "Track 6 in channel", trackNotesInDesc, menuTypeItemListText, &trackNotesInChannelSetup[5]);
+cMenuItem melTrack7NotesIn(menuMidi, "Track 7 in channel", trackNotesInDesc, menuTypeItemListText, &trackNotesInChannelSetup[6]);
+cMenuItem melTrack8NotesIn(menuMidi, "Track 8 in channel", trackNotesInDesc, menuTypeItemListText, &trackNotesInChannelSetup[7]);
 cMenuItem melNotsOutMode(menuMidi, "MIDI out", nullptr, menuTypeItemListText, &notesOutModeSetup);
 cMenuItem melCCInMode(menuMidi, "CC in", supportedCcInDesc, menuTypeItemListText, &ccInModeSetup);
 cMenuItem melCCInChannel(menuMidi,
