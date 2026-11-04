@@ -297,7 +297,7 @@ int32_t plugin_process_block(const int16_t** in, int16_t** out, uint32_t samples
         write_b(F_DEL2_BASE, 0, 2.0f);
         const float wet_r = s_acc;
 
-        // The firmware crossfades each output with amount; the mono output is the mean of both.
+        // The firmware crossfades each output with amount. The mono output is the mean of both.
         const float wet = 0.5f * (wet_l + wet_r) * 32768.0f;
         dst[i] = ot_f16s((dry + (wet - dry) * amount) * (1.0f / 32768.0f));
     }

@@ -3,7 +3,7 @@
 // Compiled together with ONE plugin source, so the code under test is the very
 // C file the ARM builder compiles. A fake host table backed by the real libm
 // stands in for the Tracker. It renders a synthetic test sample through the
-// plugin at the default parameters and at extreme ones, writes WAVs, and checks
+// plugin at the default parameters and at extreme ones, writes WAVs and checks
 // the result. Driven by tools/ptfx_host_check.py, which passes:
 //   -DPTFX_HOST_TEST -DPLUGIN_NPARAMS=<n> -DPLUGIN_SCRATCH=<bytes> -DPLUGIN_TAG=\"ot_tape\"
 //
