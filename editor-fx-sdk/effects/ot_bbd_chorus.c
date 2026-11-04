@@ -25,13 +25,19 @@
 // of linearly ramped between block ends, the dry / wet gains are fixed per render,
 // and the Tone corner uses the host's powf and expf. The sample rate comes from the
 // host (44100 Hz instead of 44117.6 Hz).
+//
+// Tail: the wet signal is a short delay behind the dry one, so cutting the render at the
+// sample end loses the last few ms. Ring Out (the stock Stereo Delay's "Tail" list,
+// "Ring Out|Cut Off") appends the longest tap delay plus the BBD filters' settling time
+// (about 7 ms), Cut Off keeps the length.
 
 #include "ot_common.h"
 
-const PluginParam PLUGIN_PARAMS[3] = {
+const PluginParam PLUGIN_PARAMS[4] = {
     PTFX_PARAM_LIST("Mode", 0, "Chorus I|Chorus II"),
     PTFX_PARAM_INT("Tone", 0.0f, 100.0f, 50.0f, 1.0f, "%"),
-    PTFX_PARAM_INT("Mix", 0.0f, 100.0f, 100.0f, 1.0f, "%")
+    PTFX_PARAM_INT("Mix", 0.0f, 100.0f, 100.0f, 1.0f, "%"),
+    PTFX_PARAM_LIST("Tail", 0, "Ring Out|Cut Off")
 };
 
 #define LINE 256   // frames (5.8 ms), int16 (512 B), power of two
@@ -46,6 +52,7 @@ static float    s_lp[3];              // the BBD filters' states
 static float    s_g;                  // their one-pole coefficient
 static float    s_hz, s_centre, s_depth;
 static float    s_wet = 1.0f;
+static uint8_t  s_cut;                // Tail: 0 = Ring Out, 1 = Cut Off
 
 static inline float tri(float x) { return 4.0f * ot_absf(x - 0.5f) - 1.0f; }   // 1 at 0, -1 at 1/2
 
@@ -60,6 +67,17 @@ static inline int16_t to_q15(float x) {
     return (int16_t)(x * 32768.0f);
 }
 
+// The tail: the longest tap delay (centre + depth) plus 64 frames for the three one-pole
+// stages to settle (at Tone 0 they are down 60 dB after about 25 frames).
+static void update_tail(void) {
+    if (!s_host || !s_host->set_extra_samples) return;
+    if (s_cut || s_wet <= 0.0f) {
+        s_host->set_extra_samples(0, 0);
+        return;
+    }
+    s_host->set_extra_samples(0, (uint32_t)(s_centre + s_depth) + 64u);
+}
+
 void plugin_init(void* scratch_mem, uint32_t scratch_size, const PtfxHostApi* host) {
     (void)scratch_mem;
     (void)scratch_size;
@@ -69,7 +87,7 @@ void plugin_init(void* scratch_mem, uint32_t scratch_size, const PtfxHostApi* ho
     s_w = 0;
     s_ph = 0.0f;
     s_lp[0] = s_lp[1] = s_lp[2] = 0.0f;
-    OT_APPLY_DEFAULTS(3);
+    OT_APPLY_DEFAULTS(4);
 }
 
 void plugin_set_param(uint8_t index, float value) {
@@ -86,8 +104,10 @@ void plugin_set_param(uint8_t index, float value) {
             break;
         }
         case 2: s_wet = ot_clampf(value * 0.01f, 0.0f, 1.0f); break;
+        case 3: s_cut = value >= 0.5f; break;
         default: break;
     }
+    update_tail();
 }
 
 int32_t plugin_process_block(const int16_t** in, int16_t** out, uint32_t samples, uint8_t channels) {

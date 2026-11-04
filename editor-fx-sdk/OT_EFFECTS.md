@@ -8,10 +8,10 @@ Six offline effects for the original Tracker (MK66), built as `.ptfx` plugins. C
 |---|---|---|---|---|
 | `ot_tape.ptfx` | Tape Saturation | 1496 | 548 | 0 |
 | `ot_lofi.ptfx` | Lo-Fi Chip | 2766 | 340 | 0 |
-| `ot_reverb.ptfx` | Reverb | 3664 | 64 | 65536 |
+| `ot_reverb.ptfx` | Reverb | 3801 | 68 | 65536 |
 | `ot_dirt.ptfx` | Dirt Drive | 2756 | 40 | 0 |
-| `ot_bbd_chorus.ptfx` | BBD Chorus | 1659 | 552 | 0 |
-| `ot_dub_echo.ptfx` | Dub Echo | 2492 | 60 | 132300 |
+| `ot_bbd_chorus.ptfx` | BBD Chorus | 1872 | 556 | 0 |
+| `ot_dub_echo.ptfx` | Dub Echo | 2601 | 64 | 132300 |
 
 Sizes are in bytes.
 
@@ -47,6 +47,7 @@ TV and Handheld are not level neutral. A loud square can peak above full scale b
 | Predly | 0 to 100 % of 5000 samples (113 ms) | 0 |
 | Diffus | 0 to 85 % | 62 |
 | Mix | 0 to 100 % | 35 |
+| Tail | Ring Out, Cut Off | Ring Out |
 
 **Dirt Drive** - pre-gain into a shaper, bit quantiser, sample and hold, tone low-pass and dry / wet.
 
@@ -66,6 +67,7 @@ TV and Handheld are not level neutral. A loud square can peak above full scale b
 | Mode | Chorus I, Chorus II | Chorus I |
 | Tone | 0 to 100 % (BBD filter 6 to 12 kHz) | 50 |
 | Mix | 0 to 100 % | 100 |
+| Tail | Ring Out, Cut Off | Ring Out |
 
 **Dub Echo** - a mono echo with a filtered, soft clipped feedback loop and a duck. Time is in milliseconds, there is no tempo sync. Adds a tail of up to 5 s.
 
@@ -77,8 +79,13 @@ TV and Handheld are not level neutral. A loud square can peak above full scale b
 | Tone | 0 to 100 % (500 Hz to 9 kHz in the loop, 100 is open) | 50 |
 | Duck | 0 to 100 % | 50 |
 | Mix | 0 to 100 % | 35 |
+| Tail | Ring Out, Cut Off | Ring Out |
 
 The tail is capped at 5 s, so with a long Time and high Fdbk the repeats that are still audible at the cap are stopped there. With Fdbk at the top, Tone open, Duck off and Mix at 100 the dry signal plus the repeats can reach full scale and clip.
+
+## Tail option
+
+Reverb, BBD Chorus and Dub Echo have the same last knob as the stock Stereo Delay (`effects/stereo_delay.c`): a list called `Tail` with the entries `Ring Out` and `Cut Off`, default `Ring Out`. With Ring Out the plugin extends the sample by its tail through `set_extra_samples` (Reverb and Dub Echo: until the tail is 60 dB down, at most 5 s. BBD Chorus: the longest tap delay plus filter settling, about 7 ms). With Cut Off the sample keeps its length and the tail is dropped. Tape Saturation, Lo-Fi Chip and Dirt Drive have no tail and no such knob.
 
 ## Differences to the originals
 
@@ -95,7 +102,7 @@ make ptfx          # builds every effects/*.c into editor-fx-sdk/build/Effects
 make ptfx-check    # builds the ot_*.c effects, renders them on the host, checks the result
 ```
 
-`make ptfx-check` writes a synthetic test sample (`_input.wav`) and for each plugin five renders (`default`, `min`, `max`, `mixA`, `mixB`) to `build/ptfx-wav`. Checks per render: no NaN or inf inside the plugin, scratch guards untouched, not silent, no full scale stuck output, tails do not grow and lose at least 6 dB. Per plugin: the same output for a second init, for in place processing and for 37 sample blocks against 8192 sample blocks. `PTFX_PARAMS=70,50,0,62,100 build/ptfx-host/ot_reverb build/ptfx-wav` renders one custom parameter set to `<plugin>_custom.wav`.
+`make ptfx-check` writes a synthetic test sample (`_input.wav`) and for each plugin five renders (`default`, `min`, `max`, `mixA`, `mixB`) to `build/ptfx-wav`. Checks per render: no NaN or inf inside the plugin, scratch guards untouched, not silent, no full scale stuck output, tails do not grow and lose at least 6 dB. Per plugin with a Tail knob: Cut Off keeps the input length, Ring Out grows it (at most 5 s) and the appended tail is not silent. Per plugin: the same output for a second init, for in place processing and for 37 sample blocks against 8192 sample blocks. `PTFX_PARAMS=70,50,0,62,100 build/ptfx-host/ot_reverb build/ptfx-wav` renders one custom parameter set to `<plugin>_custom.wav`.
 
 ## Licences
 

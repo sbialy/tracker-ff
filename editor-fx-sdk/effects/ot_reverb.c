@@ -51,16 +51,18 @@
 // the plugin adds and Damp at 0.95 because a low-pass coefficient of 0 mutes the loop.
 // The input gain is 0.2 instead of the firmware's 0.1, which is a send level: as an
 // insert at Mix 100 the wet signal is then about 2 dB under the dry one instead of
-// 8 dB. The tail rings out after the sample (set_extra_samples).
+// 8 dB. The tail rings out after the sample (set_extra_samples)
+// unless the Tail list (the stock Stereo Delay's "Ring Out|Cut Off") is on Cut Off.
 
 #include "ot_common.h"
 
-const PluginParam PLUGIN_PARAMS[5] = {
+const PluginParam PLUGIN_PARAMS[6] = {
     PTFX_PARAM_INT("Size",   0.0f, 100.0f, 70.0f, 1.0f, "%"),
     PTFX_PARAM_INT("Damp",   0.0f, 100.0f, 50.0f, 1.0f, "%"),
     PTFX_PARAM_INT("Predly", 0.0f, 100.0f,  0.0f, 1.0f, "%"),
     PTFX_PARAM_INT("Diffus", 0.0f,  85.0f, 62.0f, 1.0f, "%"),
-    PTFX_PARAM_INT("Mix",    0.0f, 100.0f, 35.0f, 1.0f, "%")
+    PTFX_PARAM_INT("Mix",    0.0f, 100.0f, 35.0f, 1.0f, "%"),
+    PTFX_PARAM_LIST("Tail", 0, "Ring Out|Cut Off")
 };
 
 #define SIZE 16384
@@ -111,6 +113,7 @@ static int   s_predelay;
 static float s_lfo_iir, s_lfo_y0, s_lfo_y1, s_lfo_value;
 
 static int g_tail_ready;
+static uint8_t s_cut;   // Tail: 0 = Ring Out, 1 = Cut Off
 static const PtfxHostApi* s_host;
 
 static void lfo_init(float frequency) {
@@ -188,7 +191,7 @@ static inline void interpolate_b(int base, float offset, float amplitude, float 
 // n rounds is about Size^(2n). A round is about 20300 samples. Down to -60 dB, at most 5 s.
 static void update_tail(void) {
     if (!s_host || !s_host->set_extra_samples || !g_tail_ready) return;
-    if (s_amount <= 0.0f) {
+    if (s_cut || s_amount <= 0.0f) {
         s_host->set_extra_samples(0, 0);
         return;
     }
@@ -219,7 +222,7 @@ void plugin_init(void* scratch_mem, uint32_t scratch_size, const PtfxHostApi* ho
     // The firmware: SetLFOFrequency(LFO_2, 0.3 / 32000), the oscillator is initialised at 32 x that.
     lfo_init((0.3f / 32000.0f) * 32.0f);
     s_lfo_value = s_lfo_y1 + 0.5f;
-    OT_APPLY_DEFAULTS(5);
+    OT_APPLY_DEFAULTS(6);
     g_tail_ready = 1;
     update_tail();
 }
@@ -231,6 +234,7 @@ void plugin_set_param(uint8_t index, float value) {
         case 2: s_predelay = (int)(ot_clampf(value, 0.0f, 100.0f) * 0.01f * (float)PREDELAY_LEN); break;
         case 3: s_kap = ot_clampf(value, 0.0f, 85.0f) * 0.01f; break;
         case 4: s_amount = ot_clampf(value, 0.0f, 100.0f) * 0.01f; break;
+        case 5: s_cut = value >= 0.5f; break;   // Tail: 0 = Ring Out, 1 = Cut Off
         default: return;
     }
     update_tail();

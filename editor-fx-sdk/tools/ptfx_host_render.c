@@ -234,6 +234,60 @@ static void check(const char* scen, Render* r, int is_default) {
     }
 }
 
+// Index of the "Tail" list (Ring Out|Cut Off, the stock Stereo Delay's option), -1 if the plugin has none.
+static int tail_param(void) {
+    for (int i = 0; i < PLUGIN_NPARAMS; i++)
+        if (param_is_list(i) && strcmp(PLUGIN_PARAMS[i].label, "Tail") == 0) return i;
+    return -1;
+}
+
+// Ring Out / Cut Off. The input ends in a loud burst (the stock test sample ends in silence), so
+// whatever the plugin appends has something to ring on. Cut Off keeps the input length, Ring Out
+// grows it by the reported tail and the tail is not silent. Returns the number of failures added.
+static void check_tail_option(const int16_t* in0, uint32_t n) {
+    const int ti = tail_param();
+    if (ti < 0) return;
+    int16_t* in = (int16_t*)malloc(n * sizeof(int16_t));
+    memcpy(in, in0, n * sizeof(int16_t));
+    g_rng = 777u;
+    for (uint32_t i = n - 4000; i < n; i++) {
+        float e = expf(-(float)(i - (n - 4000)) / 4000.0f);
+        in[i] = (int16_t)lrintf(24000.0f * e * (0.5f * sinf(2.0f * (float)M_PI * 440.0f * i / FS) + 0.5f * noise()));
+    }
+    float v[16];
+    if (PLUGIN_PARAMS[ti].default_val != 0.0f) FAIL("Tail defaults to %g, Ring Out is index 0", PLUGIN_PARAMS[ti].default_val);
+    if (strcmp(PLUGIN_PARAMS[ti].unit, "Ring Out|Cut Off") != 0) FAIL("Tail options are '%s'", PLUGIN_PARAMS[ti].unit);
+    for (int mode = 0; mode < 2; mode++) {
+        for (int i = 0; i < PLUGIN_NPARAMS; i++) v[i] = pdef(i);
+        v[ti] = (float)mode;
+        Render r = render(in, n, v, 8192, 0);
+        const char* nm = mode ? "Cut Off" : "Ring Out";
+        int16_t pk = 0;
+        for (uint32_t i = r.prepend + n; i < r.total; i++) { int a = r.pcm[i] < 0 ? -(int)r.pcm[i] : r.pcm[i]; if (a > pk) pk = (int16_t)(a > 32767 ? 32767 : a); }
+        printf("  tail=%-8s length %u -> %u (+%u pre +%u tail)  tail peak %d\n", nm, n, r.total, r.prepend, r.append, pk);
+        if (!r.ok) FAIL("%s: %s", nm, r.why);
+        if (mode == 1) {
+            if (r.total != n || r.append != 0 || r.prepend != 0) FAIL("Cut Off: output length %u is not the input length %u", r.total, n);
+        } else {
+            if (r.append == 0 || r.total != n + r.append) FAIL("Ring Out: length %u does not grow past %u", r.total, n);
+            if (r.append > 220500) FAIL("Ring Out: tail %u is over the 5 s cap", r.append);
+            if (pk < 16) FAIL("Ring Out: the appended tail is silent");
+        }
+        free(r.pcm);
+    }
+    // switching back and forth in one session: the last set_param decides
+    uint8_t* scratch = (uint8_t*)calloc(PLUGIN_SCRATCH + 16, 1);
+    plugin_init(PLUGIN_SCRATCH ? scratch : NULL, PLUGIN_SCRATCH, &g_host);
+    plugin_set_param((uint8_t)ti, 1.0f);
+    uint32_t cut_app = g_append;
+    plugin_set_param((uint8_t)ti, 0.0f);
+    uint32_t ring_app = g_append;
+    plugin_set_param((uint8_t)ti, 1.0f);
+    if (cut_app != 0 || ring_app == 0 || g_append != 0) FAIL("Tail switch: cut %u, ring %u, cut again %u", cut_app, ring_app, g_append);
+    free(scratch);
+    free(in);
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s <out_dir>\n", argv[0]); return 2; }
     const char* dir = argv[1];
@@ -291,7 +345,9 @@ int main(int argc, char** argv) {
     for (int i = 0; i < PLUGIN_NPARAMS; i++) v[i] = pdef(i);
     Render again = render(in, n, v, 8192, 0);
     if (again.total != default_total || memcmp(again.pcm, default_pcm, default_total * 2) != 0) FAIL("second default render differs (state not reset by plugin_init)");
-    free(again.pcm); free(default_pcm); free(in);
+    free(again.pcm); free(default_pcm);
+    check_tail_option(in, n);
+    free(in);
     printf("%s: %s\n", PLUGIN_TAG, g_fail ? "FAIL" : "PASS");
     return g_fail ? 1 : 0;
 }

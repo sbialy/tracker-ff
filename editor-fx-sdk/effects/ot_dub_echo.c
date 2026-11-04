@@ -9,7 +9,8 @@
 // 500 Hz..9 kHz, 100 = open), the Low Cut (two one-pole high-passes, 20..500 Hz)
 // and a soft clip. Duck turns the repeats down while the input is loud (5 ms
 // attack, 150 ms release follower). Mix is the wet level added to the dry signal,
-// the dry signal is untouched. The tail rings out after the sample (set_extra_samples).
+// the dry signal is untouched. The tail rings out after the sample (set_extra_samples)
+// unless the Tail list (the stock Stereo Delay's "Ring Out|Cut Off") is on Cut Off.
 //
 // Copyright (c) 2026 Marcin Spoczynski
 // Port of the ECHO module of opentracker-fx (https://github.com/opentracker-fw/opentracker-fx,
@@ -29,13 +30,14 @@
 
 #include "ot_common.h"
 
-const PluginParam PLUGIN_PARAMS[6] = {
+const PluginParam PLUGIN_PARAMS[7] = {
     PTFX_PARAM_INT("Time", 20.0f, 1500.0f, 350.0f, 10.0f, "ms"),
     PTFX_PARAM_INT("Fdbk", 0.0f, 100.0f, 45.0f, 1.0f, "%"),
     PTFX_PARAM_INT("LowCut", 0.0f, 100.0f, 40.0f, 1.0f, "%"),
     PTFX_PARAM_INT("Tone", 0.0f, 100.0f, 50.0f, 1.0f, "%"),
     PTFX_PARAM_INT("Duck", 0.0f, 100.0f, 50.0f, 1.0f, "%"),
-    PTFX_PARAM_INT("Mix", 0.0f, 100.0f, 35.0f, 1.0f, "%")
+    PTFX_PARAM_INT("Mix", 0.0f, 100.0f, 35.0f, 1.0f, "%"),
+    PTFX_PARAM_LIST("Tail", 0, "Ring Out|Cut Off")
 };
 
 #define LINE_MAX    66150          // 1.5 s at 44.1 kHz (int16: 132,300 B of scratch)
@@ -50,6 +52,7 @@ static int16_t* s_line;
 static uint32_t s_t = 15435;      // delay, samples
 static uint32_t s_w;
 static float s_fb, s_mix, s_duck;
+static uint8_t s_cut;             // Tail: 0 = Ring Out, 1 = Cut Off
 static float s_g_lp, s_g_hp;
 static int   s_lp_on;
 static float s_a_att, s_a_rel;
@@ -78,7 +81,7 @@ static float one_pole_g(float hz) {
 // The tail: repeats until they are 60 dB down, at most 5 s.
 static void update_tail(void) {
     if (!s_host || !s_host->set_extra_samples) return;
-    if (s_mix <= 0.0f) {
+    if (s_cut || s_mix <= 0.0f) {
         s_host->set_extra_samples(0, 0);
         return;
     }
@@ -104,7 +107,7 @@ void plugin_init(void* scratch_mem, uint32_t scratch_size, const PtfxHostApi* ho
     s_lps = s_hp1 = s_hp2 = s_env = 0.0f;
     s_a_att = 1.0f - host->expf(-1.0f / (0.005f * s_fs));
     s_a_rel = host->expf(-1.0f / (0.150f * s_fs));
-    OT_APPLY_DEFAULTS(6);
+    OT_APPLY_DEFAULTS(7);
 }
 
 void plugin_set_param(uint8_t index, float value) {
@@ -125,6 +128,7 @@ void plugin_set_param(uint8_t index, float value) {
         }
         case 4: s_duck = ot_clampf(value, 0.0f, 100.0f) * 0.01f; break;
         case 5: s_mix = ot_clampf(value, 0.0f, 100.0f) * 0.01f; break;
+        case 6: s_cut = value >= 0.5f; break;
         default: return;
     }
     update_tail();
