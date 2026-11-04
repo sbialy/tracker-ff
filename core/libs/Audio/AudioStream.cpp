@@ -213,7 +213,7 @@ void AudioConnection::connect(void)
 
     if (isConnected)
         return;
-    if (dest_index > dst->num_inputs)
+    if (dest_index >= dst->num_inputs)
         return;
     DISABLE_GLOBAL_INTERRUPTS();
     p = src->destination_list;
@@ -254,7 +254,7 @@ void AudioConnection::disconnect(void)
 
     if (!isConnected)
         return;
-    if (dest_index > dst->num_inputs)
+    if (dest_index >= dst->num_inputs)
         return;
     DISABLE_GLOBAL_INTERRUPTS();
     // Remove destination from source list
