@@ -88,6 +88,8 @@ A `.ptfx` plugin is a single freestanding C/C++ source file compiled into a posi
 - [`editor-fx-sdk/ptfx_builder.py`](../editor-fx-sdk/ptfx_builder.py) - Python build tool that parses plugin metadata comments, compiles C/C++ code via `arm-none-eabi-gcc`, packs `.ptfx_strings` tables, resolves entry point offsets, and outputs a `.ptfx` file.
 - [`editor-fx-sdk/effects/`](../editor-fx-sdk/effects) - Reference effect and generator source files.
 
+> **No relocations at load time:** the loader copies the payload to RAM as-is and applies no relocations. `ptfx_builder.py` therefore compiles with `-fvisibility=hidden` so globals and plugin functions are addressed PC-relative, and it fails the build if the object still contains GOT relocations (`R_ARM_GOT*`), for example when a global is marked `__attribute__((visibility("default")))`.
+
 ### Building Plugins
 
 Build all plugins in `editor-fx-sdk/effects/` from the repository root:
