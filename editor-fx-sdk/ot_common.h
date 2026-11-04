@@ -46,7 +46,12 @@ static inline void ot_pass_other_channels(const int16_t** in, int16_t** out, uin
     }
 }
 
-void plugin_set_param(uint8_t index, float value);
+void plugin_set_param(uint8_t index, float value) __attribute__((visibility("hidden")));
+
+// PLUGIN_PARAMS and plugin_set_param are used by OT_APPLY_DEFAULTS below. Hidden
+// visibility keeps those accesses pc-relative: with the default visibility the
+// compiler goes through the GOT, and the .ptfx loader applies no relocations.
+extern const PluginParam PLUGIN_PARAMS[] __attribute__((visibility("hidden")));
 
 // Apply every parameter's default value (called from plugin_init, so the
 // plugin does not depend on the host sending the defaults first).

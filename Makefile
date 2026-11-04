@@ -86,7 +86,7 @@ MINI_POSTFIX     ?= $(EDITION_NAME)_$(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_V
 
 .DEFAULT_GOAL := all
 
-.PHONY: all original plus mini ptfx clean version bump-patch bump-minor synth-engines package-release
+.PHONY: all original plus mini ptfx ptfx-check clean version bump-patch bump-minor synth-engines package-release
 
 all: original plus mini
 
@@ -227,6 +227,11 @@ ptfx:
 		base=$$(basename "$$src" .c); \
 		python3 "$(ROOT_DIR)/editor-fx-sdk/ptfx_builder.py" "$$src" -o "$(ROOT_DIR)/editor-fx-sdk/build/Effects/$$base.ptfx" --toolchain "$(TOOLCHAIN)"; \
 	done
+
+# Builds the ot_*.c effects, then renders each through a host harness (clang, real libm)
+# into build/ptfx-wav and checks the result. Host side only, nothing runs on the device.
+ptfx-check:
+	python3 -I "$(ROOT_DIR)/editor-fx-sdk/tools/ptfx_host_check.py"
 
 clean:
 	$(MAKE) -C "$(CORE_DIR)" clean PLATFORM=MK66 PRODUCT=ORIGINAL
