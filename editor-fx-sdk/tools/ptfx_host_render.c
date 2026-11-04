@@ -228,6 +228,7 @@ static void check(const char* scen, Render* r, int is_default) {
     }
     if (r->append >= 4 * win) {
         if (tail_a > -90.0 && tail_b > tail_a + 0.5) FAIL("tail grows (%.1f -> %.1f dBFS)", tail_a, tail_b);
+        if (tail_a > -90.0 && tail_b > tail_a - 6.0) FAIL("tail does not decay by 6 dB (%.1f -> %.1f dBFS)", tail_a, tail_b);
         if (is_default && tail_a > -90.0 && tail_b > tail_a - 20.0 && tail_b > -60.0)
             FAIL("default tail does not decay (%.1f -> %.1f dBFS)", tail_a, tail_b);
     }
@@ -244,6 +245,22 @@ int main(int argc, char** argv) {
 
     printf("%s: %d params, scratch %u B\n", PLUGIN_TAG, PLUGIN_NPARAMS, (unsigned)PLUGIN_SCRATCH);
     float v[16];
+    // PTFX_PARAMS="v0,v1,..." renders just that one parameter set as <tag>_custom.wav (for listening or probing)
+    const char* custom = getenv("PTFX_PARAMS");
+    if (custom) {
+        const char* p = custom;
+        for (int i = 0; i < PLUGIN_NPARAMS; i++) {
+            char* e;
+            v[i] = i == 0 || *p ? strtof(p, &e) : pdef(i);
+            if (*p) { p = *e == ',' ? e + 1 : e; }
+        }
+        Render r = render(in, n, v, 8192, 0);
+        check("custom", &r, 0);
+        snprintf(path, sizeof path, "%s/%s_custom.wav", dir, PLUGIN_TAG);
+        write_wav(path, r.pcm, r.total);
+        free(r.pcm); free(in);
+        return g_fail ? 1 : 0;
+    }
     const char* names[5] = {"default", "min", "max", "mixA", "mixB"};
     int16_t* default_pcm = NULL; uint32_t default_total = 0;
     for (int s = 0; s < 5; s++) {
