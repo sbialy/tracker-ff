@@ -19,6 +19,7 @@
 // Result: /plugbench.txt. The audio interrupt is off during the bench (about 0.1 s at boot).
 #ifdef FEATURE_PLUG_BENCH
 
+#include "plug_fccob.h"
 #include "plug_host.h"
 
 #include "Platform.h"
@@ -239,8 +240,8 @@ bool ftfe(uint8_t cmd, uint32_t nvmOff, const uint8_t* data8, bool verbose)
     fccob(1) = uint8_t(a >> 16);
     fccob(2) = uint8_t(a >> 8);
     fccob(3) = uint8_t(a);
-    if (data8)
-        for (int i = 0; i < 8; i++) fccob(4 + i) = data8[i];
+    if (data8)   // FCCOB4 is the MSB of each longword: the source bytes go in reversed per longword (run 2 wrote 09 0c 01 29 and read 29 back)
+        for (int i = 0; i < 8; i++) fccob(4 + i) = pgm8Fccob(data8, i);
     uint8_t cc[12];
     for (int i = 0; i < 12; i++) cc[i] = fccob(i);
     const uint8_t pmBefore = reg8(0x4007E003);   // SMC_PMSTAT: 0x80 HSRUN, 0x01 RUN
@@ -304,13 +305,30 @@ bool nvmCommit(const uint8_t* src, uintptr_t run, uint32_t len)
     s_nvmProgCycles = cyc() - t0;
     flushCaches();
     s_step = "verify";
-    for (uint32_t i = 0; i < len; i++)
-        if (reinterpret_cast<const volatile uint8_t*>(run)[i] != src[i])
+    {   // word compare (the padding past len reads back 0xFF), log the first 8 mismatching words with got and want
+        uint32_t bad = 0, firstOff = 0;
+        for (uint32_t i = 0; i < len; i += 4)
         {
-            logf("N verify: mismatch at +0x%lx: %02x, want %02x\r\n", (unsigned long)i,
-                 reinterpret_cast<const volatile uint8_t*>(run)[i], src[i]);
+            uint32_t want = 0;
+            for (int k = 3; k >= 0; k--) want = (want << 8) | (i + k < len ? src[i + k] : 0xFFu);
+            const uint32_t got = reg32(run + i);
+            if (got == want) continue;
+            if (bad == 0)
+            {
+                firstOff = i;
+                while (firstOff < len && reinterpret_cast<const volatile uint8_t*>(run)[firstOff] == src[firstOff]) firstOff++;
+            }
+            if (bad < 8) logf("N verify: +0x%lx got %08lx want %08lx\r\n", (unsigned long)i, (unsigned long)got, (unsigned long)want);
+            bad++;
+        }
+        if (bad)
+        {
+            logf("N verify: mismatch at +0x%lx: %02x, want %02x (%lu bad words of %lu)\r\n", (unsigned long)firstOff,
+                 reinterpret_cast<const volatile uint8_t*>(run)[firstOff], src[firstOff], (unsigned long)bad,
+                 (unsigned long)((len + 3) / 4));
             return false;
         }
+    }
     logf("N verify: %lu B ok\r\n", (unsigned long)len);
     return true;
 }
