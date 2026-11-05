@@ -551,19 +551,36 @@ const char* safeReason()
 }
 
 // ------------------------------------------------------------------------------------------------ project sidecar
+namespace
+{
+// plug_sidecar.h's file rules on the SD card
+struct SdFs
+{
+    int read(const char* p, char* buf, int cap)
+    {
+        auto [ok, f] = s_fs->openFile(p, FileSystem::FileOpenMode::kRead);
+        if (!ok) return -1;
+        const int n = s_fs->readFile(buf, size_t(cap), f);
+        s_fs->closeFile(f);
+        return n;
+    }
+    bool write(const char* p, const char* buf, int n)
+    {
+        writeText(p, buf, n);
+        return true;
+    }
+    bool exists(const char* p) { return s_fs->exists(p); }
+    bool remove(const char* p) { return s_fs->remove(p); }
+};
+}   // namespace
+
 void projectLoaded(const char* dir)
 {
     if (!s_fs) return;
     char p[64];
     path(p, sizeof(p), dir, kSidecarName);
-    int n = 0;
-    auto [ok, f] = s_fs->openFile(p, FileSystem::FileOpenMode::kRead);
-    if (ok)
-    {
-        n = s_fs->readFile(s_text, sizeof(s_text), f);
-        s_fs->closeFile(f);
-    }
-    if (n <= 0 || !sidecarRead(s_text, n, s_side)) memset(&s_side, 0, sizeof(s_side));   // no sidecar: no plugin, as stock
+    SdFs fs;
+    sidecarLoad(fs, p, s_text, sizeof(s_text), s_side);   // no sidecar: no plugin, as stock
     for (int k = 0; k < kSlots; k++)
     {
         unload(k);
@@ -579,14 +596,8 @@ bool projectSave(const char* dir)
     for (int k = 0; k < kSlots; k++) syncRef(k);
     char p[64];
     path(p, sizeof(p), dir, kSidecarName);
-    const int n = sidecarWrite(s_side, s_text, sizeof(s_text));
-    if (n <= 0)
-    {   // no plugin in any slot: no file, the project is what stock firmware would write
-        if (s_fs->exists(p)) s_fs->remove(p);
-        return n == 0;
-    }
-    writeText(p, s_text, n);
-    return true;
+    SdFs fs;
+    return sidecarSave(fs, p, s_side, s_text, sizeof(s_text));
 }
 
 void copySidecar(const char* srcDir, const char* dstDir)
@@ -595,17 +606,8 @@ void copySidecar(const char* srcDir, const char* dstDir)
     char src[64], dst[64];
     path(src, sizeof(src), srcDir, kSidecarName);
     path(dst, sizeof(dst), dstDir, kSidecarName);
-    int n = -1;
-    auto [ok, f] = s_fs->openFile(src, FileSystem::FileOpenMode::kRead);
-    if (ok)
-    {
-        n = s_fs->readFile(s_text, sizeof(s_text), f);
-        s_fs->closeFile(f);
-    }
-    if (n > 0)
-        writeText(dst, s_text, n);
-    else if (s_fs->exists(dst))
-        s_fs->remove(dst);   // the source has no plugin: neither has the copy
+    SdFs fs;
+    sidecarCopy(fs, src, dst, s_text, sizeof(s_text));
 }
 
 // ------------------------------------------------------------------------------------------------ boot and tick
