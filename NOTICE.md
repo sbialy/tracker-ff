@@ -91,6 +91,7 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Location**: `synth-open/ff_dirt.{h,cpp}` and `synth-open/ff_dirt_ctl.cpp`, with the host render and cycle bench in `synth-open/tools/dirt_render.*` and `synth-open/tools/dirt_cycles/`.
 * **Source**: https://github.com/opentracker-fw/opentracker-fx (commit 6e5a7da, `modules/dirt/src/dirt.cpp`). A rewrite, not a copy: the shaper maths, the mid-rise quantiser, the sample and hold, the tone low-pass and the make-up gain follow the original, the audio path (int16 blocks), the fixed preset table and the block loop are this project's own. The headers carry the notice.
 * **License**: MIT, Copyright (c) 2026 Marcin Spoczynski, text in `licenses/LICENSE-OpenTracker-fx-MIT.txt`. The repository states it contains no Polyend code.
+* **Plugins** (`PLUG_HOST=1`, shipped as separate `.plg` files, not in the image): `synth-open/plug/fx/ot_tape_plug.c` (TAPE) and `synth-open/plug/fx/ot_lofi_plug.c` (LOFI, its ladder weights are `kLadderErr` of OpenTracker's `chip_dsp.h`, Apache-2.0, item 10) are ports of the same repository, `synth-open/plug/fx_dirt_plug.cpp` wraps the DIRT port above. Notices to ship with the files: `synth-open/plug/fx/NOTICE.md`. The plugin SDK in `synth-open/plug/` is MIT (`synth-open/plug/LICENSE`).
 
 ## Release packages
 
