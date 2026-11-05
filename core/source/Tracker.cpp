@@ -2,6 +2,9 @@
 #include "Profiler.h"
 #include "TrackerImpl.h"
 #include "mtWavetableEnvelopes.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 #include "core/interface.h"
 #include "elapsedMillis.h"
 #include "fileManager.h"
@@ -152,6 +155,9 @@ void TrackerImpl::init(Platform* platform)
 #endif
 
     interfaceGlobals.devMode = platform->getFileSystem()->exists("/.develop");
+#ifdef FEATURE_PLUG_HOST
+    plug::boot(platform->getFileSystem());
+#endif
 }
 
 void TrackerImpl::update()

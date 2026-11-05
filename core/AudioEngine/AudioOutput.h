@@ -5,6 +5,9 @@
 #ifdef FEATURE_FF_DIRT
 #include "ff_dirt.h"
 #endif
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 class AudioOutput
 {
@@ -44,6 +47,10 @@ class AudioOutput
 #ifdef FEATURE_FF_DIRT
     // before the limiters: the audio objects update in creation order, so the master bus stays in the same block
     AudioEffectDirt dirt;
+#endif
+#ifdef FEATURE_PLUG_HOST
+    // spike: a loaded master insert plugin after Dirt (synth-open/plug_host.h)
+    AudioEffectPlug plug;
 #endif
 #ifndef PLATFORM_IMX
     AudioMux limiterSidechainMux;

@@ -1,5 +1,10 @@
 #include "AudioOutput.h"
 
+#ifdef FEATURE_PLUG_HOST
+AudioEffectPlug* g_plugInsert;
+AudioEffectPlug* plugInsert() { return g_plugInsert; }
+#endif
+
 AudioOutput::AudioOutput()
 {
     constexpr int kLimiterSidechainChannelIdx = 1;
@@ -22,8 +27,16 @@ AudioOutput::AudioOutput()
 
 #ifdef FEATURE_FF_DIRT
     // the tracks and sends mixers feed the Dirt insert (mtAudioEngine.cpp, connectMixerToOutput), which feeds the limiters
+#ifdef FEATURE_PLUG_HOST
+    connections.push_back(new AudioConnection(&dirt, 0, &plug, 0));
+    connections.push_back(new AudioConnection(&dirt, 1, &plug, 1));
+    connections.push_back(new AudioConnection(&plug, 0, &limiter[OutputChannels::kLeft], 0));
+    connections.push_back(new AudioConnection(&plug, 1, &limiter[OutputChannels::kRight], 0));
+    g_plugInsert = &plug;
+#else
     connections.push_back(new AudioConnection(&dirt, 0, &limiter[OutputChannels::kLeft], 0));
     connections.push_back(new AudioConnection(&dirt, 1, &limiter[OutputChannels::kRight], 0));
+#endif
 #endif
 
     constexpr int kStreamInputIdx = 0;
