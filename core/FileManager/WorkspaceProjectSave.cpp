@@ -1,4 +1,7 @@
 #include "WorkspaceProjectSave.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
@@ -129,6 +132,9 @@ void WorkspaceProjectSave::saveProjectToWorkspaceFinish()
 #else
     newFileManager.getSynth()->saveDirtyWorkspacePatches();
 #endif
+#endif
+#ifdef FEATURE_PLUG_HOST
+    plug::projectSave(cWorkspacePath); // the sidecar of the master insert plugins (removed when no slot is used)
 #endif
 
     if (newFileManager.getStatus() == fmSavingProjectToProjects) // przejdz do kopiowania projektu

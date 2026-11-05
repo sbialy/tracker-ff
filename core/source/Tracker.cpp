@@ -156,7 +156,7 @@ void TrackerImpl::init(Platform* platform)
 
     interfaceGlobals.devMode = platform->getFileSystem()->exists("/.develop");
 #ifdef FEATURE_PLUG_HOST
-    plug::boot(platform->getFileSystem());
+    plug::boot(platform);
 #endif
 }
 
@@ -175,6 +175,9 @@ void TrackerImpl::update()
     sliceDetector.update();
     newFileManager.update();
     mtInterface.update();
+#ifdef FEATURE_PLUG_HOST
+    plug::tick();
+#endif
     engine.updateSdStream();
     sequencer.update();
 }

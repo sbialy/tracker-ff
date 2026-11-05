@@ -44,6 +44,10 @@ SYNTH_TAG_NAME := FF
 else
 SYNTH_TAG_NAME := SO
 endif
+# PTF_TAG=PLUGH: another TAG in the .ptf name for a dev image (the name checks below still apply)
+ifneq ($(PTF_TAG),)
+SYNTH_TAG_NAME := $(PTF_TAG)
+endif
 # Device-facing .ptf name, same shape as stock: PolyendTracker_<TAG>_<A.B.C>.ptf with TAG = SO. The numeric
 # part is SYNTH_OPEN_VER without any dash suffix, so a plain SYNTH_OPEN build is PolyendTracker_SO_1.0.0.ptf (26 chars) and a TRIM build
 # PolyendTracker_FF_1.0.0.ptf (27 chars).

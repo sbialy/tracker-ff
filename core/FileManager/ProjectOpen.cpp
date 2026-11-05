@@ -1,4 +1,7 @@
 #include "ProjectOpen.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
@@ -368,7 +371,13 @@ void ProjectOpen::openProjectFinish()
     // Workspace has (open_bankcopy.h retries the copy once). There is no popup for a failed copy: this runs in the file manager step
     // and the load that follows owns the status. The audio engine restarts only at the end of that load.
     polysynth::open::openProjectAfterBankCopy(
-      [&]() { return newFileManager.getSynth()->copyWorkspacePatches(srcFilePath, cWorkspacePath, true); },
+      [&]()
+      {
+#ifdef FEATURE_PLUG_HOST
+          plug::copySidecar(srcFilePath, cWorkspacePath); // the plugin sidecar follows the project (removed when it has none)
+#endif
+          return newFileManager.getSynth()->copyWorkspacePatches(srcFilePath, cWorkspacePath, true);
+      },
       []()
       {
           newFileManager.setStatus(fmIdle);

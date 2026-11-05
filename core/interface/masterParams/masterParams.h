@@ -474,5 +474,9 @@ class cMasterParams : public ModuleBase
 };
 
 extern cMasterParams masterParams;
+#ifdef FEATURE_PLUG_HOST
+// external linkage so the plugin host can list them (synth-open/plug_ui.cpp)
+extern const char* const saturationListTexts[kSaturationTypeEnd];
+#endif
 
 #endif /* INTERFACE_MASTERPARAMS_H_ */

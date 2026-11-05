@@ -1,4 +1,7 @@
 #include "fileManagerDefs.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 #include "mtStructs.h"
 
 #include "mtSequencer.h"
@@ -13,6 +16,9 @@ bool cFileManager::createNewProjectInWorkspace()
 
     clearWorkspace();
     createWorkspaceDirs();
+#ifdef FEATURE_PLUG_HOST
+    plug::projectLoaded(cWorkspacePath); // no sidecar in a new project: both insert slots empty
+#endif
 
     report(" crating new project ");
 

@@ -6,6 +6,9 @@
 #include "util_math.h"
 #include <cmath>
 #include <masterParams/masterParams.h>
+#ifdef FEATURE_PLUG_HOST
+#include "plug_ui.h"
+#endif
 
 static const uint16_t framesPlaces[8][4] = {
     { 0 + 1, 31, 800 / 8 - 3, 391 },
@@ -1195,6 +1198,16 @@ void cMasterParams::showVolume()
 
 void cMasterParams::showSaturationType()
 {
+#ifdef FEATURE_PLUG_HOST
+    // built-in entries plus the master insert plugins (synth-open/plug_ui.cpp)
+    plugUiSatList(&saturationListData);
+    display.setControlValue(saturationList, plugUiSatPos());
+    display.refreshControl(saturationList);
+
+    display.setControlText2(label[5], plugUiSatText());
+    display.refreshControl(label[5]);
+    return;
+#endif
     display.setControlValue(saturationList, mtProject.values.saturationType);
     display.refreshControl(saturationList);
 

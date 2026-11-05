@@ -87,7 +87,7 @@ SYNTH_OPT_DIRT ?= -O2 -ffp-contract=off
 $(OBJ_DIR)/synth-open/ff_dirt.o: EXTRA_OPT := $(SYNTH_OPT_DIRT)
 $(OBJ_DIR)/synth-open/ff_dirt_ctl.o: EXTRA_OPT := -Os
 # plugin host: loader and bench are cold (-Os), the insert's per block path and the in-image Dirt plugin as the .plg build
-$(OBJ_DIR)/synth-open/plug_host.o $(OBJ_DIR)/synth-open/plug_bench.o: EXTRA_OPT := -Os
+$(OBJ_DIR)/synth-open/plug_host.o $(OBJ_DIR)/synth-open/plug_bench.o $(OBJ_DIR)/synth-open/plug_nvm.o $(OBJ_DIR)/synth-open/plug_ui.o: EXTRA_OPT := -Os
 $(OBJ_DIR)/synth-open/plug_insert.o $(OBJ_DIR)/synth-open/plug_dirt_inimage.o: EXTRA_OPT := -O2 -ffp-contract=off
 $(OBJ_DIR)/synth-open/open_cold.o $(OBJ_DIR)/synth-open/open_patchio.o $(OBJ_DIR)/synth-open/stub_fmt.o: EXTRA_OPT := $(SYNTH_OPT_COLD)
 $(OBJ_DIR)/synth-open/ot/audio/engines/fat.o: EXTRA_OPT := $(SYNTH_OPT_FAT)
@@ -154,7 +154,7 @@ FF_DIRT ?= 1
 ifeq ($(FF_DIRT),1)
 DEFINES+=-DFEATURE_FF_DIRT
 endif
-# Spike (branch plugin-spike): PLUG_HOST=1 runtime plugin host (synth-open/plug_host.cpp), PLUG_BENCH=1 adds the boot bench.
+# PLUG_HOST=1: runtime plugin host, master insert host v1 (synth-open/plug_*.cpp, plug/README.md). PLUG_BENCH=1 adds the boot bench.
 # A define is not a make dependency: give each variant its own SYNTH_TAG.
 PLUG_HOST ?= 0
 PLUG_BENCH ?= 0

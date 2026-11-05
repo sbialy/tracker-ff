@@ -1,11 +1,18 @@
-// Runtime plugin host (spike, FEATURE_PLUG_HOST): loader, host service table, the live master insert node.
-// ABI in synth-open/plug/plug_abi.h, design in ~/prj/poly/ref/plugin-architecture.md.
+// Runtime plugin host, master insert host v1 (FEATURE_PLUG_HOST): loader, host service table, plugin index, the two master
+// insert slots, parameter queue, project sidecar, crash marker and key skip. ABI in synth-open/plug/plug_abi.h, design in
+// ~/prj/poly/ref/plugin-architecture.md (phase 2).
+//
+// Slots (decisions 2 and 9): insert 1 runs from the 8 KB SRAM_L slot (text and rw), insert 2 runs its text from the FlexNVM
+// data flash at 0x1001E000 (8 KB, the two sectors run 3 proved, programmed at load with HSRUN left around every command) and
+// its rw from the heap. Both sit after Dirt and before the stock limiters, insert 1 first.
 #pragma once
 
 #include "plug/plug_abi.h"
+#include "plug_sidecar.h"
 #include <stdint.h>
 
 class FileSystem;
+class Platform;
 
 namespace plug
 {
@@ -15,14 +22,15 @@ enum Err : int32_t
     kOk = 0,
     kNoFile,
     kHeader,     // magic / header size
-    kAbi,        // abi major, min_host, cpu
+    kAbi,        // abi major, min_host, cpu, kind, an unsupported flag (PLUG_F_S16)
     kTooBig,     // image + bss over the slot
     kRead,
     kCrc,
     kRebase,     // a rebase offset or the word it names is outside the image
     kEntry,      // entry returned NULL (the plugin refused this host)
     kDesc,       // descriptor or one of its pointers outside the image, wrong kind, struct too small
-    kCommit,     // Place::commit failed (e.g. the flash erase, program or verify of a FlexNVM text segment)
+    kCommit,     // Place::commit failed (the flash erase, program or verify of a FlexNVM text segment)
+    kInit,       // no memory for the instance or init() failed
 };
 
 struct Loaded
@@ -32,14 +40,16 @@ struct Loaded
     const plug_desc* desc;
 };
 
-constexpr uint32_t kSlotBytes = 8192;   // the SRAM_L code slot
+constexpr uint32_t kSlotBytes = 8192;   // the SRAM_L code slot (insert 1)
 uint8_t* sramSlot();                     // kSlotBytes, SRAM_L (code bus, zero wait), .dmabuffers (NOLOAD, no flash)
+constexpr uintptr_t kNvmRun = 0x1001E000u;   // insert 2 text: the last two 4 KB sectors of the 128 KB data flash
+constexpr uint32_t kNvmBytes = 8192;
 
 const plug_host* hostTable();
 
 // Where the two segments of an image go. text (code and constants) is written at textDst and runs at textRun (the same
-// address, a code bus alias of it, or a flash address: commit() then programs it). rw (data and bss) is written and runs at
-// rwDst, or right after the text when rwDst is null.
+// address, or a flash address: commit() then programs it). rw (data and bss) is written and runs at rwDst, or right after
+// the text when rwDst is null.
 struct Place
 {
     uint8_t* textDst = nullptr;
@@ -56,34 +66,98 @@ Err checkDesc(const plug_desc* d, uintptr_t base, uint32_t size, uint32_t wantKi
 
 void syncCode();   // after writing code: DSB, ISB, invalidate the LMEM code cache
 
-// Boot hook (Tracker.cpp, end of init): the bench (FEATURE_PLUG_BENCH, /plugbench.plg) then /plugins/master.plg into the insert.
-void boot(FileSystem* fs);
-void bench(FileSystem* fs);   // plug_bench.cpp
+// FlexNVM installer for insert 2 (plug_nvm.cpp): programs len bytes of text at run (inside [kNvmRun, kNvmRun + kNvmBytes)),
+// skips every flash command when the flash already holds those bytes. Only ERSSCR and PGM8, only these two sectors.
+bool nvmInstall(const uint8_t* src, uintptr_t run, uint32_t len);
+uint32_t nvmCommands();   // flash commands issued since boot (0 when every load found its bytes in place)
+
+// ---- the plugin index: /Plugins/Master/*.plg, header and manifest only, nothing executes
+constexpr int kIndexMax = 16;
+struct IndexEntry
+{
+    uint32_t uid, version;
+    char name[kNameLen];
+    char file[40];               // name in /Plugins/Master
+    uint32_t imageSize, rwOffset, bssSize;
+    uint16_t numParams;
+};
+int indexCount();
+const IndexEntry* indexAt(int i);
+int indexFind(uint32_t uid);    // -1: no file with that uid on the card
+void rescan();                  // re-read /Plugins/Master (the Inserts page does it on entry)
+
+// ---- the two master insert slots (main thread)
+enum class SlotState : uint8_t
+{
+    kEmpty,      // nothing assigned
+    kPending,    // assigned, loads within a moment (debounce, or the boot key window is still open)
+    kRunning,
+    kMissing,    // the project names a plugin that is not on the card: audio passes, the values are kept and saved back
+    kFailed,     // the file is there but did not load (slotError() says why): audio passes, the values are kept
+    kSafe,       // safe mode: not loaded this session, the values are kept
+    kTripped,    // over its CPU budget three blocks in a row: bypassed until the next load
+};
+SlotState slotState(int slot);
+Err slotError(int slot);
+const char* slotName(int slot);      // the plugin name ("" when empty)
+int slotIndex(int slot);             // index entry of the assigned plugin, -1 when empty or missing
+void assign(int slot, int indexEntry);   // -1 clears. Loads after a short debounce (tick). The UI marks the project changed
+uint32_t paramCount(int slot);       // 0 unless running
+const plug_param* param(int slot, uint32_t i);
+float paramValue(int slot, uint32_t i);
+void setParam(int slot, uint32_t i, float v);   // clamped and rounded to the step, queued for the audio thread
+uint32_t slotCycles(int slot);       // DWT cycles of the last process() call, 0 when not running
+uint32_t slotMaxCycles(int slot);
+
+bool safeMode();
+const char* safeReason();            // "" or why: the crash marker named a plugin, or Shift was held at power on
+
+// ---- project sidecar (the file manager calls these, dir is "Workspace" or a project folder)
+constexpr const char* kSidecarName = "plugins.txt";
+void projectLoaded(const char* dir);   // after a project load from the Workspace: read the sidecar, queue the loads
+bool projectSave(const char* dir);     // Workspace save: write the sidecar (remove it when no slot is used)
+void copySidecar(const char* srcDir, const char* dstDir);   // project open and save: the file follows the project
+
+// ---- boot and main loop (Tracker.cpp)
+void boot(Platform* platform);   // end of TrackerImpl::init: the bench (FEATURE_PLUG_BENCH), crash marker, index
+void tick();                 // TrackerImpl::update: key window, debounced loads, crash marker removal
+void bench(FileSystem* fs);  // plug_bench.cpp
 
 }   // namespace plug
 
+// plug_ui.cpp
+bool plugUiShiftHeld();
+
 #include "AudioStream.h"
 
-// Master insert running a loaded PLUG_KIND_MASTER_INSERT plugin, between Dirt and the limiters. Without a plugin, or once the
-// watchdog tripped, the blocks pass untouched.
+// The master insert node: the two slots in a row on one float conversion pair, between Dirt and the limiters. Without a
+// running plugin, or once a slot's watchdog tripped, the blocks pass untouched.
 class AudioEffectPlug : public AudioStream
 {
   public:
     AudioEffectPlug() : AudioStream(2, inputQueueArray) {}
     virtual void update(void);
-    void attach(const plug_desc* d, void* inst, uint32_t budgetCycles);   // main thread, audio interrupt off inside
-    uint32_t lastCycles() const { return last_; }
-    uint32_t maxCycles() const { return max_; }
-    bool tripped() const { return tripped_; }
+    // main thread, audio interrupt off inside. desc null detaches.
+    void attach(int slot, const plug_desc* d, void* inst, uint32_t budgetCycles);
+    // main thread: the latest value per parameter reaches set_param at the next block start
+    void queue(int slot, uint32_t index, float value);
+    uint32_t lastCycles(int slot) const { return run_[slot].last; }
+    uint32_t maxCycles(int slot) const { return run_[slot].max; }
+    bool tripped(int slot) const { return run_[slot].tripped; }
 
   private:
+    struct Run
+    {
+        const plug_desc* desc;
+        void* inst;
+        uint32_t budget, last, max;
+        uint8_t over;
+        volatile bool tripped;
+        volatile uint32_t dirty;   // one bit per parameter with a queued value
+        float pend[plug::kMaxParams];
+    };
     audio_block_t* inputQueueArray[2];
-    const plug_desc* desc_ = nullptr;
-    void* inst_ = nullptr;
-    uint32_t budget_ = 0;
-    uint32_t last_ = 0, max_ = 0;
-    uint8_t over_ = 0;
-    volatile bool tripped_ = false;
+    Run run_[plug::kSlots] = {};
 };
 
 AudioEffectPlug* plugInsert();   // AudioOutput's node

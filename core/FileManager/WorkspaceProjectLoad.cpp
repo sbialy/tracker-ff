@@ -1,4 +1,7 @@
 #include "WorkspaceProjectLoad.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
@@ -179,6 +182,9 @@ void WorkspaceProjectLoad::loadProjectFromWorkspaceFinish()
 #endif
 
     newFileManager.loadProjectValues();
+#ifdef FEATURE_PLUG_HOST
+    plug::projectLoaded(cWorkspacePath); // the master insert plugins of the sidecar (none without one, as stock)
+#endif
 
     if (newFileManager.needImportModFileAfterNewProject())
     {

@@ -1,4 +1,7 @@
 #include "ProjectSave.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 #include "VoiceStreamManager.h"
 #include "fileManager.h"
@@ -535,6 +538,9 @@ void ProjectSave::saveProjectFinish()
              newFileManager.getCurrentProjectPath(),
              newFileManager.getCurrentProjectName());
 
+#ifdef FEATURE_PLUG_HOST
+    plug::copySidecar(cWorkspacePath, destFilePath); // the plugin sidecar follows the project (removed when it has none)
+#endif
 #ifdef FEATURE_SYNTH_OPEN
     if (!newFileManager.getSynth()->copyWorkspacePatches(cWorkspacePath, destFilePath))
     {
