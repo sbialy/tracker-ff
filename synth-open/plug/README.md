@@ -108,7 +108,8 @@ Contract:
   it is loaded again. `emu_plug.py` gives instructions per block, a lower bound: the device measured 1.5 times the emulated
   count for Dirt (design section 11). Add the host's conversion pair (6,496 cycles measured, shared by the two slots).
 - Size: insert 1 holds image + bss up to 8,192 B in SRAM_L. Insert 2 holds text up to 8,192 B in the FlexNVM data flash,
-  its rw and bss go to the heap.
+  its rw and bss go to a fixed 1 KB SRAM buffer (more is refused for insert 2), so its text is the
+  same bytes on every load and a reload costs no flash command.
 - No static constructors, no exceptions, no RTTI, no per instance state in globals. Constant tables of pointers are fine
   (they are rebased).
 
@@ -145,11 +146,11 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
   title shows the last block's cycles of each insert in percent.
 - Insert 1 runs from the 8 KB SRAM_L slot. Insert 2 runs its text from the FlexNVM data flash at 0x1001E000 (two 4 KB
   sectors, erased and programmed when a different plugin is loaded there, no flash command when the bytes are already
-  there) and its data from the heap.
+  there) and its data from a fixed 1 KB SRAM buffer.
 - The project stores the inserts in `plugins.txt` next to the project file (`tffplug 1`, `slot <n> <uid> <version> <name>`,
   `p <param>=<value>`), never in the binary project. A project without plugins has no such file and stays what stock
   firmware writes. A plugin that is missing from the card shows as `Missing <name>`, the audio passes and its values are
   kept and saved back.
-- Safety: before a plugin starts, the host writes `/Plugins/.loading` with its name and deletes it after 10 s of running.
+- Safety: before a plugin starts, the host writes `/Plugins/.loading` with its name and deletes it after 3 s of running.
   If the Tracker died in between, the next boot loads no plugin on its own and the Inserts page title says which one
   crashed. Holding Shift during the first 4 s after power on does the same. Picking a plugin by hand still works in both.

@@ -4,8 +4,12 @@
 //
 // Slots (decisions 2 and 9): insert 1 runs from the 8 KB SRAM_L slot (text and rw), insert 2 runs its text from the FlexNVM
 // data flash at 0x1001E000 (8 KB, the two sectors run 3 proved, programmed at load with HSRUN left around every command) and
-// its rw from the heap. Both sit after Dirt and before the stock limiters, insert 1 first.
+// its rw from a fixed 1 KB SRAM buffer. Both sit after Dirt and before the stock limiters, insert 1 first.
 #pragma once
+
+#if defined(FEATURE_PLUG_HOST) && !(defined(FEATURE_SYNTH_OPEN) && defined(FEATURE_FF_DIRT))
+#error "PLUG_HOST=1 needs SYNTH_OPEN=1 and FF_DIRT=1: the node sits after Dirt and the sidecar hooks live in the open synth paths"
+#endif
 
 #include "plug/plug_abi.h"
 #include "plug_sidecar.h"

@@ -31,13 +31,18 @@ __NOINIT(EXTERNAL_RAM) char s_text[kSidecarMax];                                
 __NOINIT(EXTERNAL_RAM) IndexEntry s_index[kIndexMax];
 __NOINIT(EXTERNAL_RAM) char s_names[kIndexMax * 40];
 __NOINIT(EXTERNAL_RAM) char* s_nameList[kIndexMax];
+// insert 2's rw and bss at a fixed SRAM address: its text (rebased against this address) is then the same bytes on every
+// load and a reload issues no flash command. Plugins with more rw + bss than this are refused for insert 2.
+constexpr uint32_t kRw2Bytes = 1024;
+__attribute__((aligned(8))) uint8_t s_rw2[kRw2Bytes];
 
 constexpr const char* kDir = "/Plugins/Master";
 constexpr const char* kMarker = "/Plugins/.loading";
 constexpr uint32_t kBudget = 60000;         // cycles per block and slot: 11.5 % of a 522,240 cycle block, then bypass
 constexpr uint32_t kKeyWindowMs = 4000;     // hold Shift this long after power on: no plugin loads this session
 constexpr uint32_t kDebounceMs = 400;       // a UI pick loads once the selection rests this long
-constexpr uint32_t kMarkerMs = 10000;       // clean audio after a load before the crash marker goes
+constexpr uint32_t kMarkerMs = 3000;        // clean running after a load before the crash marker goes (a power off
+                                            // inside this window makes the next boot a safe one, harmless)
 
 struct Slot
 {
@@ -143,6 +148,8 @@ Err checkHeader(const plug_file_header& h, uint32_t wantKind)
     if (h.abi_major != PLUG_ABI_MAJOR || h.min_host > PLUG_HOST_LEVEL || h.cpu != PLUG_CPU_CM4F || h.kind != wantKind ||
         (h.flags & PLUG_F_S16))
         return kAbi;
+    // the CRC does not cover these 64 bytes: bound every size before any sum (no wrap with a damaged file)
+    if (h.header_size > 1024 || h.image_size > 65536 || h.bss_size > 65536 || h.rebase_count > 16384) return kTooBig;
     return kOk;
 }
 
@@ -151,13 +158,23 @@ void path(char* out, int cap, const char* dir, const char* name)
     snprintf(out, size_t(cap), "%s/%s", dir, name);
 }
 
-void writeText(const char* p, const char* text, int n)
+// temp file then rename: a failed write never costs the old file
+bool writeText(const char* p, const char* text, int n)
 {
-    s_fs->remove(p);
-    auto [ok, f] = s_fs->openFile(p, FileSystem::FileOpenMode::kWriteCreateNew);
-    if (!ok) return;
-    s_fs->writeFile(text, size_t(n), f);
+    char tmp[72];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", p);
+    s_fs->remove(tmp);
+    auto [ok, f] = s_fs->openFile(tmp, FileSystem::FileOpenMode::kWriteCreateNew);
+    if (!ok) return false;
+    const bool wrote = s_fs->writeFile(text, size_t(n), f) == n;
     s_fs->closeFile(f);
+    if (!wrote)
+    {
+        s_fs->remove(tmp);
+        return false;
+    }
+    if (s_fs->exists(p)) s_fs->remove(p);
+    return s_fs->rename(tmp, p);
 }
 
 // /Plugins/host.txt: what each slot holds, after every load and on every Workspace save (the device test reads it back)
@@ -232,12 +249,11 @@ void apply(int k)
         pl.textLen = kNvmBytes;
         pl.textRun = kNvmRun;
         pl.rwLen = (e.imageSize - (e.rwOffset ? e.rwOffset : e.imageSize)) + e.bssSize;
-        s_allocSlot = k;
-        pl.rwDst = static_cast<uint8_t*>(hostAlloc(pl.rwLen ? pl.rwLen : 8, 0));
-        s_allocSlot = -1;
-        pl.rwRun = uintptr_t(pl.rwDst);
+        pl.rwDst = s_rw2;
+        pl.rwRun = uintptr_t(s_rw2);
         pl.commit = nvmInstall;
-        if (!pl.rwDst) err = kInit;
+        if (pl.rwLen > kRw2Bytes) err = kTooBig;
+        pl.rwLen = kRw2Bytes;
     }
     // crash marker first: a plugin that hangs init or its first block leaves it behind, the next boot runs in safe mode
     writeText(kMarker, ref.name, int(strlen(ref.name)));
@@ -334,9 +350,22 @@ Err checkDesc(const plug_desc* d, uintptr_t base, uint32_t size, uint32_t wantKi
     for (uintptr_t f : fns)
         if (!f || !(f & 1u) || !inImage(f & ~1u, base, size)) return kDesc;
     if (d->set_param && !inImage(uintptr_t(d->set_param) & ~1u, base, size)) return kDesc;
-    if (d->num_params > uint32_t(kMaxParams) || (d->num_params && !inImage(uintptr_t(d->params), base, size))) return kDesc;
+    if (d->num_params > uint32_t(kMaxParams) ||
+        (d->num_params && (!inImage(uintptr_t(d->params), base, size) ||
+                           !inImage(uintptr_t(d->params + d->num_params) - 1u, base, size))))
+        return kDesc;
     for (uint32_t i = 0; i < d->num_params; i++)
-        if (!inImage(uintptr_t(d->params[i].name), base, size) || d->params[i].max < d->params[i].min) return kDesc;
+    {
+        const plug_param& pp = d->params[i];
+        if (!inImage(uintptr_t(pp.name), base, size) || pp.max < pp.min) return kDesc;
+        if (pp.unit && !inImage(uintptr_t(pp.unit), base, size)) return kDesc;
+        if (pp.enum_count &&
+            (!pp.enum_names || !inImage(uintptr_t(pp.enum_names), base, size) ||
+             !inImage(uintptr_t(pp.enum_names + pp.enum_count) - 1u, base, size)))
+            return kDesc;
+        for (uint32_t e = 0; e < pp.enum_count; e++)
+            if (!inImage(uintptr_t(pp.enum_names[e]), base, size)) return kDesc;
+    }
     if (d->instance_size > 16384) return kDesc;
     return kOk;
 }
@@ -511,9 +540,13 @@ void assign(int k, int ix)
 {
     SlotRef& r = s_side.slot[k];
     const IndexEntry* e = indexAt(ix);
-    if (e && r.uid == e->uid) return;
-    memset(&r, 0, sizeof(r));   // a new pick starts at the plugin's defaults
-    if (e)
+    const SlotState st = slotState(k);
+    if (e && r.uid == e->uid && (st == SlotState::kRunning || st == SlotState::kPending)) return;   // a missing, failed,
+                                                                                                    // safe or tripped one reloads
+    const bool keep = e && r.uid == e->uid;   // the same plugin again: keep its values
+    if (keep) syncRef(k);   // a tripped plugin's last values
+    if (!keep) memset(&r, 0, sizeof(r));   // a new pick starts at the plugin's defaults
+    if (e && !keep)
     {
         r.uid = e->uid;
         r.version = e->version;
@@ -585,11 +618,7 @@ struct SdFs
         s_fs->closeFile(f);
         return n;
     }
-    bool write(const char* p, const char* buf, int n)
-    {
-        writeText(p, buf, n);
-        return true;
-    }
+    bool write(const char* p, const char* buf, int n) { return writeText(p, buf, n); }
     bool exists(const char* p) { return s_fs->exists(p); }
     bool remove(const char* p) { return s_fs->remove(p); }
 };

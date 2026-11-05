@@ -134,7 +134,10 @@ void WorkspaceProjectSave::saveProjectToWorkspaceFinish()
 #endif
 #endif
 #ifdef FEATURE_PLUG_HOST
-    plug::projectSave(cWorkspacePath); // the sidecar of the master insert plugins (removed when no slot is used)
+    if (!plug::projectSave(cWorkspacePath)) // the sidecar of the master insert plugins (removed when no slot is used)
+    {
+        mtProject.values.projectNotSavedFlag |= 1; // the Workspace lacks the current plugin settings
+    }
 #endif
 
     if (newFileManager.getStatus() == fmSavingProjectToProjects) // przejdz do kopiowania projektu
