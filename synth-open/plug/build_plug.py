@@ -86,6 +86,13 @@ def rebase_table(elf):
                 offsets.append(r_offset)
             elif rtype not in PC_RELATIVE:
                 bad.append((target[0], hex(r_offset), rtype))
+            elif rtype not in (0, 40):
+                # PC-relative: fine only inside one segment (text may run from flash, rw from RAM)
+                shndx, = struct.unpack_from("<H", data, symtab[5] + rsym * 16 + 14)
+                if 0 < shndx < len(secs):
+                    rw = lambda name: name.startswith((".data", ".bss"))
+                    if rw(secs[shndx][0]) != rw(target[0]):
+                        bad.append((target[0], hex(r_offset), PC_RELATIVE[rtype] + " across segments"))
     if bad:
         sys.exit("refused relocations (not position independent after a copy): %s" % bad[:10])
     return sorted(set(offsets))
@@ -141,17 +148,17 @@ def main():
             assert v < bss_end, "ABS32 word at %x holds %x, not an image address" % (off, v)
         payload = image + b"".join(struct.pack("<I", o) for o in table)
         maj, mi, pa = (int(x) for x in a.version.split("."))
-        hdr = struct.pack("<IHBBBBHIIIIIIIIII12x", 0x31474C50, 64, 1, 0, KINDS[a.kind], 1, 0, fnv1a(a.id),
+        hdr = struct.pack("<IHBBBBHIIIIIIIIIII8x", 0x31474C50, 64, 1, 0, KINDS[a.kind], 1, 0, fnv1a(a.id),
                           (maj << 16) | (mi << 8) | pa, 1, image_end, bss_end - image_end, len(table),
-                          syms["plug_entry"], a.ram, a.cycles, zlib.crc32(payload) & 0xFFFFFFFF)
+                          syms["plug_entry"], a.ram, a.cycles, zlib.crc32(payload) & 0xFFFFFFFF, syms["__rw_start"])
         assert len(hdr) == 64
         with open(a.out, "wb") as f:
             f.write(hdr + payload)
         if a.keep:
             import shutil
             shutil.copy(elf, a.keep)
-        print("%s: image %d B, bss %d B, %d rebase words, entry 0x%x, uid 0x%08x, file %d B" % (
-            a.out, image_end, bss_end - image_end, len(table), syms["plug_entry"], fnv1a(a.id), 64 + len(payload)))
+        print("%s: image %d B (text %d, rw %d), bss %d B, %d rebase words, entry 0x%x, uid 0x%08x, file %d B" % (
+            a.out, image_end, syms["__rw_start"], image_end - syms["__rw_start"], bss_end - image_end, len(table), syms["plug_entry"], fnv1a(a.id), 64 + len(payload)))
 
 
 if __name__ == "__main__":

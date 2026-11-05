@@ -36,8 +36,20 @@ uint8_t* sramSlot();                     // kSlotBytes, SRAM_L (code bus, zero w
 
 const plug_host* hostTable();
 
-// Loads path into dst (write address, len bytes) for execution at runBase (the same address, or a code-bus alias of it).
-Err load(FileSystem* fs, const char* path, uint8_t* dst, uint32_t len, uintptr_t runBase, uint32_t wantKind, Loaded& out);
+// Where the two segments of an image go. text (code and constants) is written at textDst and runs at textRun (the same
+// address, a code bus alias of it, or a flash address: commit() then programs it). rw (data and bss) is written and runs at
+// rwDst, or right after the text when rwDst is null.
+struct Place
+{
+    uint8_t* textDst = nullptr;
+    uint32_t textLen = 0;
+    uintptr_t textRun = 0;
+    uint8_t* rwDst = nullptr;
+    uint32_t rwLen = 0;
+    uintptr_t rwRun = 0;
+    bool (*commit)(const uint8_t* src, uintptr_t run, uint32_t len) = nullptr;
+};
+Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, Loaded& out);
 // Checks a descriptor against an image range (also used for the in-image plugins, range 0 = no range check).
 Err checkDesc(const plug_desc* d, uintptr_t base, uint32_t size, uint32_t wantKind);
 

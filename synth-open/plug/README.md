@@ -27,6 +27,8 @@ Design and results: `~/prj/poly/ref/plugin-architecture.md`.
 
 1. Flash `build/plugin-spike/PolyendTracker_PLUGB_1.1.0.ptf`.
 2. SD card: copy `dirt.plg` to `/plugbench.plg` (bench) and to `/plugins/master.plg` (live insert, Dirt Soft always on).
-   Optional `/plugbench.alias` (empty file) adds the SDRAM code bus alias row: it may hang the boot, then delete the file.
+   Optional `/plugbench.nvm` (empty file) adds the FlexNVM row: the plugin is programmed into the last two 4 KB sectors of the
+   data flash (only if they read blank) and erased again. Optional `/plugbench.alias` (empty file) adds the SDRAM code bus
+   alias row: it may hang the boot, then delete the file.
 3. Boot, play a song, listen (the master bus is driven by the loaded Dirt). Config screen CPU readout needs `/.develop`.
 4. Bring back `/plugbench.txt` and `/plugins/master.txt`. Every row's two chk values must equal row F's.

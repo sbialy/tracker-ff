@@ -29,6 +29,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("plg")
     ap.add_argument("--base", type=lambda s: int(s, 0), default=0x1FFF0BD0)
+    ap.add_argument("--rw-base", dest="rwbase", type=lambda s: int(s, 0), default=None,
+                    help="put the writable segment here (default: right after the text)")
     ap.add_argument("--blocks", type=int, default=64)
     ap.add_argument("--param", type=float, default=None, help="value for parameter 0 after init")
     ap.add_argument("--wav")
@@ -36,25 +38,31 @@ def main():
     a = ap.parse_args()
     data = open(a.plg, "rb").read()
     (magic, hsize, amaj, amin, kind, cpu, flags, uid, ver, min_host, img, bss, nreb, entry, ram, cyc,
-     crc) = struct.unpack_from("<IHBBBBHIIIIIIIIII", data, 0)
+     crc, rwoff) = struct.unpack_from("<IHBBBBHIIIIIIIIIII", data, 0)
+    rwoff = rwoff or img
     assert magic == 0x31474C50 and hsize >= 64, "bad header"
     assert amaj == 1 and cpu == 1 and min_host <= 1, "abi"
     payload = data[hsize:hsize + img + 4 * nreb]
     assert zlib.crc32(payload) & 0xFFFFFFFF == crc, "crc"
     image = bytearray(payload[:img])
+    rwbase = a.rwbase if a.rwbase is not None else a.base + rwoff
     for k in range(nreb):
         off, = struct.unpack_from("<I", payload, img + 4 * k)
         v, = struct.unpack_from("<I", image, off)
         assert off % 4 == 0 and off + 4 <= img and v < img + bss, "rebase %x" % off
-        struct.pack_into("<I", image, off, v + a.base)
+        struct.pack_into("<I", image, off, (a.base + v) if v < rwoff else (rwbase + v - rwoff))
 
     uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
     uc.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_A15)
     uc.mem_map(SRAM, SRAM_SIZE)
     uc.mem_map(SDRAM, SDRAM_SIZE)
+    uc.mem_map(0x10000000, 0x40000)   # FlexNVM
     uc.reg_write(UC_ARM_REG_C1_C0_2, uc.reg_read(UC_ARM_REG_C1_C0_2) | (0xF << 20))
     uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
-    uc.mem_write(a.base, bytes(image) + bytes(bss))
+    uc.mem_write(a.base, bytes(image[:rwoff]))
+    uc.mem_write(rwbase, bytes(image[rwoff:]) + bytes(bss))
+    if a.base < 0x20000000 and a.base >= 0x10000000 and a.base < 0x10040000:
+        uc.mem_protect(0x10000000, 0x40000, 5)   # flash: read and execute only, a store from the plugin faults here too
     uc.mem_write(TRAP, b"\xfe\xe7")
     # host table: every service traps (Dirt's default preset needs none); level 1, 44117.647 Hz
     stub = TRAP + 0x10
@@ -76,16 +84,16 @@ def main():
         return uc.reg_read(UC_ARM_REG_R0), count[0]
 
     desc, _ = call(a.base + entry, host, (1 << 16) | 0)
-    lo, hi = a.base, a.base + img + bss
-    assert lo <= desc < hi, "descriptor outside the image"
+    lo, hi = a.base, a.base + rwoff
+    assert lo <= desc < hi, "descriptor outside the text segment"
     d = struct.unpack("<IIIIIIIIIIII", bytes(uc.mem_read(desc, 48)))
     size, dkind, name_p, author_p, nparams, params_p, inst_size, f_init, f_reset, f_set, f_proc, f_query = d
     assert dkind == kind and size >= 44
     for f in (f_init, f_proc):
         assert f & 1 and lo <= (f & ~1) < hi, "function outside the image"
     cstr = lambda p: bytes(uc.mem_read(p, 32)).split(b"\0")[0].decode()
-    print("plugin %s by %s, uid 0x%08x, %d params, instance %d B, base 0x%08x, %d rebase words" % (
-        cstr(name_p), cstr(author_p), uid, nparams, inst_size, a.base, nreb))
+    print("plugin %s by %s, uid 0x%08x, %d params, instance %d B, text 0x%08x (%d B), rw 0x%08x (%d B + bss %d), %d rebase words" % (
+        cstr(name_p), cstr(author_p), uid, nparams, inst_size, a.base, rwoff, rwbase, img - rwoff, bss, nreb))
     for i in range(nparams):
         pn, pu, mn, mx, df, st, ec = struct.unpack("<IIffffH", bytes(uc.mem_read(params_p + 32 * i, 26)))
         print("  param %d %s [%g..%g] def %g%s" % (i, cstr(pn), mn, mx, df, (" %d names" % ec) if ec else ""))

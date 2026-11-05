@@ -55,7 +55,8 @@ typedef struct
     uint32_t ram_bytes;      // declared instance + arena bytes (checked against what init asks for)
     uint32_t cpu_cycles;     // declared worst case cycles of one 128-frame process() (host emulator measure)
     uint32_t crc32;          // CRC-32 (IEEE) of image and rebase table
-    uint32_t reserved[3];
+    uint32_t rw_offset;      // start of the writable segment (.data) in the image, 8 aligned: [0, rw_offset) may run from flash
+    uint32_t reserved[2];
 } plug_file_header;
 
 typedef struct

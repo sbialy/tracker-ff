@@ -125,7 +125,7 @@ Err checkDesc(const plug_desc* d, uintptr_t base, uint32_t size, uint32_t wantKi
     return kOk;
 }
 
-Err load(FileSystem* fs, const char* path, uint8_t* dst, uint32_t len, uintptr_t runBase, uint32_t wantKind, Loaded& out)
+Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, Loaded& out)
 {
     out.desc = nullptr;
     auto [isOpen, f] = fs->openFile(path, FileSystem::FileOpenMode::kRead);
@@ -136,17 +136,23 @@ Err load(FileSystem* fs, const char* path, uint8_t* dst, uint32_t len, uintptr_t
         e = kHeader;
     else if (h.abi_major != PLUG_ABI_MAJOR || h.min_host > PLUG_HOST_LEVEL || h.cpu != PLUG_CPU_CM4F || h.kind != wantKind)
         e = kAbi;
-    else if ((h.image_size & 3u) || h.image_size + h.bss_size > len || h.rebase_count > h.image_size / 4 ||
-             h.entry_offset >= h.image_size)
+    // text = [0, rw_offset) (code, constants: may run from flash), rw = [rw_offset, image_size) + bss (always RAM)
+    const uint32_t rwOff = h.rw_offset ? h.rw_offset : h.image_size;
+    const uint32_t rwLen = h.image_size - rwOff + h.bss_size;
+    uint8_t* const rwDst = pl.rwDst ? pl.rwDst : pl.textDst + rwOff;
+    const uintptr_t rwRun = pl.rwDst ? pl.rwRun : pl.textRun + rwOff;
+    if (e == kOk && ((h.image_size & 3u) || (rwOff & 7u) || rwOff > h.image_size || h.rebase_count > h.image_size / 4 ||
+                     h.entry_offset >= rwOff || rwOff > pl.textLen || (pl.rwDst ? rwLen > pl.rwLen : rwOff + rwLen > pl.textLen)))
         e = kTooBig;
-    else if (!fs->seekFile(h.header_size, f) || !readAll(fs, f, dst, h.image_size))
+    if (e == kOk && (!fs->seekFile(h.header_size, f) || !readAll(fs, f, pl.textDst, rwOff) ||
+                     !readAll(fs, f, rwDst, h.image_size - rwOff)))
         e = kRead;
     if (e != kOk)
     {
         fs->closeFile(f);
         return e;
     }
-    uint32_t crc = crc32(0, dst, h.image_size);
+    uint32_t crc = crc32(crc32(0, pl.textDst, rwOff), rwDst, h.image_size - rwOff);
     uint32_t words[32];
     for (uint32_t done = 0; done < h.rebase_count && e == kOk;)
     {
@@ -165,28 +171,31 @@ Err load(FileSystem* fs, const char* path, uint8_t* dst, uint32_t len, uintptr_t
                 e = kRebase;
                 break;
             }
-            uint32_t* w = reinterpret_cast<uint32_t*>(dst + off);
-            if (*w >= h.image_size + h.bss_size)
+            uint32_t* w = reinterpret_cast<uint32_t*>(off < rwOff ? pl.textDst + off : rwDst + (off - rwOff));
+            const uint32_t v = *w;
+            if (v >= h.image_size + h.bss_size)
             {
                 e = kRebase;
                 break;
             }
-            *w += runBase;
+            *w = v < rwOff ? uint32_t(pl.textRun + v) : uint32_t(rwRun + (v - rwOff));
         }
         done += n;
     }
     fs->closeFile(f);
     if (e == kOk && crc != h.crc32) e = kCrc;
     if (e != kOk) return e;
-    memset(dst + h.image_size, 0, h.bss_size);
+    memset(rwDst + (h.image_size - rwOff), 0, h.bss_size);
+    if (pl.commit && !pl.commit(pl.textDst, pl.textRun, rwOff)) return kRead;   // e.g. program the text into flash
     // the K66 system MPU must let the core fetch from RAM (PtfxLoader does the same)
     *reinterpret_cast<volatile uint32_t*>(0x4000D000) = 0;
     syncCode();
-    out.base = runBase;
-    const plug_entry_fn entry = reinterpret_cast<plug_entry_fn>((runBase + h.entry_offset) | 1u);
+    out.base = pl.textRun;
+    const plug_entry_fn entry = reinterpret_cast<plug_entry_fn>((pl.textRun + h.entry_offset) | 1u);
     const plug_desc* d = entry(&s_host, (PLUG_ABI_MAJOR << 16) | PLUG_ABI_MINOR);
     if (!d) return kEntry;
-    e = checkDesc(d, runBase, h.image_size + h.bss_size, wantKind);
+    // the descriptor and the functions are constants and code: in the text segment
+    e = checkDesc(d, pl.textRun, rwOff, wantKind);
     if (e == kOk) out.desc = d;
     return e;
 }
@@ -198,7 +207,11 @@ void boot(FileSystem* fs)
 #endif
     if (!fs->exists("/plugins/master.plg") || !plugInsert()) return;
     Loaded l;
-    Err e = load(fs, "/plugins/master.plg", s_slot, kSlotBytes, uintptr_t(s_slot), PLUG_KIND_MASTER_INSERT, l);
+    Place pl;
+    pl.textDst = s_slot;
+    pl.textLen = kSlotBytes;
+    pl.textRun = uintptr_t(s_slot);
+    Err e = load(fs, "/plugins/master.plg", pl, PLUG_KIND_MASTER_INSERT, l);
     void* inst = nullptr;
     if (e == kOk)
     {

@@ -8,8 +8,11 @@ SECTIONS
         KEEP(*(.text.plug_entry))
         *(.text .text.*)
         *(.rodata .rodata.*)
+        *(.data.rel.ro .data.rel.ro.*)   /* constants holding addresses: read only once rebased */
         . = ALIGN(4);
     }
+    . = ALIGN(8);
+    __rw_start = .;
     .data : {
         *(.data .data.*)
         . = ALIGN(4);
