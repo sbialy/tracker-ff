@@ -305,8 +305,6 @@ void plugUiOpen()
         display.setControlHide(MP->trackVolumeBar[i]);
         display.refreshControl(MP->trackVolumeBar[i]);
     }
-    display.setControlValue(MP->label[0], 0);
-    display.setControlValue(MP->label[1], 0);
     display.setControlText(MP->label[7], "Back");
     display.setControlText2(MP->label[7], " ");
     display.refreshControl(MP->label[7]);

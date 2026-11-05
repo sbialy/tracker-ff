@@ -1,0 +1,56 @@
+#!/bin/bash
+# Builds the shipped master insert plugins (dirt.plg, tape.plg, lofi.plg) and checks each one on the Mac:
+#   - no R_ARM_GOT* relocation in the linked ELF, the rebase table holds every R_ARM_ABS32 word (count equal, > 0)
+#   - emu_plug.py runs it at the insert 1 home (SRAM_L 0x1FFF0BD0), the insert 2 home (text at 0x1001E000 in the FlexNVM,
+#     rw at 0x20026C00 on the heap) and in SDRAM, and the output checksum is the same at all three
+#   - Dirt: the checksum is 3b1f3dc5, the device rule of section 11 (runs 2 and 3: the in-image Dirt gives 3b1f3dc5), and the
+#     firmware's own ff_dirt.o and ff_dirt_ctl.o (FW_OBJ, from the PLUG_HOST image build) linked as a plugin give it too
+#
+#   TOOLCHAIN=.../agt/10.3/bin/arm-none-eabi- PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT [FW_OBJ]
+# PY needs the unicorn module. Ports of firmware code build those objects with the firmware's flags (ff_dirt_ctl.cpp at -Os):
+# at -O2 -ffp-contract=off GCC does not fuse 1 + 15 d^2 into a vfma and Coef::pre differs by one ulp (phase 1b).
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SO="$(cd "$HERE/.." && pwd)"
+mkdir -p "${1:?output dir}"
+OUT="$(cd "$1" && pwd)"
+FW_OBJ="${2:-}"
+[ -z "$FW_OBJ" ] || FW_OBJ="$(cd "$FW_OBJ" && pwd)"
+PY="${PY:-python3}"
+: "${TOOLCHAIN:?set TOOLCHAIN to the agt 10.3 prefix}"
+mkdir -p "$OUT"
+cd "$SO"
+python3 plug/build_plug.py --id ff.dirt --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off -fno-builtin" \
+    --src-opt "ff_dirt_ctl.cpp=-Os -fno-builtin" --keep "$OUT/dirt.elf" --out "$OUT/dirt.plg" -I . \
+    plug/fx_dirt_plug.cpp ff_dirt.cpp ff_dirt_ctl.cpp
+python3 plug/build_plug.py --id org.opentracker.fx.tape --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
+    --keep "$OUT/tape.elf" --out "$OUT/tape.plg" plug/fx/ot_tape_plug.c
+python3 plug/build_plug.py --id org.opentracker.fx.lofi --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
+    --keep "$OUT/lofi.elf" --out "$OUT/lofi.plg" plug/fx/ot_lofi_plug.c
+fail=0
+emu() { "$PY" -I plug/emu_plug.py "$@" 2>&1 | sed -n 's/^output checksum \([0-9a-f]*\).*/\1/p'; }
+for p in dirt tape lofi; do
+    got=$("${TOOLCHAIN}objdump" -r "$OUT/$p.elf" | grep -c 'R_ARM_GOT' || true)
+    abs=$("${TOOLCHAIN}objdump" -r "$OUT/$p.elf" | grep -c 'R_ARM_ABS32' || true)
+    reb=$(python3 -c "import struct,sys; print(struct.unpack_from('<I', open(sys.argv[1],'rb').read(), 32)[0])" "$OUT/$p.plg")
+    l=$(emu "$OUT/$p.plg" --base 0x1FFF0BD0)
+    n=$(emu "$OUT/$p.plg" --base 0x1001E000 --rw-base 0x20026C00)
+    d=$(emu "$OUT/$p.plg" --base 0x70000000)
+    ok=ok
+    [ "$got" = 0 ] && [ "$reb" -gt 0 ] && [ "$reb" = "$abs" ] && [ -n "$l" ] && [ "$l" = "$n" ] && [ "$l" = "$d" ] || ok=FAIL
+    [ "$ok" = ok ] || fail=1
+    printf "%-5s %s  GOT relocs %s, ABS32 relocs %s, rebase words %s, checksum SRAM_L %s FlexNVM+heap %s SDRAM %s, sha256 %s\n" \
+        "$p" "$ok" "$got" "$abs" "$reb" "$l" "$n" "$d" "$(shasum -a 256 "$OUT/$p.plg" | cut -c1-16)"
+    if [ "$p" = dirt ]; then
+        if [ "$l" = 3b1f3dc5 ]; then echo "dirt  ok  checksum 3b1f3dc5 = the device's in-image Dirt (section 11)"; else echo "dirt  FAIL checksum $l, want 3b1f3dc5"; fail=1; fi
+    fi
+done
+if [ -n "$FW_OBJ" ]; then
+    # the image's own Dirt kernel and coefficient objects behind the plugin wrapper: must give the same output as dirt.plg
+    python3 plug/build_plug.py --id ff.dirt --kind master --opt "-O2 -ffp-contract=off -fno-builtin" --out "$OUT/dirt-fwobj.plg" \
+        -I . plug/fx_dirt_plug.cpp "$FW_OBJ/ff_dirt.o" "$FW_OBJ/ff_dirt_ctl.o" > /dev/null
+    f=$(emu "$OUT/dirt-fwobj.plg" --base 0x1FFF0BD0)
+    if [ "$f" = 3b1f3dc5 ]; then echo "dirt  ok  the firmware's ff_dirt.o + ff_dirt_ctl.o give 3b1f3dc5 too"; else echo "dirt  FAIL firmware objects give $f"; fail=1; fi
+    rm -f "$OUT/dirt-fwobj.plg"
+fi
+[ "$fail" = 0 ] && echo "PASSED" || { echo "FAILED"; exit 1; }
