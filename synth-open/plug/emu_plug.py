@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Host harness for a .plg (spike): the firmware loader re-done in Python, the plugin's ARM code run in Unicorn.
 
-    python -I emu_plug.py <file.plg> [--base 0x1FFF0BD0] [--blocks 64] [--wav out.wav] [--in in.wav]
+    python -I emu_plug.py <file.plg> [--base 0x1FFF0BD0] [--blocks 64] [--wav out.wav] [--inwav in.wav] [--param 0=2.5]
 
 Checks the header and CRC, copies the image to --base, applies the rebase table, calls plug_entry, checks the descriptor
 like plug::checkDesc, then init() and process() on stereo 128-frame float blocks. Prints the instruction count per block
@@ -16,8 +16,11 @@ import zlib
 from fractions import Fraction
 
 from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_THUMB, Uc
+import math
+
 from unicorn.arm_const import (UC_ARM_REG_C1_C0_2, UC_ARM_REG_FPEXC, UC_ARM_REG_LR, UC_ARM_REG_R0, UC_ARM_REG_R1,
-                               UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SP, UC_CPU_ARM_CORTEX_A15)
+                               UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_S0, UC_ARM_REG_S1, UC_ARM_REG_SP,
+                               UC_CPU_ARM_CORTEX_A15)
 
 N = 128
 SRAM, SRAM_SIZE = 0x1FFF0000, 0x40000
@@ -76,7 +79,7 @@ def main():
     ap.add_argument("--rw-base", dest="rwbase", type=lambda s: int(s, 0), default=None,
                     help="put the writable segment here (default: right after the text)")
     ap.add_argument("--blocks", type=int, default=64)
-    ap.add_argument("--param", type=float, default=None, help="value for parameter 0 after init")
+    ap.add_argument("--param", action="append", default=[], help="INDEX=VALUE, set_param after init (repeatable)")
     ap.add_argument("--wav")
     ap.add_argument("--inwav", dest="inwav")
     a = ap.parse_args()
@@ -86,8 +89,13 @@ def main():
     rwoff = rwoff or img
     assert magic == 0x31474C50 and hsize >= 64, "bad header"
     assert amaj == 1 and cpu == 1 and min_host <= 1, "abi"
+    assert zlib.crc32(data[64:]) & 0xFFFFFFFF == crc and len(data) == hsize + img + 4 * nreb, "crc or size"
+    if hsize >= 64 + 96:
+        msz, mname, mauthor, mlic, mnp, mrole = struct.unpack_from("<I16s32s16sHB", data, 64)
+        z = lambda b: b.split(b"\0")[0].decode()
+        print("manifest: %s by %s, licence %s, %d params, role %d, flags 0x%x, version %d.%d.%d" % (
+            z(mname), z(mauthor), z(mlic), mnp, mrole, flags, ver >> 16, (ver >> 8) & 255, ver & 255))
     payload = data[hsize:hsize + img + 4 * nreb]
-    assert zlib.crc32(payload) & 0xFFFFFFFF == crc, "crc"
     image = bytearray(payload[:img])
     rwbase = a.rwbase if a.rwbase is not None else a.base + rwoff
     for k in range(nreb):
@@ -108,11 +116,40 @@ def main():
     if a.base < 0x20000000 and a.base >= 0x10000000 and a.base < 0x10040000:
         uc.mem_protect(0x10000000, 0x40000, 5)   # flash: read and execute only, a store from the plugin faults here too
     uc.mem_write(TRAP, b"\xfe\xe7")
-    # host table: every service traps (Dirt's default preset needs none); level 1, 44117.647 Hz
-    stub = TRAP + 0x10
-    uc.mem_write(stub, b"\x00\xbe")   # bkpt: a service call is reported, not emulated
+    # host table (plug_host, level 1): every service is a "bx lr" stub, a code hook computes the result in Python first.
+    # libm results are rounded to float32 once; they may differ from the device libm in the last bit (Dirt's presets call
+    # no libm in process, so the Dirt checksum rule is unaffected).
+    stubs = TRAP + 0x100
+    names = ["sinf", "cosf", "tanf", "tanhf", "expf", "logf", "powf", "memcpy", "memset", "alloc", "cycles", "query"]
+    uc.mem_write(stubs, b"\x70\x47\x00\xbf" * len(names))
+    heap = [WORK + 0x8000]   # alloc: a bump pointer in the work area (flags 0 and 1 alike)
+    f2 = lambda v: f32(Fraction(v))
+    rf = lambda r: struct.unpack("<f", struct.pack("<I", uc.reg_read(r) & 0xFFFFFFFF))[0]
+    def wf(r, v):
+        uc.reg_write(r, struct.unpack("<I", struct.pack("<f", v))[0])
+    def service(u, addr, size, ud):
+        k = (addr - stubs) // 4
+        n = names[k]
+        if n in ("sinf", "cosf", "tanf", "tanhf", "expf", "logf"):
+            wf(UC_ARM_REG_S0, f2(getattr(math, n[:-1])(rf(UC_ARM_REG_S0))))
+        elif n == "powf":
+            wf(UC_ARM_REG_S0, f2(math.pow(rf(UC_ARM_REG_S0), rf(UC_ARM_REG_S1))))
+        elif n == "memcpy":
+            d, sr, ln = (u.reg_read(r) for r in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2))
+            u.mem_write(d, bytes(u.mem_read(sr, ln)))
+        elif n == "memset":
+            d, c, ln = (u.reg_read(r) for r in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2))
+            u.mem_write(d, bytes([c & 255]) * ln)
+        elif n == "alloc":
+            ln = (u.reg_read(UC_ARM_REG_R0) + 7) & ~7
+            u.mem_write(heap[0], bytes(ln))
+            u.reg_write(UC_ARM_REG_R0, heap[0])
+            heap[0] += ln
+        else:
+            u.reg_write(UC_ARM_REG_R0, 0)
+    uc.hook_add(UC_HOOK_CODE, service, begin=stubs, end=stubs + 4 * len(names) - 1)
     host = WORK
-    fields = [15 * 4, 1, struct.unpack("<I", struct.pack("<f", 44117.64706))[0]] + [stub | 1] * 12
+    fields = [15 * 4, 1, struct.unpack("<I", struct.pack("<f", 44117.64706))[0]] + [(stubs + 4 * i) | 1 for i in range(12)]
     uc.mem_write(host, struct.pack("<%dI" % len(fields), *fields))
 
     count = [0]
@@ -148,8 +185,15 @@ def main():
     dump = lambda when: print("inst %s (%d B): %s" % (when, inst_size, " ".join(
         "%08x" % w for w in struct.unpack("<%dI" % (inst_size // 4), bytes(uc.mem_read(inst, inst_size & ~3))))))
     dump("init")
-    if a.param is not None:
-        sys.exit("set_param needs float args in s0 and libm through the host table: not in the spike harness")
+    for pv in a.param:
+        idx, val = pv.split("=")
+        uc.reg_write(UC_ARM_REG_SP, WORK + 0xE000)
+        uc.reg_write(UC_ARM_REG_LR, TRAP | 1)
+        uc.reg_write(UC_ARM_REG_R0, inst)
+        uc.reg_write(UC_ARM_REG_R1, int(idx))
+        wf(UC_ARM_REG_S0, float(val))
+        uc.emu_start(f_set | 1, TRAP)
+        print("set_param(%s, %s)" % (idx, val))
 
     L, R = WORK + 0x2000, WORK + 0x2200
     io = WORK + 0x2400

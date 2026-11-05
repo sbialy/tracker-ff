@@ -1,7 +1,9 @@
-// Dirt as a runtime plugin (spike). One source, two builds:
+// Dirt as a runtime master insert plugin (dirt.plg). One source, two builds:
 //   - plugin: synth-open/plug/build_plug.py links this file with ../ff_dirt.cpp, ../ff_dirt_ctl.cpp and plug_rt.c into dirt.plg
 //   - in-image: synth-open/plug_dirt_inimage.cpp includes it with PLUG_IN_IMAGE (bench baseline, the same code from flash)
-// The kernel is the shipped int16 ffdirt::process, wrapped to the float ABI. A production port would be float native.
+// The kernel is the shipped int16 ffdirt::process, wrapped to the float ABI, so the plugin sounds exactly like the built-in
+// Dirt entries of the Saturation list (bit identical when ff_dirt_ctl.cpp is built at the firmware's -Os, see README).
+// Licence: MIT (OpenTracker DIRT port, see ../ff_dirt.h and licenses/LICENSE-OpenTracker-fx-MIT.txt).
 #include "plug_abi.h"
 #include "ff_dirt.h"
 
@@ -75,14 +77,13 @@ void process(void* p, float* const* ch, uint32_t channels, uint32_t frames)
     }
 }
 
-const plug_desc kDesc = {
-    sizeof(plug_desc), PLUG_KIND_MASTER_INSERT, "Dirt", "FF (OpenTracker port)", 1, kParams, sizeof(Inst),
+PLUG_DESCRIPTOR const plug_desc kDesc = {
+    sizeof(plug_desc), PLUG_KIND_MASTER_INSERT, "Dirt", "FF (OpenTracker DIRT)", 1, kParams, sizeof(Inst),
     init,             reset,                   setParam, process, nullptr,
 };
 }   // namespace
 
-extern "C" __attribute__((used, section(".text.plug_entry"))) const plug_desc* PLUG_ENTRY_NAME(const plug_host* host,
-                                                                                                 uint32_t abi)
+extern "C" PLUG_ENTRY const plug_desc* PLUG_ENTRY_NAME(const plug_host* host, uint32_t abi)
 {
     if ((abi >> 16) != PLUG_ABI_MAJOR || !host) return nullptr;
 #ifndef PLUG_IN_IMAGE

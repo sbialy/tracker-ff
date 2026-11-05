@@ -6,7 +6,10 @@
 Compile for the Cortex-M4F, link at address 0 with plug.ld and --emit-relocs, then:
   - refuse static constructors (.init_array), GOT access and any absolute relocation other than R_ARM_ABS32
   - write every R_ARM_ABS32 target word offset into the rebase table (the loader adds the run address)
-  - prepend the 64 byte plug_file_header with a CRC-32 of image + table.
+  - read name, author and num_params from the descriptor (PLUG_DESCRIPTOR, symbol __plug_desc) into the 96 byte manifest
+  - prepend the 64 byte plug_file_header and the manifest, CRC-32 over manifest, image and table.
+Per source flags (--src-opt NAME=FLAGS): a port of firmware DSP is only bit identical when its objects are built with the
+firmware object's own flags (the vfma gotcha, design section 11, phase 1b).
 """
 import argparse
 import os
@@ -18,6 +21,8 @@ import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KINDS = {"master": 1, "send": 2, "track": 3, "synth": 4, "offline": 5}
+ROLES = {"insert": 0, "reverb": 1, "delay": 2}
+MANIFEST_SIZE = 96
 CPU_FLAGS = ["-mcpu=cortex-m4", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv4-sp-d16"]
 
 # Relocation types ld resolves to PC-relative values (position independent after a flat copy).
@@ -31,6 +36,8 @@ R_ARM_ABS32 = 2
 
 
 def toolchain():
+    if os.environ.get("TOOLCHAIN"):   # same variable as make: TOOLCHAIN=/path/agt/10.3/bin/arm-none-eabi-
+        return os.environ["TOOLCHAIN"]
     for c in [os.path.join(HERE, "..", "..", "agt", "10.3", "bin", "arm-none-eabi-"), "arm-none-eabi-"]:
         if os.path.exists(c + "gcc") or c == "arm-none-eabi-":
             return os.path.abspath(c) if os.path.exists(c + "gcc") else c
@@ -113,6 +120,8 @@ def main():
     ap.add_argument("--src-opt", dest="src_opt", action="append", default=[], type=lambda v: tuple(v.split("=", 1)),
                     help="NAME=FLAGS: compile the source with basename NAME with FLAGS instead of --opt")
     ap.add_argument("--entry", default="plug_entry", help="entry symbol (plug_entry_dirt for the firmware object)")
+    ap.add_argument("--licence", default="MIT", help="SPDX id for the manifest")
+    ap.add_argument("--role", default="insert", choices=ROLES)
     a = ap.parse_args()
     tc = toolchain()
     with tempfile.TemporaryDirectory() as tmp:
@@ -160,9 +169,23 @@ def main():
             assert off % 4 == 0 and off + 4 <= image_end, "rebase word outside the image: %x" % off
             v, = struct.unpack_from("<I", image, off)
             assert v < bss_end, "ABS32 word at %x holds %x, not an image address" % (off, v)
-        payload = image + b"".join(struct.pack("<I", o) for o in table)
+        # the manifest, from the descriptor (link base 0: its pointers are image offsets)
+        if "__plug_desc" not in syms:
+            sys.exit("no __plug_desc: use plug.ld")
+        dsc = syms["__plug_desc"]
+        dsize, dkind, pname, pauthor, nparams = struct.unpack_from("<IIIII", image, dsc)
+        if dsize < 44 or dsize > 256 or dkind != KINDS[a.kind] or pname >= image_end:
+            sys.exit("descriptor at 0x%x is not a plug_desc of kind %s: mark it PLUG_DESCRIPTOR" % (dsc, a.kind))
+        cstr = lambda p: image[p:image.index(b"\0", p)] if p and p < image_end else b""
+        name, author = cstr(pname), cstr(pauthor)
+        if not 0 < len(name) <= 15 or nparams > 32:
+            sys.exit("descriptor name must be 1..15 chars and num_params <= 32")
+        manifest = struct.pack("<I16s32s16sHBB24x", MANIFEST_SIZE, name, author[:31], a.licence.encode()[:15], nparams,
+                               ROLES[a.role], 0)
+        assert len(manifest) == MANIFEST_SIZE
+        payload = manifest + image + b"".join(struct.pack("<I", o) for o in table)
         maj, mi, pa = (int(x) for x in a.version.split("."))
-        hdr = struct.pack("<IHBBBBHIIIIIIIIIII8x", 0x31474C50, 64, 1, 0, KINDS[a.kind], 1, 0, fnv1a(a.id),
+        hdr = struct.pack("<IHBBBBHIIIIIIIIIII8x", 0x31474C50, 64 + MANIFEST_SIZE, 1, 0, KINDS[a.kind], 1, 0, fnv1a(a.id),
                           (maj << 16) | (mi << 8) | pa, 1, image_end, bss_end - image_end, len(table),
                           syms["plug_entry"], a.ram, a.cycles, zlib.crc32(payload) & 0xFFFFFFFF, syms["__rw_start"])
         assert len(hdr) == 64
@@ -171,8 +194,9 @@ def main():
         if a.keep:
             import shutil
             shutil.copy(elf, a.keep)
-        print("%s: image %d B (text %d, rw %d), bss %d B, %d rebase words, entry 0x%x, uid 0x%08x, file %d B" % (
-            a.out, image_end, syms["__rw_start"], image_end - syms["__rw_start"], bss_end - image_end, len(table), syms["plug_entry"], fnv1a(a.id), 64 + len(payload)))
+        print("%s: %s, %d params, image %d B (text %d, rw %d), bss %d B, %d rebase words, entry 0x%x, uid 0x%08x, file %d B" % (
+            a.out, name.decode(), nparams, image_end, syms["__rw_start"], image_end - syms["__rw_start"], bss_end - image_end,
+            len(table), syms["plug_entry"], fnv1a(a.id), 64 + len(payload)))
 
 
 if __name__ == "__main__":

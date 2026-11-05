@@ -7,6 +7,9 @@ SECTIONS
     .text : {
         KEEP(*(.text.plug_entry))
         *(.text .text.*)
+        . = ALIGN(4);
+        __plug_desc = .;
+        KEEP(*(.rodata.plug_desc))
         *(.rodata .rodata.*)
         *(.data.rel.ro .data.rel.ro.*)   /* constants holding addresses: read only once rebased */
         . = ALIGN(4);

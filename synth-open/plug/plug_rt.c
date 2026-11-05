@@ -12,6 +12,13 @@ float expf(float x) { return plug_rt_host->expf(x); }
 float logf(float x) { return plug_rt_host->logf(x); }
 float powf(float x, float y) { return plug_rt_host->powf(x, y); }
 float exp2f(float x) { return plug_rt_host->powf(2.0f, x); }
+// One FPU instruction, no host call (the compiler calls sqrtf for the errno path without -fno-math-errno).
+float sqrtf(float x)
+{
+    float r;
+    __asm__("vsqrt.f32 %0, %1" : "=t"(r) : "t"(x));
+    return r;
+}
 
 // Local loops, not host calls: the compiler emits these for struct copies and zeroing, often in audio code.
 void* memcpy(void* d, const void* s, size_t n)
