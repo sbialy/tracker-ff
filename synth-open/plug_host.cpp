@@ -160,6 +160,25 @@ void writeText(const char* p, const char* text, int n)
     s_fs->closeFile(f);
 }
 
+// /Plugins/host.txt: what each slot holds, after every load and on every Workspace save (the device test reads it back)
+void writeStatus()
+{
+    char t[320];
+    int n = snprintf(t, sizeof(t), "plugin host 1, index %d, safe %d %s, nvm commands %lu\r\n", s_count, int(s_safe), s_reason,
+                     (unsigned long)nvmCommands());
+    for (int k = 0; k < kSlots && n < int(sizeof(t)); k++)
+    {
+        const Slot& s = s_slots[k];
+        const SlotRef& r = s_side.slot[k];
+        n += snprintf(t + n, sizeof(t) - size_t(n), "insert %d: %s uid %08lx state %d err %ld text 0x%08lx inst 0x%08lx cycles %lu max %lu\r\n",
+                      k + 1, r.uid ? r.name : "-", (unsigned long)r.uid, int(slotState(k)), long(s.err),
+                      (unsigned long)(s.desc ? uintptr_t(s.desc->process) & ~1u : 0), (unsigned long)uintptr_t(s.inst),
+                      (unsigned long)slotCycles(k), (unsigned long)slotMaxCycles(k));
+    }
+    if (n > int(sizeof(t))) n = int(sizeof(t)) - 1;
+    writeText("/Plugins/host.txt", t, n);
+}
+
 // ------------------------------------------------------------------------------------------------ slots
 void unload(int k)
 {
@@ -238,6 +257,7 @@ void apply(int k)
         unload(k);
         s.err = err;
         s.state = SlotState::kFailed;
+        writeStatus();
         return;
     }
     s.desc = l.desc;
@@ -253,6 +273,7 @@ void apply(int k)
     }
     s.state = SlotState::kRunning;
     if (plugInsert()) plugInsert()->attach(k, s.desc, s.inst, kBudget);
+    writeStatus();
 }
 
 // The sidecar entry of slot k from the running plugin's values (a missing or failed plugin keeps what was read)
@@ -594,6 +615,7 @@ bool projectSave(const char* dir)
 {
     if (!s_fs) return true;
     for (int k = 0; k < kSlots; k++) syncRef(k);
+    if (s_count || s_side.slot[0].uid || s_side.slot[1].uid) writeStatus();
     char p[64];
     path(p, sizeof(p), dir, kSidecarName);
     SdFs fs;
