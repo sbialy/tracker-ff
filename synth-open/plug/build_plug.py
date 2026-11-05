@@ -110,14 +110,27 @@ def main():
     ap.add_argument("--cycles", type=int, default=0)
     ap.add_argument("-I", dest="inc", action="append", default=[])
     ap.add_argument("--keep", help="keep the ELF here")
+    ap.add_argument("--src-opt", dest="src_opt", action="append", default=[], type=lambda v: tuple(v.split("=", 1)),
+                    help="NAME=FLAGS: compile the source with basename NAME with FLAGS instead of --opt")
+    ap.add_argument("--entry", default="plug_entry", help="entry symbol (plug_entry_dirt for the firmware object)")
     a = ap.parse_args()
     tc = toolchain()
     with tempfile.TemporaryDirectory() as tmp:
         objs = []
         for src in a.sources + [os.path.join(HERE, "plug_rt.c")]:
+            if src.endswith(".o"):   # a prebuilt object (e.g. the firmware's own, to run the in-image code in emu_plug.py)
+                hdrs = run([tc + "objdump", "-h", src])
+                if ".init_array" in hdrs or ".ctors" in hdrs:
+                    sys.exit("%s has static constructors: not allowed in a plugin (use init())" % src)
+                objs.append(src)
+                continue
             obj = os.path.join(tmp, os.path.basename(src) + ".o")
             cxx = src.endswith((".cpp", ".cc"))
-            cmd = [tc + ("g++" if cxx else "gcc")] + CPU_FLAGS + a.opt.split() + [
+            opt = a.opt
+            for pat, o in a.src_opt:   # per source flags: --src-opt ff_dirt_ctl.cpp=-Os (same flags as the firmware object)
+                if os.path.basename(src) == pat:
+                    opt = o
+            cmd = [tc + ("g++" if cxx else "gcc")] + CPU_FLAGS + opt.split() + [
                 "-ffunction-sections", "-fdata-sections", "-ffreestanding", "-fno-common", "-fvisibility=hidden",
                 "-I" + HERE] + ["-I" + i for i in a.inc]
             if cxx:
@@ -129,7 +142,8 @@ def main():
             objs.append(obj)
         elf = os.path.join(tmp, "plugin.elf")
         libgcc = run([tc + "gcc"] + CPU_FLAGS + ["-print-libgcc-file-name"]).strip()
-        run([tc + "ld", "-T", os.path.join(HERE, "plug.ld"), "--gc-sections", "--emit-relocs", "-o", elf] + objs + [libgcc])
+        defsym = [] if a.entry == "plug_entry" else ["--defsym=plug_entry=" + a.entry]
+        run([tc + "ld", "-T", os.path.join(HERE, "plug.ld"), "--gc-sections", "--emit-relocs", "-o", elf] + defsym + objs + [libgcc])
         syms = {}
         for line in run([tc + "nm", elf]).splitlines():
             p = line.split()

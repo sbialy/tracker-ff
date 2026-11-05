@@ -13,6 +13,7 @@ import struct
 import sys
 import wave
 import zlib
+from fractions import Fraction
 
 from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_THUMB, Uc
 from unicorn.arm_const import (UC_ARM_REG_C1_C0_2, UC_ARM_REG_FPEXC, UC_ARM_REG_LR, UC_ARM_REG_R0, UC_ARM_REG_R1,
@@ -23,6 +24,49 @@ SRAM, SRAM_SIZE = 0x1FFF0000, 0x40000
 SDRAM, SDRAM_SIZE = 0x70000000, 0x1000000
 WORK = 0x20020000            # host-side data: host table, instance, io buffers, trap
 TRAP = WORK + 0xF000
+
+
+def f32(x):
+    """Round an exact Fraction to the nearest float32 (ties to even), as one FPU operation does."""
+    x = Fraction(x)
+    if x == 0:
+        return 0.0
+    sign, a = (-1 if x < 0 else 1), abs(x)
+    e = a.numerator.bit_length() - a.denominator.bit_length()
+    if Fraction(2) ** e > a:
+        e -= 1
+    scale = Fraction(2) ** (23 - max(e, -126))   # 24 bit significand, denormals below 2^-126
+    m = a * scale
+    q, r = divmod(m.numerator, m.denominator)
+    if 2 * r > m.denominator or (2 * r == m.denominator and q & 1):
+        q += 1
+    return sign * float(Fraction(q) / scale)
+
+
+def bench_input(blocks):
+    """The input of plug_bench.cpp, bit exact: every float operation rounded once, fmaf rounded once (the bench spells the
+    fused ones with __builtin_fmaf so the firmware flags cannot change them)."""
+    c02, c08, c005 = f32(Fraction(2, 10)), f32(Fraction(8, 10)), f32(Fraction(5, 100))
+    lcg, base_l, base_r = 12345, [], []
+    for i in range(N):
+        lcg = (lcg * 1664525 + 1013904223) & 0xFFFFFFFF
+        noise = f32(Fraction(((lcg ^ 0x80000000) - 0x80000000) >> 8, 8388608))
+        saw = f32(Fraction(2 * i, N) - 1)
+        base_l.append(f32(Fraction(noise) * Fraction(c02) + Fraction(saw)))
+        base_r.append(f32(Fraction(noise) * Fraction(c08)))
+    src = []
+    for b in range(blocks):
+        g = f32(Fraction(b & 15) * Fraction(c005) + Fraction(1, 4))
+        src.append(([f32(Fraction(x) * Fraction(g)) for x in base_l], [f32(Fraction(x) * Fraction(g)) for x in base_r]))
+    print("input chk=%08x (unscaled block, L then R, as the bench prints it)" % fnv(struct.unpack("<%dI" % (2 * N), struct.pack(
+        "<%df" % (2 * N), *(base_l + base_r)))))
+    return src
+
+
+def fnv(words, h=0x811C9DC5):
+    for w in words:
+        h = ((h ^ w) * 0x01000193) & 0xFFFFFFFF
+    return h
 
 
 def main():
@@ -101,6 +145,9 @@ def main():
     uc.mem_write(inst, bytes(inst_size))
     r, _ = call(f_init, inst, host)
     assert r == 0, "init failed"
+    dump = lambda when: print("inst %s (%d B): %s" % (when, inst_size, " ".join(
+        "%08x" % w for w in struct.unpack("<%dI" % (inst_size // 4), bytes(uc.mem_read(inst, inst_size & ~3))))))
+    dump("init")
     if a.param is not None:
         sys.exit("set_param needs float args in s0 and libm through the host table: not in the spike harness")
 
@@ -115,16 +162,7 @@ def main():
             blk = struct.unpack_from("<%dh" % (2 * N), fr, b * 4 * N) if (b + 1) * 4 * N <= len(fr) else (0,) * (2 * N)
             src.append(([x / 32768 for x in blk[0::2]], [x / 32768 for x in blk[1::2]]))
     else:
-        lcg = 12345
-        base_l, base_r = [], []
-        for i in range(N):
-            lcg = (lcg * 1664525 + 1013904223) & 0xFFFFFFFF
-            noise = (((lcg ^ 0x80000000) - 0x80000000) >> 8) / 8388608.0
-            base_l.append(2.0 * i / N - 1.0 + 0.2 * noise)
-            base_r.append(0.8 * noise)
-        for b in range(a.blocks):
-            g = 0.25 + 0.05 * (b & 15)
-            src.append(([x * g for x in base_l], [x * g for x in base_r]))
+        src = bench_input(a.blocks)
     chk, counts, out = 0x811C9DC5, [], []
     for b in range(a.blocks):
         uc.mem_write(L, struct.pack("<%df" % N, *src[b][0]))
@@ -136,6 +174,7 @@ def main():
             chk = ((chk ^ w) * 0x01000193) & 0xFFFFFFFF
         fl = struct.unpack("<%df" % (2 * N), ob)
         out.append((fl[:N], fl[N:]))
+    dump("after warm")
     print("process: %d blocks, instructions per block min/avg/max %d/%d/%d (%.2f%% of a 522,240 cycle block at 1 cycle each)" % (
         a.blocks, min(counts), sum(counts) // len(counts), max(counts), 100.0 * max(counts) / 522240))
     changed = sum(1 for b in range(a.blocks) for i in range(N) if abs(out[b][0][i] - src[b][0][i]) > 1e-3)

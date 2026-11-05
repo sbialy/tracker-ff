@@ -186,7 +186,7 @@ Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, L
     if (e == kOk && crc != h.crc32) e = kCrc;
     if (e != kOk) return e;
     memset(rwDst + (h.image_size - rwOff), 0, h.bss_size);
-    if (pl.commit && !pl.commit(pl.textDst, pl.textRun, rwOff)) return kRead;   // e.g. program the text into flash
+    if (pl.commit && !pl.commit(pl.textDst, pl.textRun, rwOff)) return kCommit;   // e.g. program the text into flash
     // the K66 system MPU must let the core fetch from RAM (PtfxLoader does the same)
     *reinterpret_cast<volatile uint32_t*>(0x4000D000) = 0;
     syncCode();

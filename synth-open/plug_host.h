@@ -22,6 +22,7 @@ enum Err : int32_t
     kRebase,     // a rebase offset or the word it names is outside the image
     kEntry,      // entry returned NULL (the plugin refused this host)
     kDesc,       // descriptor or one of its pointers outside the image, wrong kind, struct too small
+    kCommit,     // Place::commit failed (e.g. the flash erase, program or verify of a FlexNVM text segment)
 };
 
 struct Loaded
