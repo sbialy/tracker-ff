@@ -266,35 +266,36 @@ Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sect
   flash command runs with interrupts off, so each sector erase (up to 5 for the biggest engine, none on blank sectors) can drop
   a few audio blocks. Engines that cannot be loaded (no room next to the engines the parts play, file gone, flash error, safe
   mode) leave their part silent as `Missing: <NAME>`, `synth.txt` says why (`err 12` no room, `13` file, `15` flash).
-- Time: measured on the device (run 3) one erase plus 282 phrase programs took about 15.4 ms. 8-Type (17,760 B: 2,220 phrases,
+- Time: measured on the device (run 3) one erase plus 282 phrase programs took about 15.4 ms. 8-Type (20,320 B: 2,540 phrases,
   5 sectors) is then about 0.1 to 0.2 s of flash commands plus the card read and two index writes. `synth.txt` logs every install
   (`ms`, `in flash commands`, commands, erases, evicted).
 
-Budgets (`tools/plug_bank_test.cpp`): the twelve need 38 whole sectors of 30 (139,768 B packed), 9 to 10 stay resident at once.
-The 3 biggest on the parts plus the one being picked need 17 sectors. Their rw needs 2,976 B of the 3,072 B pool, so the pool
+Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the twelve need 43 whole sectors of 30 (156,304 B packed), 7 to 8 stay
+resident at once. The 3 biggest on the parts plus the one being picked need 18 sectors. Their rw needs 2,976 B of the 3,072 B pool, so the pool
 never decides what is evicted. The worst 3 at once need 1,928 B (2,048 B with the one being picked): a pool of that size would
 save 1,024 B of SRAM but then hold JU6 and three others only, and the 5th engine picked would rewrite the flash.
 
 The shipped synth plugins are the twelve custom engines (`plug/synth_engines.sh`, the PLUGS image builds in only ACD FAT VAP
 WTFM PERC CHIP):
 
-| Plugin | Engine | Image B | rw + bss B | Worst block, 4 voices (instructions, scenario 1) |
+| Plugin | Engine | Image B | rw + bss B | Worst block, 4 voices (instructions, scenario 1, engine DSP at `-Os` as in 1.1.0) |
 |---|---|---|---|---|
-| `ju6.plg` | JU6 | 6,956 | 1,648 | 90,476 (17.3 %) |
-| `fm4.plg` | FM4 | 8,172 | 112 | 107,753 (20.6 %, scenario 0) |
-| `btype.plg` | B-Type | 11,296 | 120 | 51,963 (9.9 %) |
-| `phz.plg` | PHZ | 14,568 | 120 | 73,025 (14.0 %, scenario 0) |
-| `dtype.plg` | D-Type | 10,788 | 112 | 128,217 (24.6 %) |
-| `cstype.plg` | CS-Type | 11,804 | 112 | 220,049 (42.1 %) |
-| `atype.plg` | A-Type | 11,060 | 112 | 119,545 (22.9 %) |
-| `ttype.plg` | T-Type | 15,028 | 160 | 32,024 (6.1 %) |
-| `eight.plg` | 8-Type | 17,760 | 120 | 152,331 (29.2 %) |
-| `hand.plg` | Hand-Type | 11,224 | 120 | 47,838 (9.2 %, scenario 0) |
-| `arc.plg` | Arc-Type | 14,664 | 120 | 142,787 (27.3 %) |
-| `pluck.plg` | PLK | 6,420 | 120 + 8,772 work (SDRAM) | 55,551 (10.6 %) |
+| `ju6.plg` | JU6 | 7,124 | 1,648 | 90,476 (17.3 %) |
+| `fm4.plg` | FM4 | 10,604 | 112 | 107,753 (20.6 %, scenario 0) |
+| `btype.plg` | B-Type | 13,440 | 120 | 51,963 (9.9 %) |
+| `phz.plg` | PHZ | 14,664 | 120 | 73,025 (14.0 %, scenario 0) |
+| `dtype.plg` | D-Type | 11,404 | 112 | 128,217 (24.6 %) |
+| `cstype.plg` | CS-Type | 12,252 | 112 | 220,049 (42.1 %) |
+| `atype.plg` | A-Type | 12,532 | 112 | 119,545 (22.9 %) |
+| `ttype.plg` | T-Type | 15,932 | 160 | 32,024 (6.1 %) |
+| `eight.plg` | 8-Type | 20,320 | 120 | 152,331 (29.2 %) |
+| `hand.plg` | Hand-Type | 12,392 | 120 | 47,838 (9.2 %, scenario 0) |
+| `arc.plg` | Arc-Type | 19,136 | 120 | 142,787 (27.3 %) |
+| `pluck.plg` | PLK | 6,476 | 120 + 8,772 work (SDRAM) | 55,551 (10.6 %) |
 
 Instructions are a lower bound of cycles (the device measured 1.5 times the emulated count for Dirt), the percentage is of a
-522,240 cycle block, and the built-in engine executes the same count. Image B is the code and data, the `.plg` file adds the
+522,240 cycle block, and the built-in engine executes the same count. The `-O2` figures are in `synth-open/README.md`, CPU at four
+voices. Image B is the code and data, the `.plg` file adds the
 header, manifest and rebase table. Together the twelve need more than the 122,880 B bank: the bank is a cache (below). Logos:
 one `.plgi` per plugin, `previews/sheet.png` shows all twelve.
 

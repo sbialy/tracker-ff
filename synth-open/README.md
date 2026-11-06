@@ -28,7 +28,7 @@ All twelve are in the model list from boot, installed or not. The FlexNVM bank (
 an engine is installed when a part needs it (model list after a 500 ms rest, project load) and the least recently used engines
 that no part plays make room (`plug/README.md`, Library and cache). A Tracker has 3 synth parts (`kSynthInstrumentsCount` in
 `mtStructs.h`), each with one engine, and Patch FX slots keep the part's engine, so at most 3 engines play at once, 4 while one
-part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set): the twelve need 42 whole sectors, any 7 stay resident, the 3
+part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set): the twelve need 43 whole sectors, 7 to 8 stay resident, the 3
 biggest plus the one being picked need 18 (73,728 of 122,880 B). Engine rw and bss: 2,976 B of the 3,072 B SRAM pool for all twelve (the worst 3 at once
 need 1,928 B, the pool stays at all twelve so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
 work arena (`plug_synth.cpp`), no engine takes internal heap.
