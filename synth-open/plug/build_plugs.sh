@@ -4,6 +4,7 @@
 #   - emu_plug.py runs it at the insert 1 home (SRAM_L 0x1FFF0BD0), the insert 2 home (text at 0x1001E000 in the FlexNVM,
 #     rw at 0x20026C00 on the heap) and in SDRAM, and the output checksum is the same at all three
 #   - Dirt: entering Asym leaves no DC step (dirt_asym_check.py)
+#   - Dirt: zero in gives exact zero out for every Type and Bits (mid-tread quantiser, dirt_zero_check.py)
 #   - the same three runs again with one non-default setting (every parameter moved, one --param-at change in block 5 to test
 #     the ramps), the checksum again equal at the three homes
 #   - Dirt: the checksum is 3b1f3dc5, the device rule of section 11 (runs 2 and 3: the in-image Dirt gives 3b1f3dc5), and the
@@ -75,6 +76,8 @@ done
 # entering Asym from Soft, Hard and Fold: no DC step (the follower of opentracker-fx cbedea9)
 python3 plug/dirt_asym_check.py "$PY" plug/emu_plug.py "$OUT/dirt.plg" "$OUT" || fail=1
 rm -f "$OUT"/asym_*.wav
+python3 plug/dirt_zero_check.py "$PY" plug/emu_plug.py "$OUT/dirt.plg" "$OUT" || fail=1
+rm -f "$OUT"/zero_*.wav "$OUT"/near_*.wav
 if [ -n "$FW_OBJ" ]; then
     # the image's own Dirt kernel and coefficient objects behind the plugin wrapper: must give the same output as dirt.plg
     python3 plug/build_plug.py --id ff.dirt --kind master --opt "-O2 -ffp-contract=off -fno-builtin" --out "$OUT/dirt-fwobj.plg" \

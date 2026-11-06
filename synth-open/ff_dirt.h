@@ -4,7 +4,7 @@
 // Port of the DIRT module of opentracker-fx (https://github.com/opentracker-fw/opentracker-fx, modules/dirt/src/dirt.cpp,
 // commit 6e5a7da), MIT licence, text in licenses/LICENSE-OpenTracker-fx-MIT.txt. Same signal path as the original: a pre-gain 1 + 15 d^2 (d = Drive / 100)
 // into one of four shapers (Soft: rational tanh, Hard: clip at +-1, Fold: triangle fold, Asym: biased tanh with a 10 Hz DC
-// block), make-up gain 1 / (1 + 0.5 d), a mid-rise quantiser to Bits, a sample and hold every Rate frames, a TPT one-pole
+// block), make-up gain 1 / (1 + 0.5 d), a mid-tread quantiser to Bits (rounds to the nearest of 2^Bits levels, one of them is 0), a sample and hold every Rate frames, a TPT one-pole
 // low-pass Tone and a dry / wet Mix.
 //
 // Modified: int16 blocks of the Teensy audio library instead of float buses, the parameters are a fixed table of presets

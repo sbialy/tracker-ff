@@ -23,14 +23,16 @@ inline float clamp1(float x)
     __asm__("vcvt.f32.s32 %0, %0, #31" : "+t"(x));
     return x;
 }
-// Mid-rise quantiser of y in [-1, 1) to 2^bits levels: y as Q31 (the saturating VCVT clamps), the low 32 - bits bits
-// cleared (floor in two's complement) and set to half a step.
+// Mid-tread quantiser of y in [-1, 1) to 2^bits levels: y as Q31 (the saturating VCVT clamps), half a step added with
+// saturation (QADD) and the low 32 - bits bits cleared. Rounds to the nearest step and has a level at 0, so zero in is
+// exactly zero out (half is below one step, so half & mask = 0).
 inline float quantQ31(float y, uint32_t mask, uint32_t half)
 {
     uint32_t k;
     __asm__("vcvt.s32.f32 %0, %0, #31" : "+t"(y));
     __asm__("vmov %0, %1" : "=r"(k) : "t"(y));
-    k = (k & mask) | half;
+    __asm__("qadd %0, %0, %1" : "+r"(k) : "r"(half));
+    k &= mask;
     __asm__("vmov %0, %1" : "=t"(y) : "r"(k));
     __asm__("vcvt.f32.s32 %0, %0, #31" : "+t"(y));
     return y;
@@ -48,7 +50,9 @@ inline float quantQ31(float y, uint32_t mask, uint32_t half)
 {
     const double v = double(y) * 2147483648.0;
     const int32_t k = v >= 2147483647.0 ? 2147483647 : (v <= -2147483648.0 ? int32_t(-2147483647 - 1) : int32_t(v));
-    const uint32_t u = (uint32_t(k) & mask) | half;
+    const int64_t sum = int64_t(k) + int64_t(half);
+    const int32_t sat = sum > 2147483647 ? 2147483647 : int32_t(sum);
+    const uint32_t u = uint32_t(sat) & mask;
     return float(int32_t(u)) * (1.0f / 2147483648.0f);
 }
 inline int16_t toS16(float y)

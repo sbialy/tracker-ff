@@ -41,6 +41,7 @@ never clicks.
 | BBD | `bbd.plg` | Mode (I II, I), Mix 0-100 % (100), Width 0-100 % (100), Tone 0-100 % (50) | 2,128 B, 568 B | 11.8 k |
 | Phaser | `phaser.plg` | Mode (Classic 80s, Classic), Rate 0-100 (40), Depth 0-100 % (80), Feedback 0-100 % (30), Spread 0-100 % (25), Mix 0-100 % (50) | 4,792 B, 148 B | 7.8 k Classic, 11.9 k 80s, 14.0 k while a ramp runs |
 
+- **Dirt**: the OpenTracker DIRT port, the same kernel as before. The Bits quantiser is mid-tread (half a step added with saturation, then the low bits cleared), so zero in is exactly zero out at every Bits setting and an input smaller than half a step (a line-in noise floor, a reverb tail) is silent. Checked by `dirt_zero_check.py`.
 - **Console**: glue saturation. A rational tanh curve (small signal gain exactly 1 at every Drive, curve gain 0.05 to 3.5), with
   the lows pushed harder: Weight lifts everything below about 120 Hz by up to +12 dB before the curve and takes the same
   shelf out after it, so a signal too small to bend the curve passes unchanged. Drive 0 is transparent, Mix 0 is the dry
