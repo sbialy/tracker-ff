@@ -150,9 +150,24 @@ DEFINES+=-DFW_REVERB_SRAM=$(REVERB_SRAM)
 INCLUDES+=-I$(SYNTH_OPEN_DIR) -I$(SYNTH_OPEN_DIR)/ot
 # FF_DIRT=1 (default): the live Dirt master bus insert (synth-open/ff_dirt.cpp), five new entries in the master screen's Saturation list. FF_DIRT=0 leaves
 # it out (the class stays unused, the list keeps its five stock entries). A define is not a make dependency: build FF_DIRT=0 with its own SYNTH_TAG.
+# PLUG_HOST=1 drops the five built-in Dirt entries by default (dirt.plg replaces them, synth-open/plug_host.cpp loads a project
+# saved with one as Inserts with Insert 1 = Dirt). ff_dirt.cpp and ff_dirt_ctl.cpp are still compiled (build_plugs.sh links
+# them into dirt.plg as the reference), the linker drops them from the image.
+ifeq ($(PLUG_HOST),1)
+FF_DIRT ?= 0
+endif
 FF_DIRT ?= 1
 ifeq ($(FF_DIRT),1)
 DEFINES+=-DFEATURE_FF_DIRT
+endif
+# SAT_SOFTKNEE=1 (default with PLUG_HOST=1): the "Soft Knee" mixer saturation type (synth-open/sat_softknee.h), project value
+# 10 in every build (stock firmware loads it as Hard Clip). Needs PLUG_HOST=1: its Saturation list maps list positions to values.
+SAT_SOFTKNEE ?= $(if $(filter 1,$(PLUG_HOST)),1,0)
+ifeq ($(SAT_SOFTKNEE),1)
+ifneq ($(PLUG_HOST),1)
+$(error SAT_SOFTKNEE=1 needs PLUG_HOST=1)
+endif
+DEFINES+=-DFEATURE_SAT_SOFTKNEE
 endif
 # PLUG_HOST=1: runtime plugin host, master insert host v1 (synth-open/plug_*.cpp, plug/README.md). PLUG_BENCH=1 adds the boot bench.
 # A define is not a make dependency: give each variant its own SYNTH_TAG.

@@ -34,6 +34,19 @@ const char* const saturationListTexts[kSaturationTypeEnd] = { "Hard Clip",
                                                              "Dirt Asym",
                                                              "Dirt Crush"
 #endif
+#if defined(FEATURE_SAT_SOFTKNEE) && !defined(FEATURE_FF_DIRT)
+                                                             // 5..9, the Dirt values of FF builds: never listed (plug_ui.cpp)
+                                                             ,
+                                                             "Hard Clip",
+                                                             "Hard Clip",
+                                                             "Hard Clip",
+                                                             "Hard Clip",
+                                                             "Hard Clip"
+#endif
+#ifdef FEATURE_SAT_SOFTKNEE
+                                                             ,
+                                                             "Soft Knee"
+#endif
 };
 
 void cMasterParams::initDisplayControls()

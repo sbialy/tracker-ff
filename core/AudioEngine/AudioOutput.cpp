@@ -25,6 +25,12 @@ AudioOutput::AudioOutput()
                                               kLimiterSidechainChannelIdx));
 #endif
 
+#if defined(FEATURE_PLUG_HOST) && !defined(FEATURE_FF_DIRT)
+    // the tracks and sends mixers feed the plugin node (mtAudioEngine.cpp, connectMixerToOutput), which feeds the limiters
+    connections.push_back(new AudioConnection(&plug, 0, &limiter[OutputChannels::kLeft], 0));
+    connections.push_back(new AudioConnection(&plug, 1, &limiter[OutputChannels::kRight], 0));
+    g_plugInsert = &plug;
+#endif
 #ifdef FEATURE_FF_DIRT
     // the tracks and sends mixers feed the Dirt insert (mtAudioEngine.cpp, connectMixerToOutput), which feeds the limiters
 #ifdef FEATURE_PLUG_HOST
@@ -102,6 +108,17 @@ AudioEffectLimiter* AudioOutput::getLimiter(OutputChannels channel)
 AudioEffectDirt* AudioOutput::getDirt()
 {
     return &dirt;
+}
+#endif
+
+#if defined(FEATURE_FF_DIRT) || defined(FEATURE_PLUG_HOST)
+AudioStream* AudioOutput::getMasterInsert()
+{
+#ifdef FEATURE_FF_DIRT
+    return &dirt;
+#else
+    return &plug;
+#endif
 }
 #endif
 

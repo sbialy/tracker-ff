@@ -1,14 +1,17 @@
 // Plugin host UI (FEATURE_PLUG_HOST): the master insert plugins in the master screen's Saturation list and the generic
 // "Master Inserts" page. See plug_host.h and synth-open/plug/README.md (Device use).
 //
-// Saturation list: the built-in entries, then one "Inserts" entry (shown once a plugin is on the card or in the project).
-// Inserts plays both master insert slots on top of hard clip (saturationType = plug::kSatInserts, stock firmware loads it as
-// Hard Clip), its value text names what is loaded ("Ins: Tape", "Tape+Dirt"). A built-in entry bypasses the inserts and keeps
-// them (loaded, in the sidecar): Inserts again brings both back. Plugins are picked on the Inserts page only.
+// Saturation list: the built-in entries (Soft Knee after Drive+ with FEATURE_SAT_SOFTKNEE, no Dirt entries without
+// FEATURE_FF_DIRT: list positions are not saturationType values), then one "Inserts" entry (shown once a plugin is on the
+// card or in the project). Inserts plays both master insert slots on top of the mixer stage of the Inserts page
+// (saturationType = plug::kSatInserts, stock firmware loads it as Hard Clip), its value text names what is loaded
+// ("Ins: Tape", "Tape+Dirt"). A built-in entry bypasses the inserts and keeps them (loaded, in the sidecar): Inserts again
+// brings both back. Plugins are picked on the Inserts page only.
 //
 // Inserts page (Shift + the Saturation button on the master screen): column 1 and 2 pick the plugin of insert 1 and 2 (the
-// encoder, Delete empties), columns 3 to 7 are the parameters of the focused insert, five at a time (press the insert's
-// button again for the next five), the last column goes back. The plugin columns and every enum parameter are the stock list
+// encoder, Delete empties), column 3 is the mixer stage before the inserts (Hard Clip, Soft Clip, Soft Knee, Delete: Hard
+// Clip), columns 4 to 7 are the parameters of the focused insert, four at a time (press the insert's button again for the
+// next four), the last column goes back. The plugin columns, the mixer column and every enum parameter are the stock list
 // control (the master screen's own cList controls at their columns, two more for columns 4 and 7), numeric parameters a bar.
 // Picking a plugin while a built-in Saturation entry is on switches the Saturation to Inserts.
 #ifdef FEATURE_PLUG_HOST
@@ -38,10 +41,22 @@ const uint16_t kPlaces[8][4] = {
     {(800 / 8) * 6 + 1, 31, 800 / 8 - 3, 391},
     {(800 / 8) * 7 + 1, 31, 800 / 8 - 3, 391},
 };
-constexpr int kParamCols = 5;   // columns 2..6
+constexpr int kMixerCol = 2;
+constexpr int kParamCol0 = 3;
+constexpr int kParamCols = 4;   // columns 3..6
 constexpr int kListLines = 14;  // rows of a 394 px list (27 px each), as the delay screen's sync rate list
 
 const char* s_sat[kSaturationTypeEnd + 1];
+uint8_t s_satVal[kSaturationTypeEnd];       // list position -> saturationType of the built-in entries
+int s_satN;                                 // built-in entries in the list
+// the mixer stages under Inserts (Inserts page column 3)
+#ifdef FEATURE_SAT_SOFTKNEE
+const uint8_t kMixerVals[] = {plug::kSatHardClip, plug::kSatSoftClip, plug::kSatSoftKnee};
+#else
+const uint8_t kMixerVals[] = {plug::kSatHardClip, plug::kSatSoftClip};
+#endif
+constexpr int kMixerN = int(sizeof(kMixerVals));
+const char* s_mixerNames[kMixerN];
 const char* s_pick[plug::kIndexMax + 1];   // "None", then the index names: both plugin columns
 strList s_list[7];                          // the data of the list in column c
 hControl s_extra[2] = {-1, -1};             // the lists of columns 3 and 6 (created with the module's controls)
@@ -165,9 +180,34 @@ void showSlot(int k)
     display.refreshControl(MP->label[k]);
 }
 
+int mixerPos()
+{
+    for (int i = 0; i < kMixerN; i++)
+        if (kMixerVals[i] == plug::mixerStage()) return i;
+    return 0;
+}
+
+void showMixer()
+{
+    for (int i = 0; i < kMixerN; i++) s_mixerNames[i] = saturationListTexts[kMixerVals[i]];
+    const int pos = mixerPos();
+    showList(kMixerCol, s_mixerNames, kMixerN, pos);
+    display.setControlHide(MP->barControl[kMixerCol]);
+    display.refreshControl(MP->barControl[kMixerCol]);
+    display.setControlText(MP->label[kMixerCol], "Mixer");
+    display.setControlText2(MP->label[kMixerCol], s_mixerNames[pos]);
+    display.refreshControl(MP->label[kMixerCol]);
+}
+
+int pageCount()
+{
+    const int n = int(plug::paramCount(s_focus));
+    return n > kParamCols ? (n + kParamCols - 1) / kParamCols : 1;
+}
+
 void showParam(int col)
 {
-    const uint32_t i = uint32_t(s_page * kParamCols + col - 2);
+    const uint32_t i = uint32_t(s_page * kParamCols + col - kParamCol0);
     const plug_param* pp = plug::param(s_focus, i);
     if (!pp)
     {
@@ -211,8 +251,11 @@ void showTitle()
                  (unsigned long)(plug::slotCycles(0) / 522 % 10), (unsigned long)(plug::slotCycles(1) / 5222),
                  (unsigned long)(plug::slotCycles(1) / 522 % 10));
     else
-        snprintf(s_title, sizeof(s_title), "Master Inserts%s%s", plug::paramCount(s_focus) > kParamCols ? (s_page ? " 2/2" : " 1/2") : "",
-                 mtProject.values.saturationType == plug::kSatInserts ? "" : ", bypassed");
+    {
+        char pg[8] = "";
+        if (pageCount() > 1) snprintf(pg, sizeof(pg), " %d/%d", s_page + 1, pageCount());
+        snprintf(s_title, sizeof(s_title), "Master Inserts%s%s", pg, mtProject.values.saturationType == plug::kSatInserts ? "" : ", bypassed");
+    }
     MP->titleBar->setTitle(s_title);
 }
 
@@ -222,7 +265,8 @@ void showAll()
     showTitle();
     showSlot(0);
     showSlot(1);
-    for (int c = 2; c < 2 + kParamCols; c++) showParam(c);
+    showMixer();
+    for (int c = kParamCol0; c < kParamCol0 + kParamCols; c++) showParam(c);
     for (int k = 0; k < plug::kSlots; k++)
     {
         s_drawn[k] = plug::slotState(k);
@@ -233,7 +277,7 @@ void showAll()
 void clampPlace()
 {
     const int n = int(plug::paramCount(s_focus)) - s_page * kParamCols;
-    const int last = 1 + (n < 0 ? 0 : (n > kParamCols ? kParamCols : n));
+    const int last = kMixerCol + (n < 0 ? 0 : (n > kParamCols ? kParamCols : n));
     if (s_place > last && s_place < 7) s_place = uint8_t(last);
 }
 
@@ -242,7 +286,7 @@ void pickPlace(uint8_t place)
     if (place < 2)
     {
         if (s_place == place && s_focus == place && plug::paramCount(place) > kParamCols)
-            s_page ^= 1;   // second press on the focused insert: the next five parameters
+            s_page = uint8_t((s_page + 1) % pageCount());   // second press on the focused insert: the next four parameters
         else if (s_focus != place)
             s_page = 0;
         s_focus = place;
@@ -276,15 +320,25 @@ void changePlugin(int k, int delta)
     pos = pos < 0 ? 0 : (pos >= n ? n - 1 : pos);
     plug::assign(k, pos - 1);
     // a plugin picked under a built-in Saturation entry: the Saturation goes to Inserts, or the pick would not be heard
-    if (pos > 0 && mtProject.values.saturationType != plug::kSatInserts) plugUiSatSet(int(kSaturationTypeEnd));
+    if (pos > 0 && mtProject.values.saturationType != plug::kSatInserts) plugUiSatSet(plugUiSatCount() - 1);   // the last entry: Inserts (a plugin is on the card)
     s_page = 0;
     markChanged();
     showAll();
 }
 
+void changeMixer(int delta)
+{
+    int pos = mixerPos() + delta;
+    pos = pos < 0 ? 0 : (pos >= kMixerN ? kMixerN - 1 : pos);
+    if (kMixerVals[pos] == plug::mixerStage()) return;
+    plug::setMixerStage(kMixerVals[pos]);
+    markChanged();
+    showMixer();
+}
+
 void changeParam(int col, int delta)
 {
-    const uint32_t i = uint32_t(s_page * kParamCols + col - 2);
+    const uint32_t i = uint32_t(s_page * kParamCols + col - kParamCol0);
     const plug_param* pp = plug::param(s_focus, i);
     if (!pp) return;
     float step = pp->enum_count ? 1.0f : pp->step;
@@ -310,29 +364,50 @@ bool satHasInserts()
 }
 }   // namespace
 
+namespace
+{
+void satBuild()
+{   // the built-in entries of this build in value order, the Dirt holes (5..9 without FEATURE_FF_DIRT) left out
+    s_satN = 0;
+    for (int v = 0; v < int(kSaturationTypeEnd); v++)
+    {
+#ifndef FEATURE_FF_DIRT
+        if (v >= plug::kSatDirtFirst && v <= plug::kSatDirtLast) continue;
+#endif
+        s_satVal[s_satN] = uint8_t(v);
+        s_sat[s_satN++] = saturationListTexts[v];
+    }
+    s_sat[s_satN] = "Inserts";
+}
+}   // namespace
+
 int plugUiSatCount()
 {
-    return int(kSaturationTypeEnd) + (satHasInserts() ? 1 : 0);
+    satBuild();
+    return s_satN + (satHasInserts() ? 1 : 0);
 }
 
 int plugUiSatPos()
 {
+    satBuild();
     const uint8_t t = mtProject.values.saturationType;
-    return t == plug::kSatInserts ? int(kSaturationTypeEnd) : (t < kSaturationTypeEnd ? int(t) : 0);
+    if (t == plug::kSatInserts) return s_satN;
+    for (int i = 0; i < s_satN; i++)
+        if (s_satVal[i] == t) return i;
+    return 0;
 }
 
 const char* plugUiSatText()
 {
     const uint8_t t = mtProject.values.saturationType;
-    if (t != plug::kSatInserts) return saturationListTexts[t < kSaturationTypeEnd ? t : 0];
+    if (t != plug::kSatInserts) return saturationListTexts[plugUiSatPos() < s_satN ? s_satVal[plugUiSatPos()] : 0];
     plug::insertsLabel(plug::slotName(0), plug::slotName(1), s_satText, 9);   // 9 characters fit the 94 px value field
     return s_satText;
 }
 
 void plugUiSatList(strList* data)
 {
-    for (int i = 0; i < int(kSaturationTypeEnd); i++) s_sat[i] = saturationListTexts[i];
-    s_sat[kSaturationTypeEnd] = "Inserts";
+    satBuild();
     data->data = const_cast<char**>(s_sat);
     data->length = uint16_t(plugUiSatCount());
 }
@@ -341,7 +416,7 @@ void plugUiSatSet(int pos)
 {
     pos = pos < 0 ? 0 : (pos >= plugUiSatCount() ? plugUiSatCount() - 1 : pos);
     // Inserts: the reserved value, the engine runs hard clip under it. A built-in entry bypasses the inserts, they stay.
-    mtProject.values.saturationType = pos < int(kSaturationTypeEnd) ? uint8_t(pos) : plug::kSatInserts;
+    mtProject.values.saturationType = pos < s_satN ? s_satVal[pos] : plug::kSatInserts;
     engine.setSaturationType(SaturationType(mtProject.values.saturationType));
     plug::setInsertsOn(mtProject.values.saturationType == plug::kSatInserts);
     markChanged();
@@ -458,6 +533,8 @@ void plugUiEncoder(int16_t value)
 {
     if (s_place < 2)
         changePlugin(s_place, value > 0 ? 1 : -1);
+    else if (s_place == kMixerCol)
+        changeMixer(value > 0 ? 1 : -1);
     else if (s_place < 7)
         changeParam(s_place, value);
 }
@@ -496,7 +573,12 @@ void plugUiDelete()
         }
         return;
     }
-    const uint32_t i = uint32_t(s_page * kParamCols + s_place - 2);
+    if (s_place == kMixerCol)
+    {   // Delete: Hard Clip, as stock Inserts ran
+        changeMixer(-kMixerN);
+        return;
+    }
+    const uint32_t i = uint32_t(s_page * kParamCols + s_place - kParamCol0);
     const plug_param* pp = plug::param(s_focus, i);
     if (!pp || s_place > 6) return;
     plug::setParam(s_focus, i, pp->def);

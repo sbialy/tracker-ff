@@ -2,7 +2,8 @@
 
 Runtime plugins for tracker-ff on the original Polyend Tracker (MK66, Cortex-M4F). Phase 2 of the design
 (`~/prj/poly/ref/plugin-architecture.md`) hosts **master inserts**: two slots after the tracks and sends mixer (and the
-built-in Dirt), before the stock limiters. Engines, send FX, track FX and offline effects use the same file format in later
+built-in Dirt of an `FF_DIRT=1` build, the PLUG_HOST default is `FF_DIRT=0`: `dirt.plg` replaces it), before the stock
+limiters. Engines, send FX, track FX and offline effects use the same file format in later
 phases.
 
 Licence: the SDK files in this folder (`plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`,
@@ -135,32 +136,43 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
 - `build_plugs.sh OUT [FW_OBJ]` builds `dirt.plg`, `tape.plg` and `lofi.plg` and checks them: no `R_ARM_GOT*`, the rebase
   table equals the `R_ARM_ABS32` count, the same output checksum at the SRAM_L, FlexNVM plus heap and SDRAM homes, Dirt
   `3b1f3dc5` (the device's in-image Dirt hash), also from the firmware's own `ff_dirt.o` and `ff_dirt_ctl.o` when FW_OBJ is
-  given.
+  given (a PLUG_HOST build still compiles them with `FF_DIRT=0`, the linker drops them from the image), and Dirt entering
+  Asym from Soft, Hard and Fold leaves no DC step (`dirt_asym_check.py`, mean over whole periods under 0.01 of full scale).
+  The Dirt wrapper follows Asym's DC block while another type plays (as opentracker-fx `cbedea9`): without it the mean
+  after a switch to Asym reached 0.156 at Drive 100 and drained over the 10 Hz block, a thump.
 
 ## On the device (phase 2 host, `make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1`)
 
 - Copy `.plg` files to `/Plugins/Master/` on the SD card. The host reads only their headers at boot and when the Inserts
   page opens.
-- Master screen, Saturation list: after the built-in entries comes one `Inserts` entry (when a plugin is on the card or in
-  the project). Inserts plays both insert slots, the mixers run hard clip under them, and the Saturation value names what
+- Master screen, Saturation list: Hard Clip, Soft Clip, Saturate, Overdrive, Drive+, Soft Knee (new: bit exact below
+  -3 dBFS, a smooth curve into full scale above, `synth-open/sat_softknee.h`), then one `Inserts` entry (when a plugin is
+  on the card or in the project). The five built-in Dirt entries are gone from this build (`FF_DIRT=0`): a project saved
+  with one opens as Inserts with insert 1 = Dirt at that entry's values (Dirt Crush: Drive 15, Bits 8, Rate 4, Tone 70)
+  when `dirt.plg` is on the card, else as Hard Clip, and `/Plugins/host.txt` line 3 says which. Inserts plays both insert
+  slots on top of the mixer stage picked on the Inserts page (Hard Clip unless changed), and the Saturation value names what
   is loaded in 9 characters: `Inserts` (both empty), `Ins: Tape`, `Ins:Lo-Fi`, `Tape+Dirt`, `Lo-F+Tape`. A built-in
   entry bypasses both inserts and keeps them (loaded, values kept, saved in the sidecar), so Inserts again brings both
   back. Plugins are picked on the Inserts page only.
 - Shift + Saturation opens the Master Inserts page: columns 1 and 2 pick the plugin of insert 1 and insert 2 (encoder or
-  Up and Down, Delete empties), columns 3 to 7 are the parameters of the focused insert (`*` marks it), five at a time, a
-  second press on the insert's button shows the next five. The last column goes back. The plugin columns (`None` and every
-  plugin on the card) and every parameter with `enum_count > 0` show all their entries in the stock list control with the
+  Up and Down, Delete empties), column 3 `Mixer` is the stage of the tracks and sends mixers before the inserts (Hard
+  Clip, Soft Clip or Soft Knee, Delete: Hard Clip), columns 4 to 7 are the parameters of the focused insert (`*` marks
+  it), four at a time, each further press on the insert's button shows the next four. The last column goes back. The
+  plugin columns (`None` and every plugin on the card), the Mixer column and every parameter with `enum_count > 0` show
+  all their entries in the stock list control with the
   current one highlighted, numeric parameters show their value and a bar. Picking a plugin while a built-in Saturation
   entry is on switches the Saturation to Inserts. With `/.develop` on the card the title shows the last block's cycles of
   each insert in percent.
 - Insert 1 runs from the 8 KB SRAM_L slot. Insert 2 runs its text from the FlexNVM data flash at 0x1001E000 (two 4 KB
   sectors, erased and programmed when a different plugin is loaded there, no flash command when the bytes are already
   there) and its data from a fixed 1 KB SRAM buffer.
-- The project stores the inserts in `plugins.txt` next to the project file (`tffplug 1`, `format 2`,
-  `slot <n> <uid> <version> <name>`, `p <param>=<value>`). The binary project only holds the reserved saturationType
-  `0x80` for the Inserts entry, which stock firmware loads as Hard Clip. A file without the `format` line (hosts before
-  the Inserts entry) still loads: with Hard Clip in the project its inserts come back on. A project without plugins has no such file and stays what stock
-  firmware writes. A plugin that is missing from the card shows as `Missing <name>`, the audio passes and its values are
+- The project stores the inserts in `plugins.txt` next to the project file (`tffplug 1`, `format 2`, `mixer <n>` when the
+  stage is not Hard Clip (1 Soft Clip, 10 Soft Knee), `slot <n> <uid> <version> <name>`, `p <param>=<value>`). The binary
+  project only holds the reserved saturationType `0x80` for the Inserts entry, which stock firmware loads as Hard Clip
+  whatever the mixer line says, and the built-in Soft Knee as `10`, which stock firmware and FF 1.1.0 load as Hard Clip. A
+  file without the `mixer` line (every older host) runs Inserts on Hard Clip. A file without the `format` line (hosts
+  before the Inserts entry) still loads: with Hard Clip in the project its inserts come back on. A project without plugins
+  and with a Hard Clip stage has no such file and stays what stock firmware writes. A plugin that is missing from the card shows as `Missing <name>`, the audio passes and its values are
   kept and saved back.
 - Safety: before a plugin starts, the host writes `/Plugins/.loading` with its name and deletes it after 3 s of running.
   If the Tracker died in between, the next boot loads no plugin on its own and the Inserts page title says which one

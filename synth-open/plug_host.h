@@ -4,11 +4,12 @@
 //
 // Slots (decisions 2 and 9): insert 1 runs from the 8 KB SRAM_L slot (text and rw), insert 2 runs its text from the FlexNVM
 // data flash at 0x1001E000 (8 KB, the two sectors run 3 proved, programmed at load with HSRUN left around every command) and
-// its rw from a fixed 1 KB SRAM buffer. Both sit after Dirt and before the stock limiters, insert 1 first.
+// its rw from a fixed 1 KB SRAM buffer. Both sit after the tracks and sends mixers (after Dirt in an FF_DIRT=1 build) and before
+// the stock limiters, insert 1 first.
 #pragma once
 
-#if defined(FEATURE_PLUG_HOST) && !(defined(FEATURE_SYNTH_OPEN) && defined(FEATURE_FF_DIRT))
-#error "PLUG_HOST=1 needs SYNTH_OPEN=1 and FF_DIRT=1: the node sits after Dirt and the sidecar hooks live in the open synth paths"
+#if defined(FEATURE_PLUG_HOST) && !defined(FEATURE_SYNTH_OPEN)
+#error "PLUG_HOST=1 needs SYNTH_OPEN=1: the sidecar hooks live in the open synth paths"
 #endif
 
 #include "plug/plug_abi.h"
@@ -96,13 +97,19 @@ uint32_t slotMaxCycles(int slot);
 void setInsertsOn(bool on);
 bool insertsOn();
 
+// The mixer stage under the Inserts entry (Inserts page, "Mixer" column): kSatHardClip, kSatSoftClip or kSatSoftKnee, kept in
+// the sidecar ("mixer" line, Hard Clip without one). The audio engine runs the mixers on it while saturationType is Inserts.
+uint8_t mixerStage();
+void setMixerStage(uint8_t sat);   // the UI marks the project changed
+
 bool safeMode();
 const char* safeReason();            // "" or why: the crash marker named a plugin, or Shift was held at power on
 
 // ---- project sidecar (the file manager calls these, dir is "Workspace" or a project folder)
 constexpr const char* kSidecarName = "plugins.txt";
 // after a project load from the Workspace: read the sidecar, queue the loads (bypassed ones too), turn a format 1 sidecar's
-// Hard Clip into kSatInserts (insertsOnAfterLoad)
+// Hard Clip into kSatInserts (insertsOnAfterLoad), a built-in Dirt entry of an FF build into Inserts with Dirt (dirtMigrate,
+// FF_DIRT=0 builds), then set the engine's saturation (the mixer stage is in the sidecar)
 void projectLoaded(const char* dir);
 bool projectSave(const char* dir);     // Workspace save: write the sidecar (remove it when no slot is used)
 void copySidecar(const char* srcDir, const char* dstDir);   // project open and save: the file follows the project

@@ -4,16 +4,18 @@
 //
 //   tffplug 1
 //   format 2                               since the "Inserts" Saturation entry (older files have no such line, format 1)
+//   mixer 10                               the mixer stage under the inserts: 1 Soft Clip, 10 Soft Knee (saturationType
+//                                          values), no line = 0 Hard Clip (every older file)
 //   slot 1 3a51c2e0 00010000 Tape          slot (1 or 2), uid, version (hex), the name shown when the plugin is missing
 //   p Drive=30                             one line per parameter, by name, until the next slot line
 //   p Mix=100
 //
 // Unknown lines are skipped, a value that does not parse is skipped, a file without the first line reads as empty. A project
-// with no plugin has no file at all (write returns 0 and the caller removes the file).
+// with no plugin and a Hard Clip mixer stage has no file at all (write returns 0 and the caller removes the file).
 //
 // Whether the inserts play is not in the sidecar: the binary project's saturationType holds kSatInserts (the "Inserts" entry
 // of the Saturation list) or a built-in entry (the inserts are bypassed and kept). Stock firmware clamps kSatInserts to Hard
-// Clip, the mixer setting the inserts run on.
+// Clip. The inserts run on the mixer stage of the "mixer" line (Hard Clip without one), picked on the Inserts page.
 #pragma once
 
 #include <stdint.h>
@@ -31,6 +33,18 @@ constexpr int kSidecarFormat = 2;   // written by this host: "format 2" (format 
 // loads it as Hard Clip, fProjEdit.cpp)
 constexpr uint8_t kSatInserts = 0x80;
 constexpr uint8_t kSatHardClip = 0;   // SaturationType::kHardClip
+constexpr uint8_t kSatSoftClip = 1;   // SaturationType::kSoftClip
+constexpr uint8_t kSatSoftKnee = 10;  // SaturationType::kSoftKnee (fixed value, FEATURE_SAT_SOFTKNEE)
+// FF builds' built-in Dirt entries (saturationType 5..9: Dirt Soft, Hard, Fold, Asym, Crush), dropped from PLUG_HOST builds
+constexpr uint8_t kSatDirtFirst = 5;
+constexpr uint8_t kSatDirtLast = 9;
+constexpr uint32_t kDirtUid = 0x92b586d4u;   // dirt.plg (build_plug.py --id ff.dirt)
+
+// The mixer stages the Inserts entry can run on (Inserts page, "Mixer" column): a stored value outside them is Hard Clip
+inline uint8_t mixerStageOf(uint32_t v)
+{
+    return v == kSatSoftClip || v == kSatSoftKnee ? uint8_t(v) : kSatHardClip;
+}
 
 struct SlotRef
 {
@@ -46,6 +60,7 @@ struct Sidecar
 {
     SlotRef slot[kSlots];
     uint8_t format;      // 0 no sidecar, 1 before the Inserts entry, 2 this host
+    uint8_t mixer;       // the mixer stage under the inserts (mixerStageOf), 0 Hard Clip
 };
 
 inline void copyName(char* dst, const char* src, int len)
@@ -135,12 +150,18 @@ inline bool getF(const char* p, const char* e, float& out)
 // Returns the text length (0 when no slot is used: no file), -1 if cap is too small.
 inline int sidecarWrite(const Sidecar& s, char* b, int cap)
 {
-    bool any = false;
+    bool any = s.mixer != kSatHardClip;
     for (const SlotRef& r : s.slot) any = any || r.uid;
     if (!any) return 0;
     int n = sc::putStr(b, 0, cap, "tffplug 1\nformat ");
     n = sc::putU(b, n, cap, uint32_t(kSidecarFormat));
     n = sc::putStr(b, n, cap, "\n");
+    if (s.mixer != kSatHardClip)
+    {
+        n = sc::putStr(b, n, cap, "mixer ");
+        n = sc::putU(b, n, cap, s.mixer);
+        n = sc::putStr(b, n, cap, "\n");
+    }
     for (int k = 0; k < kSlots; k++)
     {
         const SlotRef& r = s.slot[k];
@@ -185,6 +206,13 @@ inline bool sidecarRead(const char* b, int len, Sidecar& s)
         e = lineEnd(p);
         if (e - p >= 8 && memcmp(p, "format ", 7) == 0 && p[7] >= '2' && p[7] <= '9')
             s.format = uint8_t(p[7] - '0');
+        else if (e - p >= 7 && memcmp(p, "mixer ", 6) == 0)
+        {
+            uint32_t v = 0;
+            const char* q = p + 6;
+            for (; q < e && *q >= '0' && *q <= '9' && v < 1000; q++) v = v * 10 + uint32_t(*q - '0');
+            s.mixer = mixerStageOf(v);
+        }
         else if (e - p > 7 && memcmp(p, "slot ", 5) == 0 && (p[5] == '1' || p[5] == '2') && p[6] == ' ')
         {
             cur = nullptr;
@@ -231,6 +259,49 @@ inline bool insertsOnAfterLoad(uint8_t& sat, const Sidecar& s)
 {
     if (s.format == 1 && sat == kSatHardClip && (s.slot[0].uid || s.slot[1].uid)) sat = kSatInserts;
     return sat == kSatInserts;
+}
+
+// Project load in a build without the built-in Dirt entries (PLUG_HOST, FF_DIRT=0): a project saved with one (sat 5..9) plays
+// Inserts with Insert 1 = Dirt at that entry's values when dirt.plg is on the card (have, its index version), else Hard
+// Clip. Insert 1's earlier plugin is replaced (it was bypassed under the Dirt entry), insert 2 stays,
+// the mixer stage is Hard Clip (the Dirt entries ran the mixers at hard clip). Returns 0 when sat is no Dirt entry (nothing
+// changes), 1 when it became Inserts with Dirt, 2 when it fell back to Hard Clip.
+struct DirtPreset
+{
+    uint8_t type, drive, bits, rate, tone;   // dirt.plg's Type (0 Soft, 1 Hard, 2 Fold, 3 Asym), Drive, Bits, Rate, Tone
+};
+// the five built-in entries (synth-open/ff_dirt_ctl.cpp kPresets), Mix 100
+constexpr DirtPreset kDirtPresets[5] = {{0, 35, 16, 1, 100}, {1, 35, 16, 1, 100}, {2, 35, 16, 1, 100}, {3, 35, 16, 1, 100},
+                                        {0, 15, 8, 4, 70}};
+constexpr const char* kDirtEntryNames[5] = {"Dirt Soft", "Dirt Hard", "Dirt Fold", "Dirt Asym", "Dirt Crush"};
+
+inline int dirtMigrate(uint8_t& sat, Sidecar& s, bool have, uint32_t version)
+{
+    if (sat < kSatDirtFirst || sat > kSatDirtLast) return 0;
+    const int k = sat - kSatDirtFirst;
+    if (!have)
+    {
+        sat = kSatHardClip;
+        return 2;
+    }
+    SlotRef& r = s.slot[0];
+    memset(&r, 0, sizeof(r));
+    r.uid = kDirtUid;
+    r.version = version;
+    memcpy(r.name, "Dirt", 5);
+    const DirtPreset& d = kDirtPresets[k];
+    const char* const names[6] = {"Type", "Drive", "Bits", "Rate", "Tone", "Mix"};
+    const uint8_t vals[6] = {d.type, d.drive, d.bits, d.rate, d.tone, 100};
+    for (int i = 0; i < 6; i++)
+    {
+        memcpy(r.pname[i], names[i], strlen(names[i]) + 1);
+        r.pval[i] = float(vals[i]);
+    }
+    r.count = 6;
+    s.mixer = kSatHardClip;
+    if (s.format < 2) s.format = uint8_t(kSidecarFormat);
+    sat = kSatInserts;
+    return 1;
 }
 
 // The Saturation value text of the Inserts entry: "Inserts" with both slots empty, else "Ins: A+B" (insert 1 first) cut to

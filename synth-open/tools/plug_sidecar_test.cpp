@@ -300,6 +300,86 @@ int main()
             }
         check(fits, "every name length pair (0..15): at most 9 characters, both names and the + when two are loaded");
     }
+
+    // ---- the mixer stage under Inserts (the "mixer" line, Hard Clip without one)
+    {
+        Sidecar m;
+        sidecarRead(oldFile, int(strlen(oldFile)), m);
+        check(m.mixer == kSatHardClip, "old sidecar (no mixer line): mixer stage Hard Clip");
+        n = sidecarWrite(a, buf, sizeof(buf));
+        check(std::string(buf, size_t(n)).find("mixer") == std::string::npos, "Hard Clip writes no mixer line (9461f16 bytes)");
+        Sidecar k = a;
+        k.mixer = kSatSoftKnee;
+        n = sidecarWrite(k, buf, sizeof(buf));
+        Sidecar r;
+        check(std::string(buf, size_t(n)).find("format 2\nmixer 10\n") != std::string::npos && sidecarRead(buf, n, r) &&
+                r.mixer == kSatSoftKnee && sameRef(r.slot[0], a.slot[0]) && sameRef(r.slot[1], a.slot[1]),
+              "Soft Knee round-trips as \"mixer 10\" after the format line, the slots unchanged");
+        k.mixer = kSatSoftClip;
+        n = sidecarWrite(k, buf, sizeof(buf));
+        check(sidecarRead(buf, n, r) && r.mixer == kSatSoftClip, "Soft Clip round-trips (mixer 1)");
+        const char* bad = "tffplug 1\nformat 2\nmixer 3\n";
+        check(sidecarRead(bad, int(strlen(bad)), r) && r.mixer == kSatHardClip, "mixer 3 (Overdrive, not a stage) reads as Hard Clip");
+        Sidecar only;
+        memset(&only, 0, sizeof(only));
+        only.mixer = kSatSoftClip;
+        n = sidecarWrite(only, buf, sizeof(buf));
+        check(n > 0 && sidecarRead(buf, n, r) && r.mixer == kSatSoftClip && !r.slot[0].uid,
+              "no plugin but Soft Clip under Inserts: a file is written (the stage is kept)");
+        only.mixer = kSatHardClip;
+        check(sidecarWrite(only, buf, sizeof(buf)) == 0, "no plugin and Hard Clip: no file, as before");
+        uint8_t stockSat = kSatInserts;   // stock firmware: kSatInserts >= its kSaturationTypeEnd (5) is clamped to Hard Clip
+        if (stockSat >= 5) stockSat = kSatHardClip;
+        check(stockSat == kSatHardClip, "stock firmware opens an Inserts project with any mixer stage as Hard Clip");
+        uint8_t knee = kSatSoftKnee;   // a built-in Soft Knee project on stock (end 5) and on FF 1.1.0 (end 10)
+        check(knee >= 5 && knee >= 10, "Soft Knee (10) is outside stock and FF 1.1.0 lists: both load it as Hard Clip");
+    }
+
+    // ---- built-in Dirt entries (5..9) in a build without them: Inserts with Insert 1 = Dirt, or Hard Clip
+    {
+        const uint8_t want[5][5] = {{0, 35, 16, 1, 100}, {1, 35, 16, 1, 100}, {2, 35, 16, 1, 100}, {3, 35, 16, 1, 100},
+                                    {0, 15, 8, 4, 70}};
+        bool all = true;
+        for (int k = 0; k < 5; k++)
+        {
+            Sidecar d;
+            memset(&d, 0, sizeof(d));
+            uint8_t sat = uint8_t(kSatDirtFirst + k);
+            const int r = dirtMigrate(sat, d, true, 0x00010000u);
+            float v[6] = {};
+            const char* nm[6] = {"Type", "Drive", "Bits", "Rate", "Tone", "Mix"};
+            bool vals = true;
+            for (int i = 0; i < 6; i++) vals = vals && sidecarValue(d.slot[0], nm[i], v[i]) && v[i] == (i < 5 ? want[k][i] : 100);
+            all = all && r == 1 && sat == kSatInserts && d.slot[0].uid == kDirtUid && !strcmp(d.slot[0].name, "Dirt") && vals &&
+                  d.mixer == kSatHardClip && insertsOnAfterLoad(sat, d);
+        }
+        check(all, "Dirt Soft/Hard/Fold/Asym/Crush -> Inserts, insert 1 Dirt at the preset (Crush: Drive 15, Bits 8, Rate 4, Tone 70)");
+        Sidecar d;
+        memset(&d, 0, sizeof(d));
+        uint8_t sat = 9;
+        check(dirtMigrate(sat, d, false, 0) == 2 && sat == kSatHardClip && !d.slot[0].uid && !insertsOnAfterLoad(sat, d),
+              "Dirt Crush without dirt.plg: Hard Clip, no slot");
+        bool none = true;
+        for (int v : {0, 1, 2, 3, 4, 10, int(kSatInserts)})
+        {
+            uint8_t t = uint8_t(v);
+            memset(&d, 0, sizeof(d));
+            none = none && dirtMigrate(t, d, true, 1) == 0 && t == v && !d.slot[0].uid;
+        }
+        check(none, "every other value (built-ins, Soft Knee, Inserts) is left alone");
+        // a 9461f16 project: Dirt Asym picked, Tape bypassed in insert 1, Lo-Fi in insert 2
+        Sidecar p;
+        n = sidecarWrite(a, buf, sizeof(buf));
+        sidecarRead(buf, n, p);
+        p.mixer = kSatSoftClip;
+        sat = 8;
+        check(dirtMigrate(sat, p, true, 0x00010000u) == 1 && p.slot[0].uid == kDirtUid && sameRef(p.slot[1], a.slot[1]) &&
+                p.mixer == kSatHardClip,
+              "a PLUGH project with a Dirt entry and bypassed inserts: insert 1 becomes Dirt, insert 2 stays, mixer Hard Clip");
+        n = sidecarWrite(p, buf, sizeof(buf));
+        Sidecar q;
+        check(sidecarRead(buf, n, q) && q.slot[0].uid == kDirtUid && q.slot[0].count == 6, "the migrated sidecar saves and reads back");
+    }
     printf("%s: %d failed\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
 }

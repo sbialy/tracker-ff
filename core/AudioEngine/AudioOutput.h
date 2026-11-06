@@ -40,6 +40,9 @@ class AudioOutput
 #ifdef FEATURE_FF_DIRT
     AudioEffectDirt* getDirt();
 #endif
+#if defined(FEATURE_FF_DIRT) || defined(FEATURE_PLUG_HOST)
+    AudioStream* getMasterInsert();   // the first node after the tracks and sends mixers: Dirt, else the plugin node
+#endif
     AudioMixer<FinalMixInputs::kFinalMixerSize>* getFinalMixer(OutputChannels channel);
     AudioOutputStream* getStream();
 
@@ -49,7 +52,7 @@ class AudioOutput
     AudioEffectDirt dirt;
 #endif
 #ifdef FEATURE_PLUG_HOST
-    // spike: a loaded master insert plugin after Dirt (synth-open/plug_host.h)
+    // the two master insert plugin slots (synth-open/plug_host.h), after Dirt when the build has it
     AudioEffectPlug plug;
 #endif
 #ifndef PLATFORM_IMX

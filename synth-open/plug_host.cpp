@@ -4,6 +4,7 @@
 #include "plug_host.h"
 
 #include "Platform.h"
+#include "mtAudioEngine.h"
 #include "mtStructs.h"
 #include "cr_section_macros.h"
 #include "interruptsControl.h"
@@ -12,6 +13,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+extern const char* const saturationListTexts[kSaturationTypeEnd];   // gMasterParams.cpp
+static_assert(plug::kSatSoftClip == SaturationType::kSoftClip, "mixer stage values are saturationType values");
+#ifdef FEATURE_SAT_SOFTKNEE
+static_assert(plug::kSatSoftKnee == SaturationType::kSoftKnee, "mixer stage values are saturationType values");
+#endif
+#ifdef FEATURE_FF_DIRT
+static_assert(plug::kSatDirtFirst == SaturationType::kDirtSoft && plug::kSatDirtLast == SaturationType::kDirtCrush, "Dirt values");
+#endif
 
 namespace plug
 {
@@ -64,6 +74,7 @@ int s_count;
 FileSystem* s_fs;
 bool s_safe, s_windowOpen, s_on;
 char s_reason[48];
+char s_note[96];   // what the last project load changed (a Dirt entry migrated), host.txt line 3
 Timer* s_timer;
 uint32_t s_bootMs, s_pickMs, s_markerMs;
 bool s_markerSet;
@@ -160,10 +171,11 @@ bool writeText(const char* p, const char* text, int n)
 // /Plugins/host.txt: what each slot holds, after every load and on every Workspace save (the device test reads it back)
 void writeStatus()
 {
-    char t[660];
+    char t[800];
     int n = snprintf(t, sizeof(t), "plugin host 1, index %d, inserts %s, safe %d %s, nvm commands %lu\r\n", s_count,
                      s_on ? "on" : "bypassed", int(s_safe), s_reason, (unsigned long)nvmCommands());
     n += snprintf(t + n, sizeof(t) - size_t(n), "scan %s: listed %d, rejected %d\r\n", kDir, s_scan.listed, s_scan.rejected);
+    n += snprintf(t + n, sizeof(t) - size_t(n), "mixer %s%s%s\r\n", saturationListTexts[mixerStage()], s_note[0] ? ", " : "", s_note);
     for (int i = 0; i < s_scan.rejected && i < 3 && n < int(sizeof(t)); i++)
         n += snprintf(t + n, sizeof(t) - size_t(n), "rejected %s err %ld\r\n", s_scan.reject[i].file, long(s_scan.reject[i].err));
     for (int i = 0; i < s_count && n < int(sizeof(t)); i++)
@@ -580,6 +592,22 @@ uint32_t slotMaxCycles(int k)
     return s_slots[k].desc && plugInsert() ? plugInsert()->maxCycles(k) : 0;
 }
 
+uint8_t mixerStage()
+{   // validated: the audio engine may ask before boot() cleared s_side (SDRAM, no static init)
+    const uint8_t m = mixerStageOf(s_side.mixer);
+#ifdef FEATURE_SAT_SOFTKNEE
+    return m;
+#else
+    return m == kSatSoftKnee ? kSatHardClip : m;
+#endif
+}
+
+void setMixerStage(uint8_t sat)
+{
+    s_side.mixer = mixerStageOf(sat);
+    engine.setSaturationType(SaturationType(mtProject.values.saturationType));   // Inserts: the new stage at once
+}
+
 void setInsertsOn(bool on)
 {
     if (on == s_on) return;
@@ -631,6 +659,24 @@ void projectLoaded(const char* dir)
     SdFs fs;
     sidecarLoad(fs, p, s_text, sizeof(s_text), s_side);   // no sidecar: no plugin, as stock
     s_on = insertsOnAfterLoad(mtProject.values.saturationType, s_side);
+    s_note[0] = 0;
+#ifndef FEATURE_FF_DIRT
+    {   // a project saved with a built-in Dirt entry of an FF build: Inserts with Insert 1 = Dirt, or Hard Clip without dirt.plg
+        uint8_t& sat = mtProject.values.saturationType;
+        const int was = sat - kSatDirtFirst;
+        const int ix = indexFind(kDirtUid);
+        const int r = dirtMigrate(sat, s_side, ix >= 0, ix >= 0 ? indexAt(ix)->version : 0);
+        if (r)
+        {
+            snprintf(s_note, sizeof(s_note), r == 1 ? "project had %s: now Inserts, insert 1 Dirt" :
+                                                      "project had %s: now Hard Clip, no dirt.plg in /Plugins/Master",
+                     kDirtEntryNames[was]);
+            s_on = r == 1;   // in memory now, the project file and its sidecar change at the next save
+        }
+    }
+#endif
+    // the mixer stage under Inserts comes from the sidecar (loadProjectValues set the type before it was read)
+    engine.setSaturationType(SaturationType(mtProject.values.saturationType));
     for (int k = 0; k < kSlots; k++)
     {
         unload(k);
@@ -638,6 +684,7 @@ void projectLoaded(const char* dir)
         s_slots[k].pending = s_side.slot[k].uid != 0;   // loads in tick(), after the boot key window
         s_slots[k].manual = false;
     }
+    if (s_note[0]) writeStatus();
 }
 
 bool projectSave(const char* dir)
