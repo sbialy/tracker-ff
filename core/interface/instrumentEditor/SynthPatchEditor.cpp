@@ -20,6 +20,8 @@
 
 const char* const OffOnNames[] = { "Off", "On" };
 #ifdef FEATURE_SYNTH_OPEN
+#include "open_section_icon.h"
+
 // SYNTH_OPEN (MK66): the built-in engines' editor icons in engine_list.h order (EngineRef::builtin). A plugin engine shows its
 // card logo (synth-open/plug_logo.h, FEATURE_PLUG_HOST) or, without one, its name.
 static const int synthModelListImages[] = {
@@ -28,6 +30,12 @@ static const int synthModelListImages[] = {
 #include "engine_list.h"
 #undef SYNTH_ENGINE
 };
+// SectionIcon (synth-open/open_section_icon.h) to the editor's section icon
+static constexpr int8_t kSectionBitmap[] = {
+    kBitmapEnv,  kBitmapFilter, kBitmapGear,   kBitmapLfo,        kBitmapMod,   kBitmapOsc, kBitmapKick,
+    kBitmapTom,  kBitmapSnare,  kBitmapHihat,  kBitmapCymbal,     kBitmapPercussion, kBitmapMixer, kBitmapFX,
+};
+static_assert(sizeof(kSectionBitmap) == size_t(polysynth::open::SectionIcon::kFX) + 1, "one icon per SectionIcon");
 #else
 static const int synthModelListImages[Synth::kSynthTypes.size()] = {
     enDisplayBitmaps::kBitmapACD,  enDisplayBitmaps::kBitmapFAT,  enDisplayBitmaps::kBitmapVAP,
@@ -1215,6 +1223,22 @@ void cInstrumentEditor::showSynthPatchSection(bool refreshList)
                             sectionName.c_str(),
                             kMaxSynthListStringLen);
 
+#ifdef FEATURE_SYNTH_OPEN
+                // one table for every open engine and card plugin, the stock chain first (synth-open/open_section_icon.h)
+                if (const auto* rule = polysynth::open::sectionIconRule(sectionName.c_str()))
+                {
+                    using polysynth::open::SectionCount;
+                    shortName = rule->label ? rule->label : section.shortName.c_str();
+                    number = rule->count == SectionCount::kEnv ? envCount++ : rule->count == SectionCount::kLfo ? lfoCount++ : 0;
+                    sectionImgList[idx] = kSectionBitmap[int(rule->icon)];
+                }
+                else
+                {
+                    shortName = section.shortName.c_str();
+                    number = 0;
+                    sectionImgList[idx] = -1;
+                }
+#else
                 if (sectionName.find("Amp Envelope") != std::string::npos)
                 {
                     shortName = "Amp Env";
@@ -1327,6 +1351,7 @@ void cInstrumentEditor::showSynthPatchSection(bool refreshList)
                     number = 0;
                     sectionImgList[idx] = -1;
                 }
+#endif
 
                 sectionNamesList[idx] = &sectionNamesGridBuff[kMaxSynthGridStringLen * idx];
 
