@@ -13,6 +13,27 @@ What 1.1.0 has:
 - A flash trim (`TRIM=1`) that makes all 16 engines fit in the original's flash.
 - A set of audio CPU optimisations that remove work the stock firmware does for silence.
 
+## Card plugin engines (PLUG_HOST builds)
+
+The PLUG_HOST image (`make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP"`, PTF tag PLUGS)
+builds in only the six stock-named engines. Every custom engine is a card plugin in `/Plugins/Synth/` (`plug/README.md`, Synth
+engine plugins): `ju6 fm4 btype phz dtype cstype atype ttype eight hand arc pluck` (`.plg` plus a `.plgi` logo each). They
+keep their stored numbers and patch ids (JU6 7, PHZ 8, FM4 9, D-Type 10, CS-Type 11, A-Type 12, T-Type 13, 8-Type 14,
+Hand-Type 15, B-Type 16, Arc-Type 17, PLK 18), so old projects, patches and slot files open on the plugin. A part whose
+plugin is not installed shows `Missing: <name>` (`open_cold.cpp`, numbers 7 to 18). Every plugin renders bit identical to
+the built-in engine (`plug/synth_render_compare.sh`, both scenarios). Moving the seven that were still built in (PHZ D-Type
+CS-Type A-Type T-Type 8-Type Arc-Type) frees 88,884 B: the image ends at 0xE535C instead of 0xFAEB8 (same tree, flag flipped).
+
+Budgets (`tools/plug_bank_test.cpp`): the twelve plugins take 139,768 B, 16,888 B more than the 122,880 B FlexNVM bank, so
+at most eleven are installed at once. The installer installs in card order and skips what does not fit (counted in
+`/Plugins/synth.txt`), all twelve without 8-Type (17,760 B) use 122,008 B. Engine rw and bss: 2,976 B of the 3,072 B SRAM
+pool for all twelve. PLK's 8,772 B delay lines live in a 16 KB SDRAM work arena (`plug_synth.cpp`), no engine takes internal heap.
+RAM_G logos: 12 slots, one per plugin. CPU: FlexNVM runs code at flash speed (device bench run 3), the plugin executes the same
+instructions as the built-in engine (worst block equal in `emu_synth.py`, PLK +11 instructions for its pool pointer).
+
+The patch editor gives every section page an icon from one table (`open_section_icon.h`, SYNTH_OPEN builds only, the stock
+chain stays in the stock build), checked over all 131 sections of the 18 engines by `tools/run_section_icon_test.sh`.
+
 ## Source files
 
 | File | Content |
@@ -75,11 +96,11 @@ Memory is all SRAM (the libc heap and `.bss`, no big per voice buffer, the voice
 
 ```
 make original SYNTH_OPEN=1                                     # default set ACD FAT VAP WTFM
-make original SYNTH_OPEN=1 SYNTH_ENGINES="ACD VAP WTFM CHIP"   # any subset of the 17 names below, the release set is the 16 without HANDTYPE
+make original SYNTH_OPEN=1 SYNTH_ENGINES="ACD VAP WTFM CHIP"   # any subset of the 18 names below, the 1.1.0 release set is ACD to ARCTYPE without HANDTYPE
 make synth-engines [SYNTH_ENGINES="..."]                       # flash cost of every engine and what fits on top of the selection
 ```
 
-The 17 names are ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE. They are case-insensitive, commas work too and the order does not matter (the model list on screen always runs in the order above). An unknown name or an empty list stops with the list of valid names. Unlisted engines are not compiled and not linked: their `engine_<name>.cpp`, OpenTracker sources, `ChiptuneSynthVoice.cpp`, list icons, registry entry and `kSynthTypes` entry are all out. Every engine set other than the default builds in its own directory (`core/build-MK66-ORIGINAL-SYNTHOPEN-E<names>`) because the engine list is a `-D` flag that the dependency files do not see. `make clean` removes them all.
+The 18 names are ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE PLK (PLK is our Karplus-Strong engine, `pluck/README.md`, stored 18, ids 0x8A). They are case-insensitive, commas work too and the order does not matter (the model list on screen always runs in the order above). An unknown name or an empty list stops with the list of valid names. Unlisted engines are not compiled and not linked: their `engine_<name>.cpp`, OpenTracker sources, `ChiptuneSynthVoice.cpp`, list icons, registry entry and `kSynthTypes` entry are all out. Every engine set other than the default builds in its own directory (`core/build-MK66-ORIGINAL-SYNTHOPEN-E<names>`) because the engine list is a `-D` flag that the dependency files do not see. `make clean` removes them all.
 
 - One place per engine: a line in `engines.mk` (name, sources), one entry in `engine_list.h`, its `EngineDef` and sources.
 - Size guards: `FLASH_IMG_MAX` is 1,044,480 B (0xFF000, the last 4 KB sector stays free) and is checked three times: the post-build `size` check of the platform makefile and the linker ASSERT (both on text+data), and again in the top Makefile from the linked `.axf`, so a second `make` of an oversize set fails as well. An oversize set leaves no `.ptf` in `build/`. `SYNTH_FLASH_IMG_MAX=n` lowers the cap for one build. The real flash image is text + data. The FLASH line of ld leaves out the `.data` load image and is about 6.5 KB too optimistic.

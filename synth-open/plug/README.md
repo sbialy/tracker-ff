@@ -222,17 +222,40 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
 A `PLUG_KIND_SYNTH` plugin answers `query(PLUG_EXT_SYNTH)` with a `plug_ext_synth` (plug_abi.h): the engine's numbers
 (`stored` for projects, `patch_engine` for `.patch` field 1, `type_id`), its name (on screen and the `Patches/<name>/`
 folder), parameter, section and macro tables in the shim's `ParamDef` / `SectionDef` / `MacroDef` layout, and the
-`ISynthEngine` calls as C functions. An engine that used to be built in keeps its numbers (JU6 7 / 0x81, FM4 9 / 0x80, B-Type 16 / 0x88),
-so old projects and patches find it. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
-lines (`synth/ju6_plug.cpp`). Large working RAM comes from the host (`work_bytes`, `set_work`), not from bss.
+`ISynthEngine` calls as C functions. An engine that used to be built in keeps its numbers (JU6 7 / 0x81, PHZ 8 / 0x82, FM4 9 / 0x80,
+D-Type 10 / 0xA2, CS-Type 11 / 0x83, A-Type 12 / 0x84, T-Type 13 / 0x85, 8-Type 14 / 0x86, Hand-Type 15 / 0x87, B-Type 16 / 0x88,
+Arc-Type 17 / 0x89, PLK 18 / 0x8A), so old projects and patches find it. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
+lines (`synth/ju6_plug.cpp`), `PLUG_SYNTH_PLUGIN_WORK` adds work memory (`synth/pluck_plug.cpp`). Large working RAM comes
+from the host (`work_bytes`, `set_work`), not from bss: the host hands it out of a 16 KB SDRAM arena, so keep only state there
+that is touched a few times per sample (a delay line), never hot per-sample state.
 
 Files go to `/Plugins/Synth/`. At boot the host installs them into the FlexNVM bank (`synth-open/plug_bank.h`, index
 `/Plugins/installed.txt`, status `/Plugins/synth.txt`) and adds them to the engine list before the synth starts. Build the
 engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma default of `-Os`), and prove bit identity with
 `synth_render_compare.sh` (the firmware's objects behind the same wrapper, rendered by `emu_synth.py`).
 
-The shipped synth plugins are `ju6.plg`, `fm4.plg` and `btype.plg` (the PLUGS image leaves all three out). Together they take
-26,424 B of the 122,880 B bank and 1,880 B of the 2,560 B SRAM pool (`plug_bank_test`).
+The shipped synth plugins are the twelve custom engines (`plug/synth_engines.sh`, the PLUGS image builds in only ACD FAT VAP
+WTFM PERC CHIP):
+
+| Plugin | Engine | Image B | rw + bss B | Worst block, 4 voices (instructions, scenario 1) |
+|---|---|---|---|---|
+| `ju6.plg` | JU6 | 6,956 | 1,648 | 90,476 (17.3 %) |
+| `fm4.plg` | FM4 | 8,172 | 112 | 107,753 (20.6 %, scenario 0) |
+| `btype.plg` | B-Type | 11,296 | 120 | 51,963 (9.9 %) |
+| `phz.plg` | PHZ | 14,568 | 120 | 73,025 (14.0 %, scenario 0) |
+| `dtype.plg` | D-Type | 10,788 | 112 | 128,217 (24.6 %) |
+| `cstype.plg` | CS-Type | 11,804 | 112 | 220,049 (42.1 %) |
+| `atype.plg` | A-Type | 11,060 | 112 | 119,545 (22.9 %) |
+| `ttype.plg` | T-Type | 15,028 | 160 | 32,024 (6.1 %) |
+| `eight.plg` | 8-Type | 17,760 | 120 | 152,331 (29.2 %) |
+| `hand.plg` | Hand-Type | 11,224 | 120 | 47,838 (9.2 %, scenario 0) |
+| `arc.plg` | Arc-Type | 14,664 | 120 | 142,787 (27.3 %) |
+| `pluck.plg` | PLK | 6,420 | 120 + 8,772 work (SDRAM) | 55,551 (10.6 %) |
+
+Instructions are a lower bound of cycles (the device measured 1.5 times the emulated count for Dirt), the percentage is of a
+522,240 cycle block, and the built-in engine executes the same count. Together the twelve need 139,768 B of the 122,880 B bank:
+eleven fit (all but 8-Type: 122,008 B), the installer skips what does not fit, in card order. They need 2,976 B of the 3,072 B
+SRAM pool (`plug_bank_test`). Logos: one `.plgi` per plugin, `previews/sheet.png` shows all twelve.
 
 ### Engine logos
 
@@ -249,4 +272,5 @@ loads the logos once at boot into the free RAM_G window above the stock bitmaps 
 controls cache) and lists what it used in `/Plugins/synth.txt` (`logo <file> sidecar|trailer|text err <n>`). Make a record
 with `synth-open/tools/make_plgi.py`: from a PNG (white or opaque is drawn, black or transparent is not, scaled to both
 sizes), from two PNGs, or `--text NAME` for a text logo in the stock style. `--check` tests a `.plgi` or a `.plg` trailer,
-`--selftest` round-trips the stock logos. The shipped `ju6.plgi`, `fm4.plgi` and `btype.plgi` are text logos.
+`--selftest` round-trips the stock logos. The twelve shipped `.plgi` files are text logos (`synth_plug_logo` in `synth_engines.sh`), `tools/plgi_sheet.py` stacks
+their previews into one sheet.

@@ -117,6 +117,7 @@ mkdir -p "$OUT/previews"
 for e in $SYNTH_PLUGS; do
     python3 -I tools/make_plgi.py --text "$(synth_plug_logo $e)" -o "$OUT/$e.plgi" --preview "$OUT/previews/$e.png" > /dev/null
 done
+python3 -I tools/plgi_sheet.py -o "$OUT/previews/sheet.png" $(for e in $SYNTH_PLUGS; do echo "$OUT/previews/$e.png"; done)
 mkdir -p "$OUT/logo-test"
 python3 -I tools/make_plgi.py --text JU6-T -o "$OUT/logo-test/ju6-trailer.plgi"
 build_synth ju6 "$OUT/logo-test/ju6.plg" --logo "$OUT/logo-test/ju6-trailer.plgi" > /dev/null

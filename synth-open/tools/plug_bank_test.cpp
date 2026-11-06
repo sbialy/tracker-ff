@@ -6,7 +6,9 @@
 // Checked:
 //   - installed.txt round trip, damaged lines dropped
 //   - a fresh install of JU6 and FM4 sized engines, then a reboot that issues no flash command and no index write
-//   - packing: engines share sectors (no whole sector per engine), all 11 phase 4 engines at their linked sizes fit
+//   - packing: engines share sectors (no whole sector per engine)
+//   - the 12 synth plugins at their build_plugs.sh sizes: together 139,768 B, more than the bank, so the one that comes last
+//     is skipped (never half written); the 11 without 8-Type fit, and all 12 fit the SRAM pool
 //   - the shipped JU6, FM4 and B-Type plugins fit the bank and the SRAM pool together, bytes left printed
 //   - replacing the engine in the middle (new version) erases the shared sectors and keeps the neighbours intact, the ones
 //     behind it move and are rewritten, a new engine goes after the installed ones (nothing else moves)
@@ -39,7 +41,7 @@ void check(bool ok, const char* what)
 }
 
 constexpr uintptr_t kPool = 0x20027000;
-constexpr uint32_t kPoolBytes = 2560;
+constexpr uint32_t kPoolBytes = 3072;   // plug_synth.cpp
 
 struct Flash
 {
@@ -288,26 +290,47 @@ int main()
                kBankBytes - end, rw, kPoolBytes, kPoolBytes - rw);
     }
 
-    // ---- the 11 engines of phase 4 at their linked sizes (BUILD.txt) + 5 % plugin overhead
+    // ---- the 12 synth plugins at their build_plugs.sh sizes (image, text, rw + bss)
     {
-        const uint32_t sizes[11] = {10685, 6108, 15154, 7291, 9868, 10507, 9989, 14025, 15474, 9740, 13939};
+        struct P { const char* f; uint32_t uid, len, text, rw; };
+        const P kAll[12] = {
+            {"ju6.plg", 0x73ac7ee0, 6956, 6952, 1648},    {"fm4.plg", 0xea3d5a7a, 8172, 8168, 112},
+            {"btype.plg", 0x5e9b11f7, 11296, 11288, 120}, {"phz.plg", 0x6670b917, 14568, 14560, 120},
+            {"dtype.plg", 0x6754cf41, 10788, 10784, 112}, {"cstype.plg", 0xf73018f5, 11804, 11800, 112},
+            {"atype.plg", 0x24084bf2, 11060, 11056, 112}, {"ttype.plg", 0x318f12b1, 15028, 15024, 160},
+            {"hand.plg", 0xf00e588e, 11224, 11216, 120},  {"arc.plg", 0xc66464e9, 14664, 14656, 120},
+            {"pluck.plg", 0xb4a152b0, 6420, 6416, 120},   {"eight.plg", 0x9d7c57e2, 17760, 17752, 120},
+        };
+        uint32_t total = 0, rwTotal = 0;
         Io io;
-        std::vector<std::string> order;
-        uint32_t total = 0;
-        for (int i = 0; i < 11; i++)
+        std::vector<std::string> all, eleven;
+        for (const P& p : kAll)
         {
-            const std::string n = "e" + std::to_string(i) + ".plg";
-            const uint32_t len = sizes[i] * 105 / 100;
-            io.card[n] = plg(n.c_str(), 0x1000 + i, len, len - 8, 96);
-            order.push_back(n);
-            total += (len + 7) & ~7u;
+            io.card[p.f] = plg(p.f, p.uid, p.len, p.text, p.rw);
+            all.push_back(p.f);
+            if (strcmp(p.f, "eight.plg")) eleven.push_back(p.f);
+            total += (p.len + 7) & ~7u;
+            rwTotal += (p.rw + 7) & ~7u;
         }
-        Flash f;
-        Bank b;
-        BankStatus st = boot(f, io, order, b);
-        printf("info  11 engines + 5 %%: %u B of %u B, installed %d, skipped %d\n", total, kBankBytes, st.installed, st.skipped);
-        check(exact(f, io, b) && insert2Blank(f), "as many as fit are exact, insert 2 untouched");
-        check(total > kBankBytes ? st.skipped > 0 : st.installed == 11, "the ones that do not fit are skipped, not half written");
+        printf("info  12 synth plugins: bank %u of %u B (%d B over), SRAM pool %u of %u B\n", total, kBankBytes,
+               int(total) - int(kBankBytes), rwTotal, kPoolBytes);
+        check(total > kBankBytes && rwTotal <= kPoolBytes, "all 12: more than the bank, inside the SRAM pool");
+        {
+            Flash f;
+            Bank b;
+            BankStatus st = boot(f, io, all, b);
+            check(st.installed == 11 && st.skipped == 1 && b.n == 11 && exact(f, io, b) && insert2Blank(f),
+                  "all 12 on the card: 11 install, the last one (8-Type) is skipped, insert 2 untouched");
+        }
+        {
+            Flash f;
+            Bank b;
+            BankStatus st = boot(f, io, eleven, b);
+            uint32_t end = 0;
+            for (int i = 0; i < b.n; i++) end = b.e[i].off + b.e[i].len > end ? b.e[i].off + b.e[i].len : end;
+            check(st.installed == 11 && st.skipped == 0 && exact(f, io, b), "the 11 without 8-Type all install");
+            printf("info  11 without 8-Type: bank %u of %u B, %u B left\n", end, kBankBytes, kBankBytes - end);
+        }
     }
 
     // ---- a new version of the engine in the middle: shared sectors erased, neighbours kept
