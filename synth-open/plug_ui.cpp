@@ -14,10 +14,15 @@
 // next four), the last column goes back. The plugin columns, the mixer column and every enum parameter are the stock list
 // control (the master screen's own cList controls at their columns, two more for columns 4 and 7), numeric parameters a bar.
 // Picking a plugin while a built-in Saturation entry is on switches the Saturation to Inserts.
+//
+// Lists move as the stock master screen's (plug_ui_nav.h): Down is the next entry below, Up the one above, the encoder
+// follows the Invert list setting, and a press on the button of the selected Mixer or enum parameter column steps to the
+// next entry, from the last back to the first. The plugin columns keep their second press for the parameter pages.
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
 #include "plug_ui.h"
+#include "plug_ui_nav.h"
 
 #include "core/interface.h"
 #include "fileManager.h"
@@ -61,6 +66,7 @@ const char* s_pick[plug::kIndexMax + 1];   // "None", then the index names: both
 strList s_list[7];                          // the data of the list in column c
 hControl s_extra[2] = {-1, -1};             // the lists of columns 3 and 6 (created with the module's controls)
 const char* const* s_bound[7];              // the entries list c was bound to (null: not bound, setData next time)
+const char* s_blank[1] = {" "};             // what a column without a list holds: never a plugin's names (see showList)
 bool s_listsMine;                           // the master screen's lists carry s_list data
 char s_satText[12];
 bool s_active;
@@ -106,6 +112,23 @@ hControl listAt(int col)
     }
 }
 
+// Column col bound to the one blank entry. The display draws every refreshed control, hidden ones too (cDisplay::step1 runs
+// cList::update, which strlen()s each entry), so a hidden list must not keep an unloaded plugin's enum names: the next plugin
+// is copied over them (SRAM_L slot, FlexNVM for insert 2) and the old char* array turns into code words, a fault on the
+// first refresh (the hang on Up and Down through the plugin list, each step loading the next plugin).
+void blankList(int col)
+{
+    const hControl h = listAt(col);
+    s_bound[col] = nullptr;
+    if (h < 0) return;
+    strList& l = s_list[col];
+    l.data = const_cast<char**>(s_blank);
+    l.length = 1;
+    l.linesCount = kListLines;
+    l.start = 0;
+    display.setControlData(h, &l);
+}
+
 // Column col as a list of n entries with entry pos highlighted (-1: none), or no list (n 0)
 void showList(int col, const char* const* names, int n, int pos)
 {
@@ -113,7 +136,7 @@ void showList(int col, const char* const* names, int n, int pos)
     if (h < 0) return;
     if (n <= 0)
     {
-        s_bound[col] = nullptr;   // the plugin may unload: never keep its names bound
+        blankList(col);   // the plugin may unload: never keep its names bound
         display.setControlHide(h);
         display.refreshControl(h);
         return;
@@ -139,6 +162,8 @@ void restoreLists()
 {
     if (!s_listsMine) return;
     s_listsMine = false;
+    blankList(3);   // the two extra lists stay with the module: off any plugin's names
+    blankList(6);
     memset(s_bound, 0, sizeof(s_bound));
     display.setControlData(MP->delayPingpongEnableList, &MP->pingpongEnableData);
     display.setControlData(MP->delaySyncEnableList, &MP->syncEnableData);
@@ -281,15 +306,100 @@ void clampPlace()
     if (s_place > last && s_place < 7) s_place = uint8_t(last);
 }
 
+void changePlugin(int k, int delta)
+{
+    // the order: None, then the index entries. The load waits until the selection rests (plug::tick, kDebounceMs)
+    const int n = plug::indexCount() + 1;
+    const int pos = plugnav::clampStep(plug::slotIndex(k) + 1, n, delta);   // a missing plugin counts as None here
+    plug::assign(k, pos - 1);
+    // a plugin picked under a built-in Saturation entry: the Saturation goes to Inserts, or the pick would not be heard
+    if (pos > 0 && mtProject.values.saturationType != plug::kSatInserts) plugUiSatSet(plugUiSatCount() - 1);   // the last entry: Inserts (a plugin is on the card)
+    s_page = 0;
+    markChanged();
+    showAll();
+}
+
+void setMixer(int pos)
+{
+    if (kMixerVals[pos] == plug::mixerStage()) return;
+    plug::setMixerStage(kMixerVals[pos]);
+    markChanged();
+    showMixer();
+}
+
+void changeMixer(int delta)
+{
+    setMixer(plugnav::clampStep(mixerPos(), kMixerN, delta));
+}
+
+void changeParam(int col, int delta)
+{
+    const uint32_t i = uint32_t(s_page * kParamCols + col - kParamCol0);
+    const plug_param* pp = plug::param(s_focus, i);
+    if (!pp) return;
+    float step = pp->enum_count ? 1.0f : pp->step;
+    if (step <= 0.0f) step = (pp->max - pp->min) / 100.0f;
+    plug::setParam(s_focus, i, plug::paramValue(s_focus, i) + step * float(delta));
+    markChanged();
+    showParam(col);
+}
+
+// The parameter in column col (null: none)
+const plug_param* paramAt(int col)
+{
+    return col >= kParamCol0 && col < kParamCol0 + kParamCols ? plug::param(s_focus, uint32_t(s_page * kParamCols + col - kParamCol0))
+                                                              : nullptr;
+}
+
+// Column col is a stock list: both plugin columns, Mixer and every enum parameter
+bool isList(int col)
+{
+    if (col < 2 || col == kMixerCol) return true;
+    const plug_param* pp = paramAt(col);
+    return pp && pp->enum_count;
+}
+
+// Column col by delta (lists: entries, +1 is the next one below)
+void change(int col, int delta)
+{
+    if (col < 2)
+        changePlugin(col, delta > 0 ? 1 : -1);
+    else if (col == kMixerCol)
+        changeMixer(delta > 0 ? 1 : -1);
+    else if (col < 7)
+        changeParam(col, delta);
+}
+
+// A press on the button of the selected list column: the next entry, the first after the last (functSelectSaturation)
+void stepNext(int col)
+{
+    if (col == kMixerCol)
+    {
+        setMixer(plugnav::nextWrap(mixerPos(), kMixerN));
+        return;
+    }
+    const plug_param* pp = paramAt(col);
+    if (!pp || !pp->enum_count) return;
+    const uint32_t i = uint32_t(s_page * kParamCols + col - kParamCol0);
+    plug::setParam(s_focus, i, float(plugnav::nextWrap(int(plug::paramValue(s_focus, i) + 0.5f), int(pp->enum_count))));
+    markChanged();
+    showParam(col);
+}
+
 void pickPlace(uint8_t place)
 {
     if (place < 2)
-    {
+    {   // second press on the focused insert: the next four parameters (the plugin list moves with the encoder or arrows)
         if (s_place == place && s_focus == place && plug::paramCount(place) > kParamCols)
-            s_page = uint8_t((s_page + 1) % pageCount());   // second press on the focused insert: the next four parameters
+            s_page = uint8_t((s_page + 1) % pageCount());
         else if (s_focus != place)
             s_page = 0;
         s_focus = place;
+    }
+    else if (s_place == place && isList(place))
+    {   // second press on the selected Mixer or enum column: the next entry, as the master screen's Saturation button
+        stepNext(place);
+        return;
     }
     s_place = place;
     clampPlace();
@@ -309,43 +419,6 @@ void btnBack()
     plugUiLeave();
     MP->switchToMaster();
     MP->activateLabelsBorder();
-}
-
-void changePlugin(int k, int delta)
-{
-    // the order: None, then the index entries
-    int pos = plug::slotIndex(k) + 1;   // a missing plugin counts as None here
-    pos += delta;
-    const int n = plug::indexCount() + 1;
-    pos = pos < 0 ? 0 : (pos >= n ? n - 1 : pos);
-    plug::assign(k, pos - 1);
-    // a plugin picked under a built-in Saturation entry: the Saturation goes to Inserts, or the pick would not be heard
-    if (pos > 0 && mtProject.values.saturationType != plug::kSatInserts) plugUiSatSet(plugUiSatCount() - 1);   // the last entry: Inserts (a plugin is on the card)
-    s_page = 0;
-    markChanged();
-    showAll();
-}
-
-void changeMixer(int delta)
-{
-    int pos = mixerPos() + delta;
-    pos = pos < 0 ? 0 : (pos >= kMixerN ? kMixerN - 1 : pos);
-    if (kMixerVals[pos] == plug::mixerStage()) return;
-    plug::setMixerStage(kMixerVals[pos]);
-    markChanged();
-    showMixer();
-}
-
-void changeParam(int col, int delta)
-{
-    const uint32_t i = uint32_t(s_page * kParamCols + col - kParamCol0);
-    const plug_param* pp = plug::param(s_focus, i);
-    if (!pp) return;
-    float step = pp->enum_count ? 1.0f : pp->step;
-    if (step <= 0.0f) step = (pp->max - pp->min) / 100.0f;
-    plug::setParam(s_focus, i, plug::paramValue(s_focus, i) + step * float(delta));
-    markChanged();
-    showParam(col);
 }
 }   // namespace
 
@@ -530,20 +603,15 @@ void plugUiUpdate(uint32_t nowMs)
 }
 
 void plugUiEncoder(int16_t value)
-{
-    if (s_place < 2)
-        changePlugin(s_place, value > 0 ? 1 : -1);
-    else if (s_place == kMixerCol)
-        changeMixer(value > 0 ? 1 : -1);
-    else if (s_place < 7)
-        changeParam(s_place, value);
+{   // as the master screen's encoder: a list follows the Invert list setting, a number does not
+    change(s_place, plugnav::encoderDelta(value, isList(s_place), interfaceGlobals.invertValForList));
 }
 
 void plugUiArrow(int dir)   // 0 left, 1 right, 2 up, 3 down
 {
-    if (dir == 2 || dir == 3)
-    {
-        plugUiEncoder(dir == 2 ? 1 : -1);
+    if (dir == plugnav::kUp || dir == plugnav::kDown)
+    {   // as the master screen's arrows: Down is the next list entry below, Up a higher number
+        change(s_place, plugnav::arrowDelta(dir, isList(s_place)));
         return;
     }
     uint8_t p = s_place;
