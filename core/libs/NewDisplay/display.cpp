@@ -10,6 +10,9 @@
 #include "elapsedMillis.h"
 
 #include "polyassert.h"
+#ifdef FEATURE_SYNTH_OPEN
+#include <cr_section_macros.h>
+#endif
 
 // FONTS
 #include "RobotoMono-Bold_17_L4.h"
@@ -378,6 +381,15 @@ void cDisplay::begin(DisplayDriver* displayDriver, Timer* timer)
 
 // elapsedMillis printTajner;
 
+#ifdef FEATURE_SYNTH_OPEN
+// Image load chunk off the stack: as a local it gave update() a 5,024 B frame, and MK66 has no fixed stack
+// (Profiler::init sizes the heap to SP minus STACK_MARGIN), so the audio ISR preempting a refresh ran past
+// the heap line. update() runs only on the main loop and the buffer is live only inside the loadImage block,
+// which never re-enters update(). SDRAM is fine: the SD read (ADMA2) already targets SDRAM for samples and
+// the FatFs pools, and the FT812 write is a CPU SPI loop. Aligned for the SDHC ADMA2 4-byte rule.
+__NOINIT(EXTERNAL_RAM) __attribute__((aligned(32))) static uint8_t s_imgLoadBuffer[imgBufforSize];
+#endif
+
 void cDisplay::update()
 {
     if (!state)
@@ -418,7 +430,11 @@ void cDisplay::update()
             if (fileSystem->getFileAvailable(imgFile))
             {
                 int32_t readBytes = 0;
+#ifdef FEATURE_SYNTH_OPEN
+                uint8_t* const currentBuffer = s_imgLoadBuffer;
+#else
                 uint8_t currentBuffer[imgBufforSize];
+#endif
                 readBytes = fileSystem->readFile(currentBuffer, imgBufforSize, imgFile);
 
                 if (readBytes < 0)
