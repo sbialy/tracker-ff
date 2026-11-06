@@ -136,7 +136,9 @@ void WorkspaceProjectSave::saveProjectToWorkspaceFinish()
 #ifdef FEATURE_PLUG_HOST
     if (!plug::projectSave(cWorkspacePath)) // the sidecar of the master insert plugins (removed when no slot is used)
     {
-        mtProject.values.projectNotSavedFlag |= 1; // the Workspace lacks the current plugin settings
+        mtProject.values.projectNotSavedFlag |= 1; // the Workspace lacks the current plugin settings: as the patches above
+        stopOperationWithError(fmSaveError);
+        return;
     }
 #endif
 

@@ -193,14 +193,9 @@ struct NvmFlash
 
 struct SdIo
 {
-    int readIndex(char* b, int cap)
-    {
-        auto [ok, f] = s_sfs->openFile(kIndexPath, FileSystem::FileOpenMode::kRead);
-        if (!ok) return -1;
-        const int n = int(s_sfs->readFile(b, size_t(cap), f));
-        s_sfs->closeFile(f);
-        return n;
-    }
+    // after moving back an interrupted replace's installed.txt.bak (writeText). -1 for no file and for a card error alike: the
+    // boot then writes nothing back, and the bank is a cache (an engine it forgets is installed again from its .plg)
+    int readIndex(char* b, int cap) { return readText(kIndexPath, b, cap); }
     bool writeIndex(const char* t, int n) { return writeText(kIndexPath, t, n); }
     // the .plg of e, rebased for e's flash and pool addresses, in the stage: text, rw initial bytes, then zeros (bss, padding)
     const uint8_t* image(const BankEntry& e)

@@ -2,7 +2,9 @@
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
+#include "plug_sidecar_io.h"
 
+#include "FileSystemAdapter.h"
 #include "Platform.h"
 #include "mtAudioEngine.h"
 #include "mtStructs.h"
@@ -39,6 +41,7 @@ __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_arena[kSlots][kAren
 __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_stage[kNvmBytes];   // insert 2 text, rebased for the flash
 __NOINIT(EXTERNAL_RAM) Sidecar s_side;                                            // the project's references and values
 __NOINIT(EXTERNAL_RAM) char s_text[kSidecarMax];                                  // sidecar file text
+SidecarState s_sideState;   // what the project load found (plug_sidecar_io.h): a card error blocks every write of the file
 __NOINIT(EXTERNAL_RAM) IndexEntry s_index[kIndexMax];
 __NOINIT(EXTERNAL_RAM) char s_names[kScanMax * 40];
 __NOINIT(EXTERNAL_RAM) char* s_nameList[kScanMax];
@@ -157,23 +160,63 @@ void useFs(FileSystem* fs)
     s_fs = fs;
 }
 
-// temp file then rename: a failed write never costs the old file
+namespace
+{
+// plug_sidecar_io.h's file operations on the SD card
+struct SdOps
+{
+    Presence stat(const char* p) { return FileSystemAdapter::statPath(p); }
+    bool remove(const char* p) { return s_fs->remove(p); }
+    bool rename(const char* from, const char* to) { return s_fs->rename(from, to); }
+    int readFile(const char* p, char* buf, int cap)
+    {
+        auto [ok, f] = s_fs->openFile(p, FileSystem::FileOpenMode::kRead);
+        if (!ok) return -1;
+        int n = int(s_fs->readFile(buf, size_t(cap), f));
+        char more;
+        if (n == cap && s_fs->readFile(&more, 1, f) != 0) n = -1;   // larger than cap (or a read error): not this file
+        s_fs->closeFile(f);
+        return n;
+    }
+    // FatFs reports a failed flush only to f_close, which the platform's closeFile does not return: the bytes are read back
+    bool writeNew(const char* p, const char* buf, int n)
+    {
+        auto [ok, f] = s_fs->openFile(p, FileSystem::FileOpenMode::kWriteCreateNew);
+        if (!ok) return false;
+        const bool wrote = s_fs->writeFile(buf, size_t(n), f) == n;
+        s_fs->closeFile(f);
+        if (!wrote) return false;
+        auto [rok, r] = s_fs->openFile(p, FileSystem::FileOpenMode::kRead);
+        if (!rok) return false;
+        bool same = true;
+        char chunk[64];   // the main stack, which the audio interrupt shares: small
+        for (int at = 0; same && at < n; at += int(sizeof(chunk)))
+        {
+            const int want = n - at < int(sizeof(chunk)) ? n - at : int(sizeof(chunk));
+            same = s_fs->readFile(chunk, size_t(want), r) == want && memcmp(chunk, buf + at, size_t(want)) == 0;
+        }
+        same = same && s_fs->readFile(chunk, 1, r) == 0;
+        s_fs->closeFile(r);
+        return same;
+    }
+};
+}   // namespace
+
+// <path>.tmp, read back, then replaceFileOps (open_fileops.h): the old file stays, as path or as <path>.bak, until the new one
+// is in place. A power cut between the two renames leaves only <path>.bak: readText (and the sidecar load) moves it back.
 bool writeText(const char* p, const char* text, int n)
 {
-    char tmp[72];
-    snprintf(tmp, sizeof(tmp), "%s.tmp", p);
-    s_fs->remove(tmp);
-    auto [ok, f] = s_fs->openFile(tmp, FileSystem::FileOpenMode::kWriteCreateNew);
-    if (!ok) return false;
-    const bool wrote = s_fs->writeFile(text, size_t(n), f) == n;
-    s_fs->closeFile(f);
-    if (!wrote)
-    {
-        s_fs->remove(tmp);
-        return false;
-    }
-    if (s_fs->exists(p)) s_fs->remove(p);
-    return s_fs->rename(tmp, p);
+    if (!s_fs) return false;
+    SdOps ops;
+    return sidecarReplace(ops, p, text, n);
+}
+
+int readText(const char* p, char* buf, int cap)
+{
+    if (!s_fs) return -1;
+    SdOps ops;
+    int n = 0;
+    return sidecarFetch(ops, p, buf, cap, n) == Presence::kPresent ? n : -1;
 }
 
 namespace
@@ -652,32 +695,22 @@ const char* safeReason()
 // ------------------------------------------------------------------------------------------------ project sidecar
 namespace
 {
-// plug_sidecar.h's file rules on the SD card
-struct SdFs
-{
-    int read(const char* p, char* buf, int cap)
-    {
-        auto [ok, f] = s_fs->openFile(p, FileSystem::FileOpenMode::kRead);
-        if (!ok) return -1;
-        const int n = s_fs->readFile(buf, size_t(cap), f);
-        s_fs->closeFile(f);
-        return n;
-    }
-    bool write(const char* p, const char* buf, int n) { return writeText(p, buf, n); }
-    bool exists(const char* p) { return s_fs->exists(p); }
-    bool remove(const char* p) { return s_fs->remove(p); }
-};
-}   // namespace
+bool s_openStale;   // the last project open could not copy the project's sidecar to the Workspace (sidecarOpen)
+}
 
-void projectLoaded(const char* dir)
+void projectLoaded(const char* dir, bool newProject)
 {
     if (!s_fs) return;
+    if (newProject) s_openStale = false;
     char p[64];
     path(p, sizeof(p), dir, kSidecarName);
-    SdFs fs;
-    sidecarLoad(fs, p, s_text, sizeof(s_text), s_side);   // no sidecar: no plugin, as stock
+    SdOps fs;
+    // no sidecar: no plugin, as stock. After a failed open copy nothing of the Workspace file is used (kStale)
+    s_sideState = sidecarLoadStep(fs, p, s_text, sizeof(s_text), s_side, s_openStale);
     s_on = insertsOnAfterLoad(mtProject.values.saturationType, s_side);
     s_note[0] = 0;
+    if (sidecarBlocked(s_sideState))
+        snprintf(s_note, sizeof(s_note), "%s not read (card error): inserts empty, the file is kept", kSidecarName);
 #ifndef FEATURE_FF_DIRT
     {   // a project saved with a built-in Dirt entry of an FF build: Inserts with Insert 1 = Dirt, or Hard Clip without dirt.plg
         uint8_t& sat = mtProject.values.saturationType;
@@ -709,21 +742,31 @@ bool projectSave(const char* dir)
 {
     if (!s_fs) return true;
     for (int k = 0; k < kSlots; k++) syncRef(k);
-    if (s_count || s_side.slot[0].uid || s_side.slot[1].uid) writeStatus();
+    if (s_count || s_side.slot[0].uid || s_side.slot[1].uid || sidecarBlocked(s_sideState)) writeStatus();
     char p[64];
     path(p, sizeof(p), dir, kSidecarName);
-    SdFs fs;
-    return sidecarSave(fs, p, s_side, s_text, sizeof(s_text));
+    SdOps fs;
+    return sidecarSave(fs, p, s_side, s_sideState, s_text, sizeof(s_text));
 }
 
-void copySidecar(const char* srcDir, const char* dstDir)
+bool sidecarOpen(const char* projectDir, const char* workspaceDir)
 {
-    if (!s_fs) return;
+    if (!s_fs) return true;
     char src[64], dst[64];
-    path(src, sizeof(src), srcDir, kSidecarName);
-    path(dst, sizeof(dst), dstDir, kSidecarName);
-    SdFs fs;
-    sidecarCopy(fs, src, dst, s_text, sizeof(s_text));
+    path(src, sizeof(src), projectDir, kSidecarName);
+    path(dst, sizeof(dst), workspaceDir, kSidecarName);
+    SdOps fs;
+    return sidecarOpenStep(fs, src, dst, s_text, sizeof(s_text), s_openStale);   // the open's retry calls it again: the last counts
+}
+
+bool sidecarToProject(const char* workspaceDir, const char* projectDir)
+{
+    if (!s_fs) return true;
+    char src[64], dst[64];
+    path(src, sizeof(src), workspaceDir, kSidecarName);
+    path(dst, sizeof(dst), projectDir, kSidecarName);
+    SdOps fs;
+    return sidecarProjectStep(fs, src, dst, s_side, s_sideState, s_text, sizeof(s_text));
 }
 
 // ------------------------------------------------------------------------------------------------ boot and tick

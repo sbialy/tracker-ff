@@ -374,7 +374,9 @@ void ProjectOpen::openProjectFinish()
       [&]()
       {
 #ifdef FEATURE_PLUG_HOST
-          plug::copySidecar(srcFilePath, cWorkspacePath); // the plugin sidecar follows the project (removed when it has none)
+          // the plugin sidecar follows the project (removed when it has none). A failed copy does not decide the open either:
+          // the project loads with empty inserts and its own sidecar is kept (no save writes over it)
+          plug::sidecarOpen(srcFilePath, cWorkspacePath);
 #endif
           return newFileManager.getSynth()->copyWorkspacePatches(srcFilePath, cWorkspacePath, true);
       },

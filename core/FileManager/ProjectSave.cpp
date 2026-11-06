@@ -539,7 +539,12 @@ void ProjectSave::saveProjectFinish()
              newFileManager.getCurrentProjectName());
 
 #ifdef FEATURE_PLUG_HOST
-    plug::copySidecar(cWorkspacePath, destFilePath); // the plugin sidecar follows the project (removed when it has none)
+    if (!plug::sidecarToProject(cWorkspacePath, destFilePath)) // the plugin sidecar follows the project (removed when it has none)
+    {
+        mtProject.values.projectNotSavedFlag |= 1; // the project folder lacks the current plugin settings: as the patches below
+        operationError();
+        return;
+    }
 #endif
 #ifdef FEATURE_SYNTH_OPEN
     if (!newFileManager.getSynth()->copyWorkspacePatches(cWorkspacePath, destFilePath))

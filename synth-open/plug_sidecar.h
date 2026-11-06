@@ -348,40 +348,6 @@ inline void insertsLabel(const char* a, const char* b, char* out, int maxChars)
     out[n] = 0;
 }
 
-// ---- the file rules, over any file system with
-//   int read(const char* path, char* buf, int cap)   bytes read, -1 when there is no such file
-//   bool write(const char* path, const char* buf, int n)   replaces the file
-//   bool exists(const char* path), bool remove(const char* path)
-// plug_host.cpp runs them on the SD card, tools/plug_sidecar_test.cpp on an in-memory one.
-
-// Project load: no file (or not a sidecar) gives an empty Sidecar, every slot empty, exactly as stock firmware.
-template <class Fs> void sidecarLoad(Fs& fs, const char* path, char* buf, int cap, Sidecar& s)
-{
-    const int n = fs.read(path, buf, cap);
-    if (n <= 0 || !sidecarRead(buf, n, s)) memset(&s, 0, sizeof(s));
-}
-
-// Project save: the file when a slot is used, no file at all otherwise (a stale one is removed).
-template <class Fs> bool sidecarSave(Fs& fs, const char* path, const Sidecar& s, char* buf, int cap)
-{
-    const int n = sidecarWrite(s, buf, cap);
-    if (n <= 0)
-    {
-        if (fs.exists(path)) fs.remove(path);
-        return n == 0;
-    }
-    return fs.write(path, buf, n);
-}
-
-// Project open (project folder to Workspace) and save (Workspace to project folder): the destination ends up with the
-// source's file or with none.
-template <class Fs> void sidecarCopy(Fs& fs, const char* src, const char* dst, char* buf, int cap)
-{
-    const int n = fs.read(src, buf, cap);
-    if (n > 0)
-        fs.write(dst, buf, n);
-    else if (fs.exists(dst))
-        fs.remove(dst);
-}
+// The file rules (load, save, copy on the card) are in plug_sidecar_io.h.
 
 }   // namespace plug
