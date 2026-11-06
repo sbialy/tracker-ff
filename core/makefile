@@ -94,6 +94,12 @@ $(OBJ_DIR)/synth-open/plug_host.o $(OBJ_DIR)/synth-open/plug_bench.o $(OBJ_DIR)/
 $(OBJ_DIR)/synth-open/plug_insert.o $(OBJ_DIR)/synth-open/plug_dirt_inimage.o: EXTRA_OPT := -O2 -ffp-contract=off
 $(OBJ_DIR)/synth-open/open_cold.o $(OBJ_DIR)/synth-open/open_patchio.o $(OBJ_DIR)/synth-open/stub_fmt.o: EXTRA_OPT := $(SYNTH_OPT_COLD)
 $(OBJ_DIR)/synth-open/ot/audio/engines/fat.o: EXTRA_OPT := $(SYNTH_OPT_FAT)
+# FM4 and B-Type: -O3 unrolls their operator and voice loops, FM4 24.4 to 16.8 %, B-Type 20.0 to 16.2 % of a block at 4 voices
+# (ref cpu-optimisation-plan item 3), output equal to -O2. The plugins use the same flags (plug/synth_engines.sh).
+SYNTH_OPT_FM4 ?= -O3
+SYNTH_OPT_BTYPE ?= -O3
+$(OBJ_DIR)/synth-open/ot-synths/fm4/fm4.o: EXTRA_OPT := $(SYNTH_OPT_FM4)
+$(OBJ_DIR)/synth-open/ot-synths/btype/btype.o: EXTRA_OPT := $(SYNTH_OPT_BTYPE)
 
 # TRIM=1: no-feature-loss flash trims for the SYNTH_OPEN image (synth-open/README.md, Flash trim).
 #   -DFW_TRIM gates the source level trims: std::map registry, float math, PERC icons only with PERC.

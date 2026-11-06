@@ -22,7 +22,8 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 . "$HERE/synth_engines.sh"
 SET="ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE PLK"
-(cd "$ROOT" && make original TOOLCHAIN="$TOOLCHAIN" SYNTH_OPEN=1 TRIM=1 BUILD_TAG=x SYNTH_TAG=-rc SYNTH_ENGINES="$SET" -n 2>/dev/null) \
+(cd "$ROOT" && make original TOOLCHAIN="$TOOLCHAIN" SYNTH_OPEN=1 TRIM=1 BUILD_TAG=x SYNTH_TAG=-rc SYNTH_ENGINES="$SET" \
+    SYNTH_OPT_ENGINES="$SYNTH_PLUG_OPT_ENGINES" SYNTH_OPT_FM4="$SYNTH_PLUG_OPT_O3" SYNTH_OPT_BTYPE="$SYNTH_PLUG_OPT_O3" -n 2>/dev/null) \
     > "$TMP/make-n.txt"
 python3 "$HERE/build_plug.py" --id ff.test.synthharness --kind offline --opt "-O2 -fno-builtin" --out "$TMP/synth-harness.plg" \
     -I "$SO" -I "$SO/ot" -I "$ROOT/synth/include" "$HERE/synth/synth_harness.cpp" > /dev/null
