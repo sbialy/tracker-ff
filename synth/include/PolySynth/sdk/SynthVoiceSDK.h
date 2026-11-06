@@ -92,7 +92,13 @@ inline void saturateSoftClip(std::span<sample_t> buf, float gainDb)
     for (auto& element : buf)
     {
         float sample = std::clamp(element * gainRaw, -1.5f, 1.5f);
+#if defined(FEATURE_SYNTH_OPEN)
+        // a multiply instead of the 14 cycle VDIV (GCC keeps the divide without -ffast-math): 3,328 cycles per sounding
+        // part and block. 1.3 % of results move 1 ulp, at most 6.0e-8 (-144.5 dBFS). Stock keeps the divide.
+        sample = sample - (sample * sample * sample) * (1.0f / 6.72f);
+#else
         sample = sample - (sample * sample * sample) / 6.72f;
+#endif
         element = std::clamp(sample, -1.0f, 1.0f);
     }
 }
