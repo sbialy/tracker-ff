@@ -7,12 +7,20 @@
 // text was rebased for that fixed address at install), the bss zeroed, plug_entry and init run, PLUG_EXT_SYNTH is checked and
 // the engine joins the shim's engine list (open::engineListAdd) behind an adapter. The engine text runs from the flash.
 // /Plugins/synth.txt says what happened.
+//
+// Logos (round B, plug_logo.h): at the end of plug::boot, every attached engine's card logo (a .plgi sidecar, else a trailer in
+// its .plg) is written to the RAM_G logo pool, one slot per engine in attach order. The list and the editor ask synthLogoBitmap
+// for its bitmap ids, an engine without one keeps its text name. The pool lives as long as the firmware runs: engines are only
+// attached at boot, so no UI control can hold a logo of an engine that goes away.
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
 #include "plug_bank.h"
+#include "plug_logo.h"
 
+#include "DisplayDriver.h"
 #include "Platform.h"
+#include "displayStructs.h"
 #include "cr_section_macros.h"
 #include "open_engine.h"
 
@@ -56,6 +64,12 @@ __NOINIT(EXTERNAL_RAM) IndexEntry s_sidx[kBankMax];
 __NOINIT(EXTERNAL_RAM) BankWant s_want[kBankMax];
 __NOINIT(EXTERNAL_RAM) ScanStats s_sscan;
 FileSystem* s_sfs;
+int s_sn;            // entries in s_sidx (the last scan of /Plugins/Synth)
+int s_btextLen;      // synth.txt as synthBoot wrote it (synthLogos adds its lines)
+uint8_t s_logo[kBankMax];   // per bank entry: 1 + its logo slot, 0 none (the text name)
+int s_logos;                // logo slots used, slot s at kLogoRamG + s * kLogoPixels
+static_assert(kBankMax <= kLogoSlots, "one logo slot per bank entry");
+static_assert(kPlugLogoFirst + 2 * kLogoSlots <= 255, "logo ids fit the label's uint8_t bitmapIndex");
 
 // The ISynthEngine of an installed engine: every call goes to its PLUG_EXT_SYNTH function (audio context, as built in)
 class PlugSynth final : public ISynthEngine
@@ -251,6 +265,7 @@ void synthBoot(FileSystem* fs)
     useFs(fs);
     memset(&s_bank, 0, sizeof(s_bank));
     const int n = scanDir(kSynthDir, s_sidx, kBankMax, s_sscan, PLUG_KIND_SYNTH);
+    s_sn = n;
     for (int i = 0; i < n; i++)
     {
         const IndexEntry& x = s_sidx[i];
@@ -281,9 +296,86 @@ void synthBoot(FileSystem* fs)
     for (int k = 0; k < s_bank.n && len < cap; k++)
         len += snprintf(t + len, size_t(cap - len), "%s at %lx attach %d\r\n", s_bank.e[k].file,
                         (unsigned long)(kBankRun + s_bank.e[k].off), int(s_attachErr[k]));
+    s_btextLen = len < cap ? len : cap - 1;
+    writeText("/Plugins/synth.txt", t, s_btextLen);
+}
+
+namespace
+{
+// FileSystem for logoFind (plug_logo.h)
+struct LogoFs
+{
+    int readAt(const char* p, uint32_t off, void* b, int cap)
+    {
+        auto [ok, f] = s_sfs->openFile(p, FileSystem::FileOpenMode::kRead);
+        if (!ok) return -1;
+        const int n = !off || s_sfs->seekFile(off, f) ? int(s_sfs->readFile(b, size_t(cap), f)) : -1;
+        s_sfs->closeFile(f);
+        return n;
+    }
+};
+}   // namespace
+
+void synthLogos(DisplayDriver* dd)
+{
+    memset(s_logo, 0, sizeof(s_logo));
+    s_logos = 0;
+    if (!s_sfs || !dd || !s_bank.n) return;
+    LogoFs fs;
+    char* t = s_btext;
+    const int cap = int(sizeof(s_btext));
+    int len = s_btextLen;
+    for (int k = 0; k < s_bank.n && len < cap; k++)
+    {
+        if (s_attachErr[k]) continue;
+        const BankEntry& e = s_bank.e[k];
+        const char* file = e.file;   // the installed file, its .plg may be gone from the card: the sidecar still counts
+        uint32_t off = 0;
+        for (int i = 0; i < s_sn; i++)
+            if (s_sidx[i].uid == e.uid && s_sidx[i].crc == e.fileCrc)
+            {
+                file = s_sidx[i].file;
+                off = s_sidx[i].logoOff;
+                break;
+            }
+        LogoErr why = kLogoOk;
+        const LogoSource src = s_logos < kLogoSlots ? logoFind(fs, kSynthDir, file, off, s_sec, &why) : kLogoNone;
+        if (src != kLogoNone)
+        {
+            dd->writeDataRAMG(s_sec + kLogoHeader, kLogoPixels, kLogoRamG + uint32_t(s_logos) * kLogoPixels);
+            s_logo[k] = uint8_t(++s_logos);
+        }
+        static const char* const kSrc[3] = {"text", "sidecar", "trailer"};
+        len += snprintf(t + len, size_t(cap - len), "logo %s %s err %d\r\n", file, kSrc[src], int(why));
+    }
+    if (len < cap)
+        len += snprintf(t + len, size_t(cap - len), "logos %d of %d, RAM_G %lu of %lu B\r\n", s_logos, kLogoSlots,
+                        (unsigned long)(s_logos * kLogoPixels), (unsigned long)(kLogoRamGEnd - kLogoRamG));
     writeText("/Plugins/synth.txt", t, len < cap ? len : cap - 1);
 }
 
+int synthLogoBitmap(const polysynth::open::EngineDef* d, bool editor)
+{
+    for (int k = 0; k < s_bank.n; k++)
+        if (&s_defs[k] == d && s_logo[k]) return kPlugLogoFirst + 2 * (s_logo[k] - 1) + (editor ? 1 : 0);
+    return -1;
+}
+
 }   // namespace plug
+
+const strBitmap* bitmapAt(int id)
+{
+    using namespace plug;
+    if (id >= 0 && id < displayBitmapsCount) return &bitmaps[id];
+    const int s = (id - kPlugLogoFirst) >> 1;
+    if (id < kPlugLogoFirst || s >= s_logos) return nullptr;
+    // slot s: the list image, then the editor image (L2 = 17, FT81x.h)
+    static const strBitmap kTpl[2] = {{nullptr, kLogoRamG, kLogoMiniBytes, kLogoMiniW, kLogoMiniH, 17, kLogoMiniStride},
+                                      {nullptr, kLogoRamG + kLogoMiniBytes, kLogoMedBytes, kLogoMedW, kLogoMedH, 17, kLogoMedStride}};
+    static strBitmap b;
+    b = kTpl[(id - kPlugLogoFirst) & 1];
+    b.address += uint32_t(s) * kLogoPixels;
+    return &b;
+}
 
 #endif   // FEATURE_PLUG_HOST

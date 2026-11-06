@@ -19,6 +19,11 @@
 
 class FileSystem;
 class Platform;
+class DisplayDriver;
+namespace polysynth::open
+{
+struct EngineDef;
+}
 
 namespace plug
 {
@@ -69,6 +74,10 @@ bool nvmProgram(uint32_t off, const uint8_t* data8);
 // ---- synth engine plugins (plug_synth.cpp, phase 3): /Plugins/Synth/*.plg installed into the FlexNVM bank (plug_bank.h),
 // attached to the shim's engine list before the synth starts (TrackerImpl::init, before Synth::init)
 void synthBoot(FileSystem* fs);
+// The attached engines' card logos into the RAM_G logo pool (plug_logo.h): boot() calls it once, the display is up by then
+void synthLogos(DisplayDriver* dd);
+// The bitmap id of a plugin engine's logo (the list image, or the editor image), -1: none, show its name
+int synthLogoBitmap(const polysynth::open::EngineDef* d, bool editor);
 void useFs(FileSystem* fs);   // the card for writeText before boot() (synthBoot runs first)
 // scanIndex of one directory and kind on the card (the names are copied into index, the list buffers are shared)
 int scanDir(const char* dir, IndexEntry* index, int cap, ScanStats& st, uint32_t kind);

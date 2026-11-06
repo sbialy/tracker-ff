@@ -8,6 +8,8 @@ Compile for the Cortex-M4F, link at address 0 with plug.ld and --emit-relocs, th
   - write every R_ARM_ABS32 target word offset into the rebase table (the loader adds the run address)
   - read name, author and num_params from the descriptor (PLUG_DESCRIPTOR, symbol __plug_desc) into the 96 byte manifest
   - prepend the 64 byte plug_file_header and the manifest, CRC-32 over manifest, image and table.
+--logo x.plgi appends a logo record (synth-open/plug_logo.h, made by tools/make_plgi.py) after the rebase table and puts its
+file offset in plug_manifest.reserved[0]. The record has its own CRC, the file CRC does not cover it.
 Per source flags (--src-opt NAME=FLAGS): a port of firmware DSP is only bit identical when its objects are built with the
 firmware object's own flags (the vfma gotcha, design section 11, phase 1b).
 """
@@ -122,6 +124,7 @@ def main():
     ap.add_argument("--entry", default="plug_entry", help="entry symbol (plug_entry_dirt for the firmware object)")
     ap.add_argument("--licence", default="MIT", help="SPDX id for the manifest")
     ap.add_argument("--role", default="insert", choices=ROLES)
+    ap.add_argument("--logo", help="a .plgi logo record to append as a trailer (synth engines, plug_logo.h)")
     ap.add_argument("--strip-ctors", dest="strip_ctors", action="store_true",
                     help="test references: drop .init_array from prebuilt objects (firmware objects of a render compare)")
     a = ap.parse_args()
@@ -190,23 +193,33 @@ def main():
         name, author = cstr(pname), cstr(pauthor)
         if not 0 < len(name) <= 15 or nparams > 32:
             sys.exit("descriptor name must be 1..15 chars and num_params <= 32")
-        manifest = struct.pack("<I16s32s16sHBB24x", MANIFEST_SIZE, name, author[:31], a.licence.encode()[:15], nparams,
-                               ROLES[a.role], 0)
+        logo = b""
+        if a.logo:
+            logo = open(a.logo, "rb").read()
+            magic, ver, fmt, mw, mh, dw, dh, _fl, lcrc = struct.unpack_from("<IBBBBBBHI", logo, 0) if len(logo) >= 16 else (0,) * 9
+            if len(logo) != 1676 or magic != 0x49474C50 or ver != 1 or (fmt, mw, mh, dw, dh) != (2, 80, 29, 108, 40) or \
+                    zlib.crc32(logo[16:]) & 0xFFFFFFFF != lcrc:
+                sys.exit("%s is not a PLGI 1 logo record (make it with tools/make_plgi.py)" % a.logo)
+        # the trailer's file offset: after the header, the manifest, the image and the rebase table
+        logo_off = 64 + MANIFEST_SIZE + image_end + 4 * len(table) if logo else 0
+        manifest = struct.pack("<I16s32s16sHBBI20x", MANIFEST_SIZE, name, author[:31], a.licence.encode()[:15], nparams,
+                               ROLES[a.role], 0, logo_off)
         assert len(manifest) == MANIFEST_SIZE
         payload = manifest + image + b"".join(struct.pack("<I", o) for o in table)
+        assert not logo or 64 + len(payload) == logo_off
         maj, mi, pa = (int(x) for x in a.version.split("."))
         hdr = struct.pack("<IHBBBBHIIIIIIIIIII8x", 0x31474C50, 64 + MANIFEST_SIZE, 1, 0, KINDS[a.kind], 1, 0, fnv1a(a.id),
                           (maj << 16) | (mi << 8) | pa, 1, image_end, bss_end - image_end, len(table),
                           syms["plug_entry"], a.ram, a.cycles, zlib.crc32(payload) & 0xFFFFFFFF, syms["__rw_start"])
         assert len(hdr) == 64
         with open(a.out, "wb") as f:
-            f.write(hdr + payload)
+            f.write(hdr + payload + logo)
         if a.keep:
             import shutil
             shutil.copy(elf, a.keep)
         print("%s: %s, %d params, image %d B (text %d, rw %d), bss %d B, %d rebase words, entry 0x%x, uid 0x%08x, file %d B" % (
             a.out, name.decode(), nparams, image_end, syms["__rw_start"], image_end - syms["__rw_start"], bss_end - image_end,
-            len(table), syms["plug_entry"], fnv1a(a.id), 64 + len(payload)))
+            len(table), syms["plug_entry"], fnv1a(a.id), 64 + len(payload) + len(logo)) + (", logo trailer at %d" % logo_off if logo else ""))
 
 
 if __name__ == "__main__":

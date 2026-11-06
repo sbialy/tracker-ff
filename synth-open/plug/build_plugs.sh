@@ -1,6 +1,8 @@
 #!/bin/bash
 # Builds the shipped master insert plugins (dirt, tape, lofi, console, tube, bbd, phaser: .plg) and the synth engine plugins
-# (ju6, fm4, btype: .plg, render compare against the firmware's own objects in synth_render_compare.sh) and checks each one on the Mac:
+# (ju6, fm4, btype: .plg, render compare against the firmware's own objects in synth_render_compare.sh) with their card logos
+# (ju6.plgi, fm4.plgi, btype.plgi: tools/make_plgi.py text logos, and the logo-test/ files of the device test) and checks each
+# one on the Mac:
 #   - no R_ARM_GOT* relocation in the linked ELF, the rebase table holds every R_ARM_ABS32 word (count equal, > 0)
 #   - emu_plug.py runs it at the insert 1 home (SRAM_L 0x1FFF0BD0), the insert 2 home (text at 0x1001E000 in the FlexNVM,
 #     rw at 0x20026C00 on the heap) and in SDRAM, and the output checksum is the same at all three
@@ -103,5 +105,29 @@ for e in ju6 fm4 btype; do
     [ "$got" = 0 ] && [ "$reb" = "$abs" ] || { echo "$e FAIL GOT $got rebase $reb ABS32 $abs"; fail=1; }
 done
 PY="$PY" "$HERE/synth_render_compare.sh" "$OUT" || fail=1
+# Card logos (synth-open/plug_logo.h): a .plgi sidecar per synth engine, and the device test set in logo-test/: ju6.plg with a
+# "JU6-T" logo trailer (the sidecar must win over it), a truncated fm4.plgi and a btype.plgi with a bad magic (both: text name)
+python3 -I tools/make_plgi.py --text JU6 -o "$OUT/ju6.plgi"
+python3 -I tools/make_plgi.py --text FM4 -o "$OUT/fm4.plgi"
+python3 -I tools/make_plgi.py --text B-TYPE -o "$OUT/btype.plgi"
+mkdir -p "$OUT/logo-test"
+python3 -I tools/make_plgi.py --text JU6-T -o "$OUT/logo-test/ju6-trailer.plgi"
+python3 plug/build_plug.py --id org.opentracker.synth.ju6 --kind synth --version 1.0.0 --opt "-Os -fno-builtin" \
+    --src-opt "ju6.cpp=$FWFLAGS -Os -DSYNTH_ENGINE_JU6" --src-opt "engine_ju6.cpp=$FWFLAGS -DSYNTH_ENGINE_JU6" \
+    --logo "$OUT/logo-test/ju6-trailer.plgi" --out "$OUT/logo-test/ju6.plg" -I . -I ot -I ../synth/include \
+    plug/synth/ju6_plug.cpp engine_ju6.cpp ot-synths/ju6/ju6.cpp
+rm -f "$OUT/logo-test/ju6-trailer.plgi"
+head -c 1000 "$OUT/fm4.plgi" > "$OUT/logo-test/fm4.plgi"
+{ printf 'PLGX'; tail -c +5 "$OUT/btype.plgi"; } > "$OUT/logo-test/btype.plgi"
+# the trailer plugin is the shipped ju6.plg plus the trailer: same image bytes
+cmp -s <(head -c "$(wc -c < "$OUT/ju6.plg")" "$OUT/logo-test/ju6.plg" | tail -c +161) <(tail -c +161 "$OUT/ju6.plg") ||
+    { echo "logo FAIL logo-test/ju6.plg image differs from ju6.plg"; fail=1; }
+c++ -std=c++20 -O1 -Wall -I . tools/plug_logo_test.cpp -o "$OUT/plug_logo_test"
+"$OUT/plug_logo_test" "$OUT/ju6.plgi" "$OUT/fm4.plgi" "$OUT/btype.plgi" "$OUT/logo-test/ju6.plg" | grep -E "FAIL|PASSED|ok  .*(plgi|plg):" || fail=1
+for bad in fm4 btype; do
+    if "$OUT/plug_logo_test" "$OUT/logo-test/$bad.plgi" > /dev/null; then echo "logo FAIL logo-test/$bad.plgi passes"; fail=1
+    else echo "logo ok  logo-test/$bad.plgi is refused (text name)"; fi
+done
+rm -f "$OUT/plug_logo_test"
 rm -f "$OUT"/*.elf
 [ "$fail" = 0 ] && echo "PASSED" || { echo "FAILED"; exit 1; }

@@ -11,6 +11,9 @@
 #include "mtAudioEngine.h"
 #include "util_math.h"
 #include "util_string.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 extern uint8_t externalRamScratchBuff[];
 static_assert(kMaxFilesListLength * (kMaxFileNameLen + 1) + kMaxFilesListLength * sizeof(char**) <=
@@ -34,12 +37,16 @@ constexpr int kSynthModelsMax = 32;
 static int synthModelListImages[kSynthModelsMax];
 static char* synthModelListNames[kSynthModelsMax];
 
-// The list icon of model ui, -1 for a plugin engine. Hook for the card logo loader (ref/synth-art-plan.md, round B): a loaded
-// .plgi / .plg trailer logo returns its bitmap here, the name stays the fallback.
+// The list icon of model ui. A plugin engine shows its card logo (a .plgi sidecar or a .plg trailer, synth-open/plug_logo.h,
+// loaded at boot) or, without one, -1: its name.
 static int synthModelListImage(int ui)
 {
-    const int b = polysynth::open::engineAt(ui).builtin;
-    return b >= 0 ? synthBuiltinListImages[b] : -1;
+    const polysynth::open::EngineRef& m = polysynth::open::engineAt(ui);
+#ifdef FEATURE_PLUG_HOST
+    return m.builtin >= 0 ? synthBuiltinListImages[m.builtin] : plug::synthLogoBitmap(m.def, false);
+#else
+    return m.builtin >= 0 ? synthBuiltinListImages[m.builtin] : -1;
+#endif
 }
 
 static int fillSynthModelList()

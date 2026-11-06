@@ -12,13 +12,16 @@
 #include "util_string.h"
 
 #include "mtAudioEngine.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 #include <cmath>
 
 const char* const OffOnNames[] = { "Off", "On" };
 #ifdef FEATURE_SYNTH_OPEN
-// SYNTH_OPEN (MK66): the built-in engines' editor icons in engine_list.h order (EngineRef::builtin). A plugin engine has none
-// and shows its name (hook for the card logo loader of ref/synth-art-plan.md, round B).
+// SYNTH_OPEN (MK66): the built-in engines' editor icons in engine_list.h order (EngineRef::builtin). A plugin engine shows its
+// card logo (synth-open/plug_logo.h, FEATURE_PLUG_HOST) or, without one, its name.
 static const int synthModelListImages[] = {
 #define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, PATCH_ENGINE, MINI_ICON, ICON) \
     enDisplayBitmaps::ICON,
@@ -1051,7 +1054,12 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
     const int modelUi = std::max(Synth::storedToUi(mtProject.values.synthPart[syntPartIdx].synthType), 0);
 #ifdef FEATURE_SYNTH_OPEN
     const polysynth::open::EngineRef& model = polysynth::open::engineAt(modelUi);
-    labelImage.bitmaps[0].bitmapIndex = model.builtin >= 0 ? synthModelListImages[model.builtin] : 0;
+#ifdef FEATURE_PLUG_HOST
+    const int modelIcon = model.builtin >= 0 ? synthModelListImages[model.builtin] : plug::synthLogoBitmap(model.def, true);
+#else
+    const int modelIcon = model.builtin >= 0 ? synthModelListImages[model.builtin] : -1;
+#endif
+    labelImage.bitmaps[0].bitmapIndex = modelIcon > 0 ? modelIcon : 0;
 #else
     assert(modelUi < static_cast<int>(Synth::kSynthTypes.size()));
     labelImage.bitmaps[0].bitmapIndex = synthModelListImages[modelUi];
@@ -1064,8 +1072,8 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
     display.setControlColors(noteLabel, display.getTheme().patchEditSynthModelIconColors);
     display.setControlText(noteLabel, "");
 #ifdef FEATURE_SYNTH_OPEN
-    if (model.builtin < 0)
-    {   // a plugin engine: its name in place of the icon
+    if (modelIcon < 0)
+    {   // a plugin engine without a logo: its name in place of the icon
         display.setControlStyle(noteLabel, controlStyleShow | controlStyleCenterY | controlStyleFont4);
         display.setControlText(noteLabel, model.def->name);
     }

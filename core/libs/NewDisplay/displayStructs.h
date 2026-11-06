@@ -262,6 +262,13 @@ extern const strBitmap bitmaps[];
 extern const strBitmap bitmaps[];
 extern strGetProps getProps;
 
+#ifdef FEATURE_PLUG_HOST
+// The card logos of the synth plugin engines (synth-open/plug_logo.h, plug_synth.cpp): ids past the stock table, two per logo
+// slot (the list image, then the editor image). The list and the label draw through bitmapAt.
+constexpr int kPlugLogoFirst = displayBitmapsCount;
+const strBitmap* bitmapAt(int id);   // bitmaps[id], a loaded plugin logo, or nullptr
+#endif
+
 #define FONT_INDEX_FROM_STYLE (((style >> 8) & 15) - 1)
 
 uint16_t getTextWidth(const strFont* font, const char* text, uint16_t length);

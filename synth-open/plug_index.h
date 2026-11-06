@@ -82,6 +82,7 @@ struct IndexEntry
     uint16_t numParams;
     uint32_t crc;                // header crc32: the identity of the file (the synth bank reinstalls an engine whose file changed)
     uint32_t entry;              // entry_offset
+    uint32_t logoOff;            // file offset of a logo trailer (plug_manifest.reserved[0], plug_logo.h), 0 for none
 };
 
 // What the last scan saw, for /Plugins/host.txt
@@ -143,6 +144,7 @@ int scanIndex(Fs& fs, const char* dir, IndexEntry* index, int cap, char* names, 
         e.entry = hm.h.entry_offset;
         const bool man = hm.h.header_size >= sizeof(hm) && got == int(sizeof(hm)) && hm.m.struct_size >= sizeof(plug_manifest);
         e.numParams = man ? hm.m.num_params : 0;
+        e.logoOff = man && hm.m.reserved[0] >= hm.h.header_size ? hm.m.reserved[0] : 0;
         copyName(e.name, man && hm.m.name[0] ? hm.m.name : nameList[i], man ? kNameLen : int(strlen(nameList[i])) - 4);
         snprintf(e.file, sizeof(e.file), "%s", nameList[i]);
         int dup = -1;   // two files with one uid: the newer version wins

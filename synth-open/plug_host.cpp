@@ -753,6 +753,7 @@ void boot(Platform* platform)
         enterSafe(why);
     }
     rescan();
+    synthLogos(platform->getDisplayDriver());
     s_bootMs = now();
     s_windowOpen = true;
 }
