@@ -115,6 +115,19 @@ static size_t gShortHeap = 0;
 void* operator new(size_t n, const std::nothrow_t&) noexcept { return gShortHeap && n > gShortHeap ? nullptr : std::malloc(n); }
 void* operator new[](size_t n, const std::nothrow_t&) noexcept { return gShortHeap && n > gShortHeap ? nullptr : std::malloc(n); }
 int main() {
+#ifdef SMOKE_PLUGIN_ENGINE
+  // A plugin engine as plug_synth.cpp adds it before the synth starts: ACD's definition and engine under JU6's numbers (stored 7,
+  // type and .patch engine 0x81), shown by its name (builtin -1)
+  static open::EngineDef plugDef = open::kAcdDef;
+  plugDef.name = "JU6";
+  plugDef.typeId = 0x81;
+  plugDef.inst = open::kAcdDef.engine();
+  static open::EngineDef dupDef = plugDef;
+  const bool addOk = open::engineListAdd(&plugDef, 7, 0x81);
+  const bool dupStored = open::engineListAdd(&dupDef, 0, 0x90);    // ACD's stored number
+  dupDef.typeId = 0x91;
+  const bool dupPatch = open::engineListAdd(&dupDef, 30, 0x81);    // JU6's .patch id
+#endif
   auto synth = Synth::createSynth([](size_t){return nullptr;});
   auto store = synth->createPatchStore(Synth::FileSystemId::kPatches, true);
   const int kLead = open::firstEngineTypeId();   // the first engine of this build (ACD unless left out)
@@ -380,8 +393,13 @@ int main() {
       check(hp && hp->getMetadata().instrumentTypeId == int(kHand) && hp->getMetadata().params.empty() && ps->listPatchesByType(int(kHand)).empty() &&
               ws->loadPatch("0", *hp, true) && ws->savePatch("0", *hp) && mw->files["0.patch"] == before && !mw->files.count("0.patch.tmp"),
             "a Hand-Type part is the placeholder: no parameters, its Workspace file loads as done and is never written over");
-      check(open::engineCount() == nKinds && open::engineUiForStored(open::engineAt(nKinds - 1).stored) == nKinds - 1 &&
-              open::engineAt(0).builtin == 0, "the engine list is the built-in set, in engine_list.h order");
+#ifdef SMOKE_PLUGIN_ENGINE
+      const int nList = nKinds + 1;
+#else
+      const int nList = nKinds;
+#endif
+      check(open::engineCount() == nList && open::engineUiForStored(open::engineAt(nList - 1).stored) == nList - 1 &&
+              open::engineAt(0).builtin == 0, "the engine list is the built-in set (and the plugin engine), by stored number");
     }
 #endif
     // workspace store: flat N.patch, as Synth::savePatchToWorkspace / loadPatchFromWorkspace use it
@@ -1672,5 +1690,26 @@ int main() {
     check(open::partIdle(0), "Voices set to 0: idle");
   }
   printf(bad ? "SMOKE TEST FAILED\n" : "voice pool, governor, patch files and pitch bend OK\n");
+#ifdef SMOKE_PLUGIN_ENGINE
+  {
+    const int ui = open::engineUiForStored(7);
+    const bool placed = ui > 0 && open::engineAt(ui).builtin == -1 && open::engineAt(ui).def == &plugDef &&
+                        open::engineAt(ui - 1).stored < 7 && (ui + 1 >= open::engineCount() || open::engineAt(ui + 1).stored > 7);
+    check(addOk && !dupStored && !dupPatch, "plugin engine: added, a second one with a taken stored number or .patch id is refused");
+    check(placed && !open::missingDef(7) && open::typeForStored(7) == 0x81, "plugin engine: sits by its stored number, not missing");
+    check(!open::engineListAdd(&dupDef, 31, 0x92), "plugin engine: nothing is added once the synth started");
+    auto sp = Synth::createSynth([](size_t){return nullptr;});
+    auto pst = sp->createPatchStore(Synth::FileSystemId::kPatches, true);
+    auto pj = pst->createPatch(0x81);
+    open::PatchData pd;
+    static_cast<open::OpenPatch&>(*pj).exportData(pd);
+    uint8_t pb[4096];
+    const size_t pn = open::encodePatch(pd, pb, sizeof(pb));
+    open::PatchData back;
+    check(pj->getMetadata().instrumentTypeId == 0x81 && int(pj->getMetadata().params.size()) == plugDef.paramCount && pd.engine == 0x81 &&
+            pn && open::decodePatch(pb, pn, back) && open::typeForEngineId(back.engine) == 0x81 && open::engineIdForType(0x81) == 0x81,
+          "plugin engine: its patch carries engine 0x81 and reads back as the plugin's type");
+  }
+#endif
   return bad ? 1 : 0;
 }
