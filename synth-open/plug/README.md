@@ -191,13 +191,15 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
   is loaded in 9 characters: `Inserts` (both empty), `Ins: Tape`, `Ins:Lo-Fi`, `Tape+Dirt`, `Lo-F+Tape`. A built-in
   entry bypasses both inserts and keeps them (loaded, values kept, saved in the sidecar), so Inserts again brings both
   back. Plugins are picked on the Inserts page only.
-- Shift + Saturation opens the Master Inserts page: columns 1 and 2 pick the plugin of insert 1 and insert 2 (encoder or
-  Up and Down, Delete empties), column 3 `Mixer` is the stage of the tracks and sends mixers before the inserts (Hard
-  Clip, Soft Clip or Soft Knee, Delete: Hard Clip), columns 4 to 7 are the parameters of the focused insert (`*` marks
+- Shift + Saturation opens the Master Inserts page: column 1 `Mixer` is the stage of the tracks and sends mixers before
+  the inserts (Hard Clip, Soft Clip or Soft Knee, Delete: Hard Clip), columns 2 and 3 pick the plugin of insert 1 and
+  insert 2 (encoder or Up and Down, Delete empties), columns 4 to 7 are the parameters of the focused insert (`*` marks
   it), four at a time, each further press on the insert's button shows the next four. The last column goes back. The
   plugin columns (`None` and every plugin on the card), the Mixer column and every parameter with `enum_count > 0` show
   all their entries in the stock list control with the
-  current one highlighted, numeric parameters show their value and a bar. Picking a plugin while a built-in Saturation
+  current one highlighted, numeric parameters show their value and a bar. The value line of an insert column is at most 9 characters:
+  the plugin name, `None`, `Loading`, `Bypassed`, or a tag and as much of the name as fits (`Safe:BBD`, `Miss:Lo-Fi`,
+  `Fail:Dirt`, `CPU:Phase`). Picking a plugin while a built-in Saturation
   entry is on switches the Saturation to Inserts. With `/.develop` on the card the title shows the last block's cycles of
   each insert in percent.
 - Insert 1 runs from the 8 KB SRAM_L slot. Insert 2 runs its text from the FlexNVM data flash at 0x1001E000 (two 4 KB
@@ -209,7 +211,7 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
   whatever the mixer line says, and the built-in Soft Knee as `10`, which stock firmware and FF 1.1.0 load as Hard Clip. A
   file without the `mixer` line (every older host) runs Inserts on Hard Clip. A file without the `format` line (hosts
   before the Inserts entry) still loads: with Hard Clip in the project its inserts come back on. A project without plugins
-  and with a Hard Clip stage has no such file and stays what stock firmware writes. A plugin that is missing from the card shows as `Missing <name>`, the audio passes and its values are
+  and with a Hard Clip stage has no such file and stays what stock firmware writes. A plugin that is missing from the card shows as `Miss:<name>`, the audio passes and its values are
   kept and saved back.
 - Safety: before a plugin starts, the host writes `/Plugins/.loading` with its name and deletes it after 3 s of running.
   If the Tracker died in between, the next boot loads no plugin on its own and the Inserts page title says which one
