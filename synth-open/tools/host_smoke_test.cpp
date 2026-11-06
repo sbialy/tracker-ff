@@ -1707,6 +1707,344 @@ int main() {
     iI->setVoiceCount(0);
     check(open::partIdle(0), "Voices set to 0: idle");
   }
+  // ---- synth automation (synth-open/open_mod.h, .patch field 64): codec, block rate math, the render hook, gates, Patch FX, identity
+  {
+    using open::ModSlot; using open::ModType; using open::ModKind; using open::PatchData;
+    auto sameSlot = [](const ModSlot& a, const ModSlot& b) {
+      return a.type == b.type && a.kind == b.kind && a.index == b.index && a.nth == b.nth && a.amount == b.amount && a.shape == b.shape &&
+             a.speed == b.speed && a.attack == b.attack && a.decay == b.decay && a.sustain == b.sustain && a.release == b.release &&
+             std::strcmp(a.name, b.name) == 0; };
+    // top level field list of an encoded file: {field, offset, size}
+    struct FieldAt { uint32_t f; size_t at, n; };
+    auto fields = [](const uint8_t* p, size_t n) { std::vector<FieldAt> out; size_t i = 0;
+      auto var = [&](uint64_t& v) { v = 0; for (int s = 0; i < n; s += 7) { const uint8_t b = p[i++]; v |= uint64_t(b & 0x7F) << s; if (!(b & 0x80)) return true; } return false; };
+      while (i < n) { const size_t at = i; uint64_t t, v; if (!var(t)) break; const int wt = int(t & 7);
+        if (wt == 0) var(v); else if (wt == 1) i += 8; else if (wt == 5) i += 4; else { var(v); i += size_t(v); }
+        out.push_back({ uint32_t(t >> 3), at, i - at }); } return out; };
+    auto encode = [](const PatchData& d) { std::vector<uint8_t> b(open::kPatchFileMax); b.resize(open::encodePatch(d, b.data(), b.size())); return b; };
+    auto initData = [&](int typeId) { auto p = store->createPatch(typeId); auto d = std::make_unique<PatchData>(); static_cast<open::OpenPatch&>(*p).exportData(*d); return d; };
+    const open::EngineDef* leadDef = open::engineDefForType(kLead);
+
+    // codec
+    {
+      auto d = initData(kLead);
+      const auto plain = encode(*d);
+      bool no64 = !plain.empty(); for (const auto& f : fields(plain.data(), plain.size())) no64 = no64 && f.f != open::kModField;
+      check(no64, "automation: a patch with every slot Off has no field 64");
+      ModSlot a[4];
+      a[0].type = ModType::kLfo; a[0].kind = ModKind::kParam; a[0].index = 9; std::strcpy(a[0].name, "Cutoff"); a[0].nth = 0; a[0].amount = -37; a[0].shape = 4; a[0].speed = 28;
+      a[1].type = ModType::kEnv; a[1].kind = ModKind::kMacro; a[1].index = 5; a[1].amount = 100; a[1].attack = 10000; a[1].decay = 0; a[1].sustain = 100; a[1].release = 1300;
+      a[2].type = ModType::kEnv; a[2].kind = ModKind::kParam; a[2].index = 63; std::strcpy(a[2].name, "Attack"); a[2].nth = 2; a[2].amount = -100; a[2].attack = 0; a[2].decay = 990; a[2].sustain = 0; a[2].release = 0;
+      a[3].type = ModType::kLfo; a[3].kind = ModKind::kParam; a[3].index = 0; std::strcpy(a[3].name, "Osc Shape"); a[3].amount = 1; a[3].shape = 0; a[3].speed = 0;
+      for (int s = 0; s < 4; s++) d->mod[s] = a[s];
+      const auto full = encode(*d);
+      auto back = std::make_unique<PatchData>();
+      bool rt = !full.empty() && open::decodePatch(full.data(), full.size(), *back);
+      for (int s = 0; s < 4; s++) rt = rt && sameSlot(back->mod[s], a[s]);
+      check(rt, "automation codec: 4 slots, every field, round trip");
+      size_t block = 0; bool last64 = false; std::vector<FieldAt> ff = fields(full.data(), full.size());
+      for (size_t k = 0; k < ff.size(); k++) if (ff[k].f == open::kModField) { block = ff[k].n; last64 = k + 1 == ff.size(); }
+      check(block > 0 && last64 && full[ff.back().at] == 0x82 && full[ff.back().at + 1] == 0x04, "automation codec: field 64 (tag 82 04) after Extra, the last field");
+      // an Off slot between two active ones is an empty slot, trailing Off slots are not written
+      auto d2 = initData(kLead); d2->mod[0] = a[0]; d2->mod[2] = a[1];
+      const auto mid = encode(*d2); auto b2 = std::make_unique<PatchData>();
+      check(open::decodePatch(mid.data(), mid.size(), *b2) && sameSlot(b2->mod[0], a[0]) && b2->mod[1].type == ModType::kOff && sameSlot(b2->mod[2], a[1]) &&
+              b2->mod[3].type == ModType::kOff, "automation codec: an Off slot in the middle stays Off, the slots keep their places");
+      // worst case: 4 envelopes, 20 character names, every number at its top
+      auto dw = initData(kLead);
+      for (int s = 0; s < 4; s++) { ModSlot& m = dw->mod[s]; m.type = ModType::kEnv; m.kind = ModKind::kParam; m.index = open::kMaxParams - 1; std::memset(m.name, 'W', open::kModNameMax); m.name[open::kModNameMax] = 0;
+        m.nth = 255; m.amount = -100; m.shape = 4; m.speed = 28; m.attack = m.decay = m.release = 10000; m.sustain = 100; }
+      const auto worst = encode(*dw);
+      size_t wblock = 0; for (const auto& f : fields(worst.data(), worst.size())) if (f.f == open::kModField) wblock = f.n;
+      printf("  automation: worst field 64 = %zu B (kModBlockMax %zu), 4 slot example = %zu B\n", wblock, open::kModBlockMax, block);
+      check(!worst.empty() && wblock > 0 && wblock <= open::kModBlockMax, "automation codec: the worst block fits kModBlockMax");
+      check(open::kModField == 64 && open::kModField > 11 && open::kModField != 16, "automation codec: field 64 collides with nothing (1..11, 16)");
+      // an old reader keeps the block raw: worst block plus the largest raw part of the fixtures stays under kRawMax
+      size_t rawMax = 0;
+      for (const char* fx : { SMOKE_FIXTURES "/ot-test-07/0.patch", SMOKE_FIXTURES "/ot-test-07/0-1.patch", SMOKE_FIXTURES "/ot-test-07/0-2.patch", SMOKE_FIXTURES "/ot-test-07/0-3.patch" }) {
+        FILE* fp = std::fopen(fx, "rb"); if (!fp) { check(false, "automation: fixture file opens"); continue; }
+        std::vector<uint8_t> fb(open::kPatchFileMax); fb.resize(std::fread(fb.data(), 1, fb.size(), fp)); std::fclose(fp);
+        auto fd = std::make_unique<PatchData>(); const bool dec = open::decodePatch(fb.data(), fb.size(), *fd); rawMax = std::max<size_t>(rawMax, fd->extra.len);
+        check(dec && !open::modAnyOn(fd->mod) && encode(*fd) == fb, "automation: a fixture file without automation re-encodes byte identical");
+      }
+      printf("  automation: largest raw part of the fixtures %zu B, worst block %zu B, kRawMax %zu B\n", rawMax, wblock, open::kRawMax);
+      check(wblock + rawMax + 64 <= open::kRawMax, "automation codec: an old reader's raw budget holds the worst block, the names and room for field 16");
+      // version 2: kept raw, written back as it was, automation Off
+      std::vector<uint8_t> v2 = plain; const uint8_t blk2[] = { 0x82, 0x04, 0x06, 0x08, 0x02, 0x12, 0x02, 0x08, 0x01 };
+      v2.insert(v2.end(), blk2, blk2 + sizeof(blk2));
+      auto d3 = std::make_unique<PatchData>();
+      check(open::decodePatch(v2.data(), v2.size(), *d3) && !open::modAnyOn(d3->mod) && encode(*d3) == v2, "automation codec: a version 2 block is kept raw and written back byte identical");
+      // the raw version 2 block gives way when this image's automation is set
+      d3->mod[0] = a[0]; const auto v2own = encode(*d3); int n64 = 0; for (const auto& f : fields(v2own.data(), v2own.size())) n64 += f.f == open::kModField;
+      check(n64 == 1, "automation codec: own automation replaces a raw block of another version (one field 64)");
+      // malformed inside its length: dropped, the file still loads
+      for (const auto& bad64 : { std::vector<uint8_t>{ 0x82, 0x04, 0x05, 0x08, 0x01, 0x12, 0x05, 0x08 }, std::vector<uint8_t>{ 0x82, 0x04, 0x04, 0xFF, 0xFF, 0xFF, 0xFF } }) {
+        std::vector<uint8_t> g = plain; g.insert(g.end(), bad64.begin(), bad64.end());
+        auto dg = std::make_unique<PatchData>();
+        check(open::decodePatch(g.data(), g.size(), *dg) && !open::modAnyOn(dg->mod) && dg->nParams == d->nParams, "automation codec: a truncated or garbage block loads with automation Off");
+      }
+      // an image without automation (field 64 unknown) keeps it raw and writes it back identical
+      open::gModDecodeOff = true;
+      auto d4 = std::make_unique<PatchData>();
+      check(open::decodePatch(full.data(), full.size(), *d4) && !open::modAnyOn(d4->mod) && d4->extra.len >= block && encode(*d4) == full,
+            "automation codec: an older image keeps field 64 raw and re-encodes the file byte identical");
+      open::gModDecodeOff = false;
+    }
+
+    // block rate math
+    {
+      bool inRange = true;
+      for (int sh = 0; sh < open::kLfoShapes; sh++) for (int k = 0; k <= 1000; k++) { const float v = open::modShape(sh, k / 1000.0f * 0.9999f, 0.3f); inRange = inRange && v >= -1.0f && v <= 1.0f; }
+      check(inRange, "automation: every LFO shape stays in -1..1");
+      bool period = true;
+      for (float bpm : { 60.0f, 120.0f, 200.0f }) for (int sp : { 6, 10, 14, 20 }) {
+        ModSlot c; c.type = ModType::kLfo; c.shape = 1; c.speed = uint8_t(sp); c.dest = 0; c.amount = 100;
+        open::ModState st; open::modReset(st, 0); int b = 1;
+        for (; b < 100000; b++) { const float before = st.phase; open::modStep(c, st, bpm); if (st.phase < before) break; }
+        const float want = 15000.0f / bpm * open::kModRate[sp] / open::kModBlockMs;
+        period = period && std::fabs(float(b) - want) <= 1.0f;
+        if (std::fabs(float(b) - want) > 1.0f) printf("  LFO period at %.0f BPM speed %d: %d blocks, want %.2f\n", bpm, sp, b, want);
+      }
+      check(period, "automation: LFO period in blocks = 15000 / bpm * rate / 2.9013 ms within one block (60, 120, 200 BPM)");
+      ModSlot rc; rc.type = ModType::kLfo; rc.shape = 4; rc.speed = 28; rc.dest = 0; rc.amount = 100;
+      open::ModState r1, r2; open::modReset(r1, 2); open::modReset(r2, 2); bool rep = true; float prevOut = 0; int changes = 0;
+      for (int b = 0; b < 400; b++) { open::modStep(rc, r1, 120); open::modStep(rc, r2, 120); rep = rep && r1.out == r2.out; changes += b && r1.out != prevOut; prevOut = r1.out; }
+      check(rep && changes > 50, "automation: Random is repeatable after a reset and steps at every wrap");
+      // envelope
+      ModSlot e; e.type = ModType::kEnv; e.dest = 0; e.amount = 100; e.attack = 100; e.decay = 100; e.sustain = 50; e.release = 100;
+      open::ModState es; open::modReset(es, 0); open::modSync(e, es); open::modNoteOn(e, es, true); int toTop = 1;
+      for (; toTop < 1000; toTop++) { open::modStep(e, es, 120); if (es.level >= 1.0f) break; }
+      check(std::abs(toTop - 35) <= 1, "automation: a 100 ms attack reaches 1 in 35 blocks (+-1)");
+      for (int b = 0; b < 200; b++) open::modStep(e, es, 120);
+      check(es.stage == open::EnvStage::kSustain && std::fabs(es.out - 0.5f) < 1e-6f, "automation: decay ends on the sustain level and holds");
+      open::modGateOff(e, es); int toZero = 1;
+      for (; toZero < 1000; toZero++) { open::modStep(e, es, 120); if (es.level <= 0.0f) break; }
+      check(std::abs(toZero - 35) <= 1 && es.stage == open::EnvStage::kIdle, "automation: release from the sustain level takes the Release time");
+      open::modNoteOn(e, es, true); for (int b = 0; b < 10; b++) open::modStep(e, es, 120);
+      const float midLevel = es.level; open::modGateOff(e, es); open::modStep(e, es, 120);
+      int relBlocks = 1; for (; relBlocks < 1000 && es.level > 0.0f; relBlocks++) open::modStep(e, es, 120);
+      check(midLevel > 0.2f && midLevel < 0.4f && std::abs(relBlocks - 35) <= 1, "automation: release from a level below the peak also takes the Release time");
+      open::modNoteOn(e, es, true); for (int b = 0; b < 40; b++) open::modStep(e, es, 120); open::modGateOff(e, es);
+      for (int b = 0; b < 10; b++) open::modStep(e, es, 120);
+      const float relLevel = es.level; open::modNoteOn(e, es, false); open::modStep(e, es, 120);
+      check(relLevel > 0.1f && es.level > relLevel && es.level < relLevel + 0.05f && es.stage == open::EnvStage::kAttack, "automation: a retrigger restarts the attack from the current level");
+      ModSlot z = e; z.attack = 0; z.decay = 0; z.release = 0;
+      open::ModState zs; open::modReset(zs, 0); open::modSync(z, zs); open::modNoteOn(z, zs, true);
+      open::modStep(z, zs, 120); const bool a0 = zs.level == 1.0f; open::modStep(z, zs, 120); const bool d0 = zs.level == 0.5f;
+      open::modGateOff(z, zs); open::modStep(z, zs, 120);
+      check(a0 && d0 && zs.level == 0.0f, "automation: 0 ms attack, decay and release are one block each");
+      bool law = open::modStepToTime(0) == 0 && open::modStepToTime(100) == 1000 && open::modStepToTime(190) == 10000 && open::modTimeToStep(10000) == 190;
+      for (int sp = 0; sp <= open::kModTimeSteps; sp++) law = law && open::modTimeToStep(open::modStepToTime(sp)) == sp;
+      check(law, "automation: the 190 step time law round trips 0..10000 ms");
+    }
+
+    // identity: every eligible param of every engine round trips by index, enums, switches and unused slots are never listed
+    {
+      struct EK { const char* name; InstrumentTypeId id; } eks[] = {
+#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, ...) {#NAME, TYPE_ID},
+#include "engine_list.h"
+#undef SYNTH_ENGINE
+      };
+      // the wave group of each engine, pinned (a change to a param table or to isWaveParam shows up here)
+      const std::map<std::string, int> kWavePin = { {"ACD", 3}, {"FAT", 1}, {"VAP", 4}, {"WTFM", 2}, {"PERC", 12}, {"CHIP", 3} };
+      bool byIndex = true, never = true;
+      for (const auto& k : eks) {
+        const open::EngineDef* def = open::engineDefForType(int(k.id)); if (!def) continue;
+        int16_t pick[open::kModPickMax]; const int n = open::modPicker(def, pick);
+        std::string wave; int nWave = 0;
+        while (nWave < n && pick[nWave] < open::kModPickMacro) { wave += wave.empty() ? "" : ", "; wave += def->params[pick[nWave]].name; nWave++; }
+        int eligible = 0;
+        for (int i = 0; i < def->paramCount; i++) {
+          const auto& pd = def->params[i]; const bool el = open::modEligible(pd); eligible += el;
+          bool listed = false; for (int j = 0; j < n; j++) listed = listed || pick[j] == i;
+          never = never && listed == el && (!el || (pd.fmt != open::Fmt::kEnum && pd.fmt != open::Fmt::kOnOff && pd.min != pd.max));
+          if (el) { ModSlot s; s.type = ModType::kLfo; open::modSetDest(*def, s, i); s.dest = -1; byIndex = byIndex && open::modResolve(def, s) == i; }
+        }
+        printf("  automation %-5s eligible %2d of %2d, wave group %d: %s\n", k.name, eligible, def->paramCount, nWave, wave.c_str());
+        never = never && n == eligible + open::kModMacros;
+        for (int m = 0; m < open::kModMacros; m++) never = never && pick[nWave + m] == open::kModPickMacro + m;
+        const int pinned = kWavePin.count(k.name) ? kWavePin.at(k.name) : -1;
+        if (pinned >= 0 && pinned != nWave) { printf("  %s: wave group %d, pinned %d\n", k.name, nWave, pinned); never = false; }
+      }
+      check(byIndex, "automation identity: every eligible param of every engine resolves by its index");
+      check(never, "automation identity: enums, on/off and unused (min == max) params are never listed, macros after the wave group (pinned counts)");
+      // a table a plugin update reordered: the slot follows the param by name
+      if (leadDef && leadDef->paramCount > 9) {
+        std::vector<open::ParamDef> swapped(leadDef->params, leadDef->params + leadDef->paramCount);
+        int target = -1; for (int i = 0; i < leadDef->paramCount; i++) if (open::modEligible(leadDef->params[i])) { target = i; break; }
+        int other = leadDef->paramCount - 1; while (other > target && !open::modEligible(leadDef->params[other])) other--;
+        std::swap(swapped[target], swapped[other]);
+        open::EngineDef re = *leadDef; re.params = swapped.data();
+        ModSlot s; s.type = ModType::kLfo; open::modSetDest(*leadDef, s, target);
+        check(target >= 0 && other > target && open::modResolve(&re, s) == other, "automation identity: a reordered table resolves by name");
+      }
+#ifdef SYNTH_ENGINE_WTFM
+      {
+        const open::EngineDef& w = open::kWtfmDef; int at[3] = { -1, -1, -1 }, na = 0;
+        for (int i = 0; i < w.paramCount && na < 3; i++) if (std::strcmp(w.params[i].name, "Attack") == 0) at[na++] = i;
+        bool nthOk = na == 3;
+        for (int k = 0; k < na; k++) { ModSlot s; s.type = ModType::kEnv; open::modSetDest(w, s, at[k]); nthOk = nthOk && s.nth == k; s.index = 0; nthOk = nthOk && open::modResolve(&w, s) == at[k]; }
+        check(nthOk, "automation identity: WTFM's three Attack params resolve by occurrence (nth 0, 1, 2)");
+      }
+#endif
+      ModSlot ph; ph.type = ModType::kLfo; ph.kind = ModKind::kParam; ph.index = 3; std::strcpy(ph.name, "Cutoff");
+      open::EngineDef place = {}; place.name = "X";
+      check(open::modResolve(&place, ph) == -1 && open::modResolve(nullptr, ph) == -1, "automation identity: a placeholder engine (no params) resolves nothing");
+    }
+
+#ifdef SYNTH_ENGINE_ACD
+    if (kLead == int(InstrumentTypeId::kSimpleAnalogSynth)) {
+      auto s7 = Synth::createSynth([](size_t){return nullptr;});
+      auto fs7 = std::make_unique<MemFS>(); MemFS* m7 = fs7.get();
+      s7->addFileSystem(Synth::FileSystemId::kWorkspace, std::move(fs7));
+      auto ws7 = s7->createPatchStore(Synth::FileSystemId::kWorkspace, false);
+      std::shared_ptr<Patch> p7(ws7->createPatch(kLead));
+      auto& op = static_cast<open::OpenPatch&>(*p7);
+      const open::EngineDef& acd = *op.getDef();
+      int cutoff = -1; for (int i = 0; i < acd.paramCount; i++) if (std::strcmp(acd.params[i].name, "Cutoff") == 0) cutoff = i;
+      Src src7; auto i7 = s7->createInstrument(0); i7->assignPatch(p7); i7->connect(src7); i7->setVoiceCount(4); i7->setMidiChannel(0);
+      std::shared_ptr<Instrument> a7[1] = { i7 };
+      s7->setup(std::span<std::shared_ptr<Instrument>>(a7,1), {}, nullptr, []{ return tiny::optional<float>(120.0f); });
+      auto blk7 = [&]() { s7->renderAudioBuffer({AudioBufferRef(L),AudioBufferRef(R)}, std::span<AudioBufferRef>(aux), 0); return peakOf(L); };
+      auto endOf = [&](int i) { return open::testParams(0)->end[i]; };
+      auto toIdle = [&]() { for (int b = 0; b < 3000 && !open::partIdle(0); b++) blk7(); };
+      const float rng = float(acd.params[cutoff].max - acd.params[cutoff].min);
+      // LFO on Cutoff, base in the middle so the sweep never clamps (a clamped value does not change, so serial would not move)
+      p7->setParamValue(cutoff, 10000.0f, Patch::ParamChangeSource::kKnob);
+      float raw0[open::kMaxParams]; op.getValuesRaw(raw0);
+      float base = *p7->getParamValue(cutoff);
+      ModSlot lfo; lfo.type = ModType::kLfo; lfo.shape = 2; lfo.speed = 14; lfo.amount = 40; open::modSetDest(acd, lfo, cutoff);
+      op.setModSlot(0, lfo);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100);
+      float lo = 1e9f, hi = -1e9f; uint32_t ser = 0; int bumps = 0; float pk7 = 0;
+      for (int b = 0; b < 100; b++) { pk7 = std::max(pk7, blk7()); const float v = endOf(cutoff); lo = std::min(lo, v); hi = std::max(hi, v);
+        bumps += b && open::testParams(0)->serial != ser; ser = open::testParams(0)->serial; }
+      float raw1[open::kMaxParams]; op.getValuesRaw(raw1);
+      printf("  automation LFO on ACD Cutoff: end %.0f .. %.0f Hz over 100 blocks (base %.0f), serial bumps %d of 99\n", lo, hi, base, bumps);
+      check(pk7 > 1e-3f && hi - lo > 0.4f * rng && bumps == 99, "automation hook: an LFO on Cutoff moves params.end every block, serial bumps every block");
+      check(*p7->getParamValue(cutoff) == base && std::memcmp(raw0, raw1, sizeof(float) * acd.paramCount) == 0 && *p7->getParamFinalValue(cutoff) == base,
+            "automation hook: getParamValue, getValuesRaw and the final value stay unmodulated");
+      // off: no more bumps
+      const ModSlot off; op.setModSlot(0, off); blk7(); ser = open::testParams(0)->serial; int offBumps = 0;
+      for (int b = 0; b < 50; b++) { blk7(); offBumps += open::testParams(0)->serial != ser; ser = open::testParams(0)->serial; }
+      check(offBumps == 0 && endOf(cutoff) == base, "automation hook: every slot Off, the values are the patch's and serial stays");
+      p7->setParamValue(cutoff, acd.params[cutoff].def, Patch::ParamChangeSource::kKnob); base = *p7->getParamValue(cutoff);
+      // macro destination: Macro 1 (Cutoff, 0.4) at 0, a square on it moves cutoff by 0.4 of the range in the high half
+      ModSlot mac; mac.type = ModType::kLfo; mac.shape = 3; mac.speed = 14; mac.amount = 100; open::modSetDest(acd, mac, open::kModPickMacro + 0);
+      op.setModSlot(0, mac); float mlo = 1e9f, mhi = -1e9f;
+      for (int b = 0; b < 100; b++) { blk7(); mlo = std::min(mlo, endOf(cutoff)); mhi = std::max(mhi, endOf(cutoff)); }
+      printf("  automation square on Macro 1: cutoff %.0f .. %.0f Hz\n", mlo, mhi);
+      check(mac.kind == ModKind::kMacro && mac.dest == 0 && std::fabs(mlo - base) < 1e-3f && std::fabs(mhi - std::min(base + 0.4f * rng, float(acd.params[cutoff].max))) < 1.0f,
+            "automation hook: a macro destination moves the macro's targets (square 0 .. 1 on Macro 1)");
+      // macro plus slot on one param: summed, clamped once
+      ModSlot env; env.type = ModType::kEnv; env.attack = 0; env.decay = 0; env.sustain = 100; env.amount = 30; open::modSetDest(acd, env, cutoff);
+      op.setModSlot(0, env); op.setMacroCC(0, 64);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 60, 100); for (int b = 0; b < 4; b++) blk7();
+      const float wantSum = std::clamp(base + 0.4f * (64.0f / 127.0f) * rng + 0.3f * rng, float(acd.params[cutoff].min), float(acd.params[cutoff].max));
+      const float gotSum = endOf(cutoff);
+      ModSlot big = env; big.amount = 100; op.setModSlot(0, big); for (int b = 0; b < 3; b++) blk7();
+      printf("  automation macro + slot on Cutoff: %.1f Hz (want %.1f), at 100 %% %.1f Hz\n", gotSum, wantSum, endOf(cutoff));
+      check(std::fabs(gotSum - wantSum) < 1.0f && endOf(cutoff) == float(acd.params[cutoff].max), "automation hook: macro and slot on one param add up, clamped once at the top");
+      op.setMacroCC(0, 0); op.setModSlot(0, off);
+      src7.send(MidiEvent::Type::kStop, 0, 0, 0); toIdle();
+
+      // gates: LFO phase resets only after silence, the envelope on every note, release with the last gate
+      ModSlot saw; saw.type = ModType::kLfo; saw.shape = 1; saw.speed = 6; saw.amount = 50; open::modSetDest(acd, saw, cutoff);
+      op.setModSlot(0, saw);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100);
+      const float atStart = open::testModOut(0, 0);
+      for (int b = 0; b < 20; b++) blk7();
+      const float mid = open::testModOut(0, 0);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 60, 100);
+      const float afterOverlap = open::testModOut(0, 0);
+      src7.send(MidiEvent::Type::kNoteOff, 0, 57, 0); src7.send(MidiEvent::Type::kNoteOff, 0, 60, 0);
+      toIdle();
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100);
+      const float afterIdle = open::testModOut(0, 0);
+      printf("  automation LFO gate: start %.3f, after 20 blocks %.3f, overlapping note %.3f, after silence %.3f\n", atStart, mid, afterOverlap, afterIdle);
+      check(atStart == -0.5f && mid > atStart && afterOverlap == mid && afterIdle == -0.5f, "automation gate: LFO phase resets on a note after silence only");
+      src7.send(MidiEvent::Type::kNoteOff, 0, 57, 0); toIdle();
+      ModSlot ev; ev.type = ModType::kEnv; ev.attack = 100; ev.decay = 100; ev.sustain = 50; ev.release = 200; ev.amount = 100; open::modSetDest(acd, ev, cutoff);
+      op.setModSlot(1, ev); op.setModSlot(0, off);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 200; b++) blk7();
+      const float sus = open::testModOut(0, 1);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 60, 100); blk7(); blk7();
+      const float retrig = open::testModOut(0, 1);
+      for (int b = 0; b < 200; b++) blk7();
+      src7.send(MidiEvent::Type::kNoteOff, 0, 57, 0); for (int b = 0; b < 5; b++) blk7();
+      const float oneHeld = open::testModOut(0, 1);
+      src7.send(MidiEvent::Type::kNoteOff, 0, 60, 0); for (int b = 0; b < 5; b++) blk7();
+      const float released = open::testModOut(0, 1);
+      printf("  automation envelope gate: sustain %.3f, retrigger %.3f, one note held %.3f, released %.3f\n", sus, retrig, oneHeld, released);
+      check(sus == 0.5f && retrig > sus && oneHeld == 0.5f && released < 0.5f, "automation gate: envelope restarts on every note, release when the last gate is released");
+      toIdle();
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 200; b++) blk7();
+      src7.send(MidiEvent::Type::kStop, 0, 0, 0); for (int b = 0; b < 5; b++) blk7();
+      const float stopped = open::testModOut(0, 1);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 200; b++) blk7();
+      src7.send(MidiEvent::Type::kControlChange, 0, MidiEvent::Data::ControlChange::kAllNotesOffCC, 0); for (int b = 0; b < 5; b++) blk7();
+      check(stopped < 0.5f && open::testModOut(0, 1) < 0.5f, "automation gate: Stop and All Notes Off (releaseAll) release the envelope");
+      toIdle();
+
+      // Patch FX: the FX copies another slot's values, the block stays and keeps modulating. A slot select (importData) replaces it.
+      {
+        m7->files.clear();
+        op.setModSlot(1, off); op.setModSlot(0, lfo);
+        ws7->savePatch("0", *p7);
+        auto other = ws7->createPatch(kLead); other->setParamValue(cutoff, float(acd.params[cutoff].min), Patch::ParamChangeSource::kKnob);
+        ModSlot oe = ev; oe.amount = -20; static_cast<open::OpenPatch&>(*other).setModSlot(2, oe);
+        ws7->savePatch("0-1", *other);
+        open::patchBankSetLive(0, p7.get()); open::patchBankToSlotZero(0); open::patchBankPreload(0, *p7, *ws7);
+        src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 10; b++) blk7();
+        const bool fxOn = open::patchBankApply(0, 1);
+        float flo = 1e9f, fhi = -1e9f; for (int b = 0; b < 100; b++) { blk7(); flo = std::min(flo, endOf(cutoff)); fhi = std::max(fhi, endOf(cutoff)); }
+        check(fxOn && sameSlot(op.modSlot(0), lfo) && op.modSlot(2).type == ModType::kOff && fhi - flo > 0.3f * rng && flo < base,
+              "automation Patch FX: another slot's values play, the open slot's automation keeps running over them");
+        open::patchBankApply(0, 0);
+        const uint8_t serBefore = op.modSerial();
+        const bool selOk = open::patchBankSelect(0, 1, *p7, *ws7) == open::SlotSelect::kLoaded;
+        blk7();
+        check(selOk && op.modSerial() != serBefore && op.modSlot(0).type == ModType::kOff && op.modSlot(2).type == ModType::kEnv && op.modSlot(2).amount == -20 &&
+                open::testModOut(0, 0) == 0.0f, "automation Patch FX: a slot select brings that slot file's automation and restarts the modulators");
+        open::patchBankSelect(0, 0, *p7, *ws7);
+        check(sameSlot(op.modSlot(0), lfo), "automation Patch FX: back on slot 0 its automation is there again");
+        src7.send(MidiEvent::Type::kStop, 0, 0, 0); toIdle();
+        open::patchBankSetLive(0, nullptr);
+      }
+
+      // unresolved destination: kept, drives nothing, written back byte identical
+      {
+        auto d = initData(kLead); ModSlot u; u.type = ModType::kLfo; u.kind = ModKind::kParam; u.index = 3; std::strcpy(u.name, "Gone Param"); u.amount = 80; u.speed = 20;
+        d->mod[1] = u; const auto bytes = encode(*d);
+        auto dd = std::make_unique<PatchData>(); open::decodePatch(bytes.data(), bytes.size(), *dd);
+        op.importData(*dd);
+        src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); blk7(); const uint32_t s0 = open::testParams(0)->serial; for (int b = 0; b < 30; b++) blk7();
+        auto out = std::make_unique<PatchData>(); op.exportData(*out);
+        check(op.modSlot(1).dest == -1 && op.modSlot(1).type == ModType::kLfo && open::testParams(0)->serial == s0 && encode(*out) == bytes,
+              "automation identity: a missing name stays unresolved, modulates nothing and is written back byte identical");
+        src7.send(MidiEvent::Type::kStop, 0, 0, 0); toIdle();
+      }
+
+      // slot 0 backup of an engine change: the block comes back with the backup, a fresh patch is still initPatchData (no block)
+      {
+        m7->files.clear();
+        auto live = ws7->createPatch(kLead); static_cast<open::OpenPatch&>(*live).setModSlot(3, ev);
+        open::patchBankSetLive(0, live.get()); open::patchBankToSlotZero(0); open::patchBankPreload(0, *live, *ws7);
+        ws7->savePatch("0", *live);
+        const bool saved = open::patchBackupSave(0, *live, *ws7) == open::Backup::kSaved;
+        auto fresh = ws7->createPatch(kLead);
+        auto fd = std::make_unique<PatchData>(); static_cast<open::OpenPatch&>(*fresh).exportData(*fd);
+        auto idd = std::make_unique<PatchData>(); open::initPatchData(*leadDef, *idd);
+        const bool initSame = encode(*fd) == encode(*idd) && !open::modAnyOn(fd->mod);
+        ws7->savePatch("0", *fresh);
+        const bool restored = open::patchBackupRestore(0, *fresh, *ws7);
+        check(saved && initSame && restored && sameSlot(static_cast<open::OpenPatch&>(*fresh).modSlot(3), ev),
+              "automation backup: an untouched patch equals initPatchData, slot 0 with a block is backed up and restored with it");
+        open::patchBankSetLive(0, nullptr);
+      }
+    }
+#endif
+  }
   printf(bad ? "SMOKE TEST FAILED\n" : "voice pool, governor, patch files and pitch bend OK\n");
 #ifdef SMOKE_PLUGIN_ENGINE
   {
@@ -1734,6 +2072,14 @@ int main() {
           "library engine: listed before it is installed, no engine yet");
     auto pl = pst->createPatch(0x82);
     check(pl && pl->getMetadata().params.empty() && !open::patchStale(*pl), "library engine not attached: a patch without parameters, not stale");
+    {
+      // automation on a part whose plugin is not attached: the slot is kept as read (no params to resolve against) and written back
+      auto pdm = std::make_unique<open::PatchData>(); open::ModSlot u; u.type = open::ModType::kEnv; u.index = 12; std::strcpy(u.name, "Shape 1"); u.nth = 1; u.amount = -40;
+      pdm->mod[2] = u; auto& plo = static_cast<open::OpenPatch&>(*pl); plo.importData(*pdm);
+      auto pdo = std::make_unique<open::PatchData>(); plo.exportData(*pdo); const open::ModSlot& g = pdo->mod[2];
+      check(plo.modSlot(2).dest == -1 && g.type == u.type && g.index == u.index && g.nth == u.nth && g.amount == u.amount && std::strcmp(g.name, u.name) == 0,
+            "automation: a placeholder engine (plugin not attached) keeps the slot untouched");
+    }
     libDef = open::kAcdDef;   // what plug_synth.cpp attach() fills in
     libDef.name = "PHZ";
     libDef.typeId = 0x82;
