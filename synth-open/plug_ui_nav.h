@@ -11,6 +11,66 @@
 
 namespace plugnav
 {
+// Inserts page columns: Mixer, Insert 1, Insert 2, four parameters of the focused insert, Back
+constexpr int kMixerCol = 0;
+constexpr int kInsertCol0 = 1;   // insert k (0, 1) sits in column kInsertCol0 + k
+constexpr int kParamCol0 = 3;
+constexpr int kParamCols = 4;    // columns 3..6
+constexpr int kBackCol = 7;
+
+// The insert (0, 1) whose plugin list is column col, -1 for every other column
+constexpr int insertOfCol(int col)
+{
+    return col == kInsertCol0 || col == kInsertCol0 + 1 ? col - kInsertCol0 : -1;
+}
+
+constexpr int colOfInsert(int k)
+{
+    return kInsertCol0 + k;
+}
+
+// The value line of an insert column. 9 characters fit the 97 px column in the value font (as the master screen's
+// Saturation value field, plug_ui.cpp plugUiSatText); plug_ui.cpp also clips to the measured width.
+constexpr int kLabelChars = 9;
+enum class Shown
+{
+    kNone,
+    kLoading,
+    kName,       // running: the plugin's name
+    kBypassed,
+    kMissing,    // not on the card
+    kFailed,
+    kSafe,       // not loaded: safe mode (a crash marker or Shift at power on)
+    kOverCpu,    // tripped its CPU budget
+};
+
+// out (at least kLabelChars + 1 bytes): a status word, the name, or a short tag and as much of the name as fits ("Safe:BBD")
+inline void slotLabel(Shown st, const char* name, char* out)
+{
+    const char* tag = nullptr;
+    const char* word = nullptr;
+    switch (st)
+    {
+        case Shown::kNone: word = "None"; break;
+        case Shown::kLoading: word = "Loading"; break;
+        case Shown::kBypassed: word = "Bypassed"; break;
+        case Shown::kMissing: tag = "Miss:"; break;
+        case Shown::kFailed: tag = "Fail:"; break;
+        case Shown::kSafe: tag = "Safe:"; break;
+        case Shown::kOverCpu: tag = "CPU:"; break;
+        case Shown::kName: tag = ""; break;
+    }
+    int n = 0;
+    if (word)
+        for (; word[n] && n < kLabelChars; n++) out[n] = word[n];
+    else
+    {
+        for (; tag[n] && n < kLabelChars; n++) out[n] = tag[n];
+        for (int i = 0; name && name[i] && n < kLabelChars; i++) out[n++] = name[i];
+    }
+    out[n] = 0;
+}
+
 enum Arrow
 {
     kLeft = 0,

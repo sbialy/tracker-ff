@@ -199,6 +199,7 @@ void unload(int k)
 {
     Slot& s = s_slots[k];
     if (plugInsert()) plugInsert()->attach(k, nullptr, nullptr, 0);   // audio interrupt off inside: the node lets go first
+    plugUiSlotGone(k);   // and the Inserts page: its lists hold the plugin's enum names, the next load overwrites them
     for (uint8_t i = 0; i < s.nHeap; i++) free(s.heap[i]);
     s.nHeap = 0;
     s.arenaUsed = 0;

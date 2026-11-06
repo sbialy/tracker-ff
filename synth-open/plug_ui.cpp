@@ -8,10 +8,10 @@
 // ("Ins: Tape", "Tape+Dirt"). A built-in entry bypasses the inserts and keeps them (loaded, in the sidecar): Inserts again
 // brings both back. Plugins are picked on the Inserts page only.
 //
-// Inserts page (Shift + the Saturation button on the master screen): column 1 and 2 pick the plugin of insert 1 and 2 (the
-// encoder, Delete empties), column 3 is the mixer stage before the inserts (Hard Clip, Soft Clip, Soft Knee, Delete: Hard
-// Clip), columns 4 to 7 are the parameters of the focused insert, four at a time (press the insert's button again for the
-// next four), the last column goes back. The plugin columns, the mixer column and every enum parameter are the stock list
+// Inserts page (Shift + the Saturation button on the master screen): column 1 is the mixer stage before the inserts (Hard
+// Clip, Soft Clip, Soft Knee, Delete: Hard Clip), columns 2 and 3 pick the plugin of insert 1 and 2 (the encoder, Delete
+// empties), columns 4 to 7 are the parameters of the focused insert, four at a time (press the insert's button again for
+// the next four), the last column goes back (plug_ui_nav.h has the column numbers, 0 based). The plugin columns, the mixer column and every enum parameter are the stock list
 // control (the master screen's own cList controls at their columns, two more for columns 4 and 7), numeric parameters a bar.
 // Picking a plugin while a built-in Saturation entry is on switches the Saturation to Inserts.
 //
@@ -46,9 +46,11 @@ const uint16_t kPlaces[8][4] = {
     {(800 / 8) * 6 + 1, 31, 800 / 8 - 3, 391},
     {(800 / 8) * 7 + 1, 31, 800 / 8 - 3, 391},
 };
-constexpr int kMixerCol = 2;
-constexpr int kParamCol0 = 3;
-constexpr int kParamCols = 4;   // columns 3..6
+using plugnav::colOfInsert;
+using plugnav::insertOfCol;
+using plugnav::kMixerCol;
+using plugnav::kParamCol0;
+using plugnav::kParamCols;
 constexpr int kListLines = 14;  // rows of a 394 px list (27 px each), as the delay screen's sync rate list
 
 const char* s_sat[kSaturationTypeEnd + 1];
@@ -72,23 +74,34 @@ char s_satText[12];
 bool s_active;
 uint8_t s_place, s_focus, s_page;
 char s_val[8][20];
+char s_pname[8][plug::kNameLen];             // the parameter names shown: copies, a label keeps the pointer it is given
 char s_title[48];
 uint32_t s_lastDraw;
 plug::SlotState s_drawn[plug::kSlots];
 uint32_t s_drawnCount[plug::kSlots];
 
-const char* stateText(int k)
+plugnav::Shown shownOf(int k)
 {
+    using plugnav::Shown;
     switch (plug::slotState(k))
     {
-        case plug::SlotState::kEmpty: return "None";
-        case plug::SlotState::kPending: return "Loading";
-        case plug::SlotState::kMissing: return "Missing";
-        case plug::SlotState::kFailed: return "Failed";
-        case plug::SlotState::kSafe: return "Safe mode";
-        case plug::SlotState::kTripped: return "Over CPU";
-        default: return plug::slotName(k);
+        case plug::SlotState::kEmpty: return Shown::kNone;
+        case plug::SlotState::kPending: return Shown::kLoading;
+        case plug::SlotState::kMissing: return Shown::kMissing;
+        case plug::SlotState::kFailed: return Shown::kFailed;
+        case plug::SlotState::kSafe: return Shown::kSafe;
+        case plug::SlotState::kTripped: return Shown::kOverCpu;
+        case plug::SlotState::kBypassed: return Shown::kBypassed;
+        default: return Shown::kName;
     }
+}
+
+// text cut to what the value font draws inside a column (the 9 characters of slotLabel fit, a wide name may not)
+void clipToColumn(char* text)
+{
+    const uint32_t style = controlStyleFont2;
+    const int len = getMaxTextLengthThatFitSpecificWidth(&fonts[FONT_INDEX_FROM_STYLE], text, 800 / 8 - 7);
+    if (len >= 0 && len < int(strlen(text))) text[len] = 0;
 }
 
 void markChanged()
@@ -186,23 +199,18 @@ void showFrame()
 
 void showSlot(int k)
 {
+    const int col = colOfInsert(k);
     const int n = plug::indexCount();
     s_pick[0] = "None";
     for (int i = 0; i < n; i++) s_pick[i + 1] = plug::indexAt(i)->name;
-    // the assigned plugin highlighted, None when empty, no highlight when it is not on the card (the label says Missing)
+    // the assigned plugin highlighted, None when empty, no highlight when it is not on the card (the label says Miss:)
     const int ix = plug::slotIndex(k);
-    showList(k, s_pick, n + 1, ix >= 0 ? ix + 1 : (plug::slotName(k)[0] ? -1 : 0));
-    if (plug::slotState(k) == plug::SlotState::kRunning)
-        snprintf(s_val[k], sizeof(s_val[k]), "%s", plug::slotName(k));
-    else if (plug::slotState(k) == plug::SlotState::kBypassed)
-        snprintf(s_val[k], sizeof(s_val[k]), "Bypassed");
-    else if (plug::slotName(k)[0] && plug::slotState(k) != plug::SlotState::kPending)
-        snprintf(s_val[k], sizeof(s_val[k]), "%.8s %s", stateText(k), plug::slotName(k));
-    else
-        snprintf(s_val[k], sizeof(s_val[k]), "%s", stateText(k));
-    display.setControlText(MP->label[k], k == 0 ? (s_focus == 0 ? "*Insert 1" : "Insert 1") : (s_focus == 1 ? "*Insert 2" : "Insert 2"));
-    display.setControlText2(MP->label[k], s_val[k]);
-    display.refreshControl(MP->label[k]);
+    showList(col, s_pick, n + 1, ix >= 0 ? ix + 1 : (plug::slotName(k)[0] ? -1 : 0));
+    plugnav::slotLabel(shownOf(k), plug::slotName(k), s_val[col]);   // "Safe:BBD", at most 9 characters
+    clipToColumn(s_val[col]);
+    display.setControlText(MP->label[col], k == 0 ? (s_focus == 0 ? "*Insert 1" : "Insert 1") : (s_focus == 1 ? "*Insert 2" : "Insert 2"));
+    display.setControlText2(MP->label[col], s_val[col]);
+    display.refreshControl(MP->label[col]);
 }
 
 int mixerPos()
@@ -247,7 +255,7 @@ void showParam(int col)
         if (pp->enum_count)
         {   // every entry in the stock list control, the current one highlighted
             const int e = int(v + 0.5f);
-            snprintf(s_val[col], sizeof(s_val[col]), "%s", e >= 0 && e < pp->enum_count ? pp->enum_names[e] : "?");
+            snprintf(s_val[col], sizeof(s_val[col]), "%s", e >= 0 && e < int(pp->enum_count) ? pp->enum_names[e] : "?");
             display.setControlHide(MP->barControl[col]);
             showList(col, pp->enum_names, pp->enum_count, e);
         }
@@ -260,7 +268,10 @@ void showParam(int col)
             display.setControlValue(MP->barControl[col], span > 0.0f ? int((v - pp->min) * 100.0f / span + 0.5f) : 0);
             display.setControlShow(MP->barControl[col]);
         }
-        display.setControlText(MP->label[col], pp->name);
+        snprintf(s_pname[col], sizeof(s_pname[col]), "%s", pp->name);   // never a pointer into the plugin image
+        clipToColumn(s_pname[col]);
+        clipToColumn(s_val[col]);
+        display.setControlText(MP->label[col], s_pname[col]);
         display.setControlText2(MP->label[col], s_val[col]);
     }
     display.refreshControl(MP->barControl[col]);
@@ -302,7 +313,7 @@ void showAll()
 void clampPlace()
 {
     const int n = int(plug::paramCount(s_focus)) - s_page * kParamCols;
-    const int last = kMixerCol + (n < 0 ? 0 : (n > kParamCols ? kParamCols : n));
+    const int last = kParamCol0 - 1 + (n < 0 ? 0 : (n > kParamCols ? kParamCols : n));
     if (s_place > last && s_place < 7) s_place = uint8_t(last);
 }
 
@@ -354,7 +365,7 @@ const plug_param* paramAt(int col)
 // Column col is a stock list: both plugin columns, Mixer and every enum parameter
 bool isList(int col)
 {
-    if (col < 2 || col == kMixerCol) return true;
+    if (insertOfCol(col) >= 0 || col == kMixerCol) return true;
     const plug_param* pp = paramAt(col);
     return pp && pp->enum_count;
 }
@@ -362,8 +373,8 @@ bool isList(int col)
 // Column col by delta (lists: entries, +1 is the next one below)
 void change(int col, int delta)
 {
-    if (col < 2)
-        changePlugin(col, delta > 0 ? 1 : -1);
+    if (insertOfCol(col) >= 0)
+        changePlugin(insertOfCol(col), delta > 0 ? 1 : -1);
     else if (col == kMixerCol)
         changeMixer(delta > 0 ? 1 : -1);
     else if (col < 7)
@@ -388,13 +399,14 @@ void stepNext(int col)
 
 void pickPlace(uint8_t place)
 {
-    if (place < 2)
+    const int k = insertOfCol(place);
+    if (k >= 0)
     {   // second press on the focused insert: the next four parameters (the plugin list moves with the encoder or arrows)
-        if (s_place == place && s_focus == place && plug::paramCount(place) > kParamCols)
+        if (s_place == place && s_focus == k && plug::paramCount(k) > kParamCols)
             s_page = uint8_t((s_page + 1) % pageCount());
-        else if (s_focus != place)
+        else if (s_focus != k)
             s_page = 0;
-        s_focus = place;
+        s_focus = uint8_t(k);
     }
     else if (s_place == place && isList(place))
     {   // second press on the selected Mixer or enum column: the next entry, as the master screen's Saturation button
@@ -421,6 +433,13 @@ void btnBack()
     MP->activateLabelsBorder();
 }
 }   // namespace
+
+void plugUiSlotGone(int k)
+{   // plug_host.cpp unload(): before the slot's memory is reused (a new plugin copied in, the FlexNVM sector erased), no
+    // control may still point into it. Lists keep the char* array they are bound to (labels get copies, showParam).
+    if (!s_active || s_focus != k) return;
+    for (int c = kParamCol0; c < kParamCol0 + kParamCols; c++) blankList(c);
+}
 
 bool plugUiShiftHeld()
 {
@@ -536,7 +555,7 @@ void plugUiOpen()
 {
     plug::rescan();   // files copied since boot show up
     s_active = true;
-    s_place = 0;
+    s_place = uint8_t(colOfInsert(0));
     s_page = 0;
     s_focus = 0;
     MP->ip->clearButtonsRange(interfaceButton0, interfaceButton7);
@@ -620,9 +639,9 @@ void plugUiArrow(int dir)   // 0 left, 1 right, 2 up, 3 down
     s_place = p;
     clampPlace();
     if (dir == 1 && s_place < p) s_place = 7;   // past the last parameter: Back
-    if (s_place < 2 && s_focus != s_place)
+    if (insertOfCol(s_place) >= 0 && s_focus != insertOfCol(s_place))
     {
-        s_focus = s_place;
+        s_focus = uint8_t(insertOfCol(s_place));
         s_page = 0;
         showAll();
     }
@@ -631,11 +650,12 @@ void plugUiArrow(int dir)   // 0 left, 1 right, 2 up, 3 down
 
 void plugUiDelete()
 {
-    if (s_place < 2)
+    const int k = insertOfCol(s_place);
+    if (k >= 0)
     {
-        if (plug::slotName(s_place)[0])
+        if (plug::slotName(k)[0])
         {
-            plug::assign(s_place, -1);
+            plug::assign(k, -1);
             markChanged();
             showAll();
         }

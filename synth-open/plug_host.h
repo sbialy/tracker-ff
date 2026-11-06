@@ -123,6 +123,7 @@ void bench(FileSystem* fs);  // plug_bench.cpp
 
 // plug_ui.cpp
 bool plugUiShiftHeld();
+void plugUiSlotGone(int slot);
 
 #include "AudioStream.h"
 
