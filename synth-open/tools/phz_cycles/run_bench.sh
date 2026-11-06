@@ -1,8 +1,8 @@
 #!/bin/sh
 # PHZ cost on a Cortex-M4F without hardware: builds bench_arm.cpp + PHZ with the firmware's compiler and flags, runs it
 # in a Unicorn (QEMU) emulator and turns the executed instructions into an estimated cycle count per 128 frame block.
-#   synth-open/tools/phz_cycles/run_bench.sh [OPT] [ENGINE]   OPT: fw (default: the firmware's flags per engine, -Os, FAT -O2, PHZ
-#   -O2 -ffp-contract=off), or one flag set for the engine, e.g. -Os / -O2
+#   synth-open/tools/phz_cycles/run_bench.sh [OPT] [ENGINE]   OPT: fw (default: the firmware's flags per engine, -O2, FM4 and
+#   B-Type -O3, PHZ and PLK -O2 -ffp-contract=off), or one flag set for the engine, e.g. -Os / -O2
 #   ENGINE: PHZ (default, phz_cycles scenarios, one voice) or any engine of synth-open/engines.mk (bench_engine.cpp: 4 voices as the
 #   shim renders them, BENCH_VOICES=n for another count; scenarios default patch, all parameters max / mid / min, CHIP per model),
 #   PHZG is PHZ through that generic bench,
@@ -18,7 +18,7 @@ OUT=${KEEP_DIR:-${TMPDIR:-/tmp}/phz_cycles_$$}
 mkdir -p "$OUT"
 ENGINE=${2:-PHZ}
 if [ "$OPT" = fw ]; then
-  case $ENGINE in FAT) OPT=-O2 ;; PHZ|PHZG) OPT="-O2 -ffp-contract=off" ;; *) OPT=-Os ;; esac
+  case $ENGINE in FM4|BTYPE) OPT=-O3 ;; PHZ|PHZG|PLK) OPT="-O2 -ffp-contract=off" ;; *) OPT=-O2 ;; esac
 fi
 FL="-std=gnu++20 $OPT -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -mfp16-format=ieee -ffunction-sections -fdata-sections -ffreestanding -fno-builtin -fno-rtti -fno-exceptions -fno-threadsafe-statics -DNDEBUG -DFEATURE_SYNTH -DFEATURE_SYNTH_OPEN -DSYNTH_ENGINE_$ENGINE $EXTRA_FLAGS"
 INC="-I$ROOT/synth/include -I$ROOT/util/include -I$ROOT/util/3rdparty -I$ROOT/synth-open -I$ROOT/synth-open/ot -I$ROOT/core/synth -I$ROOT/core/config"
