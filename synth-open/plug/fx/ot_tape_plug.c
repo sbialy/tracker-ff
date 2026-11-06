@@ -102,13 +102,14 @@ static void process(void* p, float* const* ch, uint32_t channels, uint32_t frame
     float* const R = ch[1];
     uint32_t w = s->w;
     float phW = s->phW, phF = s->phF, lp0 = s->lp[0], lp1 = s->lp[1];
-    const float drive = s->drive, makeup = s->makeup, mix = s->mix, dW = s->dW, dF = s->dF;
+    // every coefficient in a local: the float stores to L and R may alias Inst, read through s GCC reloads them per sample
+    const float drive = s->drive, makeup = s->makeup, mix = s->mix, dW = s->dW, dF = s->dF, incW = s->incW, incF = s->incF;
     for (uint32_t i = 0; i < frames; i++)
     {
         const float d = BASE + dW * sin_cyc(phW) + dF * sin_cyc(phF);
-        phW += s->incW;
+        phW += incW;
         if (phW >= 1.0f) phW -= 1.0f;
-        phF += s->incF;
+        phF += incF;
         if (phF >= 1.0f) phF -= 1.0f;
         float rp = (float)w - d;
         if (rp < 0.0f) rp += (float)LINE;
