@@ -1,4 +1,4 @@
-# Tracker FF plugin SDK (`.plg`, ABI 1.0)
+# Tracker FF plugin SDK (`.plg`, ABI 1.1)
 
 Runtime plugins for tracker-ff on the original Polyend Tracker (MK66, Cortex-M4F). Phase 2 of the design
 (`~/prj/poly/ref/plugin-architecture.md`) hosts **master inserts**: two slots after the tracks and sends mixer (and the

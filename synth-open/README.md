@@ -6,11 +6,11 @@ The shim is built only with `make original SYNTH_OPEN=1`. It replaces the closed
 
 What 1.1.0 has:
 
-- 16 synth engines in one image, chosen at build time (see "Engine picker"). ACD, FAT, VAP and WTFM are the Polyend engines as OpenTracker re-implements them. PERC is OpenTracker's drum engine, CHIP is Polyend's own open Chiptune voice, PHZ is our own phase distortion engine written from the public manual, and JU6, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, B-Type and Arc-Type are OpenTracker 3.x modules. The Hand-Type module is in the tree and can be picked by name (`HANDTYPE`), the release image leaves it out. MIDI registers by name only and Shaping has no engine.
+- Synth engines chosen at build time (see "Engine picker") plus synth plugins at run time. The PLUGS configuration has six built in (ACD, FAT, VAP, WTFM, PERC, CHIP) and a library of twelve plugins in `/Plugins/Synth/` (JU6, PHZ, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type, Arc-Type, PLK). ACD, FAT, VAP and WTFM are the Polyend engines as OpenTracker re-implements them. PERC is OpenTracker's drum engine, CHIP is Polyend's own open Chiptune voice, PHZ (phase distortion) and PLK (Karplus-Strong) are our own, the rest are OpenTracker 3.x modules. Other built-in sets still build, for example the 16 engine 1.1.0 image. MIDI registers by name only and Shaping has no engine.
 - Up to 4 voices per instrument, a shared voice pool and OpenTracker's governor.
 - `.patch` files that load and save from the SD card, a bank of 16 patch slots per synth part with the Patch step FX (see "Patch files"), and pitch bend.
 - A live Dirt master insert with five presets in the master Saturation entry (see "Dirt master insert").
-- A flash trim (`TRIM=1`) that makes all 16 engines fit in the original's flash.
+- A flash trim (`TRIM=1`). It made the 16 built-in engines of 1.1.0 fit the original's flash, the PLUGS configuration uses it with six built-in engines and the rest as plugins.
 - A set of audio CPU optimisations that remove work the stock firmware does for silence.
 
 ## Card plugin engines (PLUG_HOST builds)
