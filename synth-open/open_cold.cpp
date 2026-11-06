@@ -112,9 +112,7 @@ std::string formatValue(const ParamDef& d, float v)
             break;
         }
 #endif
-#ifdef SYNTH_ENGINE_PHZ
         case open::Fmt::kUnit: snprintf(buf, sizeof(buf), "%.2f", v); break;
-#endif
         case open::Fmt::kPan:
         {
             const int p = int(std::lround(v * 100.0f));

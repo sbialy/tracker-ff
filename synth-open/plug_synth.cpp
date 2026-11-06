@@ -47,8 +47,12 @@ static_assert(sizeof(polysynth::open::SectionDef) == sizeof(plug_synth_section),
 static_assert(sizeof(polysynth::open::MacroDef) == sizeof(plug_synth_macro) &&
                 offsetof(polysynth::open::MacroDef, targets) == offsetof(plug_synth_macro, targets),
               "MacroDef is plug_synth_macro");
-static_assert(int(polysynth::open::Fmt::kPan) == PLUG_FMT_PAN && int(polysynth::open::CurveKind::kPower) == PLUG_CURVE_POWER,
+static_assert(int(polysynth::open::Fmt::kPan) == PLUG_FMT_PAN && int(polysynth::open::Fmt::kUnit) == PLUG_FMT_UNIT &&
+                PLUG_FMT_COUNT == 16 && int(polysynth::open::CurveKind::kPower) == PLUG_CURVE_POWER,
               "the shim's formats and curves are PLUG_FMT_* and PLUG_CURVE_*");
+// Sections of a plugin engine. Nothing is sized by it (the editor keeps them in a vector), it only bounds what the host walks.
+// PHZ has 10, the most of any engine
+constexpr uint32_t kSynthSectionMax = 10;
 constexpr uint32_t kLayout = PLUG_SYNTH_LAYOUT(sizeof(SynthVoice), sizeof(SynthParams), sizeof(SynthNote), sizeof(SynthSlotScratch));
 
 constexpr const char* kSynthDir = "/Plugins/Synth";
@@ -255,7 +259,7 @@ bool checkSynth(const plug_ext_synth* x, uintptr_t t, uint32_t tn, uintptr_t rw,
     if (!x || !(in(x, t, tn) || in(x, rw, rwn)) || x->struct_size < sizeof(plug_ext_synth) || x->layout != kLayout) return false;
     const uint32_t np = x->param_count;
     if (!in(x->name, t, tn) || !x->name[0] || strnlen(x->name, 9) > 8 || strchr(x->name, '/') || np > kSynthParamMax ||
-        x->section_count > 8 || x->macro_count > 6 || x->max_voices - 1u > 3u || x->volume_param >= int32_t(np) ||
+        x->section_count > kSynthSectionMax || x->macro_count > 6 || x->max_voices - 1u > 3u || x->volume_param >= int32_t(np) ||
         x->volume_param < -1 || !fn(reinterpret_cast<const void*>(x->note_on), t, tn, true) ||
         !fn(reinterpret_cast<const void*>(x->note_off), t, tn, true) || !fn(reinterpret_cast<const void*>(x->render), t, tn, true))
         return false;

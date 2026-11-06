@@ -5,6 +5,9 @@
 #   PLUGENG=1 synth-open/tools/run_smoke.sh "..."          adds a plugin engine stand-in (JU6's numbers) to the run time engine list
 # Uses the same engine list as the firmware build (synth-open/engines.mk), so every built engine gets a note.
 # Needs clang++ (macOS: x86_64 build via Rosetta, as the test always was) and make.
+# The smoke test never loads a .plg. The synth plugins have their own acceptance test, the firmware's real checkSynth in Unicorn
+# (12 of 12 must PASS, also run by plug/build_plugs.sh):
+#   TOOLCHAIN=.../agt/10.3/bin/arm-none-eabi- /tmp/phzvenv/bin/python -I synth-open/tools/validate_synth.py DIR_WITH_PLGS
 set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 ENGINES=${1:-"ACD FAT VAP WTFM"}

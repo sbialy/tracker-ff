@@ -163,7 +163,8 @@ enum
 {   // plug_synth_param.fmt: how the value prints (the shim's open::Fmt, numbers frozen)
     PLUG_FMT_PCT = 0, PLUG_FMT_PCT_MAX, PLUG_FMT_HZ, PLUG_FMT_SEC, PLUG_FMT_LFO_HZ, PLUG_FMT_ENUM, PLUG_FMT_VAL100,
     PLUG_FMT_ON_OFF, PLUG_FMT_SEMI, PLUG_FMT_CENTS, PLUG_FMT_INT, PLUG_FMT_RATIO, PLUG_FMT_MS10, PLUG_FMT_DB, PLUG_FMT_PAN,
-    PLUG_FMT_COUNT
+    PLUG_FMT_UNIT, // 0.00 .. 1.00 (PHZ X / Y)
+    PLUG_FMT_COUNT // 16. The shim's formats past PLUG_FMT_UNIT (PERC's note and body wave) are the built-in PERC's only
 };
 enum
 {   // plug_synth_param.curve: the edit curve of the encoder (open::CurveKind)
@@ -223,7 +224,7 @@ typedef struct
     const plug_synth_param* params;
     uint32_t param_count;     // <= 84 (kSynthParamMax)
     const plug_synth_section* sections;
-    uint32_t section_count;   // <= 8
+    uint32_t section_count;   // <= 10 (PHZ has 10, D-Type, CS-Type and T-Type 9)
     const plug_synth_macro* macros;
     uint32_t macro_count;     // <= 6
     int32_t volume_param;     // the host applies it as voice gain (-1: none)

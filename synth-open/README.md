@@ -61,6 +61,7 @@ chain stays in the stock build), checked over all 131 sections of the 18 engines
 | `stub_fmt.cpp` | `fmt::v9::vformat` replacement so the 37 KB `fmt/format.cc` is not linked |
 | `tools/host_smoke_test.cpp` | Host (Mac) smoke test of the shim, not firmware. It plays notes on every engine and checks finite, non-silent output, patch round trips, the id tables, the voice pool, the governor and the idle skip. Build line in the file header |
 | `tools/run_smoke.sh` | `run_smoke.sh "ACD VAP WTFM CHIP"` builds and runs the smoke test for an engine set (same names as `SYNTH_ENGINES`) |
+| `tools/validate_synth.py` | `python -I tools/validate_synth.py DIR` runs the firmware's own `checkSynth` (cut out of `plug_synth.cpp`, built with the agt toolchain) in Unicorn on every synth `.plg` in DIR. A reject shows as Missing on the device. All 12 must PASS |
 | `tools/engine_budget.sh` `.py` | Flash cost per engine from the link map, the image size against the cap, `BUILD.txt` |
 | `tools/phz_cycles/` `tools/phz_render.sh` | Emulated cycle bench for the engines and the WAV renderer for PHZ |
 | `tools/dirt_cycles/` `tools/dirt_render.sh` | Emulated cycle bench of the Dirt insert and its host render (WAV files and self checks) |

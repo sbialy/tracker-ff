@@ -10,6 +10,7 @@
 #   - Dirt: zero in gives exact zero out for every Type and Bits (mid-tread quantiser, dirt_zero_check.py)
 #   - the same three runs again with one non-default setting (every parameter moved, one --param-at change in block 5 to test
 #     the ramps), the checksum again equal at the three homes
+#   - every synth plugin passes the firmware's own attach check (tools/validate_synth.py runs the real checkSynth)
 #   - Dirt: the checksum is 3b1f3dc5, the device rule of section 11 (runs 2 and 3: the in-image Dirt gives 3b1f3dc5), and the
 #     firmware's own ff_dirt.o and ff_dirt_ctl.o (FW_OBJ, from the PLUG_HOST image build) linked as a plugin give it too
 #
@@ -111,6 +112,8 @@ for e in $SYNTH_PLUGS; do
     [ "$got" = 0 ] && [ "$reb" = "$abs" ] || { echo "$e FAIL GOT $got rebase $reb ABS32 $abs"; fail=1; }
 done
 PY="$PY" "$HERE/synth_render_compare.sh" "$OUT" || fail=1
+# the firmware's own checkSynth (plug_synth.cpp, cross-compiled) on every synth plugin: a reject would be Missing on the device
+"$PY" -I tools/validate_synth.py $(for e in $SYNTH_PLUGS; do echo "$OUT/$e.plg"; done) || fail=1
 # Card logos (synth-open/plug_logo.h): a .plgi sidecar per synth engine, and the device test set in logo-test/: ju6.plg with a
 # "JU6-T" logo trailer (the sidecar must win over it), a truncated fm4.plgi and a btype.plgi with a bad magic (both: text name)
 mkdir -p "$OUT/previews"
