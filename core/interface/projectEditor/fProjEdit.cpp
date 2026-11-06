@@ -182,6 +182,15 @@ void cProjectEditor::update()
         ip->unblockAllInputs();
         newFileManager.clearStatus();
     }
+    else if (managerStatus == fmLoadEnd) // project opened, new project or mod import done
+    {
+        ip->unblockAllInputs();
+        newFileManager.clearStatus();
+
+        // leave the File screen for the pattern editor, like the project load at boot
+        uint8_t button = interfaceButtonPattern;
+        PE->eventFunct(eventSwitchModule, PE, &button, 0);
+    }
     else if (managerStatus >= fmLoadEnd) // catch rest of ends
     {
         setDefaultScreenFunct();
