@@ -15,7 +15,12 @@
 
 #include <stddef.h>
 
-extern "C" const plug_host* plug_rt_host;   // plug_rt.c
+extern "C" const plug_host* plug_rt_host;
+
+// The descriptor's author line: a plugin of an engine that is not OpenTracker's defines its own before the include
+#ifndef PLUG_SYNTH_AUTHOR
+#define PLUG_SYNTH_AUTHOR "OpenTracker synths (MIT)"
+#endif   // plug_rt.c
 
 namespace plugsynth
 {
@@ -54,7 +59,8 @@ inline void process(void*, float* const*, uint32_t, uint32_t) {}   // a synth re
 inline const void* query(uint32_t id) { return id == PLUG_EXT_SYNTH && g_eng ? &g_ext : nullptr; }
 
 // Fills the extension from the definition. Called by plug_entry: the host asks for it right after.
-inline void fill(const char* name, const EngineDef& d, int32_t stored, int32_t patchEngine)
+inline void fill(const char* name, const EngineDef& d, int32_t stored, int32_t patchEngine, uint32_t workBytes = 0,
+                 void (*setWork)(void*, uint32_t) = nullptr)
 {
     g_eng = d.engine();
     plug_ext_synth& x = g_ext;
@@ -81,24 +87,28 @@ inline void fill(const char* name, const EngineDef& d, int32_t stored, int32_t p
     x.render = render;
     x.slot_post = d.slotFx ? slotPost : nullptr;
     x.set_send_tap = sendTap;
+    x.work_bytes = setWork ? workBytes : 0;
+    x.set_work = setWork;
 }
 }   // namespace plugsynth
 
 // The engines' virtual destructors put a deleting destructor in the vtable. Nothing deletes an engine (a static object): the
-// operator it names is never called, it only has to link.
-#define PLUG_SYNTH_PLUGIN(NAME, DEF, STORED, PATCH_ENGINE)                                                                    \
+// operator it names is never called, it only has to link. WORK_BYTES and SET_WORK: the engine's working RAM from the host
+// (PLUG_EXT_SYNTH work_bytes, set_work), 0 and nullptr for none.
+#define PLUG_SYNTH_PLUGIN_WORK(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK)                                          \
     void operator delete(void*, unsigned int) noexcept {}                                                                      \
     namespace                                                                                                                  \
     {                                                                                                                          \
     PLUG_DESCRIPTOR const plug_desc kDesc = {                                                                                  \
-        sizeof(plug_desc), PLUG_KIND_SYNTH, NAME, "OpenTracker synths (MIT)", 0, nullptr, 8, plugsynth::init, nullptr,       \
-        nullptr,           plugsynth::process, plugsynth::query,                                                              \
+        sizeof(plug_desc), PLUG_KIND_SYNTH, NAME, PLUG_SYNTH_AUTHOR, 0, nullptr, 8, plugsynth::init, nullptr,                  \
+        nullptr,           plugsynth::process, plugsynth::query,                                                               \
     };                                                                                                                         \
     }                                                                                                                          \
-    extern "C" PLUG_ENTRY const plug_desc* plug_entry(const plug_host* host, uint32_t abi)                                    \
+    extern "C" PLUG_ENTRY const plug_desc* plug_entry(const plug_host* host, uint32_t abi)                                     \
     {                                                                                                                          \
-        if ((abi >> 16) != PLUG_ABI_MAJOR || !host || !PLUG_HAS(host, plug_host, log2f)) return nullptr;                     \
+        if ((abi >> 16) != PLUG_ABI_MAJOR || !host || !PLUG_HAS(host, plug_host, log2f)) return nullptr;                       \
         plug_rt_host = host;                                                                                                   \
-        plugsynth::fill(NAME, DEF, STORED, PATCH_ENGINE);                                                                      \
+        plugsynth::fill(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK);                                                \
         return &kDesc;                                                                                                         \
     }
+#define PLUG_SYNTH_PLUGIN(NAME, DEF, STORED, PATCH_ENGINE) PLUG_SYNTH_PLUGIN_WORK(NAME, DEF, STORED, PATCH_ENGINE, 0, nullptr)

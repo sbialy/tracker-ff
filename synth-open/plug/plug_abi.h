@@ -224,7 +224,8 @@ typedef struct
     int32_t volume_param;     // the host applies it as voice gain (-1: none)
     uint32_t max_voices;      // voices per instrument, 1..4
     uint32_t flags;           // PLUG_SYNTH_*
-    // Working RAM from the host (delay lines, pools: Pluck's 8.7 KB), SRAM, zeroed, 8 aligned, given once through set_work
+    // Working RAM from the host (delay lines, pools: Pluck's 8.7 KB), SDRAM (about 20 to 30 cycles per uncached access on the
+    // MK66: fine for a delay line read once per sample, not for hot state), zeroed, 8 aligned, given once through set_work
     // after init and before any audio call, kept while the engine is installed. 0 = none (set_work may be NULL then).
     uint32_t work_bytes;
     void (*set_work)(void* work, uint32_t bytes);

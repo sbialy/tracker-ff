@@ -269,18 +269,20 @@ constexpr Builtin kBuiltin[] = {
 };
 constexpr int kBuiltinCount = int(sizeof(kBuiltin) / sizeof(kBuiltin[0]));
 constexpr int kPlugMax = 12;   // plug::kBankMax
-// The engines that can be missing: the numbers 7 to 17 of engine_list.h (type id = .patch engine id for all of them).
+// The engines that can be missing: the numbers 7 to 18 of engine_list.h (type id = .patch engine id for all of them).
 // 0 to 6 are Polyend's (always built in when they exist in this firmware family), DIRT (5) never had an open engine.
-constexpr char kKnownName[11][9] = { "JU6", "PHZ", "FM4", "DTYPE", "CSTYPE", "ATYPE", "TTYPE", "8TYPE", "HANDTYPE", "BTYPE", "ARCTYPE" };
-constexpr uint8_t kKnownType[11] = { 0x81, 0x82, 0x80, 0xA2, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89 };
+constexpr int kKnownCount = 12;
+constexpr char kKnownName[kKnownCount][9] = { "JU6",   "PHZ",      "FM4",   "DTYPE",   "CSTYPE", "ATYPE",
+                                              "TTYPE", "8TYPE",    "HANDTYPE", "BTYPE", "ARCTYPE", "PLK" };
+constexpr uint8_t kKnownType[kKnownCount] = { 0x81, 0x82, 0x80, 0xA2, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A };
 constexpr int kKnownFirst = 7;
 
 EngineRef gPlug[kPlugMax];
 int gPlugCount;
 EngineRef gList[kBuiltinCount + kPlugMax];
 int gCount; // 0 until the list is built (first use)
-EngineDef gMissing[11] = {};
-bool gHasMissing[11];
+EngineDef gMissing[kKnownCount] = {};
+bool gHasMissing[kKnownCount];
 
 // built in and plugin engines by stored number (the built-in ones ascend already)
 void buildList()
@@ -309,7 +311,7 @@ void buildList()
         }
         gCount++;
     }
-    for (int k = 0; k < 11; k++)
+    for (int k = 0; k < kKnownCount; k++)
     {
         gHasMissing[k] = open::engineUiForStored(kKnownFirst + k) < 0;
         EngineDef& d = gMissing[k];
@@ -380,7 +382,7 @@ const EngineDef* open::missingDef(int stored)
 {
     ensureList();
     const int k = stored - kKnownFirst;
-    return k >= 0 && k < 11 && gHasMissing[k] ? &gMissing[k] : nullptr;
+    return k >= 0 && k < kKnownCount && gHasMissing[k] ? &gMissing[k] : nullptr;
 }
 
 int open::typeForStored(int stored)
@@ -400,7 +402,7 @@ const EngineDef* open::engineDefForType(int typeId)
             return gList[i].def;
         }
     }
-    for (int k = 0; k < 11; k++)
+    for (int k = 0; k < kKnownCount; k++)
     {
         if (gHasMissing[k] && gMissing[k].typeId == typeId)
         {
@@ -450,7 +452,7 @@ void open::registerEngines(InstrumentTypeRegistry& registry)
     {
         registry.addInstrumentType(gList[i].def->typeId, createFromDef(*gList[i].def));
     }
-    for (int k = 0; k < 11; k++)
+    for (int k = 0; k < kKnownCount; k++)
     {
         if (gHasMissing[k])
         {

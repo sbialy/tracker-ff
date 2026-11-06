@@ -50,13 +50,19 @@ constexpr uint32_t kLayout = PLUG_SYNTH_LAYOUT(sizeof(SynthVoice), sizeof(SynthP
 
 constexpr const char* kSynthDir = "/Plugins/Synth";
 constexpr const char* kIndexPath = "/Plugins/installed.txt";
-constexpr uint32_t kPoolBytes = 2560;    // rw + bss of the installed engines (JU6 1,648 B with its chorus lines, FM4 112 B, B-Type 120 B)
+// rw + bss of the installed engines: JU6 1,648 B (its chorus lines), the other 11 112 to 160 B each, all 12 together 2,976 B
+constexpr uint32_t kPoolBytes = 3072;
 constexpr uint32_t kStageBytes = 32768;  // one engine's image + bss while it is rebased for the flash
 
 // The engines' rw segments at a fixed SRAM address: the text in the flash holds their addresses, so they never move while
 // this firmware runs (another firmware build moves the pool: bankCheck drops the entries, they are installed again once).
 __attribute__((aligned(8))) uint8_t s_pool[kPoolBytes];
 __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_bstage[kStageBytes];
+// The engines' work memory (PLUG_EXT_SYNTH work_bytes: PLK's 8,772 B delay line pool), SDRAM, so no engine takes internal
+// heap. Handed out in attach order, zeroed, never given back (engines are only attached at boot).
+constexpr uint32_t kWorkBytes = 16384;
+__NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_work[kWorkBytes];
+uint32_t s_workUsed;
 __NOINIT(EXTERNAL_RAM) uint8_t s_sec[kBankSector];
 __NOINIT(EXTERNAL_RAM) char s_btext[4096];
 __NOINIT(EXTERNAL_RAM) Bank s_bank;
@@ -236,10 +242,13 @@ int attach(int k)
       fn(reinterpret_cast<const void*>(d->query), t, e.text, true) ? static_cast<const plug_ext_synth*>(d->query(PLUG_EXT_SYNTH)) : nullptr;
     if (!checkSynth(x, t, e.text, e.rwRun, e.rwLen)) return 4;
     if (x->work_bytes)
-    {   // the engine's working RAM (pools, delay lines), SRAM heap, zeroed, kept while the firmware runs
-        void* w = calloc(1, (x->work_bytes + 7u) & ~7u);
-        if (!w) return 5;
-        if (x->set_work) x->set_work(w, x->work_bytes);
+    {   // the engine's working RAM (pools, delay lines), SDRAM arena, zeroed, kept while the firmware runs
+        const uint32_t need = (x->work_bytes + 7u) & ~7u;
+        if (!x->set_work || need > kWorkBytes - s_workUsed) return 5;
+        uint8_t* w = s_work + s_workUsed;
+        memset(w, 0, need);
+        s_workUsed += need;
+        x->set_work(w, x->work_bytes);
     }
     EngineDef& def = s_defs[k];
     def.name = x->name;

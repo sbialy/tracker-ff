@@ -20,6 +20,7 @@ SynthVoice* const g_v = reinterpret_cast<SynthVoice*>(g_vMem);
 bool g_on[kVoices];
 float g_gain[kVoices];
 float g_busL[kBlock], g_busR[kBlock];
+const plug_host* g_host;   // init: the emulator's host table (cycles = instructions so far)
 
 struct Ev
 {
@@ -40,7 +41,7 @@ float pick(const plug_synth_param& d, int scenario, int i)
     return d.min + (d.max - d.min) * t;
 }
 
-// out: blocks x 256 floats (L then R per block)
+// out: blocks x 256 floats (L then R per block), then blocks x uint32: the instructions of each block (prepare, voices, slot_post)
 void run(const plug_ext_synth* x, float* out, uint32_t blocks, uint32_t scenario)
 {
     memset(&g_p, 0, sizeof(g_p));
@@ -54,6 +55,7 @@ void run(const plug_ext_synth* x, float* out, uint32_t blocks, uint32_t scenario
     if (x->set_tempo) x->set_tempo(120.0f);
     for (uint32_t b = 0; b < blocks; b++)
     {
+        const uint32_t t0 = g_host->cycles();   // the block's note events count too, as on the device
         g_p.moving = false;
         if (scenario && b == 16)   // a ramp on every continuous parameter over one block (p.moving)
             for (uint32_t i = 0; i < x->param_count; i++)
@@ -116,11 +118,16 @@ void run(const plug_ext_synth* x, float* out, uint32_t blocks, uint32_t scenario
                 R[i] += g_busR[i];
             }
         }
+        reinterpret_cast<uint32_t*>(out + blocks * 2 * kBlock)[b] = g_host->cycles() - t0;
         memcpy(g_p.start, g_p.end, sizeof(g_p.start));
     }
 }
 
-int32_t init(void*, const plug_host*) { return 0; }
+int32_t init(void*, const plug_host* h)
+{
+    g_host = h;
+    return 0;
+}
 void process(void*, float* const*, uint32_t, uint32_t) {}
 const void* query(uint32_t id) { return id == 0x7E ? reinterpret_cast<const void*>(&run) : nullptr; }
 

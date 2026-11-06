@@ -31,7 +31,8 @@ SRAM, SRAM_SIZE = 0x1FFF0000, 0x40000
 WORK = 0x20020000
 TRAP = WORK + 0xF000
 HARNESS = 0x1FFF4000          # harness text, its rw after it
-OUT = 0x70000000              # SDRAM: the rendered blocks
+OUT = 0x70000000              # SDRAM: the rendered blocks, then one instruction count per block
+WORK_MEM = 0x70080000         # SDRAM: the engine's work memory (work_bytes)
 
 
 def load(uc, path, base, rwbase=None):
@@ -109,6 +110,8 @@ def main():
         elif n == "memset":
             d, c, ln = (u.reg_read(r) for r in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2))
             u.mem_write(d, bytes([c & 255]) * ln)
+        elif n == "cycles":   # executed instructions so far in this call (1 cycle each: a lower bound)
+            u.reg_write(UC_ARM_REG_R0, count[0] & 0xFFFFFFFF)
         else:
             u.reg_write(UC_ARM_REG_R0, 0)
     uc.hook_add(UC_HOOK_CODE, service, begin=stubs, end=stubs + 4 * len(names) - 1)
@@ -140,10 +143,16 @@ def main():
     print("engine %s: stored %d, patch engine 0x%x, type 0x%x, %d params, %d sections, %d macros, volume %d, voices %d, flags %d, "
           "work %d B, text %d B, rw+bss %d B" % (cstr(x[5]), x[2], x[3], x[4], x[7], x[9], x[11], x[12], x[13], x[14],
                                                  u32(ext + 60), eng["text"], eng["rw"]))
+    work = u32(ext + 60)
+    if work:   # the host's work memory (plug_synth.cpp: SDRAM arena, zeroed), given before any audio call
+        assert work <= 0x80000, "work memory larger than the emulator's arena"
+        call(u32(ext + 64), WORK_MEM, work)
     hdesc = call(har["entry"], host, (1 << 16) | 1)
+    call(u32(hdesc + 28), WORK + 0x1100, host)   # harness init: keeps the host table (cycles)
     run = call(u32(hdesc + 44), 0x7E)
     call(run, ext, OUT, a.blocks, a.scenario)
     instr = count[0]
+    per = struct.unpack("<%dI" % a.blocks, bytes(uc.mem_read(OUT + a.blocks * 2 * N * 4, 4 * a.blocks)))
     ob = bytes(uc.mem_read(OUT, a.blocks * 2 * N * 4))
     chk = 0x811C9DC5
     for w in struct.unpack("<%dI" % (len(ob) // 4), ob):
@@ -153,6 +162,8 @@ def main():
     print("libm calls: %s" % ", ".join("%s %d" % kv for kv in sorted(used.items())))
     print("render: %d blocks, scenario %d, %d instructions (%.2f%% of the blocks at 1 cycle each), peak %.4f" % (
         a.blocks, a.scenario, instr, 100.0 * instr / (a.blocks * 522240), peak))
+    print("worst block: %d instructions (%.2f%% of a block at 1 cycle each), in block %d" % (
+        max(per), 100.0 * max(per) / 522240, per.index(max(per))))
     print("output checksum %08x" % chk)
     if a.wav:
         w = wave.open(a.wav, "wb")

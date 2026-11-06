@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds the shipped master insert plugins (dirt, tape, lofi, console, tube, bbd, phaser: .plg) and the synth engine plugins
-# (ju6, fm4, btype: .plg, render compare against the firmware's own objects in synth_render_compare.sh) with their card logos
-# (ju6.plgi, fm4.plgi, btype.plgi: tools/make_plgi.py text logos, and the logo-test/ files of the device test) and checks each
+# (the 12 of synth_engines.sh: .plg, render compare against the firmware's own objects in synth_render_compare.sh) with their card logos
+# (<name>.plgi: tools/make_plgi.py text logos, previews/<name>.png, and the logo-test/ files of the device test) and checks each
 # one on the Mac:
 #   - no R_ARM_GOT* relocation in the linked ELF, the rebase table holds every R_ARM_ABS32 word (count equal, > 0)
 #   - emu_plug.py runs it at the insert 1 home (SRAM_L 0x1FFF0BD0), the insert 2 home (text at 0x1001E000 in the FlexNVM,
@@ -43,13 +43,19 @@ python3 plug/build_plug.py --id org.opentracker.fx.bbd --kind master --version 1
 python3 plug/build_plug.py --id org.opentracker.fx.phaser --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
     --keep "$OUT/phaser.elf" --out "$OUT/phaser.plg" plug/fx/ot_phaser_plug.c
 # Synth engines (phase 3): the engine sources exactly as the firmware compiled them when they were built in (the flags of
-# make -n for ot-synths/ at TRIM=1: -Os, fp-contract left at its fused default, see synth_render_compare.sh, which proves it)
+# make -n at TRIM=1, per engine in synth_engines.sh: -Os and fp-contract left at its fused default for the OpenTracker
+# modules, -O2 -ffp-contract=off for PHZ and PLK, see synth_render_compare.sh, which proves it)
+. "$HERE/synth_engines.sh"
 FWFLAGS="-std=gnu++20 -felide-constructors -include cstdint -fno-rtti -fno-exceptions -fno-common -ffunction-sections -fdata-sections -ffreestanding -fno-builtin -O2 -DNDEBUG -mfp16-format=ieee"
-for e in ju6 fm4 btype; do
-    E=$(echo $e | tr a-z A-Z)
+build_synth() {   # build_synth <plugin> <out.plg> [extra build_plug.py args]
+    local e="$1" out="$2"; shift 2
+    read -r E def dsp dspopt <<< "$(synth_plug_info "$e")"
     python3 plug/build_plug.py --id org.opentracker.synth.$e --kind synth --version 1.0.0 --opt "-Os -fno-builtin" \
-        --src-opt "$e.cpp=$FWFLAGS -Os -DSYNTH_ENGINE_$E" --src-opt "engine_$e.cpp=$FWFLAGS -DSYNTH_ENGINE_$E" \
-        --keep "$OUT/$e.elf" --out "$OUT/$e.plg" -I . -I ot -I ../synth/include plug/synth/${e}_plug.cpp engine_$e.cpp ot-synths/$e/$e.cpp
+        --src-opt "$(basename "$dsp")=$FWFLAGS $dspopt -DSYNTH_ENGINE_$E" --src-opt "$def=$FWFLAGS -DSYNTH_ENGINE_$E" \
+        "$@" --out "$out" -I . -I ot -I ../synth/include plug/synth/${e}_plug.cpp "$def" "$dsp"
+}
+for e in $SYNTH_PLUGS; do
+    build_synth "$e" "$OUT/$e.plg" --keep "$OUT/$e.elf"
 done
 fail=0
 emu() { "$PY" -I plug/emu_plug.py "$@" 2>&1 | sed -n 's/^output checksum \([0-9a-f]*\).*/\1/p'; }
@@ -98,7 +104,7 @@ if [ -n "$FW_OBJ" ]; then
     if [ "$f" = 3b1f3dc5 ]; then echo "dirt  ok  the firmware's ff_dirt.o + ff_dirt_ctl.o give 3b1f3dc5 too"; else echo "dirt  FAIL firmware objects give $f"; fail=1; fi
     rm -f "$OUT/dirt-fwobj.plg"
 fi
-for e in ju6 fm4 btype; do
+for e in $SYNTH_PLUGS; do
     got=$("${TOOLCHAIN}objdump" -r "$OUT/$e.elf" | grep -c 'R_ARM_GOT' || true)
     reb=$(python3 -c "import struct,sys; print(struct.unpack_from('<I', open(sys.argv[1],'rb').read(), 32)[0])" "$OUT/$e.plg")
     abs=$("${TOOLCHAIN}objdump" -r "$OUT/$e.elf" | grep -c 'R_ARM_ABS32' || true)
@@ -107,15 +113,13 @@ done
 PY="$PY" "$HERE/synth_render_compare.sh" "$OUT" || fail=1
 # Card logos (synth-open/plug_logo.h): a .plgi sidecar per synth engine, and the device test set in logo-test/: ju6.plg with a
 # "JU6-T" logo trailer (the sidecar must win over it), a truncated fm4.plgi and a btype.plgi with a bad magic (both: text name)
-python3 -I tools/make_plgi.py --text JU6 -o "$OUT/ju6.plgi"
-python3 -I tools/make_plgi.py --text FM4 -o "$OUT/fm4.plgi"
-python3 -I tools/make_plgi.py --text B-TYPE -o "$OUT/btype.plgi"
+mkdir -p "$OUT/previews"
+for e in $SYNTH_PLUGS; do
+    python3 -I tools/make_plgi.py --text "$(synth_plug_logo $e)" -o "$OUT/$e.plgi" --preview "$OUT/previews/$e.png" > /dev/null
+done
 mkdir -p "$OUT/logo-test"
 python3 -I tools/make_plgi.py --text JU6-T -o "$OUT/logo-test/ju6-trailer.plgi"
-python3 plug/build_plug.py --id org.opentracker.synth.ju6 --kind synth --version 1.0.0 --opt "-Os -fno-builtin" \
-    --src-opt "ju6.cpp=$FWFLAGS -Os -DSYNTH_ENGINE_JU6" --src-opt "engine_ju6.cpp=$FWFLAGS -DSYNTH_ENGINE_JU6" \
-    --logo "$OUT/logo-test/ju6-trailer.plgi" --out "$OUT/logo-test/ju6.plg" -I . -I ot -I ../synth/include \
-    plug/synth/ju6_plug.cpp engine_ju6.cpp ot-synths/ju6/ju6.cpp
+build_synth ju6 "$OUT/logo-test/ju6.plg" --logo "$OUT/logo-test/ju6-trailer.plgi" > /dev/null
 rm -f "$OUT/logo-test/ju6-trailer.plgi"
 head -c 1000 "$OUT/fm4.plgi" > "$OUT/logo-test/fm4.plgi"
 { printf 'PLGX'; tail -c +5 "$OUT/btype.plgi"; } > "$OUT/logo-test/btype.plgi"
@@ -133,7 +137,7 @@ rm -f "$OUT/logo-test/h.plg"
 if [ -n "$s1" ] && [ "$s1" = "$s2" ]; then echo "logo ok  logo-test/ju6.plg (trailer) renders $s2 = ju6.plg"
 else echo "logo FAIL logo-test/ju6.plg renders '$s2', ju6.plg '$s1'"; fail=1; fi
 c++ -std=c++20 -O1 -Wall -I . tools/plug_logo_test.cpp -o "$OUT/plug_logo_test"
-"$OUT/plug_logo_test" "$OUT/ju6.plgi" "$OUT/fm4.plgi" "$OUT/btype.plgi" "$OUT/logo-test/ju6.plg" | grep -E "FAIL|PASSED|ok  .*(plgi|plg):" || fail=1
+"$OUT/plug_logo_test" $(for e in $SYNTH_PLUGS; do echo "$OUT/$e.plgi"; done) "$OUT/logo-test/ju6.plg" | grep -E "FAIL|PASSED|ok  .*(plgi|plg):" || fail=1
 for bad in fm4 btype; do
     if "$OUT/plug_logo_test" "$OUT/logo-test/$bad.plgi" > /dev/null; then echo "logo FAIL logo-test/$bad.plgi passes"; fail=1
     else echo "logo ok  logo-test/$bad.plgi is refused (text name)"; fi
