@@ -67,6 +67,7 @@ offset 0     plug_file_header (64)       magic "PLG1", header_size, abi 1.0, kin
                                          image_size, bss_size, rebase_count, entry_offset, ram_bytes, cpu_cycles,
                                          crc32, rw_offset, 8 reserved
 offset 64    plug_manifest (96)          struct_size, name[16], author[32], licence[16], num_params, role, reserved
+                                         (reserved[0] logo trailer offset, reserved[1..4] synth numbers, below)
 header_size  image (image_size)          [0, rw_offset) text: code, constants, the descriptor (may run from flash)
                                          [rw_offset, image_size) rw: initialised data (always RAM), then bss_size zeroed
              rebase table                rebase_count x u32: image offsets of the words that hold an image address
@@ -84,6 +85,9 @@ header_size  image (image_size)          [0, rw_offset) text: code, constants, t
 - `kind`: 1 master insert (the only kind phase 2 hosts). `cpu`: 1 Cortex-M4F. `min_host`: 1.
 - `flags` bit 0 `PLUG_F_S16` (int16 I/O for bit identical ports of the stock FX) is reserved: the phase 2 host refuses it.
 - `role` (manifest): 0 insert. 1 reverb and 2 delay are reserved for the override slots of phase 5b.
+- Synth engines: `reserved[1]` stored number, `[2]` `.patch` engine id, `[3]` type id, `[4]` `PLUG_SYNTH_MANIFEST` ("SYN1",
+  `build_plug.py --synth STORED,PATCH,TYPE`). The host lists the engine by them before it is installed and refuses to attach it
+  when `PLUG_EXT_SYNTH` says otherwise (`emu_synth.py` checks the same). A synth `.plg` without them is not listed.
 
 ## Compatibility rules
 
@@ -229,10 +233,43 @@ lines (`synth/ju6_plug.cpp`), `PLUG_SYNTH_PLUGIN_WORK` adds work memory (`synth/
 from the host (`work_bytes`, `set_work`), not from bss: the host hands it out of a 16 KB SDRAM arena, so keep only state there
 that is touched a few times per sample (a delay line), never hot per-sample state.
 
-Files go to `/Plugins/Synth/`. At boot the host installs them into the FlexNVM bank (`synth-open/plug_bank.h`, index
-`/Plugins/installed.txt`, status `/Plugins/synth.txt`) and adds them to the engine list before the synth starts. Build the
-engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma default of `-Os`), and prove bit identity with
-`synth_render_compare.sh` (the firmware's objects behind the same wrapper, rendered by `emu_synth.py`).
+Files go to `/Plugins/Synth/`. Build the engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma
+default of `-Os`, `--synth` with the engine's numbers), and prove bit identity with `synth_render_compare.sh` (the firmware's
+objects behind the same wrapper, rendered by `emu_synth.py`).
+
+### Library and cache (round E)
+
+`/Plugins/Synth` is the library, the FlexNVM bank is a cache of it (`synth-open/plug_bank.h`, `plug_synth.cpp`, index
+`/Plugins/installed.txt`, status `/Plugins/synth.txt`):
+
+- At boot every synth `.plg` with numbers in its manifest (up to 16) is in the model list, installed or not, with its card
+  logo. Nothing is installed at boot. An engine whose `.plg` left the card or changed is dropped from the index (no flash
+  command) and installed again when it is needed.
+- An engine is installed when a part needs it: the model list (after the list rests 500 ms on it, so scrolling past engines
+  writes nothing), a project load (all the project's engines before any part changes, the boot project included). Patch FX
+  slots are of the part's own engine and never change it, a patch load is of the part's engine too.
+- When the bank (30 sectors of 4 KB) or the rw pool has no room, the least recently used engines go first. An engine a part
+  plays is never evicted for another part's pick. On a model change the part's own old engine goes only when nothing else
+  frees room, on a project load the old project's engines go before the new ones.
+- An install takes whole free sectors (a sector never holds two engines), so it never erases a sector of an engine that may be
+  playing, and the engines never move. Installs pick the free sectors with the fewest erases. An engine back in the sectors
+  it left only writes what another engine overwrote.
+- Power cut: the index is rewritten before the first flash command without the evicted engines and with the new one as `w`.
+  A cut leaves a `w`: dropped at the next boot, installed again when picked. A journal that cannot be written issues no command.
+- Wear: `installed.txt` keeps an erase counter per sector (`c` line, counted in the journal, so never fewer than the flash did),
+  `synth.txt` prints them with the total and the highest.
+- What the user sees: the popup `Loading <NAME>` while it installs (the main loop waits for it). Audio keeps running, but every
+  flash command runs with interrupts off, so each sector erase (up to 5 for the biggest engine, none on blank sectors) can drop
+  a few audio blocks. Engines that cannot be loaded (no room next to the engines the parts play, file gone, flash error, safe
+  mode) leave their part silent as `Missing: <NAME>`, `synth.txt` says why (`err 12` no room, `13` file, `15` flash).
+- Time: measured on the device (run 3) one erase plus 282 phrase programs took about 15.4 ms. 8-Type (17,760 B: 2,220 phrases,
+  5 sectors) is then about 0.1 to 0.2 s of flash commands plus the card read and two index writes. `synth.txt` logs every install
+  (`ms`, `in flash commands`, commands, erases, evicted).
+
+Budgets (`tools/plug_bank_test.cpp`): the twelve need 38 whole sectors of 30 (139,768 B packed), 9 to 10 stay resident at once.
+The 3 biggest on the parts plus the one being picked need 17 sectors. Their rw needs 2,976 B of the 3,072 B pool, so the pool
+never decides what is evicted. The worst 3 at once need 1,928 B (2,048 B with the one being picked): a pool of that size would
+save 1,024 B of SRAM but then hold JU6 and three others only, and the 5th engine picked would rewrite the flash.
 
 The shipped synth plugins are the twelve custom engines (`plug/synth_engines.sh`, the PLUGS image builds in only ACD FAT VAP
 WTFM PERC CHIP):
@@ -253,9 +290,9 @@ WTFM PERC CHIP):
 | `pluck.plg` | PLK | 6,420 | 120 + 8,772 work (SDRAM) | 55,551 (10.6 %) |
 
 Instructions are a lower bound of cycles (the device measured 1.5 times the emulated count for Dirt), the percentage is of a
-522,240 cycle block, and the built-in engine executes the same count. Together the twelve need 139,768 B of the 122,880 B bank:
-eleven fit (all but 8-Type: 122,008 B), the installer skips what does not fit, in card order. They need 2,976 B of the 3,072 B
-SRAM pool (`plug_bank_test`). Logos: one `.plgi` per plugin, `previews/sheet.png` shows all twelve.
+522,240 cycle block, and the built-in engine executes the same count. Image B is the code and data, the `.plg` file adds the
+header, manifest and rebase table. Together the twelve need more than the 122,880 B bank: the bank is a cache (below). Logos:
+one `.plgi` per plugin, `previews/sheet.png` shows all twelve.
 
 ### Engine logos
 
@@ -269,7 +306,8 @@ style and the theme colour. Without one it shows its name as text. The logo is a
 
 A record that is missing, truncated, the wrong size or damaged goes to the next source and finally to the text name. The host
 loads the logos once at boot into the free RAM_G window above the stock bitmaps (12 slots, 19,920 of the 21,220 B below the
-controls cache) and lists what it used in `/Plugins/synth.txt` (`logo <file> sidecar|trailer|text err <n>`). Make a record
+controls cache), one per listed engine whether it is installed or not (the first 12 of the library), and lists what it used in
+`/Plugins/synth.txt` (`logo <file> sidecar|trailer|text err <n>`). Make a record
 with `synth-open/tools/make_plgi.py`: from a PNG (white or opaque is drawn, black or transparent is not, scaled to both
 sizes), from two PNGs, or `--text NAME` for a text logo in the stock style. `--check` tests a `.plgi` or a `.plg` trailer,
 `--selftest` round-trips the stock logos. The twelve shipped `.plgi` files are text logos (`synth_plug_logo` in `synth_engines.sh`), `tools/plgi_sheet.py` stacks

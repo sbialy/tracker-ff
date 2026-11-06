@@ -37,7 +37,7 @@ constexpr uintptr_t kBankRun = 0x10000000u;   // data flash (FlexNVM) base, exec
 constexpr uint32_t kBankBytes = 0x1E000u;     // up to insert 2's two sectors at 0x1001E000
 constexpr uint32_t kBankSector = 4096;
 constexpr int kBankSectors = int(kBankBytes / kBankSector);   // 30
-constexpr int kBankMax = 12;                  // installed engines at once (the 12 shipped ones need 34 sectors, 30 exist)
+constexpr int kBankMax = 12;                  // installed engines at once (the 12 shipped ones need 38 whole sectors, 30 exist)
 constexpr int kBankFileLen = 24;
 
 struct BankEntry

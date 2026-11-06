@@ -24,11 +24,15 @@ plugin is not installed shows `Missing: <name>` (`open_cold.cpp`, numbers 7 to 1
 the built-in engine (`plug/synth_render_compare.sh`, both scenarios). Moving the seven that were still built in (PHZ D-Type
 CS-Type A-Type T-Type 8-Type Arc-Type) frees 88,884 B: the image ends at 0xE535C instead of 0xFAEB8 (same tree, flag flipped).
 
-Budgets (`tools/plug_bank_test.cpp`): the twelve plugins take 139,768 B, 16,888 B more than the 122,880 B FlexNVM bank, so
-at most eleven are installed at once. The installer installs in card order and skips what does not fit (counted in
-`/Plugins/synth.txt`), all twelve without 8-Type (17,760 B) use 122,008 B. Engine rw and bss: 2,976 B of the 3,072 B SRAM
-pool for all twelve. PLK's 8,772 B delay lines live in a 16 KB SDRAM work arena (`plug_synth.cpp`), no engine takes internal heap.
-RAM_G logos: 12 slots, one per plugin. CPU: FlexNVM runs code at flash speed (device bench run 3), the plugin executes the same
+All twelve are in the model list from boot, installed or not. The FlexNVM bank (30 sectors of 4 KB) is a cache of the card:
+an engine is installed when a part needs it (model list after a 500 ms rest, project load) and the least recently used engines
+that no part plays make room (`plug/README.md`, Library and cache). A Tracker has 3 synth parts (`kSynthInstrumentsCount` in
+`mtStructs.h`), each with one engine, and Patch FX slots keep the part's engine, so at most 3 engines play at once, 4 while one
+part changes engine. Budgets (`tools/plug_bank_test.cpp`): the twelve need 38 whole sectors, 9 to 10 stay resident, the 3 biggest
+plus the one being picked need 17. Engine rw and bss: 2,976 B of the 3,072 B SRAM pool for all twelve (the worst 3 at once
+need 1,928 B, the pool stays at all twelve so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
+work arena (`plug_synth.cpp`), no engine takes internal heap.
+RAM_G logos: 12 slots, one per listed plugin, installed or not. CPU: FlexNVM runs code at flash speed (device bench run 3), the plugin executes the same
 instructions as the built-in engine (worst block equal in `emu_synth.py`, PLK +11 instructions for its pool pointer).
 
 The patch editor gives every section page an icon from one table (`open_section_icon.h`, SYNTH_OPEN builds only, the stock
