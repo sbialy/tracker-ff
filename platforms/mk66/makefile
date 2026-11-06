@@ -75,6 +75,13 @@ DEFINES+=-DFW_TRIM
 TRIM_LINK	:= -specs=nano.specs -Xlinker -u -Xlinker _printf_float
 endif
 
+# SDRAM_FILE_POOLS=1 (top Makefile, SYNTH_OPEN=1 builds): the FatFs FIL pool and the SdFile pool stay in the SDRAM
+# as before tracker-ce 5b6b0f2, which moved them (about 19.6 KB) into the internal RAM the plugin slots and heap need.
+# The stock build leaves it off and stays byte-identical to upstream.
+ifeq ($(SDRAM_FILE_POOLS),1)
+DEFINES+=-DFW_SDRAM_FILE_POOLS
+endif
+
 ifeq ($(PRODUCT), MINI)
 DEFINES+=-DTRACKER_MINI
 else ifeq ($(PRODUCT), ORIGINAL)

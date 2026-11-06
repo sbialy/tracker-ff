@@ -9,7 +9,11 @@
 #include <algorithm>
 
 static constexpr size_t kSdFilePoolSize = FF_FS_LOCK;
-__NOINIT(EXTERNAL_RAM) static SdFile s_sdFilePool[kSdFilePoolSize];
+#ifdef FW_SDRAM_FILE_POOLS
+// SDRAM, as before tracker-ce 5b6b0f2: keeps the internal RAM for the heap and the plugin slots
+__NOINIT(EXTERNAL_RAM)
+#endif
+static SdFile s_sdFilePool[kSdFilePoolSize];
 static bool s_sdFilePoolUsed[kSdFilePoolSize]{ false };
 
 static SdFile* allocateSdFile()

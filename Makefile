@@ -93,6 +93,8 @@ original:
 	@echo " Building Original Tracker (MK66) - $(EDITION_NAME) $(ORIGINAL_VER_MAJOR).$(ORIGINAL_VER_MINOR).$(ORIGINAL_VER_PATCH) ($(BUILD_TAG))"
 	@echo "=================================================================="
 	@rm -f "$(MK66_BUILD)/obj/source/PlatformImpl.o"
+	@# SDRAM_FILE_POOLS follows SYNTH_OPEN and the plain build shares these objects: rebuild them every time
+	@rm -f "$(MK66_BUILD)/obj/source/FileSystemImpl.o" "$(MK66_BUILD)/obj/3rdparty/SD/SdFile.o"
 ifeq ($(SYNTH_OPEN),1)
 	@rm -f "$(OUT_DIR)/$(SYNTH_PTF)" "$(OUT_DIR)/BUILD.txt"
 endif
@@ -114,6 +116,7 @@ endif
 		TARGET_POSTFIX="$(ORIGINAL_POSTFIX)" \
 		BUILD_ID_STR="$(BUILD_ID_STR)" \
 		$(if $(filter 1,$(TRIM)),TRIM=1 BUILD_DIR="build$(TRIM_TAG)") \
+		$(if $(filter 1,$(SYNTH_OPEN)),SDRAM_FILE_POOLS=1) \
 		$(if $(filter 1,$(SYNTH_OPEN)),LINK_EXTRA="-Xlinker -Map=build$(TRIM_TAG)/PolyendTracker.map")
 	@mkdir -p "$(OUT_DIR)"
 ifeq ($(SYNTH_OPEN),1)
