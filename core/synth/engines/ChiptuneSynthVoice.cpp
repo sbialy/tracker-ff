@@ -101,8 +101,65 @@ inline float polyBlep(float t, float dt)
     return 0.0f;
 }
 
+#ifdef FEATURE_SYNTH_OPEN
+// MK66 (Cortex-M4F): no VRINT, so __builtin_floorf and __builtin_roundf in the SDK's fastPow2 and fastSine are newlib
+// calls (floorf, roundf), as is std::round. Same polynomials as sdk::fastPow2 and sdk::fastSine, with round and floor
+// as integer code that gives the same value for |x| < 2^31 (every argument here), so the voice renders bit identical to
+// the SDK version at about two thirds of the cycles (synth-open/tools/phz_cycles/run_bench.sh fw CHIP).
+// floor(x), exact for |x| < 2^31 (the sign of a zero result is not kept: fastPow2 and the phase wrap never see it)
+[[gnu::always_inline]] inline float floorOf(float x)
+{
+    int i = static_cast<int>(x);
+    i -= (static_cast<float>(i) > x) ? 1 : 0;
+    return static_cast<float>(i);
+}
+
+// round half away from zero, the same value and sign (also of a zero) as roundf for |x| < 2^31
+[[gnu::always_inline]] inline float roundOf(float x)
+{
+    const float t = static_cast<float>(static_cast<int>(x));
+    const float d = x - t; // exact
+    return __builtin_copysignf(t + ((d >= 0.5f) ? 1.0f : 0.0f) - ((d <= -0.5f) ? 1.0f : 0.0f), x);
+}
+
+// sdk::fastSine with roundOf
+inline float fastSine(float phase)
+{
+    float t = phase - roundOf(phase);
+    if (t > 0.25f)
+    {
+        t = 0.5f - t;
+    }
+    else if (t < -0.25f)
+    {
+        t = -0.5f - t;
+    }
+    const float t2 = t * t;
+    return t * (6.283164f + t2 * (-41.337143f + t2 * (81.340782f + t2 * -70.993568f)));
+}
+
+// sdk::fastPow2 with floorOf
+inline float fastPow2(float x)
+{
+    x = std::clamp(x, -126.0f, 127.0f);
+    const float whole = floorOf(x);
+    const float f = x - whole;
+    const float mantissa =
+      1.0f + f * (0.69315249f +
+                  f * (0.24015281f + f * (0.05583591f + f * (0.0089734f + f * 0.00188529f))));
+    const union
+    {
+        uint32_t bits;
+        float value;
+    } scale = { static_cast<uint32_t>(static_cast<int32_t>(whole) + 127) << 23 };
+    return mantissa * scale.value;
+}
+#else
 using sdk::fastPow2;
 using sdk::fastSine;
+inline float floorOf(float x) { return std::floor(x); }
+inline float roundOf(float x) { return std::round(x); }
+#endif
 
 // The same as std::fmod(x, 1.0f) for x in [0, 2), which is all the pulse oscillators give it.
 inline float wrapPhase(float x)
@@ -114,7 +171,7 @@ inline float nesSteppedTriangle(float phase01)
 {
     const float tri = (phase01 < 0.5f) ? (phase01 * 4.0f - 1.0f) : (3.0f - phase01 * 4.0f);
     // 4-bit quantized 16-step triangle like the NES 2A03
-    return std::round(tri * 7.5f) * (1.0f / 7.5f);
+    return roundOf(tri * 7.5f) * (1.0f / 7.5f);
 }
 
 inline uint16_t stepLfsr(uint16_t lfsr, bool metallicShortMode)
@@ -298,6 +355,12 @@ class ChiptuneSynthVoice : public sdk::CustomSynthVoice<ChiptuneSynthVoice, Chip
             ? std::min(0.85f, 2.0f * fastSine(0.5f * cachedEnvCutoff * invSr))
             : 0.0f;
 
+#ifdef FEATURE_SYNTH_OPEN
+        float freqNote = 0.0f;
+        float freqHz = 0.0f;
+        bool freqValid = false;
+#endif
+
         for (size_t i = 0; i < out.size(); ++i)
         {
             // 1. Update ADSR envelope
@@ -390,8 +453,19 @@ class ChiptuneSynthVoice : public sdk::CustomSynthVoice<ChiptuneSynthVoice, Chip
             const float totalNote = currentGlideNote + baseNoteOffset +
                                     static_cast<float>(arpSemi) + vibSemitones + activeSweepSemi;
             // sdk::noteToFreq(0, totalNote), as note 0 is MIDI note 0
+#ifdef FEATURE_SYNTH_OPEN
+            // only when the note moves (a held note without vibrato, sweep or glide keeps it): same value, less work
+            if (!freqValid || totalNote != freqNote)
+            {
+                freqNote = totalNote;
+                freqHz = std::clamp(8.1757989f * fastPow2(totalNote * (1.0f / 12.0f)), 16.0f, 18000.0f);
+                freqValid = true;
+            }
+            const float freq = freqHz;
+#else
             const float freq =
               std::clamp(8.1757989f * fastPow2(totalNote * (1.0f / 12.0f)), 16.0f, 18000.0f);
+#endif
             const float dt = freq * invSr;
 
             // Duty cycle with PWM modulation
@@ -452,13 +526,13 @@ class ChiptuneSynthVoice : public sdk::CustomSynthVoice<ChiptuneSynthVoice, Chip
                     osc2Phase += modDt;
                     if (osc2Phase >= 1.0f)
                     {
-                        osc2Phase -= std::floor(osc2Phase);
+                        osc2Phase -= floorOf(osc2Phase);
                     }
                     const float modIndex = fmModScale * envLevel;
                     const float modSig = fastSine(osc2Phase + 0.15f * pwmLfo);
                     // Quantize FM carrier to 6-bit OPL DAC character
                     const float rawCarrier = fastSine(phase + modIndex * modSig * 0.5f);
-                    sig = std::round(rawCarrier * 31.0f) * (0.85f / 31.0f);
+                    sig = roundOf(rawCarrier * 31.0f) * (0.85f / 31.0f);
                     break;
                 }
 
@@ -499,7 +573,7 @@ class ChiptuneSynthVoice : public sdk::CustomSynthVoice<ChiptuneSynthVoice, Chip
                     osc2Phase += drumFreq * invSr;
                     if (osc2Phase >= 1.0f)
                     {
-                        osc2Phase -= std::floor(osc2Phase);
+                        osc2Phase -= floorOf(osc2Phase);
                     }
                     if (wrapped || (noteAgeSamples & 1u) == 0u)
                     {
@@ -530,7 +604,7 @@ class ChiptuneSynthVoice : public sdk::CustomSynthVoice<ChiptuneSynthVoice, Chip
                 decimateCounter = 0;
                 if (crushActive)
                 {
-                    heldSample = std::round(sig * crushScale) * invCrushScale;
+                    heldSample = roundOf(sig * crushScale) * invCrushScale;
                 }
                 else
                 {
