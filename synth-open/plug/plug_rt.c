@@ -11,7 +11,14 @@ float tanhf(float x) { return plug_rt_host->tanhf(x); }
 float expf(float x) { return plug_rt_host->expf(x); }
 float logf(float x) { return plug_rt_host->logf(x); }
 float powf(float x, float y) { return plug_rt_host->powf(x, y); }
+#ifdef PLUG_RT_LIBM11
+// Synth plugins (host ABI 1.1, build_plug.py --kind synth): the firmware's own exp2f and log2f, so a port of a built-in engine
+// calls the same libm the built-in one did (bit identical output)
+float exp2f(float x) { return plug_rt_host->exp2f(x); }
+float log2f(float x) { return plug_rt_host->log2f(x); }
+#else
 float exp2f(float x) { return plug_rt_host->powf(2.0f, x); }
+#endif
 // One FPU instruction, no host call (the compiler calls sqrtf for the errno path without -fno-math-errno).
 float sqrtf(float x)
 {

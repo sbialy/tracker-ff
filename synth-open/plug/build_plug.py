@@ -122,6 +122,8 @@ def main():
     ap.add_argument("--entry", default="plug_entry", help="entry symbol (plug_entry_dirt for the firmware object)")
     ap.add_argument("--licence", default="MIT", help="SPDX id for the manifest")
     ap.add_argument("--role", default="insert", choices=ROLES)
+    ap.add_argument("--strip-ctors", dest="strip_ctors", action="store_true",
+                    help="test references: drop .init_array from prebuilt objects (firmware objects of a render compare)")
     a = ap.parse_args()
     tc = toolchain()
     with tempfile.TemporaryDirectory() as tmp:
@@ -129,6 +131,12 @@ def main():
         for src in a.sources + [os.path.join(HERE, "plug_rt.c")]:
             if src.endswith(".o"):   # a prebuilt object (e.g. the firmware's own, to run the in-image code in emu_plug.py)
                 hdrs = run([tc + "objdump", "-h", src])
+                if (".init_array" in hdrs or ".ctors" in hdrs) and a.strip_ctors:
+                    # test references only: a firmware object registers its engine's destructor with atexit at static init
+                    # (never runs on the device either), the engine code itself is what the comparison needs
+                    o = os.path.join(tmp, "noctor-" + os.path.basename(src))
+                    run([tc + "objcopy", "--remove-section=.init_array", "--remove-section=.rel.init_array", src, o])
+                    src, hdrs = o, run([tc + "objdump", "-h", o])
                 if ".init_array" in hdrs or ".ctors" in hdrs:
                     sys.exit("%s has static constructors: not allowed in a plugin (use init())" % src)
                 objs.append(src)
@@ -144,6 +152,8 @@ def main():
                 "-I" + HERE] + ["-I" + i for i in a.inc]
             if cxx:
                 cmd += ["-std=gnu++20", "-fno-exceptions", "-fno-rtti", "-fno-threadsafe-statics", "-fno-use-cxa-atexit"]
+            if src.endswith("plug_rt.c") and a.kind == "synth":
+                cmd += ["-DPLUG_RT_LIBM11"]   # the ABI 1.1 libm forwards (exp2f and log2f from the host)
             run(cmd + ["-c", src, "-o", obj])
             hdrs = run([tc + "objdump", "-h", obj])
             if ".init_array" in hdrs or ".ctors" in hdrs:

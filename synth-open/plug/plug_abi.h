@@ -1,4 +1,4 @@
-// Tracker FF runtime plugin ABI 1.0 (final for phase 2, master inserts). MIT licence, see synth-open/plug/README.md.
+// Tracker FF runtime plugin ABI 1.1 (1.0: phase 2, master inserts. 1.1: synth engines, PLUG_EXT_SYNTH, more libm). MIT licence, see synth-open/plug/README.md.
 // Design: ~/prj/poly/ref/plugin-architecture.md. Plain C, shared by the host (firmware) and by plugins (any licence).
 //
 // File layout (.plg, little endian):
@@ -26,7 +26,7 @@ extern "C" {
 
 #define PLUG_MAGIC 0x31474C50u   // "PLG1"
 #define PLUG_ABI_MAJOR 1         // bumped only for an incompatible change: a host refuses any other major
-#define PLUG_ABI_MINOR 0         // additive changes: new tail fields, new optional entry points, new host services
+#define PLUG_ABI_MINOR 1         // additive changes: new tail fields, new optional entry points, new host services
 #define PLUG_HOST_LEVEL 1        // host service table level, a plugin's min_host must be <= this
 
 enum
@@ -67,7 +67,7 @@ enum
 {
     PLUG_EXT_STATE = 1,   // reserved: state beyond the parameters (save and load through the project sidecar)
     PLUG_EXT_TAIL = 2,    // plug_ext_tail (declared below, the phase 2 host does not ask for it yet)
-    PLUG_EXT_SYNTH = 3,   // reserved: the C form of ISynthEngine (phase 3)
+    PLUG_EXT_SYNTH = 3,   // plug_ext_synth (declared below): the C form of ISynthEngine, PLUG_KIND_SYNTH plugins (phase 3)
     PLUG_EXT_TEMPO = 4,   // reserved: set_tempo(inst, bpm) for synced inserts
 };
 
@@ -150,6 +150,96 @@ typedef struct
     void (*skip)(void* inst, uint32_t frames);     // advance LFOs and write heads exactly as process() on silence would
 } plug_ext_tail;
 
+// ---- PLUG_EXT_SYNTH: a synth engine (PLUG_KIND_SYNTH, phase 3). The host wraps it in an ISynthEngine adapter, so the
+// shim's voice pool, macros, patch slots and governor treat it as a built-in engine. The audio calls get the OpenTracker 3.x
+// engine structs (synth-open/ot/audio/synth_engine.h: SynthVoice, SynthParams, SynthNote, SynthSlotScratch) by pointer,
+// frozen for ABI 1: plug_ext_synth.layout carries their sizes and the host refuses a plugin built against others. Same
+// contract as ISynthEngine: audio context, no allocation, no I/O, Volume is the host's.
+//
+// The metadata arrays have the layout of the shim's ParamDef, SectionDef and MacroDef (open_engine.h, static_assert in the
+// host): the host points its engine description straight at them, nothing is copied. They must sit in the text segment.
+enum
+{   // plug_synth_param.fmt: how the value prints (the shim's open::Fmt, numbers frozen)
+    PLUG_FMT_PCT = 0, PLUG_FMT_PCT_MAX, PLUG_FMT_HZ, PLUG_FMT_SEC, PLUG_FMT_LFO_HZ, PLUG_FMT_ENUM, PLUG_FMT_VAL100,
+    PLUG_FMT_ON_OFF, PLUG_FMT_SEMI, PLUG_FMT_CENTS, PLUG_FMT_INT, PLUG_FMT_RATIO, PLUG_FMT_MS10, PLUG_FMT_DB, PLUG_FMT_PAN,
+    PLUG_FMT_COUNT
+};
+enum
+{   // plug_synth_param.curve: the edit curve of the encoder (open::CurveKind)
+    PLUG_CURVE_LINEAR = 0, PLUG_CURVE_EXP, PLUG_CURVE_STEEP, PLUG_CURVE_POWER, PLUG_CURVE_COUNT
+};
+typedef struct
+{
+    const char* name;
+    float def, min, max;
+    uint8_t fmt;                     // PLUG_FMT_*
+    uint8_t curve;                   // PLUG_CURVE_*
+    const char* const* enum_names;   // PLUG_FMT_ENUM: max + 1 names (min is 0)
+} plug_synth_param;
+typedef struct
+{
+    const char* name;         // the editor picks the section icon from it ("Oscillator", "Filter", "Amplifier", ...)
+    const char* short_name;
+    const uint8_t* ids;       // parameter indices
+    uint8_t count;
+} plug_synth_section;
+typedef struct
+{
+    const char* name;
+    uint8_t bipolar;
+    uint8_t count;            // 1 or 2 targets
+    struct
+    {
+        uint8_t param;
+        float amount;
+    } targets[2];
+} plug_synth_macro;
+
+enum
+{
+    PLUG_SYNTH_SLOT_FX = 1u << 0,   // slot_post is the engine's slot effect (JU6's chorus): the host renders the slot on a private bus
+};
+// sizeof SynthVoice, SynthParams, SynthNote and SynthSlotScratch of the OpenTracker 3.x interface the plugin was built with
+#define PLUG_SYNTH_LAYOUT(voice, params, note, scratch) \
+    ((uint32_t)(voice) | ((uint32_t)(params) << 8) | ((uint32_t)(note) << 20) | ((uint32_t)((scratch) >> 3) << 26))
+
+typedef struct
+{
+    uint32_t struct_size;
+    uint32_t layout;          // PLUG_SYNTH_LAYOUT(...) of the plugin's build
+    // Identity. stored: the engine's number in a project (strMtValues synthPart[].synthType), patch_engine: field 1 of a
+    // .patch file, type_id: the shim's instrument type key. An engine that used to be built in keeps its numbers (JU6 7,
+    // 0x81, 0x81, FM4 9, 0x80, 0x80, engine_list.h), so old projects and patches find it. A new engine uses its uid for all
+    // three. The host refuses a plugin whose numbers a built-in or an earlier installed engine already has.
+    int32_t stored;
+    int32_t patch_engine;
+    int32_t type_id;
+    const char* name;         // on-screen name and the Patches/<name>/ folder, 1..8 printable chars, no '/'
+    const plug_synth_param* params;
+    uint32_t param_count;     // <= 84 (kSynthParamMax)
+    const plug_synth_section* sections;
+    uint32_t section_count;   // <= 8
+    const plug_synth_macro* macros;
+    uint32_t macro_count;     // <= 6
+    int32_t volume_param;     // the host applies it as voice gain (-1: none)
+    uint32_t max_voices;      // voices per instrument, 1..4
+    uint32_t flags;           // PLUG_SYNTH_*
+    // Working RAM from the host (delay lines, pools: Pluck's 8.7 KB), SRAM, zeroed, 8 aligned, given once through set_work
+    // after init and before any audio call, kept while the engine is installed. 0 = none (set_work may be NULL then).
+    uint32_t work_bytes;
+    void (*set_work)(void* work, uint32_t bytes);
+    // ISynthEngine, one to one (the pointers are SynthSlotScratch*, SynthParams*, SynthNote*, SynthVoice*). NULL = the
+    // ISynthEngine default (nothing) for prepare, slot_reset, set_tempo, slot_post and set_send_tap.
+    void (*prepare)(void* scratch, const void* params);
+    void (*slot_reset)(void* scratch);
+    void (*set_tempo)(float bpm);
+    void (*note_on)(void* voice, const void* params, const void* note);
+    void (*note_off)(void* voice, const void* params);
+    uint32_t (*render)(void* voice, const void* params, float g0, float g_inc, float* l, float* r);   // 0 = finished
+    uint32_t (*slot_post)(int32_t slot, void* scratch, const void* params, float* l, float* r);    // 1 = tail
+    uint32_t (*set_send_tap)(int32_t slot, float* delay, float* reverb, float gain_d, float gain_r);
+} plug_ext_synth;
+
 struct plug_host
 {
     uint32_t struct_size;
@@ -168,6 +258,10 @@ struct plug_host
     void* (*alloc)(uint32_t bytes, uint32_t flags);
     uint32_t (*cycles)(void);
     const void* (*query)(uint32_t ext_id);   // NULL for every id in host level 1
+    // ABI 1.1 (check with PLUG_HAS): more of the firmware's libm, so a port of built-in DSP calls the very same functions.
+    // Only what an engine that moves out needs (each host function pulls its libm code into the image): JU6 calls exp2f.
+    float (*exp2f)(float);
+    float (*log2f)(float);
 };
 
 // The one exported symbol. abi is the host's PLUG_ABI_MAJOR << 16 | PLUG_ABI_MINOR.
