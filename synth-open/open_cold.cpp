@@ -721,6 +721,10 @@ void OpenPatch::exportData(PatchData& d) const
         }
         dst.count = int8_t(n);
     }
+    for (int i = 0; i < kModSlots; i++)
+    {
+        d.mod[i] = mod[i]; // the stored identity, so an unresolved destination is written back as it was read
+    }
     d.extra = extra;
 }
 
@@ -809,7 +813,50 @@ void OpenPatch::importData(const PatchData& d)
             }
         }
     }
+    // Automation: range checks, then each destination is looked up in this engine's table (open_mod.h modResolve). A param found under
+    // another index (a plugin update moved it) follows the param. The slot state of the instrument starts over (serial).
+    for (int i = 0; i < kModSlots; i++)
+    {
+        ModSlot m = d.mod[i];
+        modSanitize(m);
+        m.dest = modResolve(def, m);
+        if (m.dest >= 0 && m.kind == ModKind::kParam)
+        {
+            m.index = m.dest;
+        }
+        mod[i] = m;
+    }
+    modOn = modAnyOn(mod);
+    modSer++;
     extra = d.extra;
+}
+
+// ------------------------------------------------------------- automation (editor access)
+
+const ModSlot& modSlotOf(const Patch& p, int s)
+{
+    return static_cast<const OpenPatch&>(p).modSlot(s);
+}
+
+void modSlotSet(Patch& p, int s, const ModSlot& v)
+{
+    static_cast<OpenPatch&>(p).setModSlot(s, v);
+}
+
+const EngineDef* modEngineOf(const Patch& p)
+{
+    return static_cast<const OpenPatch&>(p).getDef();
+}
+
+const char* modDestName(const Patch& p, int code)
+{
+    const auto& op = static_cast<const OpenPatch&>(p);
+    if (code >= kModPickMacro && code < kModPickMacro + kModMacros)
+    {
+        return op.getMetadata().macros[code - kModPickMacro].displayName.c_str();
+    }
+    const EngineDef* d = op.getDef();
+    return d && code >= 0 && code < d->paramCount && d->params[code].name ? d->params[code].name : "";
 }
 
 // ------------------------------------------------------------- patch store

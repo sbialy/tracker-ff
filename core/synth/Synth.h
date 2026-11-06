@@ -11,6 +11,7 @@
 #ifdef FEATURE_SYNTH_OPEN
 #include "open_engine.h"
 #include "open_load.h"
+#include "open_mod.h"
 #endif
 #include <array>
 #include <cassert>
@@ -162,6 +163,14 @@ class Synth
             persistSlotNames(part);
         }
     }
+    // Synth automation (synth-open/open_mod.h): the 4 slots of the open patch (they belong to its slot file, the Patch FX leaves them).
+    // setModSlot disables audio interrupts and marks the patch dirty (the slot file is written with the patch, the project structure
+    // does not change). modDestinations fills `out` (open::kModPickMax) with the picker order and returns the count.
+    const polysynth::open::ModSlot& getModSlot(int part, int slot) { return polysynth::open::modSlotOf(*parts[part].patch, slot); }
+    void setModSlot(int part, int slot, const polysynth::open::ModSlot& value);
+    const polysynth::open::EngineDef* getModEngine(int part) { return polysynth::open::modEngineOf(*parts[part].patch); }
+    int modDestinations(int part, int16_t* out) { return polysynth::open::modPicker(getModEngine(part), out); }
+    const char* modDestName(int part, int code) { return polysynth::open::modDestName(*parts[part].patch, code); }
 #endif
 
     std::string getInstrumentTypeName(int typeIdx);

@@ -425,6 +425,15 @@ polysynth::open::SlotSelect Synth::selectPatchSlot(int part, int slot)
     return result;
 }
 
+void Synth::setModSlot(int part, int slot, const polysynth::open::ModSlot& value)
+{
+    assert(part >= 0 && part < kSynthParts && slot >= 0 && slot < polysynth::open::kModSlots);
+    DISABLE_AUDIO_INTERRUPTS();
+    polysynth::open::modSlotSet(*parts[part].patch, slot, value);
+    ENABLE_AUDIO_INTERRUPTS();
+    setPatchDirty(part);
+}
+
 bool Synth::flushPatchSlot(int part)
 {
     return !(parts[part].patchDirty && getPatchSlot(part) > 0) || savePatchToWorkspace(part);

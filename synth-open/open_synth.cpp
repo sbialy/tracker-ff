@@ -63,17 +63,43 @@ constexpr float kBendRange = 1.0f;
 
 } // namespace
 
-// Values with macros M1..M6 applied (additive, scaled by the param range, clamped).
-void open::OpenPatch::effective(float* out) const
+// Values with macros M1..M6 and the automation slots applied (additive, scaled by the param range, clamped once).
+void open::OpenPatch::effective(float* out, const float* modOut) const
 {
     std::memcpy(out, values, sizeof(float) * count);
     float add[kMaxParams] = {};
     bool hit[kMaxParams] = {};
+    float macroMod[open::kModMacros] = {};
+    if (modOut && modOn)
+    {
+        for (int s = 0; s < open::kModSlots; s++)
+        {
+            const open::ModSlot& c = mod[s];
+            if (c.type == open::ModType::kOff || c.dest < 0)
+            {
+                continue;
+            }
+            if (c.kind == open::ModKind::kMacro)
+            {
+                macroMod[c.dest] += modOut[s];
+            }
+            else if (c.dest < count)
+            {
+                const auto& p = metadata.params[c.dest];
+                add[c.dest] += modOut[s] * (float(p.maxValue) - float(p.minValue));
+                hit[c.dest] = true;
+            }
+        }
+    }
     for (int m = 0; m < int(kUserMacroCount); m++)
     {
         const auto& macro = metadata.macros[m];
         const float cc = float(macroCC[m]);
-        const float mv = macro.bipolar ? (cc - 63.0f) * (1.0f / 64.0f) : cc * (1.0f / 127.0f);
+        float mv = macro.bipolar ? (cc - 63.0f) * (1.0f / 64.0f) : cc * (1.0f / 127.0f);
+        if (m < open::kModMacros && macroMod[m] != 0.0f)
+        {
+            mv = std::clamp(mv + macroMod[m], macro.bipolar ? -1.0f : 0.0f, 1.0f); // as far as the knob goes
+        }
         for (const auto& mod : macro.modifiers)
         {
             if (!mod.paramId.has_value() || *mod.paramId < 0 || *mod.paramId >= count)
@@ -142,6 +168,7 @@ class OpenInstrument final : public Instrument
         def = patch ? patch->getDef() : nullptr;
         engine = engineOf(def); // nullptr for a missing engine's placeholder: the part is silent
         cutAll();
+        modResetAll();
         std::memset(scratch.bytes, 0, sizeof(scratch.bytes));
         if (engine)
         {
@@ -222,14 +249,21 @@ class OpenInstrument final : public Instrument
             R = busR;
         }
 #endif
-        refreshParams();
+        // the same tempo feeds the automation (before the params of the block are made) and the engine
+        float bpmNow = 0.0f;
         if (tempo && *tempo)
         {
             const auto bpm = (*tempo)();
             if (bpm.has_value())
             {
-                engine->setTempo(*bpm);
+                bpmNow = *bpm;
             }
+        }
+        modAdvance(bpmNow);
+        refreshParams();
+        if (bpmNow > 0.0f)
+        {
+            engine->setTempo(bpmNow);
         }
         engine->prepare(scratch, params);
         // PERC has no Volume: the voice gain is the note velocity (the engine divides it back out per hit)
@@ -273,7 +307,78 @@ class OpenInstrument final : public Instrument
         params.moving = false;
     }
 
+#ifdef OPEN_HOST_TEST
+    const ot::audio::SynthParams& testParams() const { return params; }
+    float testModOut(int s) const { return modSt[s].out; }
+#endif
+
   private:
+    // ---- automation (open_mod.h): one state per slot of the patch, advanced once per rendered block
+    void modResetAll()
+    {
+        for (int s = 0; s < open::kModSlots; s++)
+        {
+            open::modReset(modSt[s], s);
+            modOut[s] = 0.0f;
+        }
+        modSerial = patch ? patch->modSerial() : 0;
+    }
+
+    void modAdvance(float bpm)
+    {
+        if (patch->modSerial() != modSerial)
+        {
+            modResetAll(); // another file came in (slot select, load): its modulators start fresh
+        }
+        if (!patch->modActive())
+        {
+            return;
+        }
+        for (int s = 0; s < open::kModSlots; s++)
+        {
+            open::modStep(patch->modSlot(s), modSt[s], bpm);
+            modOut[s] = modSt[s].out;
+        }
+    }
+
+    bool anyGate() const
+    {
+        for (const auto& v : voices)
+        {
+            if (v.on && v.v.gate)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Note and gate events of the automation: once per MIDI event, not per block, kept out of line (the MIDI lambda inlines the rest)
+    __attribute__((noinline)) void modNoteOnAll()
+    {
+        if (patch->modSerial() != modSerial)
+        {
+            modResetAll();
+        }
+        const bool afterSilence = !anyActive();
+        for (int s = 0; s < open::kModSlots; s++)
+        {
+            open::modNoteOn(patch->modSlot(s), modSt[s], afterSilence);
+            modOut[s] = modSt[s].out;
+        }
+    }
+
+    __attribute__((noinline)) void modGateEnded()
+    {
+        if (patch && patch->modActive() && !anyGate())
+        {
+            for (int s = 0; s < open::kModSlots; s++)
+            {
+                open::modGateOff(patch->modSlot(s), modSt[s]);
+            }
+        }
+    }
+
     bool anyActive() const
     {
         for (const auto& v : voices)
@@ -300,7 +405,7 @@ class OpenInstrument final : public Instrument
     void refreshParams()
     {
         float eff[kMaxParams];
-        patch->effective(eff);
+        patch->effective(eff, modOut);
         params.count = patch->paramCount();
         bool changed = false;
         for (int i = 0; i < params.count; i++)
@@ -444,6 +549,10 @@ class OpenInstrument final : public Instrument
         {
             return;
         }
+        if (patch->modActive())
+        {
+            modNoteOnAll();
+        }
         refreshParams();
         bool reused;
         Voice* v = pickVoice(reused);
@@ -489,6 +598,7 @@ class OpenInstrument final : public Instrument
                 engine->noteOff(v.v, params);
             }
         }
+        modGateEnded();
     }
 
     void releaseAll()
@@ -505,6 +615,7 @@ class OpenInstrument final : public Instrument
                 engine->noteOff(v.v, params);
             }
         }
+        modGateEnded();
     }
 
     VoiceHost& host;
@@ -523,6 +634,9 @@ class OpenInstrument final : public Instrument
     ot::audio::SynthSlotScratch scratch;
     ot::audio::SynthParams params;
     bool paramsValid = false;
+    open::ModState modSt[open::kModSlots];
+    float modOut[open::kModSlots] = {};
+    uint8_t modSerial = 0;
     float bend = 0.0f; // pitch bend in semitones, applied to every voice (SynthVoice::bend)
     Voice voices[kMaxVoicesPerInstrument];
 };
@@ -625,6 +739,12 @@ class OpenSynth final
         governor.reset();
         meter.reset();
     }
+#ifdef OPEN_HOST_TEST
+    OpenInstrument* instrumentAt(int part)
+    {
+        return part >= 0 && part < int(instruments.size()) && instruments[part] ? &static_cast<OpenInstrument&>(*instruments[part]) : nullptr;
+    }
+#endif
     bool partIdle(int part)
     {
         if (part < 0 || part >= int(instruments.size()) || !instruments[part])
@@ -779,6 +899,18 @@ void open::reportBlockCycles(uint32_t cycles)
     }
 }
 bool open::partIdle(int part) { return gActive && gActive->partIdle(part); }
+#ifdef OPEN_HOST_TEST
+const ot::audio::SynthParams* open::testParams(int part)
+{
+    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
+    return i ? &i->testParams() : nullptr;
+}
+float open::testModOut(int part, int slot)
+{
+    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
+    return i ? i->testModOut(slot) : 0.0f;
+}
+#endif
 void open::setOffline(bool offline)
 {
     if (gActive)

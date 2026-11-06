@@ -159,7 +159,11 @@ void cInstrumentEditor::start(uint32_t options)
 #if GUI_HANDLE_SYNTH
             if (mtProject.values.lastUsedInstrument >= SYNTH_INSTRUMENTS_START_IDX)
             {
-                if (mode != mtInstEditModeSynth && mode != mtInstEditModeSynthMacros)
+                if (mode != mtInstEditModeSynth && mode != mtInstEditModeSynthMacros
+#if GUI_SYNTH_AUTO
+                    && mode != mtInstEditModeSynthAutomation
+#endif
+                )
                 {
                     mode = mtInstEditModeSynth;
                 }
@@ -255,6 +259,14 @@ void cInstrumentEditor::start(uint32_t options)
             break;
         }
 #endif
+#if GUI_SYNTH_AUTO
+        case mtInstEditModeSynthAutomation:
+        {
+            showSynthAutomationScreen();
+            setSynthAutomationScreenFunct();
+            break;
+        }
+#endif
         default:
         {
             showInstrumentParams();
@@ -297,7 +309,10 @@ void cInstrumentEditor::hideControlsUnderMiniMenu()
 
 uint8_t cInstrumentEditor::getCurrentModeIdx()
 {
-#if GUI_HANDLE_SYNTH
+#if GUI_SYNTH_AUTO
+    // the mini menu has two entries: Automation counts as the second page, its next entry is the first
+    return (mode == mtInstEditModeEnv || mode == mtInstEditModeSynthMacros || mode == mtInstEditModeSynthAutomation) ? 1 : 0;
+#elif GUI_HANDLE_SYNTH
     return (mode == mtInstEditModeEnv || mode == mtInstEditModeSynthMacros) ? 1 : 0;
 #else
     return (mode == mtInstEditModeEnv) ? 1 : 0;
@@ -1007,8 +1022,18 @@ static void functSwitchMode()
     }
     else if (IE->mode == mtInstEditModeSynthMacros)
     {
+#if GUI_SYNTH_AUTO
+        IE->mode = mtInstEditModeSynthAutomation; // Synth 1/3, Macros 2/3, Automation 3/3
+#else
+        IE->mode = mtInstEditModeSynth;
+#endif
+    }
+#if GUI_SYNTH_AUTO
+    else if (IE->mode == mtInstEditModeSynthAutomation)
+    {
         IE->mode = mtInstEditModeSynth;
     }
+#endif
 #endif
 
     IE->start(0);
@@ -2758,7 +2783,11 @@ void cInstrumentEditor::lightUpPadBoard()
     }
 #if GUI_HANDLE_SYNTH
 
-    if (mode == mtInstEditModeSynth || mode == mtInstEditModeSynthMacros)
+    if (mode == mtInstEditModeSynth || mode == mtInstEditModeSynthMacros
+#if GUI_SYNTH_AUTO
+        || mode == mtInstEditModeSynthAutomation
+#endif
+    )
     {
         if (isSynthInstrument(mtProject.values.lastUsedInstrument))
         {

@@ -10,6 +10,12 @@
 #if GUI_HANDLE_SYNTH
 #include "Synth.h"
 #endif
+// Synth Automation page (SynthAutomation.cpp): the open synth only (MK66 SYNTH_OPEN), not the IMX stock synth GUI
+#if GUI_HANDLE_SYNTH && defined(FEATURE_SYNTH_OPEN)
+#define GUI_SYNTH_AUTO 1
+#else
+#define GUI_SYNTH_AUTO 0
+#endif
 #include <map>
 
 enum mtInstrumentEditorMode
@@ -22,6 +28,9 @@ enum mtInstrumentEditorMode
     mtInstEditModeSynth,
     mtInstEditModeSynthMacros,
     mtInstEditModeSynthPatchEdit,
+#endif
+#if GUI_SYNTH_AUTO
+    mtInstEditModeSynthAutomation,
 #endif
     mtInstEditModeCount,
 };
@@ -462,6 +471,22 @@ class cInstrumentEditor : public ModuleBase
     void showSynthReverbSend(uint8_t syntPartIdx);
     void showSynthDelaySend(uint8_t syntPartIdx);
     void showSynthMacroValue(uint8_t syntPartIdx, uint8_t macroIdx);
+
+#if GUI_SYNTH_AUTO
+    // automation (SynthAutomation.cpp): slot list, destination picker, type, then the sample page's columns. The list buffers are in
+    // the SDRAM (SynthAutomation.cpp), not in this object, so the internal RAM (heap) does not pay for them. No new.
+    uint8_t autoSlot = 0;                                        // the slot shown
+    strList autoTypeList;                                        // the Type column (filterModeListControl moved to column 2)
+
+    void showSynthAutomationScreen();
+    void setSynthAutomationScreenFunct();
+    void showSynthAutomationColumns();
+    void buildSynthAutomationLists();
+    void changeSynthAutomation(int place, int16_t delta, ValueChangeSource source = kArrowButton);
+    void setDefaultSynthAutomation(int place);
+    bool synthAutomationOn();
+    int synthAutomationLastPlace();
+#endif
 
     //----------------------------------
     // patch editor

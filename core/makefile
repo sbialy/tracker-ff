@@ -70,7 +70,7 @@ SYNTH_OPT_GUI ?=
 SYNTH_OPT_SHIM ?=
 SYNTH_OPT_COLD ?=
 SYNTH_OPT_FAT ?= $(SYNTH_OPT_ENGINES)
-SYNTH_GUI_OBJS := $(addprefix $(OBJ_DIR)/,interface/instrumentEditor/SynthEditor.o interface/instrumentEditor/SynthPatchEditor.o interface/instrumentEditor/SynthMacros.o synth/Synth.o synth/FileSystemAdapter.o synth/MidiAdapter.o synth/registry.o)
+SYNTH_GUI_OBJS := $(addprefix $(OBJ_DIR)/,interface/instrumentEditor/SynthEditor.o interface/instrumentEditor/SynthPatchEditor.o interface/instrumentEditor/SynthMacros.o interface/instrumentEditor/SynthAutomation.o synth/Synth.o synth/FileSystemAdapter.o synth/MidiAdapter.o synth/registry.o)
 $(filter $(OBJ_DIR)/synth-open/ot/% $(OBJ_DIR)/synth-open/ot-synths/% $(OBJ_DIR)/synth-open/phz/% $(OBJ_DIR)/synth-open/engine_chip.o,$(SYNTH_OPEN_OBJS)): EXTRA_OPT := $(SYNTH_OPT_ENGINES)
 # CHIP (the voice and its glue) has its own knob, default the engines' flag. -O2 makes a voice about 12 % cheaper (12.7 % of a
 # block instead of 14.4 %, default patch, synth-open/tools/phz_cycles/run_bench.sh -O2 CHIP) for +3.6 KB in the image
