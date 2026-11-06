@@ -8,12 +8,18 @@
 #include <cstdint>
 
 // Engines with a slot effect (ISynthEngine::slotPost) need a private bus per slot in the render path of the shim. That
-// costs flash (about 0.4 KB), so it is only compiled when such an engine is picked (JU6, engines.mk).
-#if defined(SYNTH_ENGINE_JU6)
+// costs flash (about 0.4 KB), so it is only compiled when such an engine is picked (JU6, engines.mk) or can be installed
+// (FEATURE_PLUG_HOST: the JU6 plugin has it).
+#if defined(SYNTH_ENGINE_JU6) || defined(FEATURE_PLUG_HOST)
 #define OPEN_SLOT_FX 1
 #else
 #define OPEN_SLOT_FX 0
 #endif
+
+namespace polysynth
+{
+class InstrumentTypeRegistry;
+}
 
 namespace polysynth::open
 {
@@ -103,9 +109,38 @@ struct EngineDef
     ot::audio::ISynthEngine* (*engine)();
     bool slotFx;            // the engine has a slot effect (ISynthEngine::slotPost): the shim renders its voices
                             // into a private bus, runs the effect on it and adds the result to the mix
+    ot::audio::ISynthEngine* inst = nullptr;   // a plugin engine (plug_synth.cpp: the PLUG_EXT_SYNTH adapter), else engine()
 };
 
-// nullptr when the type has no open engine in this build
+// The engine of a definition. nullptr for a missing engine's placeholder (missingDef): the part stays silent.
+inline ot::audio::ISynthEngine* engineOf(const EngineDef* d)
+{
+    return !d ? nullptr : (d->inst ? d->inst : (d->engine ? d->engine() : nullptr));
+}
+
+// The engine list at run time, in the order of the model list on screen: the engines built in (engine_list.h) and the
+// installed plugin engines (FEATURE_PLUG_HOST, engineListAdd before the synth starts), merged by stored number, so a
+// plugin of an engine that used to be built in (JU6 7, FM4 9) sits where it always sat.
+struct EngineRef
+{
+    const EngineDef* def;
+    int32_t stored;        // the number in a project (strMtValues synthPart[].synthType)
+    int32_t patchEngine;   // field 1 of a .patch file
+    int8_t builtin;        // position in engine_list.h (its icons), -1 for a plugin engine (shown by its name)
+};
+bool engineListAdd(const EngineDef* def, int stored, int patchEngine);   // false: full, or a number already taken
+int engineCount();
+const EngineRef& engineAt(int ui);
+int engineUiForStored(int stored);   // -1: not in the list
+// A known engine (engine_list.h numbers 7 to 17) that is neither built in nor installed: a placeholder definition with its
+// name and type, no parameters and no engine. A part on it stays silent and keeps its project values and patch files
+// untouched ("missing" state), installing the plugin brings it back. nullptr for any other number.
+const EngineDef* missingDef(int stored);
+int typeForStored(int stored);       // the list entry's or the placeholder's type, -1 when neither
+
+void registerEngines(InstrumentTypeRegistry& registry);   // the list and the missing placeholders (registry.cpp)
+
+// nullptr when the type has no open engine in this build (a missing engine's placeholder counts as one)
 const EngineDef* engineDefForType(int typeId);
 // type id of the first engine of this build (the fallback for a type this build does not have)
 int firstEngineTypeId();

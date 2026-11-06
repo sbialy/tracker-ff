@@ -47,8 +47,9 @@ struct Place
     uintptr_t textRun = 0;
     uint8_t* rwDst = nullptr;
     uint32_t rwLen = 0;
-    uintptr_t rwRun = 0;
+    uintptr_t rwRun = 0;   // 0: rwDst (or right after the text run address when rwDst is null)
     bool (*commit)(const uint8_t* src, uintptr_t run, uint32_t len) = nullptr;
+    bool run = true;       // false: stop after the rebase (the synth bank writes text and rw to the flash itself, no entry call)
 };
 Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, Loaded& out);
 // Checks a descriptor against an image range (also used for the in-image plugins, range 0 = no range check).
@@ -60,6 +61,19 @@ void syncCode();   // after writing code: DSB, ISB, invalidate the LMEM code cac
 // skips every flash command when the flash already holds those bytes. Only ERSSCR and PGM8, only these two sectors.
 bool nvmInstall(const uint8_t* src, uintptr_t run, uint32_t len);
 uint32_t nvmCommands();   // flash commands issued since boot (0 when every load found its bytes in place)
+// One command on the synth bank (plug_bank.h, [0x10000000, 0x1001E000)): ERSSCR of the sector at bank offset off, PGM8 of the
+// phrase at off. The caches are invalidated after it, so the flash reads back what it holds.
+bool nvmErase(uint32_t off);
+bool nvmProgram(uint32_t off, const uint8_t* data8);
+
+// ---- synth engine plugins (plug_synth.cpp, phase 3): /Plugins/Synth/*.plg installed into the FlexNVM bank (plug_bank.h),
+// attached to the shim's engine list before the synth starts (TrackerImpl::init, before Synth::init)
+void synthBoot(FileSystem* fs);
+void useFs(FileSystem* fs);   // the card for writeText before boot() (synthBoot runs first)
+// scanIndex of one directory and kind on the card (the names are copied into index, the list buffers are shared)
+int scanDir(const char* dir, IndexEntry* index, int cap, ScanStats& st, uint32_t kind);
+bool writeText(const char* path, const char* text, int n);   // temp file and rename (plug_host.cpp)
+constexpr const char* kMarker = "/Plugins/.loading";      // crash marker: a plugin was starting (section 7 of the design)
 
 // ---- the plugin index: /Plugins/Master/*.plg, header and manifest only, nothing executes (IndexEntry: plug_index.h)
 int indexCount();

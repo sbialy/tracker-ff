@@ -17,8 +17,9 @@
 
 const char* const OffOnNames[] = { "Off", "On" };
 #ifdef FEATURE_SYNTH_OPEN
-// SYNTH_OPEN (MK66): the engines picked at build time, in the order of Synth::kSynthTypes (engine_list.h)
-static const int synthModelListImages[Synth::kSynthTypes.size()] = {
+// SYNTH_OPEN (MK66): the built-in engines' editor icons in engine_list.h order (EngineRef::builtin). A plugin engine has none
+// and shows its name (hook for the card logo loader of ref/synth-art-plan.md, round B).
+static const int synthModelListImages[] = {
 #define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, PATCH_ENGINE, MINI_ICON, ICON) \
     enDisplayBitmaps::ICON,
 #include "engine_list.h"
@@ -1048,8 +1049,13 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
 
     uint8_t syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
     const int modelUi = std::max(Synth::storedToUi(mtProject.values.synthPart[syntPartIdx].synthType), 0);
+#ifdef FEATURE_SYNTH_OPEN
+    const polysynth::open::EngineRef& model = polysynth::open::engineAt(modelUi);
+    labelImage.bitmaps[0].bitmapIndex = model.builtin >= 0 ? synthModelListImages[model.builtin] : 0;
+#else
     assert(modelUi < static_cast<int>(Synth::kSynthTypes.size()));
     labelImage.bitmaps[0].bitmapIndex = synthModelListImages[modelUi];
+#endif
     labelImage.bitmaps[0].xValue = 116;
     labelImage.bitmaps[0].yValue = 49;
     labelImage.bitmaps[1].bitmapIndex = 0;
@@ -1057,6 +1063,13 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
     display.setControlStyle(noteLabel, controlStyleShowBitmap);
     display.setControlColors(noteLabel, display.getTheme().patchEditSynthModelIconColors);
     display.setControlText(noteLabel, "");
+#ifdef FEATURE_SYNTH_OPEN
+    if (model.builtin < 0)
+    {   // a plugin engine: its name in place of the icon
+        display.setControlStyle(noteLabel, controlStyleShow | controlStyleCenterY | controlStyleFont4);
+        display.setControlText(noteLabel, model.def->name);
+    }
+#endif
     display.setControlValue(noteLabel, 0);
     display.setControlPosition(noteLabel, 50, 45);
     display.setControlSize(noteLabel, 108, 40);

@@ -49,7 +49,6 @@ constexpr uint32_t kRw2Bytes = 1024;
 __attribute__((aligned(8))) uint8_t s_rw2[kRw2Bytes];
 
 constexpr const char* kDir = "/Plugins/Master";
-constexpr const char* kMarker = "/Plugins/.loading";
 constexpr uint32_t kBudget = 60000;         // cycles per block and slot: 11.5 % of a 522,240 cycle block, then bypass
 constexpr uint32_t kKeyWindowMs = 4000;     // hold Shift this long after power on: no plugin loads this session
 constexpr uint32_t kDebounceMs = 400;       // a UI pick loads once the selection rests this long
@@ -121,10 +120,12 @@ float hTanh(float x) { return tanhf(x); }
 float hExp(float x) { return expf(x); }
 float hLog(float x) { return logf(x); }
 float hPow(float x, float y) { return powf(x, y); }
+float hExp2(float x) { return exp2f(x); }
+float hLog2(float x) { return log2f(x); }
 
 const plug_host s_host = {
     sizeof(plug_host), PLUG_HOST_LEVEL, 44117.64706f, hSin, hCos, hTan, hTanh, hExp, hLog, hPow, memcpy, memset,
-    hostAlloc,         hostCycles,      hostQuery,
+    hostAlloc,         hostCycles,      hostQuery,    hExp2, hLog2,
 };
 
 bool readAll(FileSystem* fs, FileSystem::FileHandle f, uint8_t* dst, uint32_t n)
@@ -149,6 +150,13 @@ void path(char* out, int cap, const char* dir, const char* name)
     snprintf(out, size_t(cap), "%s/%s", dir, name);
 }
 
+}   // namespace
+
+void useFs(FileSystem* fs)
+{
+    s_fs = fs;
+}
+
 // temp file then rename: a failed write never costs the old file
 bool writeText(const char* p, const char* text, int n)
 {
@@ -167,6 +175,9 @@ bool writeText(const char* p, const char* text, int n)
     if (s_fs->exists(p)) s_fs->remove(p);
     return s_fs->rename(tmp, p);
 }
+
+namespace
+{
 
 // /Plugins/host.txt: what each slot holds, after every load and on every Workspace save (the device test reads it back)
 void writeStatus()
@@ -395,7 +406,7 @@ Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, L
     // text = [0, rw_offset) (code, constants: may run from flash), rw = [rw_offset, image_size) + bss (always RAM)
     const uint32_t rwOff = h.rw_offset ? h.rw_offset : h.image_size;
     uint8_t* const rwDst = pl.rwDst ? pl.rwDst : pl.textDst + rwOff;
-    const uintptr_t rwRun = pl.rwDst ? pl.rwRun : pl.textRun + rwOff;
+    const uintptr_t rwRun = pl.rwRun ? pl.rwRun : pl.textRun + rwOff;
     if (e == kOk) e = checkLayout(h, pl.textLen, pl.rwDst ? pl.rwLen : 0);
     // the CRC covers everything after the 64 byte header: the manifest first
     uint32_t crc = 0;
@@ -447,6 +458,7 @@ Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, L
     if (e == kOk && crc != h.crc32) e = kCrc;
     if (e != kOk) return e;
     memset(rwDst + (h.image_size - rwOff), 0, h.bss_size);
+    if (!pl.run) return kOk;
     if (pl.commit && !pl.commit(pl.textDst, pl.textRun, rwOff)) return kCommit;   // e.g. program the text into flash
     // the K66 system MPU must let the core fetch from RAM (PtfxLoader does the same)
     *reinterpret_cast<volatile uint32_t*>(0x4000D000) = 0;
@@ -500,12 +512,17 @@ struct ScanFs
 };
 }   // namespace
 
+int scanDir(const char* dir, IndexEntry* index, int cap, ScanStats& st, uint32_t kind)
+{
+    ScanFs fs;
+    return scanIndex(fs, dir, index, cap, s_names, s_nameList, st, kind);
+}
+
 void rescan()
 {
     s_count = 0;
     if (!s_fs) return;
-    ScanFs fs;
-    s_count = scanIndex(fs, kDir, s_index, kIndexMax, s_names, s_nameList, s_scan);
+    s_count = scanDir(kDir, s_index, kIndexMax, s_scan, PLUG_KIND_MASTER_INSERT);
     if (s_scan.listed) writeStatus();   // what the scan kept and refused, also when nothing loads
 }
 
@@ -713,7 +730,7 @@ void copySidecar(const char* srcDir, const char* dstDir)
 void boot(Platform* platform)
 {
     FileSystem* fs = platform->getFileSystem();
-    s_fs = fs;
+    s_fs = fs;   // synthBoot set it already (before the synth started)
     s_timer = platform->getTimer();
     memset(&s_side, 0, sizeof(s_side));
     memset(s_slots, 0, sizeof(s_slots));

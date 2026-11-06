@@ -42,6 +42,7 @@
 namespace polysynth
 {
 using open::EngineDef;
+using open::EngineRef;
 using open::ParamDef;
 using open::kVelocityMacro;
 
@@ -252,18 +253,158 @@ std::unique_ptr<InstrumentType> createUnavailable(const char* name)
 
 } // namespace
 
-const EngineDef* open::engineDefForType(int typeId)
+// ----------------------------------------------------------------- engine list (built in + installed plugins)
+namespace
 {
-    static const EngineDef* const kDefs[] = {
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, ...) &DEF,
+struct Builtin
+{
+    const EngineDef* def;
+    int16_t stored;
+    int16_t patchEngine;
+};
+constexpr Builtin kBuiltin[] = {
+#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, PATCH_ENGINE, ...) { &open::DEF, STORED, PATCH_ENGINE },
 #include "engine_list.h"
 #undef SYNTH_ENGINE
-    };
-    for (const EngineDef* def : kDefs)
+};
+constexpr int kBuiltinCount = int(sizeof(kBuiltin) / sizeof(kBuiltin[0]));
+constexpr int kPlugMax = 12;   // plug::kBankMax
+// The engines that can be missing: the numbers 7 to 17 of engine_list.h (type id = .patch engine id for all of them).
+// 0 to 6 are Polyend's (always built in when they exist in this firmware family), DIRT (5) never had an open engine.
+constexpr char kKnownName[11][9] = { "JU6", "PHZ", "FM4", "DTYPE", "CSTYPE", "ATYPE", "TTYPE", "8TYPE", "HANDTYPE", "BTYPE", "ARCTYPE" };
+constexpr uint8_t kKnownType[11] = { 0x81, 0x82, 0x80, 0xA2, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89 };
+constexpr int kKnownFirst = 7;
+
+EngineRef gPlug[kPlugMax];
+int gPlugCount;
+EngineRef gList[kBuiltinCount + kPlugMax];
+int gCount; // 0 until the list is built (first use)
+EngineDef gMissing[11] = {};
+bool gHasMissing[11];
+
+// built in and plugin engines by stored number (the built-in ones ascend already)
+void buildList()
+{
+    int b = 0;
+    bool used[kPlugMax] = {};
+    while (gCount < kBuiltinCount + gPlugCount)
     {
-        if (def->typeId == typeId)
+        int p = -1;
+        for (int i = 0; i < gPlugCount; i++)
         {
-            return def;
+            if (!used[i] && (p < 0 || gPlug[i].stored < gPlug[p].stored))
+            {
+                p = i;
+            }
+        }
+        if (b < kBuiltinCount && (p < 0 || kBuiltin[b].stored < gPlug[p].stored))
+        {
+            gList[gCount] = { kBuiltin[b].def, kBuiltin[b].stored, kBuiltin[b].patchEngine, int8_t(b) };
+            b++;
+        }
+        else
+        {
+            gList[gCount] = gPlug[p];
+            used[p] = true;
+        }
+        gCount++;
+    }
+    for (int k = 0; k < 11; k++)
+    {
+        gHasMissing[k] = open::engineUiForStored(kKnownFirst + k) < 0;
+        EngineDef& d = gMissing[k];
+        d.name = kKnownName[k];
+        d.typeId = kKnownType[k];
+        d.volumeParam = -1;
+        d.maxVoices = open::kMaxVoicesPerInstrument; // never clamps the part's voice count
+    }
+}
+
+inline void ensureList()
+{
+    if (!gCount)
+    {
+        buildList();
+    }
+}
+} // namespace
+
+bool open::engineListAdd(const EngineDef* def, int stored, int patchEngine)
+{
+    if (gCount || gPlugCount >= kPlugMax)
+    {
+        return false; // the list is in use (the synth started), or full
+    }
+    for (int i = 0; i < kBuiltinCount + gPlugCount; i++) // its numbers must be its own
+    {
+        const bool bi = i < kBuiltinCount;
+        const EngineRef& r = gPlug[bi ? 0 : i - kBuiltinCount];
+        const int st = bi ? kBuiltin[i].stored : r.stored;
+        const int pe = bi ? kBuiltin[i].patchEngine : r.patchEngine;
+        const int ty = bi ? kBuiltin[i].def->typeId : r.def->typeId;
+        if (st == stored || ty == def->typeId || pe == patchEngine)
+        {
+            return false;
+        }
+    }
+    gPlug[gPlugCount++] = { def, stored, patchEngine, -1 };
+    return true;
+}
+
+int open::engineCount()
+{
+    ensureList();
+    return gCount;
+}
+
+const EngineRef& open::engineAt(int ui)
+{
+    ensureList();
+    return gList[ui >= 0 && ui < gCount ? ui : 0];
+}
+
+int open::engineUiForStored(int stored)
+{
+    ensureList();
+    for (int i = 0; i < gCount; i++)
+    {
+        if (gList[i].stored == stored)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+const EngineDef* open::missingDef(int stored)
+{
+    ensureList();
+    const int k = stored - kKnownFirst;
+    return k >= 0 && k < 11 && gHasMissing[k] ? &gMissing[k] : nullptr;
+}
+
+int open::typeForStored(int stored)
+{
+    const int ui = engineUiForStored(stored);
+    const EngineDef* m = missingDef(stored);
+    return ui >= 0 ? gList[ui].def->typeId : (m ? m->typeId : -1);
+}
+
+const EngineDef* open::engineDefForType(int typeId)
+{
+    ensureList();
+    for (int i = 0; i < gCount; i++)
+    {
+        if (gList[i].def->typeId == typeId)
+        {
+            return gList[i].def;
+        }
+    }
+    for (int k = 0; k < 11; k++)
+    {
+        if (gHasMissing[k] && gMissing[k].typeId == typeId)
+        {
+            return &gMissing[k];
         }
     }
     return nullptr;
@@ -271,12 +412,51 @@ const EngineDef* open::engineDefForType(int typeId)
 
 int open::firstEngineTypeId()
 {
-    static const int kFirst[] = {
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, ...) static_cast<int>(TYPE_ID),
-#include "engine_list.h"
-#undef SYNTH_ENGINE
-    };
-    return kFirst[0];
+    return engineAt(0).def->typeId;
+}
+
+int open::engineIdForType(int typeId)
+{
+    ensureList();
+    for (int i = 0; i < gCount; i++)
+    {
+        if (gList[i].def->typeId == typeId)
+        {
+            return gList[i].patchEngine;
+        }
+    }
+    const EngineDef* d = engineDefForType(typeId); // a missing engine: its type is its .patch id
+    return d ? d->typeId : 0;
+}
+
+int open::typeForEngineId(int engine)
+{
+    ensureList();
+    for (int i = 0; i < gCount; i++)
+    {
+        if (gList[i].patchEngine == engine)
+        {
+            return gList[i].def->typeId;
+        }
+    }
+    return engineDefForType(engine) ? engine : -1; // a missing engine's .patch: its own type
+}
+
+// Every engine of the list and every missing placeholder into the registry (InstrumentTypeRegistry::registerInstrumentTypes)
+void open::registerEngines(InstrumentTypeRegistry& registry)
+{
+    ensureList();
+    for (int i = 0; i < gCount; i++)
+    {
+        registry.addInstrumentType(gList[i].def->typeId, createFromDef(*gList[i].def));
+    }
+    for (int k = 0; k < 11; k++)
+    {
+        if (gHasMissing[k])
+        {
+            registry.addInstrumentType(gMissing[k].typeId, createFromDef(gMissing[k]));
+        }
+    }
 }
 
 std::shared_ptr<const InstrumentType> InstrumentTypeRegistry::getInstrumentType(int typeId) const
@@ -292,11 +472,6 @@ void InstrumentTypeRegistry::addInstrumentType(int typeId,
 }
 
 std::unique_ptr<InstrumentType> createMidiOut() { return createUnavailable("MIDI"); }
-// One registry factory per engine picked at build time (engine_list.h)
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, ...) \
-    std::unique_ptr<InstrumentType> FACTORY() { return createFromDef(open::DEF); }
-#include "engine_list.h"
-#undef SYNTH_ENGINE
 
 namespace open
 {
@@ -756,6 +931,10 @@ class OpenPatchStore final : public PatchStore
         {
             return false;
         }
+        if (!open::engineOf(def))
+        {
+            return true; // a missing engine: nothing to load into a patch without parameters, the file stays as it is
+        }
         ScratchLease sc;
         if (!sc || readPatchFile(def, op.typeId(), name, sc.buf(), sc.data()) != FileRead::kOk)
         {
@@ -788,6 +967,10 @@ class OpenPatchStore final : public PatchStore
         if (!fs || !def)
         {
             return false;
+        }
+        if (!open::engineOf(def))
+        {
+            return true; // a missing engine: its file already holds the patch, never overwrite it with an empty one
         }
         constexpr size_t kCap = 4096; // every file this writes is at most 4 KB
         static_assert(kCap <= sizeof(PatchScratch::file));

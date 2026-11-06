@@ -119,7 +119,11 @@ void Synth::init(Platform* platform, std::function<tiny_optional<float>()> getTe
         int partIdx = std::distance(parts.begin(), &part);
         auto& instrument = part.instrument;
 
+#ifdef FEATURE_SYNTH_OPEN
+        part.instrumentTypeId = synthTypeAt(partIdx % synthTypeCount());
+#else
         part.instrumentTypeId = kSynthTypes[partIdx % kSynthTypes.size()];
+#endif
         part.patchName = kInitPatchName;
         setPatch(partIdx, patchStore->createPatch(*part.instrumentTypeId), part.patchName);
 
@@ -529,6 +533,24 @@ void Synth::setPatch(int part, std::shared_ptr<polysynth::Patch> patch, std::str
     //    updateCCDefaults(part);
 }
 
+#ifdef FEATURE_SYNTH_OPEN
+std::string Synth::getInstrumentTypeName(int typeIdx)
+{
+    return polysynth::open::engineAt(typeIdx).def->name;
+}
+
+int Synth::getInstrumentTypeIdx(int part)
+{
+    for (int i = 0; i < synthTypeCount(); i++)
+    {
+        if (synthTypeAt(i) == parts[part].instrumentTypeId)
+        {
+            return i;
+        }
+    }
+    return -1; // a missing engine's placeholder
+}
+#else
 std::string Synth::getInstrumentTypeName(int typeIdx)
 {
     return synth->getInstrumentName(*kSynthTypes.at(typeIdx));
@@ -541,6 +563,7 @@ int Synth::getInstrumentTypeIdx(int part)
 
     return std::distance(kSynthTypes.begin(), it);
 }
+#endif
 
 int Synth::getSend(int part, int sendIdx)
 {
@@ -632,7 +655,12 @@ void Synth::updateToSettings(const strMtValues& settings, bool resetAllVoices)
         SynthPartSettings partSettings = settings.synthPart[part];
         validateSynthPartSettings(part, partSettings);
         setVoiceCount(part, partSettings.voiceCount);
+#ifdef FEATURE_SYNTH_OPEN
+        // a missing engine (a plugin that is not installed) gets its placeholder: silent, the number and patches stay
+        setInstrumentType(part, static_cast<polysynth::InstrumentTypeId>(polysynth::open::typeForStored(partSettings.synthType)));
+#else
         setInstrumentType(part, kSynthTypes.at(storedToUi(partSettings.synthType)));
+#endif
         parts[part].patchName = partSettings.patchName;
     }
 }

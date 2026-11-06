@@ -4,11 +4,13 @@
 // store"). Device bench run 3 (PLUGD, d448039) proved this exact path: ERSSCR and PGM8 with address bit 23 set, HSRUN left
 // around every command (K66 flash cannot be erased or programmed in HSRUN, run 1), the launch and wait loop run from RAM
 // like Teensy's eeprom.c, PGM8 data with FCCOB4 as the most significant byte of each longword (plug_fccob.h, run 2), then
-// verify. Rules: only ERSSCR (0x09) and PGM8 (0x07), only [kNvmRun, kNvmRun + kNvmBytes), never PGMPART, SETRAM or a
-// program flash address, the FlexRAM EEPROM is never touched. A load whose bytes are already in the flash issues no command.
+// verify. Rules: only ERSSCR (0x09) and PGM8 (0x07), only the 128 KB data flash (insert 2 in [kNvmRun, kNvmRun + kNvmBytes),
+// the synth bank of plug_bank.h below it), never PGMPART, SETRAM or a program flash address, the FlexRAM EEPROM is never
+// touched. A load whose bytes are already in the flash issues no command.
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
+#include "plug_bank.h"
 #include "plug_fccob.h"
 
 #include <string.h>
@@ -46,8 +48,8 @@ void flushCaches()
 
 bool ftfe(uint8_t cmd, uint32_t nvmOff, const uint8_t* data8)
 {
-    const uint32_t lo = uint32_t(kNvmRun - kNvmBase), hi = lo + kNvmBytes;
-    if ((cmd != 0x09 && cmd != 0x07) || nvmOff < lo || nvmOff >= hi || (nvmOff & 7u) || (cmd == 0x09 && (nvmOff & (kSector - 1))))
+    if ((cmd != 0x09 && cmd != 0x07) || nvmOff >= uint32_t(kNvmRun - kNvmBase) + kNvmBytes || (nvmOff & 7u) ||
+        (cmd == 0x09 && (nvmOff & (kSector - 1))))
         return false;
     const uint32_t a = 0x800000u | nvmOff;   // bit 23: data flash
     if (s_flashCmd[0] != kFlashCmd[0]) memcpy(s_flashCmd, kFlashCmd, sizeof(kFlashCmd));
@@ -83,6 +85,21 @@ bool blank(uintptr_t run, uint32_t len)
 uint32_t nvmCommands()
 {
     return s_cmds;
+}
+
+// The synth bank: only below insert 2's sectors
+bool nvmErase(uint32_t off)
+{
+    const bool ok = off < kBankBytes && ftfe(0x09, off, nullptr);
+    flushCaches();
+    return ok;
+}
+
+bool nvmProgram(uint32_t off, const uint8_t* data8)
+{
+    const bool ok = off + 8 <= kBankBytes && ftfe(0x07, off, data8);
+    flushCaches();
+    return ok;
 }
 
 bool nvmInstall(const uint8_t* src, uintptr_t run, uint32_t len)

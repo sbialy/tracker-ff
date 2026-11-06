@@ -22,19 +22,51 @@ static const uint16_t framesPlacesSynth[1][4] = {
 };
 
 #ifdef FEATURE_SYNTH_OPEN
-// SYNTH_OPEN (MK66): the engines picked at build time, in the order of Synth::kSynthTypes (engine_list.h)
-const char* const synthModelNames[Synth::kSynthTypes.size()] = {
-#define SYNTH_ENGINE(NAME, ...) #NAME,
-#include "engine_list.h"
-#undef SYNTH_ENGINE
-};
-
-static const int synthModelListImages[Synth::kSynthTypes.size()] = {
+// SYNTH_OPEN (MK66): the run time engine list (synth-open/open_engine.h). The built-in engines show their list icon
+// (engine_list.h order, EngineRef::builtin), a plugin engine its name: NewList draws the text of an entry without an image.
+static const int synthBuiltinListImages[] = {
 #define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, PATCH_ENGINE, MINI_ICON, ICON) \
     enDisplayBitmaps::MINI_ICON,
 #include "engine_list.h"
 #undef SYNTH_ENGINE
 };
+constexpr int kSynthModelsMax = 32;
+static int synthModelListImages[kSynthModelsMax];
+static char* synthModelListNames[kSynthModelsMax];
+
+// The list icon of model ui, -1 for a plugin engine. Hook for the card logo loader (ref/synth-art-plan.md, round B): a loaded
+// .plgi / .plg trailer logo returns its bitmap here, the name stays the fallback.
+static int synthModelListImage(int ui)
+{
+    const int b = polysynth::open::engineAt(ui).builtin;
+    return b >= 0 ? synthBuiltinListImages[b] : -1;
+}
+
+static int fillSynthModelList()
+{
+    const int n = std::min(Synth::synthTypeCount(), kSynthModelsMax);
+    for (int i = 0; i < n; i++)
+    {
+        synthModelListImages[i] = synthModelListImage(i);
+        synthModelListNames[i] = const_cast<char*>(polysynth::open::engineAt(i).def->name);
+    }
+    return n;
+}
+
+// A part whose engine is a plugin that is not installed: the patch browser, the patch editor and the slots stay closed (there
+// are no parameters, and the files must stay as they are until the plugin is back)
+static bool synthPartMissing(int part)
+{
+    const polysynth::open::EngineDef* d = polysynth::open::missingDef(mtProject.values.synthPart[part].synthType);
+    if (!Synth::storedIsMissing(mtProject.values.synthPart[part].synthType) || !d)
+    {
+        return false;
+    }
+    static char text[32];
+    snprintf(text, sizeof(text), "%s not installed", d->name);
+    mtPopups.show(0, text);
+    return true;
+}
 #else
 const char* const synthModelNames[Synth::kSynthTypes.size()] = {
     "ACD", "FAT", "VAP", "WTFM", "PERC", "DIRT", "CHIP",
@@ -282,6 +314,12 @@ static void functSynthActionButtons(uint8_t button)
 
 static void functSynthLoad()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    if (synthPartMissing(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX))
+    {
+        return;
+    }
+#endif
     IE->browsePatchList();
     IE->showSynthPatchBrowser();
 
@@ -429,6 +467,12 @@ static void functSynthLoadMiniMiddle(uint8_t state)
 
 static void functSynthEditPatch()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    if (synthPartMissing(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX))
+    {
+        return;
+    }
+#endif
     sequencer.stopManualNotes();
 #ifdef FEATURE_SYNTH_OPEN
     IE->getSynth()->restorePatchFx(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX);
@@ -444,7 +488,11 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     int syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
     assert(syntPartIdx >= 0 && syntPartIdx < kSynthInstrumentsCount);
 
+#ifdef FEATURE_SYNTH_OPEN
+    int modelMaxValue = Synth::synthTypeCount() - 1;
+#else
     int modelMaxValue = (Synth::kSynthTypes.size() - 1);
+#endif
 
     // The project stores the engine's canonical number, the list on screen is the engines of this build
     int32_t previousSynthType = mtProject.values.synthPart[syntPartIdx].synthType;
@@ -480,7 +528,11 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
         return;
     }
 #endif
+#ifdef FEATURE_SYNTH_OPEN
+    synth->setInstrumentType(syntPartIdx, Synth::synthTypeAt(newUi));
+#else
     synth->setInstrumentType(syntPartIdx, Synth::kSynthTypes.at(newUi));
+#endif
 
     changeSynthPolyphony(0);
 
@@ -506,6 +558,10 @@ void cInstrumentEditor::changeSynthSlot(int16_t value)
     const int syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
     assert(syntPartIdx >= 0 && syntPartIdx < kSynthInstrumentsCount);
 
+    if (synthPartMissing(syntPartIdx))
+    {
+        return;
+    }
     const int step = value < 0 ? -1 : 1;
     const int from = synth->getPatchSlot(syntPartIdx);
     SlotSelect result = SlotSelect::kSame;
@@ -696,7 +752,11 @@ void cInstrumentEditor::setDefaultSynthDelay()
 
 [[maybe_unused]] void cInstrumentEditor::setDefaultSynthModel()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    int modelMaxValue = Synth::synthTypeCount() - 1;
+#else
     int modelMaxValue = (Synth::kSynthTypes.size() - 1);
+#endif
     changeSynthModel(-modelMaxValue);
 }
 
@@ -958,10 +1018,17 @@ void cInstrumentEditor::showSynthParamsScreen()
     display.setControlSize(noteLabel, 170, 30);
 
     modelListData.start = std::max(Synth::storedToUi(mtProject.values.synthPart[syntPartIdx].synthType), 0);
+#ifdef FEATURE_SYNTH_OPEN
+    modelListData.length = fillSynthModelList();
+    modelListData.linesCount = std::min<uint16_t>(modelListData.length, 7);
+    modelListData.rowHeight = 50;
+    modelListData.params = synthModelListNames;
+#else
     modelListData.length = Synth::kSynthTypes.size();
     modelListData.linesCount = std::min<uint16_t>(Synth::kSynthTypes.size(), 7);
     modelListData.rowHeight = 50;
     modelListData.params = nullptr;
+#endif
     modelListData.imageIds = synthModelListImages;
     modelListData.scrollText = true;
 
@@ -1128,6 +1195,13 @@ void cInstrumentEditor::showSynthPatchName(uint8_t synthPart)
 {
     polystrncpy(
       synthPatchNameText, synth->getPatchName(synthPart).c_str(), sizeof(synthPatchNameText));
+#ifdef FEATURE_SYNTH_OPEN
+    if (Synth::storedIsMissing(mtProject.values.synthPart[synthPart].synthType))
+    {   // the engine is a plugin that is not installed: say which (the project keeps the part, the patch name stays saved)
+        snprintf(synthPatchNameText, sizeof(synthPatchNameText), "Missing: %s",
+                 polysynth::open::missingDef(mtProject.values.synthPart[synthPart].synthType)->name);
+    }
+#endif
     display.setControlText(noteLabel, synthPatchPanelLabel(synthPart));
     display.setControlText2(noteLabel, synthPatchNameText);
     display.setControlShow(noteLabel);

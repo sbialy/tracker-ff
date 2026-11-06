@@ -39,15 +39,11 @@
 #endif
 namespace polysynth {
 std::unique_ptr<InstrumentType> createMidiOut();
-// One factory per engine picked with -DSYNTH_ENGINE_<NAME> (synth-open/engine_list.h), as core/synth/registry.cpp
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, ...) std::unique_ptr<InstrumentType> FACTORY();
-#include "engine_list.h"
-#undef SYNTH_ENGINE
+// The run time engine list (the engines picked with -DSYNTH_ENGINE_<NAME>, no plugins here) and the missing placeholders,
+// as core/synth/registry.cpp
 void InstrumentTypeRegistry::registerInstrumentTypes(InstrumentTypeRegistry& r, const Synth::Allocator&) {
     r.addInstrumentType(int(InstrumentTypeId::kMidiOut), createMidiOut());
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, ...) r.addInstrumentType(int(TYPE_ID), FACTORY());
-#include "engine_list.h"
-#undef SYNTH_ENGINE
+    open::registerEngines(r);
 }
 }
 using namespace polysynth;
@@ -361,7 +357,8 @@ int main() {
     }
 #ifndef SYNTH_ENGINE_HANDTYPE
     // Hand-Type (stored 15, type id and .patch engine 0x87) is in the source tree but not in the release set: a project or a
-    // patch from a build that has it must be as harmless as any other absent engine
+    // patch from a build that has it is in the "missing" state (phase 3, open_engine.h missingDef): a placeholder without
+    // parameters or engine, silent, whose patch files are never read into it or written over
     {
       const InstrumentTypeId kHand = static_cast<InstrumentTypeId>(0x87);
       auto src = ps->createPatch(kLead); open::PatchData pd; static_cast<open::OpenPatch&>(*src).exportData(pd);
@@ -373,10 +370,18 @@ int main() {
         refused = refused && !ps->loadPatch("hand", *t, true); untouched = untouched && *t->getParamValue(0) == b0;
       }
       auto hp = ps->createPatch(int(kHand));
-      check(refused && untouched && open::typeForEngineId(0x87) == -1 && open::engineDefForType(int(kHand)) == nullptr,
-            "Hand-Type is not in this build: its .patch is refused by every engine and its ids are unknown");
-      check(hp && hp->getMetadata().instrumentTypeId == kLead && ps->listPatchesByType(int(kHand)).empty() && !ws->loadPatch("0", *hp, true),
-            "a Hand-Type part falls back to an Init patch of the first engine, lists nothing and loads nothing");
+      const open::EngineDef* hd = open::engineDefForType(int(kHand));
+      check(refused && untouched && open::typeForEngineId(0x87) == 0x87 && hd && !open::engineOf(hd) && hd->paramCount == 0 &&
+              std::string(hd->name) == "HANDTYPE" && open::missingDef(15) == hd && open::typeForStored(15) == 0x87 &&
+              open::engineUiForStored(15) == -1,
+            "Hand-Type is not in this build: its .patch is refused by every engine, its numbers name the missing placeholder");
+      mw->files["0.patch"].assign(pbuf, pbuf + pn);
+      const auto before = mw->files["0.patch"];
+      check(hp && hp->getMetadata().instrumentTypeId == int(kHand) && hp->getMetadata().params.empty() && ps->listPatchesByType(int(kHand)).empty() &&
+              ws->loadPatch("0", *hp, true) && ws->savePatch("0", *hp) && mw->files["0.patch"] == before && !mw->files.count("0.patch.tmp"),
+            "a Hand-Type part is the placeholder: no parameters, its Workspace file loads as done and is never written over");
+      check(open::engineCount() == nKinds && open::engineUiForStored(open::engineAt(nKinds - 1).stored) == nKinds - 1 &&
+              open::engineAt(0).builtin == 0, "the engine list is the built-in set, in engine_list.h order");
     }
 #endif
     // workspace store: flat N.patch, as Synth::savePatchToWorkspace / loadPatchFromWorkspace use it

@@ -265,45 +265,7 @@ void writeExtra(Writer& w)
 
 } // namespace
 
-namespace
-{
-struct IdPair
-{
-    int typeId;
-    int engine;
-};
-// Field 1 of a .patch file for each engine picked at build time (engine_list.h): Polyend's InstrumentTypeId for the
-// Polyend engines, OpenTracker's engine id for the others
-const IdPair kIds[] = {
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, PATCH_ENGINE, ...) { int(TYPE_ID), PATCH_ENGINE },
-#include "engine_list.h"
-#undef SYNTH_ENGINE
-};
-} // namespace
-
-int engineIdForType(int typeId)
-{
-    for (const auto& i : kIds)
-    {
-        if (i.typeId == typeId)
-        {
-            return i.engine;
-        }
-    }
-    return 0;
-}
-
-int typeForEngineId(int engine)
-{
-    for (const auto& i : kIds)
-    {
-        if (i.engine == engine)
-        {
-            return i.typeId;
-        }
-    }
-    return -1;
-}
+// engineIdForType and typeForEngineId: open_cold.cpp, from the engine list (built in and installed plugin engines)
 
 bool decodePatch(const uint8_t* data, size_t len, PatchData& out)
 {

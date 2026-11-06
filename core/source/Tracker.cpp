@@ -121,6 +121,10 @@ void TrackerImpl::init(Platform* platform)
     platform->setPowerButtonCallback(onPowerButtonChange);
     platform->getFileSystem()->setMountEventCallback(onSDCardSlotChange);
 
+#ifdef FEATURE_PLUG_HOST
+    // the synth engine plugins: installed into the FlexNVM bank and added to the engine list before the synth starts
+    plug::synthBoot(platform->getFileSystem());
+#endif
 #ifdef FEATURE_SYNTH
     synth.init(platform, [this]() { return sequencer.getCurrentTempo(); });
 

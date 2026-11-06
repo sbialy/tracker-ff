@@ -4,6 +4,8 @@
 #include "PolySynth/sdk/InstrumentTypeRegistry.h"
 #ifndef FEATURE_SYNTH_OPEN
 #include "engines/ChiptuneSynthVoice.h"
+#else
+#include "open_engine.h"
 #endif
 
 namespace polysynth
@@ -11,10 +13,7 @@ namespace polysynth
 // Factory synth engines (provided by precompiled libPolySynth.a + libPolyDSP.a)
 extern std::unique_ptr<InstrumentType> createMidiOut();
 #ifdef FEATURE_SYNTH_OPEN
-// SYNTH_OPEN (MK66): the engines picked at build time (SYNTH_ENGINES, synth-open/engine_list.h)
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, ...) extern std::unique_ptr<InstrumentType> FACTORY();
-#include "engine_list.h"
-#undef SYNTH_ENGINE
+// SYNTH_OPEN (MK66): the run time engine list (synth-open/open_engine.h: built in, installed plugins, missing placeholders)
 #else
 extern std::unique_ptr<InstrumentType> createSimpleAnalogSynth();
 extern std::unique_ptr<InstrumentType> createFatAnalogSynth();
@@ -30,10 +29,7 @@ void InstrumentTypeRegistry::registerInstrumentTypes(
 {
     registry.addInstrumentType(static_cast<int>(InstrumentTypeId::kMidiOut), createMidiOut());
 #ifdef FEATURE_SYNTH_OPEN
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, ...) \
-    registry.addInstrumentType(static_cast<int>(TYPE_ID), FACTORY());
-#include "engine_list.h"
-#undef SYNTH_ENGINE
+    open::registerEngines(registry);
 #else
     registry.addInstrumentType(static_cast<int>(InstrumentTypeId::kSimpleAnalogSynth),
                                createSimpleAnalogSynth());

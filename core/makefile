@@ -87,7 +87,7 @@ SYNTH_OPT_DIRT ?= -O2 -ffp-contract=off
 $(OBJ_DIR)/synth-open/ff_dirt.o: EXTRA_OPT := $(SYNTH_OPT_DIRT)
 $(OBJ_DIR)/synth-open/ff_dirt_ctl.o: EXTRA_OPT := -Os
 # plugin host: loader and bench are cold (-Os), the insert's per block path and the in-image Dirt plugin as the .plg build
-$(OBJ_DIR)/synth-open/plug_host.o $(OBJ_DIR)/synth-open/plug_bench.o $(OBJ_DIR)/synth-open/plug_nvm.o $(OBJ_DIR)/synth-open/plug_ui.o: EXTRA_OPT := -Os
+$(OBJ_DIR)/synth-open/plug_host.o $(OBJ_DIR)/synth-open/plug_bench.o $(OBJ_DIR)/synth-open/plug_nvm.o $(OBJ_DIR)/synth-open/plug_ui.o $(OBJ_DIR)/synth-open/plug_synth.o: EXTRA_OPT := -Os
 $(OBJ_DIR)/synth-open/plug_insert.o $(OBJ_DIR)/synth-open/plug_dirt_inimage.o: EXTRA_OPT := -O2 -ffp-contract=off
 $(OBJ_DIR)/synth-open/open_cold.o $(OBJ_DIR)/synth-open/open_patchio.o $(OBJ_DIR)/synth-open/stub_fmt.o: EXTRA_OPT := $(SYNTH_OPT_COLD)
 $(OBJ_DIR)/synth-open/ot/audio/engines/fat.o: EXTRA_OPT := $(SYNTH_OPT_FAT)

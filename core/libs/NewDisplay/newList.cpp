@@ -577,6 +577,14 @@ void NewList::drawImagesList(int x1, int x2, int y, int rowH)
 
         int idx = data->imageIds[dataIdx];
 
+#ifdef FEATURE_SYNTH_OPEN
+        // no bitmap for this entry (a synth plugin engine in the model list): its text, centred in the row
+        if (idx < 0 && data->params != nullptr && data->params[dataIdx] != nullptr)
+        {
+            API_CMD_TEXT(x1 + (x2 - x1) / 2, y + (rowH * rowIdx), font->handle, OPT_CENTER, data->params[dataIdx]);
+            continue;
+        }
+#endif
         if (idx >= displayBitmapsCount)
         {
             continue;

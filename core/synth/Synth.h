@@ -9,6 +9,7 @@
 
 #include "mtStructs.h"
 #ifdef FEATURE_SYNTH_OPEN
+#include "open_engine.h"
 #include "open_load.h"
 #endif
 #include <array>
@@ -38,33 +39,25 @@ class Synth
     static constexpr int kSendMaxValue = 100;
     static constexpr float kSendDefaultValue = 0.0f;
 #ifdef FEATURE_SYNTH_OPEN
-    // SYNTH_OPEN (MK66): only the engines picked at build time (SYNTH_ENGINES, synth-open/engine_list.h, PERC only when picked)
-    // and no Shaping (no open engine). The model list on screen is this array.
-    static constexpr std::array kSynthTypes = {
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, ...) TYPE_ID,
-#include "engine_list.h"
-#undef SYNTH_ENGINE
-    };
-    // Projects store an engine as its canonical number, not as its position in kSynthTypes, so a project keeps
-    // its engines when it is opened by a build with another engine set (engine_list.h).
-    static constexpr std::array kSynthStoredIdx = {
-#define SYNTH_ENGINE(NAME, STORED, ...) STORED,
-#include "engine_list.h"
-#undef SYNTH_ENGINE
-    };
-    // Position in kSynthTypes of a stored engine number, -1 when this build does not have the engine
-    static constexpr int storedToUi(int stored)
+    // SYNTH_OPEN (MK66): the run time engine list (synth-open/open_engine.h): the engines picked at build time (SYNTH_ENGINES,
+    // engine_list.h, PERC only when picked, no Shaping) and the installed plugin engines (PLUG_HOST), merged by stored number.
+    // The model list on screen is this list. Projects store an engine as its canonical number, not as its position here, so a
+    // project keeps its engines when it is opened by a build with another engine set or other plugins.
+    static int synthTypeCount() { return polysynth::open::engineCount(); }
+    static polysynth::InstrumentTypeId synthTypeAt(int ui)
     {
-        for (size_t i = 0; i < kSynthStoredIdx.size(); i++)
-        {
-            if (kSynthStoredIdx[i] == stored)
-            {
-                return static_cast<int>(i);
-            }
-        }
-        return -1;
+        return static_cast<polysynth::InstrumentTypeId>(polysynth::open::engineAt(ui).def->typeId);
     }
-    static constexpr int uiToStored(int ui) { return kSynthStoredIdx.at(ui); }
+    // Position in the list of a stored engine number, -1 when this build has not got the engine (or it is missing)
+    static int storedToUi(int stored) { return polysynth::open::engineUiForStored(stored); }
+    static int uiToStored(int ui) { return polysynth::open::engineAt(ui).stored; }
+    // A known engine that is not installed (JU6 without ju6.plg): the part keeps its number and patches, silent
+    static bool storedIsMissing(int stored) { return storedToUi(stored) < 0 && polysynth::open::missingDef(stored); }
+    static bool isStoredTypeValid(int stored) { return polysynth::open::typeForStored(stored) >= 0; }
+    static bool storedTypeIs(int stored, polysynth::InstrumentTypeId id)
+    {
+        return polysynth::open::typeForStored(stored) == static_cast<int>(id);
+    }
 #else
     static constexpr std::array kSynthTypes = { polysynth::InstrumentTypeId::kSimpleAnalogSynth,
                                                 polysynth::InstrumentTypeId::kFatAnalogSynth,
@@ -79,13 +72,13 @@ class Synth
         return (stored >= 0 && stored < static_cast<int>(kSynthTypes.size())) ? stored : -1;
     }
     static constexpr int uiToStored(int ui) { return ui; }
-#endif
     static constexpr bool isStoredTypeValid(int stored) { return storedToUi(stored) >= 0; }
     static constexpr bool storedTypeIs(int stored, polysynth::InstrumentTypeId id)
     {
         const int ui = storedToUi(stored);
         return ui >= 0 && kSynthTypes[ui] == id;
     }
+#endif
     static constexpr auto kInitPatchName = "Init";
 
     Synth();

@@ -80,6 +80,8 @@ struct IndexEntry
     char file[40];               // name in /Plugins/Master
     uint32_t imageSize, rwOffset, bssSize;
     uint16_t numParams;
+    uint32_t crc;                // header crc32: the identity of the file (the synth bank reinstalls an engine whose file changed)
+    uint32_t entry;              // entry_offset
 };
 
 // What the last scan saw, for /Plugins/host.txt
@@ -94,14 +96,15 @@ struct ScanStats
     } reject[3];                 // the first three rejected files and why
 };
 
-// Scans dir into index[0..cap). Fs:
+// Scans dir into index[0..cap), the files of one kind (/Plugins/Master: master inserts, /Plugins/Synth: engines). Fs:
 //   void list(const char* dir, bool (*filter)(const char*), char* names, int namesSize, int maxNameLen, int& count,
 //             char** list)    FileSystem::listDirContents(kFiles) rules: count is the room in list on the way in, the
 //                             number of names on the way out
 //   int read(const char* path, void* buf, int cap)    bytes read from the start of the file, -1 when it does not open
 // names holds kScanMax * 40 bytes, nameList kScanMax pointers. Returns the entry count.
 template <class Fs>
-int scanIndex(Fs& fs, const char* dir, IndexEntry* index, int cap, char* names, char** nameList, ScanStats& st)
+int scanIndex(Fs& fs, const char* dir, IndexEntry* index, int cap, char* names, char** nameList, ScanStats& st,
+              uint32_t kind = PLUG_KIND_MASTER_INSERT)
 {
     memset(&st, 0, sizeof(st));
     int n = kScanMax;
@@ -119,7 +122,7 @@ int scanIndex(Fs& fs, const char* dir, IndexEntry* index, int cap, char* names, 
         } hm;
         memset(&hm, 0, sizeof(hm));
         const int got = fs.read(p, &hm, int(sizeof(hm)));
-        Err err = got < 0 ? kNoFile : (got < int(sizeof(plug_file_header)) ? kHeader : checkHeader(hm.h, PLUG_KIND_MASTER_INSERT));
+        Err err = got < 0 ? kNoFile : (got < int(sizeof(plug_file_header)) ? kHeader : checkHeader(hm.h, kind));
         if (err != kOk)
         {
             if (st.rejected < 3)
@@ -136,6 +139,8 @@ int scanIndex(Fs& fs, const char* dir, IndexEntry* index, int cap, char* names, 
         e.imageSize = hm.h.image_size;
         e.rwOffset = hm.h.rw_offset;
         e.bssSize = hm.h.bss_size;
+        e.crc = hm.h.crc32;
+        e.entry = hm.h.entry_offset;
         const bool man = hm.h.header_size >= sizeof(hm) && got == int(sizeof(hm)) && hm.m.struct_size >= sizeof(plug_manifest);
         e.numParams = man ? hm.m.num_params : 0;
         copyName(e.name, man && hm.m.name[0] ? hm.m.name : nameList[i], man ? kNameLen : int(strlen(nameList[i])) - 4);

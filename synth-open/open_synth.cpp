@@ -140,7 +140,7 @@ class OpenInstrument final : public Instrument
     {
         patch = std::static_pointer_cast<OpenPatch>(std::move(newPatch));
         def = patch ? patch->getDef() : nullptr;
-        engine = def ? def->engine() : nullptr;
+        engine = engineOf(def); // nullptr for a missing engine's placeholder: the part is silent
         cutAll();
         std::memset(scratch.bytes, 0, sizeof(scratch.bytes));
         if (engine)
