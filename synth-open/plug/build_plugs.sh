@@ -1,8 +1,10 @@
 #!/bin/bash
-# Builds the shipped master insert plugins (dirt.plg, tape.plg, lofi.plg) and checks each one on the Mac:
+# Builds the shipped master insert plugins (dirt, tape, lofi, console, tube, bbd, phaser: .plg) and checks each one on the Mac:
 #   - no R_ARM_GOT* relocation in the linked ELF, the rebase table holds every R_ARM_ABS32 word (count equal, > 0)
 #   - emu_plug.py runs it at the insert 1 home (SRAM_L 0x1FFF0BD0), the insert 2 home (text at 0x1001E000 in the FlexNVM,
 #     rw at 0x20026C00 on the heap) and in SDRAM, and the output checksum is the same at all three
+#   - the same three runs again with one non-default setting (every parameter moved, one --param-at change in block 5 to test
+#     the ramps), the checksum again equal at the three homes
 #   - Dirt: the checksum is 3b1f3dc5, the device rule of section 11 (runs 2 and 3: the in-image Dirt gives 3b1f3dc5), and the
 #     firmware's own ff_dirt.o and ff_dirt_ctl.o (FW_OBJ, from the PLUG_HOST image build) linked as a plugin give it too
 #
@@ -27,20 +29,44 @@ python3 plug/build_plug.py --id org.opentracker.fx.tape --kind master --version 
     --keep "$OUT/tape.elf" --out "$OUT/tape.plg" plug/fx/ot_tape_plug.c
 python3 plug/build_plug.py --id org.opentracker.fx.lofi --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
     --keep "$OUT/lofi.elf" --out "$OUT/lofi.plg" plug/fx/ot_lofi_plug.c
+python3 plug/build_plug.py --id ff.console --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
+    --keep "$OUT/console.elf" --out "$OUT/console.plg" plug/fx/ff_console_plug.c
+python3 plug/build_plug.py --id ff.tube --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
+    --keep "$OUT/tube.elf" --out "$OUT/tube.plg" plug/fx/ff_tube_plug.c
+python3 plug/build_plug.py --id org.opentracker.fx.bbd --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
+    --keep "$OUT/bbd.elf" --out "$OUT/bbd.plg" plug/fx/ot_bbd_plug.c
+python3 plug/build_plug.py --id org.opentracker.fx.phaser --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
+    --keep "$OUT/phaser.elf" --out "$OUT/phaser.plg" plug/fx/ot_phaser_plug.c
 fail=0
 emu() { "$PY" -I plug/emu_plug.py "$@" 2>&1 | sed -n 's/^output checksum \([0-9a-f]*\).*/\1/p'; }
-for p in dirt tape lofi; do
+# one non-default setting per plugin: every parameter moved, then one more change in block 5 (ramps and crossfades)
+nd() {
+    case "$1" in
+        dirt) echo "--param 0=2 --param 1=60 --param 2=8 --param 3=4 --param 4=70 --param 5=80 --param-at 5:1=20" ;;
+        tape) echo "--param 0=80 --param 1=60 --param 2=40 --param 3=70 --param-at 5:0=10" ;;
+        lofi) echo "--param 0=8 --param 1=2 --param 2=40 --param 3=1 --param 4=70 --param-at 5:0=6" ;;
+        console) echo "--param 0=70 --param 1=80 --param 2=-3 --param 3=60 --param-at 5:0=20" ;;
+        tube) echo "--param 0=70 --param 1=80 --param 2=40 --param 3=60 --param-at 5:0=20" ;;
+        bbd) echo "--param 0=1 --param 1=60 --param 2=40 --param 3=90 --param-at 5:1=100" ;;
+        phaser) echo "--param 0=1 --param 1=70 --param 2=50 --param 3=60 --param 4=100 --param 5=70 --param-at 5:0=0" ;;
+    esac
+}
+for p in dirt tape lofi console tube bbd phaser; do
     got=$("${TOOLCHAIN}objdump" -r "$OUT/$p.elf" | grep -c 'R_ARM_GOT' || true)
     abs=$("${TOOLCHAIN}objdump" -r "$OUT/$p.elf" | grep -c 'R_ARM_ABS32' || true)
     reb=$(python3 -c "import struct,sys; print(struct.unpack_from('<I', open(sys.argv[1],'rb').read(), 32)[0])" "$OUT/$p.plg")
     l=$(emu "$OUT/$p.plg" --base 0x1FFF0BD0)
     n=$(emu "$OUT/$p.plg" --base 0x1001E000 --rw-base 0x20026C00)
     d=$(emu "$OUT/$p.plg" --base 0x70000000)
+    nl=$(emu "$OUT/$p.plg" --base 0x1FFF0BD0 $(nd $p))
+    nn=$(emu "$OUT/$p.plg" --base 0x1001E000 --rw-base 0x20026C00 $(nd $p))
+    nd_=$(emu "$OUT/$p.plg" --base 0x70000000 $(nd $p))
     ok=ok
+    [ -n "$nl" ] && [ "$nl" = "$nn" ] && [ "$nl" = "$nd_" ] && [ "$nl" != "$l" ] || ok=FAIL
     [ "$got" = 0 ] && [ "$reb" -gt 0 ] && [ "$reb" = "$abs" ] && [ -n "$l" ] && [ "$l" = "$n" ] && [ "$l" = "$d" ] || ok=FAIL
     [ "$ok" = ok ] || fail=1
-    printf "%-5s %s  GOT relocs %s, ABS32 relocs %s, rebase words %s, checksum SRAM_L %s FlexNVM+heap %s SDRAM %s, sha256 %s\n" \
-        "$p" "$ok" "$got" "$abs" "$reb" "$l" "$n" "$d" "$(shasum -a 256 "$OUT/$p.plg" | cut -c1-16)"
+    printf "%-5s %s  GOT relocs %s, ABS32 relocs %s, rebase words %s, checksum SRAM_L %s FlexNVM+heap %s SDRAM %s, non-default %s %s %s, sha256 %s\n" \
+        "$p" "$ok" "$got" "$abs" "$reb" "$l" "$n" "$d" "$nl" "$nn" "$nd_" "$(shasum -a 256 "$OUT/$p.plg" | cut -c1-16)"
     if [ "$p" = dirt ]; then
         if [ "$l" = 3b1f3dc5 ]; then echo "dirt  ok  checksum 3b1f3dc5 = the device's in-image Dirt (section 11)"; else echo "dirt  FAIL checksum $l, want 3b1f3dc5"; fail=1; fi
     fi

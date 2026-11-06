@@ -8,7 +8,7 @@ phases.
 Licence: the SDK files in this folder (`plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`,
 `build_plugs.sh`, this README) are MIT (`LICENSE` here). A plugin may use any licence that allows shipping it as a separate
 file. The firmware licence is unchanged. The plugins in `fx/` and `fx_dirt_plug.cpp` are ports of MIT and Apache-2.0
-OpenTracker code, see `fx/NOTICE.md`.
+OpenTracker code, except Console and Tube, which are original. See `fx/NOTICE.md`.
 
 ## Files
 
@@ -19,8 +19,42 @@ OpenTracker code, see `fx/NOTICE.md`.
 | `plug.ld` | Link at address 0: entry first, then code, the descriptor (`__plug_desc`), constants, then the writable segment |
 | `build_plug.py` | Compile, link, check relocations, write header + manifest + image + rebase table |
 | `emu_plug.py` | The host loader re-done in Python, the plugin's ARM code in Unicorn: checks, instructions per block, output checksum, wav |
-| `build_plugs.sh` | Builds and checks the shipped plugins (dirt, tape, lofi) |
+| `build_plugs.sh` | Builds and checks the shipped plugins (dirt, tape, lofi, console, tube, bbd, phaser) |
 | `fx_dirt_plug.cpp`, `fx/` | The shipped plugins |
+
+## Shipped plugins
+
+Seven master inserts. File sizes are the `.plg` bytes. Every image is text only (no writable data) plus 8 B of bss, far
+below the 8,192 B limit, so each runs from either insert. The instance (state, the BBD line) is allocated by the host from the
+SRAM heap and counts against neither limit. Emulated instructions are per stereo block of 128 frames (a lower bound, the
+device measured 1.5 times that for Dirt). Console, Tube, BBD and Phaser ramp every setting over the block, so a change
+never clicks.
+
+| Plugin | File | Parameters (range, default) | File size, instance | Emulated insns per block |
+|---|---|---|---|---|
+| Dirt | `dirt.plg` | Type (Soft Hard Fold Asym, Soft), Drive 0-100 % (35), Bits 4-16 (16), Rate 1-32 (1), Tone 0-100 (100 = off), Mix 0-100 % (100) | 3,116 B, 680 B | 13.8 k |
+| Tape | `tape.plg` | Drive 0-100 % (30), Wow 0-100 % (20), Flutter 0-100 % (10), Mix 0-100 % (100) | 1,692 B, 1,072 B | 16.3 k |
+| Lo-Fi | `lofi.plg` | Bits, Rate, Ladder, Speaker, Mix | 2,668 B, 388 B | 18.4 k |
+| Console | `console.plg` | Drive 0-100 % (25), Weight 0-100 % (30), Output -12 to +12 dB (0), Mix 0-100 % (100) | 1,508 B, 80 B | 8.8 k |
+| Tube | `tube.plg` | Drive 0-100 % (25), Warmth 0-100 % (30), Tone 0-100 (80, 100 = off), Mix 0-100 % (100) | 1,496 B, 80 B | 9.7 k |
+| BBD | `bbd.plg` | Mode (I II, I), Mix 0-100 % (100), Width 0-100 % (100), Tone 0-100 % (50) | 2,128 B, 568 B | 11.8 k |
+| Phaser | `phaser.plg` | Mode (Classic 80s, Classic), Rate 0-100 (40), Depth 0-100 % (80), Feedback 0-100 % (30), Spread 0-100 % (25), Mix 0-100 % (50) | 4,792 B, 148 B | 7.8 k Classic, 11.9 k 80s, 14.0 k while a ramp runs |
+
+- **Console**: glue saturation. A rational tanh curve (small signal gain exactly 1 at every Drive, curve gain 0.05 to 3.5), with
+  the lows pushed harder: Weight lifts everything below about 120 Hz by up to +12 dB before the curve and takes the same
+  shelf out after it, so a signal too small to bend the curve passes unchanged. Drive 0 is transparent, Mix 0 is the dry
+  signal exactly. Output trims the result (the curve lowers loud peaks, so a hot Drive wants a few dB back).
+- **Tube**: a triode style stage. The signal rides on a bias point of the curve (Warmth), so one half-wave compresses sooner
+  than the other and the added harmonics are mostly even (2nd and 4th, warm). The small signal gain is 1 and DC is blocked
+  (6 Hz). Tone is a one pole high cut from 2 kHz (0) to 20 kHz (99), 100 is off. Measured at 1 kHz and -9 dBFS with the
+  defaults: 2nd harmonic -29 dB, 3rd -46 dB.
+- **BBD**: the classic two mode chorus of OpenTracker. Mode I is 0.5 Hz and 2.0 to 5.0 ms, Mode II 0.8 Hz and 1.5 to
+  5.5 ms. Mix 100 is dry and wet equal as on the original unit. Width 0 puts both taps on both sides, 100 one tap per
+  side. Tone is the BBD filter cutoff from 6 kHz (0) to 12 kHz (100). The line is 256 frames of int16 (512 B) in the
+  instance, so no SDRAM is used.
+- **Phaser**: Classic is 4 stages from 140 Hz to 2.4 kHz with feedback up to 60 %, 80s is 8 stages from 90 Hz to 4.2 kHz with
+  feedback up to 80 %. Rate is 0.05 Hz (0) to 6.4 Hz (100) on a log scale, 40 is 0.38 Hz. Depth is how far up the sweep goes,
+  Spread offsets the right channel's LFO by up to half a cycle. Mix 0 passes the bus untouched.
 
 ## File format
 
@@ -132,8 +166,10 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
   changes (design section 11, phase 1b).
 - `build_plug.py` refuses static constructors, GOT access, MOVW/MOVT absolute pairs and PC-relative references between the
   text and the rw segment, and prints image, rw, bss and rebase counts.
-- `build_plugs.sh OUT [FW_OBJ]` builds `dirt.plg`, `tape.plg` and `lofi.plg` and checks them: no `R_ARM_GOT*`, the rebase
-  table equals the `R_ARM_ABS32` count, the same output checksum at the SRAM_L, FlexNVM plus heap and SDRAM homes, Dirt
+- `build_plugs.sh OUT [FW_OBJ]` builds `dirt.plg`, `tape.plg`, `lofi.plg`, `console.plg`, `tube.plg`, `bbd.plg` and `phaser.plg` and
+  checks them: no `R_ARM_GOT*`, the rebase table equals the `R_ARM_ABS32` count, the same output checksum at the SRAM_L,
+  FlexNVM plus heap and SDRAM homes, with the default settings and again with every parameter moved and one more change in
+  block 5 (the checksum must differ from the default one), Dirt
   `3b1f3dc5` (the device's in-image Dirt hash), also from the firmware's own `ff_dirt.o` and `ff_dirt_ctl.o` when FW_OBJ is
   given.
 
