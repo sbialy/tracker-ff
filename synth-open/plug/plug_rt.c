@@ -27,18 +27,38 @@ float sqrtf(float x)
     return r;
 }
 
-// Local loops, not host calls: the compiler emits these for struct copies and zeroing, often in audio code.
-void* memcpy(void* d, const void* s, size_t n)
+// Local loops, not host calls: the compiler emits these for struct copies and zeroing, often in audio code (the engines
+// clear their per-chunk sum buffers with memset: as a byte loop that was 12 to 15k cycles per block for CS-Type, B-Type
+// and 8-Type at 4 voices). Word stores when the pointers are 4 B aligned, bytes for the rest. no-tree-loop-distribute-
+// patterns: GCC must not turn these loops back into calls to themselves.
+#define PLUG_RT_NO_IDIOM __attribute__((optimize("no-tree-loop-distribute-patterns")))
+typedef uint32_t __attribute__((may_alias)) plug_rt_word;   // the bytes may belong to any type
+PLUG_RT_NO_IDIOM void* memcpy(void* d, const void* s, size_t n)
 {
     unsigned char* dp = (unsigned char*)d;
     const unsigned char* sp = (const unsigned char*)s;
+    if ((((uintptr_t)dp | (uintptr_t)sp) & 3u) == 0)
+    {
+        plug_rt_word* wd = (plug_rt_word*)dp;
+        const plug_rt_word* ws = (const plug_rt_word*)sp;
+        for (; n >= 4; n -= 4) *wd++ = *ws++;
+        dp = (unsigned char*)wd;
+        sp = (const unsigned char*)ws;
+    }
     while (n--) *dp++ = *sp++;
     return d;
 }
 
-void* memset(void* d, int c, size_t n)
+PLUG_RT_NO_IDIOM void* memset(void* d, int c, size_t n)
 {
     unsigned char* dp = (unsigned char*)d;
+    if ((((uintptr_t)dp) & 3u) == 0)
+    {
+        const uint32_t w = (uint32_t)(unsigned char)c * 0x01010101u;
+        plug_rt_word* wd = (plug_rt_word*)dp;
+        for (; n >= 4; n -= 4) *wd++ = w;
+        dp = (unsigned char*)wd;
+    }
     while (n--) *dp++ = (unsigned char)c;
     return d;
 }
