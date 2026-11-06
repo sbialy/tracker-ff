@@ -73,6 +73,11 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Source**: written for this project from the public Polyend Synth manual (SYN2 p.76-80). Nothing of Polyend's closed code or binaries was read. The block rate voice skeleton and the filter stages are adapted from OpenTracker's VAP engine (item 10, Apache-2.0), the header of `phz.cpp` says so. No Mutable Instruments Plaits code is used.
 * **Note**: compiled only when `PHZ` is in `SYNTH_ENGINES`. The PHZ icons are Polyend's (already in `core/libs/images`).
 
+## 13a. PLK (clean-room Karplus-Strong plucked string engine for the `SYNTH_OPEN=1` build, optional)
+* **Location**: `synth-open/pluck/pluck.{cpp,h}` and `synth-open/engine_pluck.cpp`, `synth-open/tools/pluck_render.*`.
+* **Source**: written for this project from the published Karplus-Strong algorithm (Karplus and Strong, CMJ 1983) and its extensions (Jaffe and Smith, CMJ 1983). No third-party code was read or adapted. Only the `ISynthEngine` interface (item 10, Apache-2.0) is shared.
+* **Note**: compiled only when `PLK` is in `SYNTH_ENGINES`. It borrows the VAP list icons.
+
 ## 14. Mutable Instruments Polyverb sources (reverb code from Mutable Instruments Clouds and Rings)
 * **Location**: `core/libs/Audio/Polyverb/{reverb,fx_engine,util,cosine_oscillator}.h`
 * **License**: MIT License (the full text and "See http://creativecommons.org/licenses/MIT/" are in each file header)

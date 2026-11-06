@@ -11,7 +11,7 @@
 # Adding an engine: one line in SYNTH_ENGINES_ALL, one SYNTH_ENGINE_SRCS_<NAME> line, one entry in engine_list.h
 # (and its sources + EngineDef). Keep the canonical order: it is the order of the model list on screen.
 
-SYNTH_ENGINES_ALL     := ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE
+SYNTH_ENGINES_ALL     := ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE PLK
 SYNTH_ENGINES_DEFAULT := ACD FAT VAP WTFM
 
 # Sources are relative to synth-open/. Engine sources that live in core/ (Polyend's open Chiptune voice) are listed
@@ -33,6 +33,7 @@ SYNTH_ENGINE_SRCS_8TYPE    := engine_eight.cpp ot-synths/eight/eight.cpp
 SYNTH_ENGINE_SRCS_HANDTYPE := engine_hand.cpp ot-synths/hand/hand.cpp
 SYNTH_ENGINE_SRCS_BTYPE    := engine_btype.cpp ot-synths/btype/btype.cpp
 SYNTH_ENGINE_SRCS_ARCTYPE  := engine_arc.cpp ot-synths/arc/arc.cpp
+SYNTH_ENGINE_SRCS_PLK      := engine_pluck.cpp pluck/pluck.cpp
 SYNTH_ENGINE_CORE_SRCS_CHIP := synth/engines/ChiptuneSynthVoice.cpp
 # Name parts of data sections that belong to an engine without being in its objects (the CHIP list icons, only built in
 # with CHIP, see displayStructs.h). Only used to attribute flash in make synth-engines. PERC is the odd one: its

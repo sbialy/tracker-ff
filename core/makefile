@@ -80,6 +80,9 @@ $(OBJ_DIR)/synth/engines/ChiptuneSynthVoice.o $(OBJ_DIR)/synth-open/engine_chip.
 # worth 20 % of the voice (synth-open/tools/phz_cycles). Measured: worst case 5.8 % of a block at these flags, 7.3 % at -Os
 SYNTH_OPT_PHZ ?= -O2 -ffp-contract=off
 $(OBJ_DIR)/synth-open/phz/phz.o: EXTRA_OPT := $(SYNTH_OPT_PHZ)
+# PLK (Pluck): the same -O2 and no fused multiply add as PHZ (synth-open/pluck/README.md, CPU)
+SYNTH_OPT_PLK ?= -O2 -ffp-contract=off
+$(OBJ_DIR)/synth-open/pluck/pluck.o: EXTRA_OPT := $(SYNTH_OPT_PLK)
 $(SYNTH_GUI_OBJS): EXTRA_OPT := $(SYNTH_OPT_GUI)
 $(OBJ_DIR)/synth-open/open_synth.o: EXTRA_OPT := $(SYNTH_OPT_SHIM)
 # Dirt: FMA fusing costs 3 cycles on the M4F against 2 for a separate multiply and add, so no contraction

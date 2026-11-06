@@ -7,7 +7,7 @@
 //   STORED        the engine's canonical number in project files (strMtValues::synthPart[].synthType). It is the
 //                 position in the stock Tracker+/Mini CE list ACD FAT VAP WTFM PERC DIRT CHIP (so a stock PERC part
 //                 is 4 and a stock CHIP part is 6 here as well), JU6 (7) and PHZ (8) come after it, then the other OpenTracker 3.x engines
-//                 FM4 (9) D-Type (10) CS-Type (11) A-Type (12) T-Type (13) 8-Type (14) Hand-Type (15) B-Type (16) Arc-Type (17), the same
+//                 FM4 (9) D-Type (10) CS-Type (11) A-Type (12) T-Type (13) 8-Type (14) Hand-Type (15) B-Type (16) Arc-Type (17), then our own PLK (18), the same
 //                 numbers as the poly-editor stores. DIRT (5) has no open
 //                 engine, and PERC (4) has one only when it is picked: a project that uses an engine this build lacks
 //                 falls back to a default part. STORED is not the PATCH_ENGINE number (PERC is 4 stored but 6 in a
@@ -16,7 +16,7 @@
 //   TYPE_ID       polysynth::InstrumentTypeId. JU6 has no Polyend id, it uses its OpenTracker engine id 0x81,
 //                 PHZ has none either (the Polyend Synth engine is not in tracker-ce), it uses our own 0x82. The other OpenTracker
 //                 engines use their module engine id (FM4 0x80, CS-Type 0x83, A-Type 0x84, T-Type 0x85, 8-Type 0x86, Hand-Type 0x87, B-Type 0x88,
-//                 Arc-Type 0x89). D-Type's OpenTracker id 0x82 is PHZ's, so D-Type is stored as 0xA2 here, in the .patch and in the editor
+//                 Arc-Type 0x89, PLK 0x8A: our own Karplus-Strong pluck, no Polyend or OpenTracker id exists). D-Type's OpenTracker id 0x82 is PHZ's, so D-Type is stored as 0xA2 here, in the .patch and in the editor
 //                 (the module itself still gets 0x82 from its engine, the id is only a key)
 //   FACTORY       registry factory, defined in open_cold.cpp from DEF
 //   DEF           the engine's polysynth::open::EngineDef (engine_<name>.cpp)
@@ -93,4 +93,8 @@ SYNTH_ENGINE(BTYPE, 16, static_cast<polysynth::InstrumentTypeId>(0x88), createBt
 #ifdef SYNTH_ENGINE_ARCTYPE
 SYNTH_ENGINE(ARCTYPE, 17, static_cast<polysynth::InstrumentTypeId>(0x89), createArcSynth, kArcDef, 0x89,
              kBitmapMiniWTFM, kBitmapWTFM)
+#endif
+#ifdef SYNTH_ENGINE_PLK
+SYNTH_ENGINE(PLK, 18, static_cast<polysynth::InstrumentTypeId>(0x8A), createPluckSynth, kPlkDef, 0x8A,
+             kBitmapMiniVAP, kBitmapVAP)
 #endif

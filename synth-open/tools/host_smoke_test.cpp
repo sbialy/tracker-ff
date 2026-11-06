@@ -1565,7 +1565,7 @@ int main() {
     // the numbers the poly-editor stores (patches saved by the editor load on the device): pinned
     static const struct { const char* name; int stored, patchId; } kPin[] = {
       {"ACD",0,1},{"FAT",1,2},{"VAP",2,4},{"WTFM",3,5},{"PERC",4,6},{"CHIP",6,8},{"JU6",7,0x81},{"PHZ",8,0x82},{"FM4",9,0x80},{"DTYPE",10,0xA2},
-      {"CSTYPE",11,0x83},{"ATYPE",12,0x84},{"TTYPE",13,0x85},{"8TYPE",14,0x86},{"HANDTYPE",15,0x87},{"BTYPE",16,0x88},{"ARCTYPE",17,0x89} };
+      {"CSTYPE",11,0x83},{"ATYPE",12,0x84},{"TTYPE",13,0x85},{"8TYPE",14,0x86},{"HANDTYPE",15,0x87},{"BTYPE",16,0x88},{"ARCTYPE",17,0x89},{"PLK",18,0x8A} };
     bool pinned = true, roundTrip = true;
     for (const auto& id : ids) {
       bool found = false;
