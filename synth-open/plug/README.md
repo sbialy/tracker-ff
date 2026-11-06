@@ -234,7 +234,8 @@ from the host (`work_bytes`, `set_work`), not from bss: the host hands it out of
 that is touched a few times per sample (a delay line), never hot per-sample state.
 
 Files go to `/Plugins/Synth/`. Build the engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma
-default of `-Os`, `--synth` with the engine's numbers), and prove bit identity with `synth_render_compare.sh` (the firmware's
+default at `-O2`, `-O3` for FM4 and B-Type, `--synth` with the engine's numbers, `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3` in
+`synth_engines.sh` set other flags for a test set and the render compare follows them), and prove bit identity with `synth_render_compare.sh` (the firmware's
 objects behind the same wrapper, rendered by `emu_synth.py`). Then run the firmware's own attach check on it,
 `tools/validate_synth.py` (the real `checkSynth` in Unicorn, no device needed): an engine it rejects is listed but shows
 Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sections, 6 macros, 4 voices, formats
