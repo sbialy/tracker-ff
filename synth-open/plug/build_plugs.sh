@@ -122,6 +122,16 @@ head -c 1000 "$OUT/fm4.plgi" > "$OUT/logo-test/fm4.plgi"
 # the trailer plugin is the shipped ju6.plg plus the trailer: same image bytes
 cmp -s <(head -c "$(wc -c < "$OUT/ju6.plg")" "$OUT/logo-test/ju6.plg" | tail -c +161) <(tail -c +161 "$OUT/ju6.plg") ||
     { echo "logo FAIL logo-test/ju6.plg image differs from ju6.plg"; fail=1; }
+# and it renders as ju6.plg (the emulators cut the trailer off, the firmware never reads past the rebase table)
+python3 plug/build_plug.py --id ff.test.synthharness --kind offline --opt "-O2 -fno-builtin" --out "$OUT/logo-test/h.plg" \
+    -I . -I ot -I ../synth/include plug/synth/synth_harness.cpp > /dev/null
+esum() { "$PY" -I plug/emu_synth.py "$1" "$OUT/logo-test/h.plg" --scenario 0 --base 0x10000000 --rw-base 0x20027000 2>&1 |
+    sed -n 's/^output checksum //p'; }
+s1=$(esum "$OUT/ju6.plg")
+s2=$(esum "$OUT/logo-test/ju6.plg")
+rm -f "$OUT/logo-test/h.plg"
+if [ -n "$s1" ] && [ "$s1" = "$s2" ]; then echo "logo ok  logo-test/ju6.plg (trailer) renders $s2 = ju6.plg"
+else echo "logo FAIL logo-test/ju6.plg renders '$s2', ju6.plg '$s1'"; fail=1; fi
 c++ -std=c++20 -O1 -Wall -I . tools/plug_logo_test.cpp -o "$OUT/plug_logo_test"
 "$OUT/plug_logo_test" "$OUT/ju6.plgi" "$OUT/fm4.plgi" "$OUT/btype.plgi" "$OUT/logo-test/ju6.plg" | grep -E "FAIL|PASSED|ok  .*(plgi|plg):" || fail=1
 for bad in fm4 btype; do

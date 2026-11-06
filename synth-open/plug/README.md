@@ -233,3 +233,20 @@ engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma d
 
 The shipped synth plugins are `ju6.plg`, `fm4.plg` and `btype.plg` (the PLUGS image leaves all three out). Together they take
 26,424 B of the 122,880 B bank and 1,880 B of the 2,560 B SRAM pool (`plug_bank_test`).
+
+### Engine logos
+
+A synth plugin engine shows a logo in the engine list (80x29) and in the patch editor header (108x40), in the stock lettered
+style and the theme colour. Without one it shows its name as text. The logo is a PLGI record (`synth-open/plug_logo.h`): a
+16 B header and the two images as FT812 L2 alpha masks, 1,676 B. It comes from one of two places, in this order:
+
+1. a sidecar `/Plugins/Synth/<name>.plgi` next to `<name>.plg` (the whole file is the record, any other size is refused)
+2. a trailer inside the `.plg` after the rebase table, named by `plug_manifest.reserved[0]` (`build_plug.py --logo x.plgi`).
+   The record has its own CRC, the file CRC does not cover it, and hosts without logo support never read it.
+
+A record that is missing, truncated, the wrong size or damaged goes to the next source and finally to the text name. The host
+loads the logos once at boot into the free RAM_G window above the stock bitmaps (12 slots, 19,920 of the 21,220 B below the
+controls cache) and lists what it used in `/Plugins/synth.txt` (`logo <file> sidecar|trailer|text err <n>`). Make a record
+with `synth-open/tools/make_plgi.py`: from a PNG (white or opaque is drawn, black or transparent is not, scaled to both
+sizes), from two PNGs, or `--text NAME` for a text logo in the stock style. `--check` tests a `.plgi` or a `.plg` trailer,
+`--selftest` round-trips the stock logos. The shipped `ju6.plgi`, `fm4.plgi` and `btype.plgi` are text logos.

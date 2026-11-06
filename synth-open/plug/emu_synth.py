@@ -40,6 +40,10 @@ def load(uc, path, base, rwbase=None):
      crc, rwoff) = struct.unpack_from("<IHBBBBHIIIIIIIIIII", data, 0)
     rwoff = rwoff or img
     assert magic == 0x31474C50 and amaj == 1 and cpu == 1, "header"
+    # a logo trailer (plug_logo.h, build_plug.py --logo) after the rebase table is outside the CRC: cut it off
+    logo_off = struct.unpack_from("<I", data, 64 + 72)[0] if hsize >= 64 + 96 else 0
+    if logo_off and logo_off == hsize + img + 4 * nreb and len(data) == logo_off + 1676:
+        data = data[:logo_off]
     assert zlib.crc32(data[64:]) & 0xFFFFFFFF == crc and len(data) == hsize + img + 4 * nreb, "crc or size"
     payload = data[hsize:]
     image = bytearray(payload[:img])

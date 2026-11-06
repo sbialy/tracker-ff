@@ -91,6 +91,10 @@ def main():
     rwoff = rwoff or img
     assert magic == 0x31474C50 and hsize >= 64, "bad header"
     assert amaj == 1 and cpu == 1 and min_host <= 1, "abi"
+    # a logo trailer (plug_logo.h, build_plug.py --logo) after the rebase table is outside the CRC: cut it off
+    logo_off = struct.unpack_from("<I", data, 64 + 72)[0] if hsize >= 64 + 96 else 0
+    if logo_off and logo_off == hsize + img + 4 * nreb and len(data) == logo_off + 1676:
+        data = data[:logo_off]
     assert zlib.crc32(data[64:]) & 0xFFFFFFFF == crc and len(data) == hsize + img + 4 * nreb, "crc or size"
     if hsize >= 64 + 96:
         msz, mname, mauthor, mlic, mnp, mrole = struct.unpack_from("<I16s32s16sHB", data, 64)
