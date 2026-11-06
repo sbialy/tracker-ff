@@ -477,11 +477,12 @@ void cSampleImporter::showRename()
     }
 }
 
-void cSampleImporter::showAddOrEnter()
+void cSampleImporter::showAddOrEnter(bool isShiftPressed)
 {
     if (explorerNames != nullptr && *explorerNames[selectedFile] == '/')
     {
         display.setControlText(label[0], "Enter");
+        display.setControlValue(label[0], 0);
 
         if (selectedPlace == 0)
         {
@@ -494,7 +495,20 @@ void cSampleImporter::showAddOrEnter()
     }
     else
     {
-        display.setControlText(label[0], "Add");
+        if (isShiftPressed && selectionLength[listFiles] == 0)
+        {
+            display.setControlText(label[0], "Add to");
+            display.setControlText2(label[0], "Empty Slot");
+            display.setControlValue(label[0], 1);
+            display.setControlStyle2(label[0],
+                                     controlStyleCenterX | controlStyleCenterY | controlStyleFont3);
+        }
+        else
+        {
+            display.setControlText(label[0], "Add");
+            display.setControlValue(label[0], 0);
+        }
+
         display.setControlColors(label[0], display.getTheme().activeButtonLabelsColors);
     }
 
