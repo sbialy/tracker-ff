@@ -481,7 +481,7 @@ Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, L
         for (uint32_t i = 0; i < n; i++)
         {
             const uint32_t off = words[i];
-            if ((off & 3u) || off + 4 > h.image_size)
+            if (!rebaseOffsetOk(off, h.image_size))
             {
                 e = kRebase;
                 break;

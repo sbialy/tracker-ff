@@ -152,6 +152,13 @@ int main(int argc, char** argv)
         }
     }
 
+    // ---- the rebase offset bound (load(): a damaged table word must not reach outside the image)
+    check(rebaseOffsetOk(0, 4) && rebaseOffsetOk(1020, 1024) && !rebaseOffsetOk(1024, 1024) && !rebaseOffsetOk(1022, 1024),
+          "rebase offset: the last whole word is in, one past and an unaligned one are out");
+    check(!rebaseOffsetOk(0xFFFFFFFCu, 1024) && !rebaseOffsetOk(0xFFFFFFF8u, 65536),
+          "rebase offset 0xFFFFFFFC (off + 4 wraps to 0) and 0xFFFFFFF8 are out");
+    check(!rebaseOffsetOk(0, 0) && !rebaseOffsetOk(0, 3), "rebase offset: an image smaller than a word has none");
+
     // ---- each real file through the checks load() runs before anything executes
     for (int i = 0; i < 3; i++)
     {
