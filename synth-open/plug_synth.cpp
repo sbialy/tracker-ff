@@ -76,6 +76,7 @@ __NOINIT(EXTERNAL_RAM) uint8_t s_sec[kBankSector];
 __NOINIT(EXTERNAL_RAM) char s_btext[4096];   // synth.txt
 __NOINIT(EXTERNAL_RAM) char s_itext[2048];   // installed.txt
 __NOINIT(EXTERNAL_RAM) Bank s_bank;
+__NOINIT(EXTERNAL_RAM) Bank s_bankWork[2];   // bankInstall's plan and journal (main loop only, as every bankInstall call)
 __NOINIT(EXTERNAL_RAM) IndexEntry s_sidx[kLibMax];
 __NOINIT(EXTERNAL_RAM) ScanStats s_sscan;
 FileSystem* s_sfs;
@@ -495,7 +496,7 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
         const uint32_t ms0 = systick_millis_count;
         const uint64_t cy0 = nvmCommandCycles();
         const BankInstallStatus st = bankInstall(f, io, w, rank, onEvict, uintptr_t(s_pool), kPoolBytes, s_bank, s_sec, s_itext,
-                                                 int(sizeof(s_itext)));
+                                                 int(sizeof(s_itext)), s_bankWork);
         // systick stops inside a flash command (interrupts off): the command time is counted from the DWT (90 MHz there)
         const uint32_t cmdMs = uint32_t((nvmCommandCycles() - cy0) / 90000u);
         Install& l = s_log[s_logN++ % 8];

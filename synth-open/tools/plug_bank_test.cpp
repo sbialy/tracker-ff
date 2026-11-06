@@ -180,6 +180,7 @@ BankWant want(const Plg& p)
 
 char g_text[4096];
 uint8_t g_sec[kBankSector];
+Bank g_work[2];
 
 BankOpenStatus open(Flash& f, Io& io, Bank& b)
 {
@@ -209,7 +210,7 @@ BankInstallStatus install(Flash& f, Io& io, Bank& b, const std::string& file, Ca
         return long(c.lastUse.count(e.uid) ? c.lastUse[e.uid] : 0);
     };
     auto onEvict = [&](const BankEntry& e) { c.evicted.push_back(e.uid); };
-    return bankInstall(f, io, want(p), rank, onEvict, kPool, pool, b, g_sec, g_text, int(sizeof(g_text)));
+    return bankInstall(f, io, want(p), rank, onEvict, kPool, pool, b, g_sec, g_text, int(sizeof(g_text)), g_work);
 }
 
 // Every entry of the bank holds exactly the image of its file for its place (what "never run a half-written entry" needs)

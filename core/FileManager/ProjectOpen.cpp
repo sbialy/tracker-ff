@@ -19,6 +19,12 @@
 
 #include <cstring>
 
+#ifdef FEATURE_SYNTH_OPEN
+#include "mainLoopScratch.h"
+#include <new>
+#include <type_traits>
+#endif
+
 void ProjectOpen::update()
 {
     ProjectOpenStep nextStep = operationStep;
@@ -159,7 +165,17 @@ void ProjectOpen::openProjectInit()
 void ProjectOpen::loadProjectFileFromSd()
 {
     char projectFilePath[PATCH_SIZE];
+#ifdef FEATURE_SYNTH_OPEN
+    // The 2.3 KB file image off the stack (mainLoopScratch.h): main loop only, loadFileToMemory and
+    // loadProjectFileFormFileStruct reach no other scratch user (the old version recovery has its own buffer).
+    // Constructed in place: a file shorter than the struct keeps the member defaults past its end, as the local did.
+    static_assert(std::is_trivially_destructible<strProjectFile>::value &&
+                    sizeof(strProjectFile) <= kMainLoopScratchSize,
+                  "the project file image must fit the main-loop scratch");
+    strProjectFile& fileManagerProjectBuffer = *new (g_mainLoopScratch) strProjectFile;
+#else
     strProjectFile fileManagerProjectBuffer;
+#endif
     volatile int pathSize = sizeof(projectFilePath);
 
     snprintf(projectFilePath,

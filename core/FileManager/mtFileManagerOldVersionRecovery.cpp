@@ -10,6 +10,22 @@
 #include "Synth.h"
 #endif
 
+#ifdef FEATURE_SYNTH_OPEN
+#include <cr_section_macros.h>
+#include <new>
+#include <type_traits>
+// The old project copy of recoveryProjectVersion1, 14 and 15 off the stack: as a 2,304 B local it put the project
+// open path past the room MK66 leaves above the heap with the audio interrupt on top (mainLoopScratch.h). It cannot be
+// the main-loop scratch, which holds the project file being translated. The steps run one after another on the main
+// loop and never nest. Raw SDRAM bytes, NOINIT (no static constructor may touch the SDRAM before it is up), the copy
+// is constructed in place at each step as the local was.
+static_assert(std::is_trivially_destructible<strMtProjectRemote>::value, "the recovery copy is never destroyed");
+__NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) static uint8_t s_recoveryOld[sizeof(strMtProjectRemote)];
+#define RECOVERY_OLD_PROJECT(name) strMtProjectRemote& name = *new (s_recoveryOld) strMtProjectRemote
+#else
+#define RECOVERY_OLD_PROJECT(name) strMtProjectRemote name
+#endif
+
 static void recoveryProjectVersion1();
 static void recoveryProjectVersion2();
 static void recoveryProjectVersion3();
@@ -96,7 +112,7 @@ void mtVersionRecovery::translateProject(uint8_t firstVersion,
 static void recoveryProjectVersion1()
 {
     strMtProjectRemote* receivedProject = versionRecovery.getReadedProject();
-    strMtProjectRemote tmp;
+    RECOVERY_OLD_PROJECT(tmp);
 
     memcpy(&tmp, receivedProject, sizeof(tmp));
 
@@ -330,7 +346,7 @@ static void recoveryProjectVersion13()
 static void recoveryProjectVersion14()
 {
     strMtProjectRemote* receivedProject = versionRecovery.getReadedProject();
-    strMtProjectRemote tmp;
+    RECOVERY_OLD_PROJECT(tmp);
     memcpy(&tmp, receivedProject, sizeof(tmp));
 
     receivedProject->values.isHeadroomEnabled = 0;
@@ -345,7 +361,7 @@ static_assert(sizeof(strMtProjectRemote) ==
 static void recoveryProjectVersion15()
 {
     strMtProjectRemote* newProject = versionRecovery.getReadedProject();
-    strMtProjectRemote oldProject;
+    RECOVERY_OLD_PROJECT(oldProject);
     memcpy(&oldProject, newProject, sizeof(oldProject));
 
     for (int trackIdx = kSampleTracks; trackIdx < kMaxAllTracksInTrackers; trackIdx++)
