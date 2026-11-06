@@ -92,7 +92,8 @@ int synthLogoBitmap(const polysynth::open::EngineDef* d, bool editor);
 void useFs(FileSystem* fs);   // the card for writeText before boot() (synthBoot runs first)
 // scanIndex of one directory and kind on the card (the names are copied into index, the list buffers are shared)
 int scanDir(const char* dir, IndexEntry* index, int cap, ScanStats& st, uint32_t kind);
-bool writeText(const char* path, const char* text, int n);   // temp file and rename (plug_host.cpp)
+bool writeText(const char* path, const char* text, int n);   // <path>.tmp, read back, replaceFileOps: the old file is kept until then
+int readText(const char* path, char* buf, int cap);          // the whole file after moving back <path>.bak, -1: none or a card error
 constexpr const char* kMarker = "/Plugins/.loading";      // crash marker: a plugin was starting (section 7 of the design)
 
 // ---- the plugin index: /Plugins/Master/*.plg, header and manifest only, nothing executes (IndexEntry: plug_index.h)
@@ -144,9 +145,13 @@ constexpr const char* kSidecarName = "plugins.txt";
 // after a project load from the Workspace: read the sidecar, queue the loads (bypassed ones too), turn a format 1 sidecar's
 // Hard Clip into kSatInserts (insertsOnAfterLoad), a built-in Dirt entry of an FF build into Inserts with Dirt (dirtMigrate,
 // FF_DIRT=0 builds), then set the engine's saturation (the mixer stage is in the sidecar)
-void projectLoaded(const char* dir);
-bool projectSave(const char* dir);     // Workspace save: write the sidecar (remove it when no slot is used)
-void copySidecar(const char* srcDir, const char* dstDir);   // project open and save: the file follows the project
+void projectLoaded(const char* dir, bool newProject = false);   // newProject: an empty Workspace, not an open
+// Workspace save: write the sidecar (remove it when no slot is used). False: the settings are not on the card (the save failed)
+bool projectSave(const char* dir);
+// Project open (before projectLoaded) and save: the file follows the project. False: the card failed. A failed open copy makes
+// the next projectLoaded start empty and keeps the project's file (no save writes over it, plug_sidecar_io.h kStale).
+bool sidecarOpen(const char* projectDir, const char* workspaceDir);
+bool sidecarToProject(const char* workspaceDir, const char* projectDir);
 
 // ---- boot and main loop (Tracker.cpp)
 void boot(Platform* platform);   // end of TrackerImpl::init: the bench (FEATURE_PLUG_BENCH), crash marker, index

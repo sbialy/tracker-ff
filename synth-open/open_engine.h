@@ -41,12 +41,11 @@ enum class Fmt : uint8_t
     kMs10,     // value / 10 ms
     kDb,
     kPan,      // L50 / 0 / R50
+    kUnit,     // value as 0.00 .. 1.00 (PHZ X / Y). Always 15: a PHZ plugin is built without PERC and the host with it, so the
+               // number must not depend on which engines a build has (PLUG_FMT_UNIT)
 #ifdef SYNTH_ENGINE_PERC
-    kNote,     // PERC pitch note name, only compiled with PERC
-    kBodyWave, // PERC body wave: enumNames = 16 families, 11 positions each, only compiled with PERC
-#endif
-#ifdef SYNTH_ENGINE_PHZ
-    kUnit,     // value as 0.00 .. 1.00 (PHZ X / Y), only compiled with PHZ
+    kNote,     // PERC pitch note name, only compiled with PERC (built in only, no plugin may use it)
+    kBodyWave, // PERC body wave: enumNames = 16 families, 11 positions each, only compiled with PERC (built in only)
 #endif
 };
 

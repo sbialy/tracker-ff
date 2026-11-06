@@ -64,6 +64,12 @@ inline Err checkLayout(const plug_file_header& h, uint32_t textLen, uint32_t rwL
     return kOk;
 }
 
+// A rebase table word: the offset of a whole aligned word inside the image. By subtraction: off + 4 wraps for 0xFFFFFFFC
+inline bool rebaseOffsetOk(uint32_t off, uint32_t imageSize)
+{
+    return !(off & 3u) && imageSize >= 4 && off <= imageSize - 4;
+}
+
 // A plugin file name: *.plg in any case (FAT keeps the case it was written with), no macOS AppleDouble "._" twin
 inline bool isPlugName(const char* name)
 {

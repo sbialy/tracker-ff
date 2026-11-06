@@ -344,10 +344,12 @@ struct BankInstallStatus
 // Puts engine w into the bank b unless it is there. rank(const BankEntry&) says what may go to make room: < 0 never (a part
 // needs it), else the lowest rank goes first (the caller ranks by last use, and the engines of the parts above all others).
 // onEvict(const BankEntry&) runs for every dropped entry after the journal is on the card and before the first flash command
-// (the firmware detaches the engine there). sec: kBankSector bytes, text: cap bytes of scratch.
+// (the firmware detaches the engine there). sec: kBankSector bytes, text: cap bytes of scratch, work: two Banks of scratch
+// (the plan and the journal, about 1 KB each, kept off the stack: the firmware's main loop has 2 KB to spare under the audio
+// interrupt), none of them may alias b.
 template <class Flash, class Io, class Rank, class OnEvict>
 BankInstallStatus bankInstall(Flash& f, Io& io, const BankWant& w, Rank rank, OnEvict onEvict, uintptr_t pool, uint32_t poolBytes,
-                              Bank& b, uint8_t* sec, char* text, int cap)
+                              Bank& b, uint8_t* sec, char* text, int cap, Bank (&work)[2])
 {
     BankInstallStatus st = {};
     st.at = -1;
@@ -364,7 +366,8 @@ BankInstallStatus bankInstall(Flash& f, Io& io, const BankWant& w, Rank rank, On
         return st;
     }
     // the plan, on a copy: drop the lowest ranked entries until the engine has whole free sectors and an rw gap
-    Bank plan = b;
+    Bank& plan = work[0];
+    plan = b;
     bool gone[kBankMax] = {};
     uint32_t off = 0, rw = 0;
     for (;;)
@@ -400,7 +403,7 @@ BankInstallStatus bankInstall(Flash& f, Io& io, const BankWant& w, Rank rank, On
         return st;
     }
     // the journal: the evicted entries gone, the new one 'w', the erases about to happen counted, in the index before any command
-    Bank j;
+    Bank& j = work[1];
     j.n = 0;
     memcpy(j.wear, b.wear, sizeof(j.wear));
     for (int i = 0; i < b.n; i++)

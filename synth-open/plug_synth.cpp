@@ -47,8 +47,12 @@ static_assert(sizeof(polysynth::open::SectionDef) == sizeof(plug_synth_section),
 static_assert(sizeof(polysynth::open::MacroDef) == sizeof(plug_synth_macro) &&
                 offsetof(polysynth::open::MacroDef, targets) == offsetof(plug_synth_macro, targets),
               "MacroDef is plug_synth_macro");
-static_assert(int(polysynth::open::Fmt::kPan) == PLUG_FMT_PAN && int(polysynth::open::CurveKind::kPower) == PLUG_CURVE_POWER,
+static_assert(int(polysynth::open::Fmt::kPan) == PLUG_FMT_PAN && int(polysynth::open::Fmt::kUnit) == PLUG_FMT_UNIT &&
+                PLUG_FMT_COUNT == 16 && int(polysynth::open::CurveKind::kPower) == PLUG_CURVE_POWER,
               "the shim's formats and curves are PLUG_FMT_* and PLUG_CURVE_*");
+// Sections of a plugin engine. Nothing is sized by it (the editor keeps them in a vector), it only bounds what the host walks.
+// PHZ has 10, the most of any engine
+constexpr uint32_t kSynthSectionMax = 10;
 constexpr uint32_t kLayout = PLUG_SYNTH_LAYOUT(sizeof(SynthVoice), sizeof(SynthParams), sizeof(SynthNote), sizeof(SynthSlotScratch));
 
 constexpr const char* kSynthDir = "/Plugins/Synth";
@@ -72,6 +76,7 @@ __NOINIT(EXTERNAL_RAM) uint8_t s_sec[kBankSector];
 __NOINIT(EXTERNAL_RAM) char s_btext[4096];   // synth.txt
 __NOINIT(EXTERNAL_RAM) char s_itext[2048];   // installed.txt
 __NOINIT(EXTERNAL_RAM) Bank s_bank;
+__NOINIT(EXTERNAL_RAM) Bank s_bankWork[2];   // bankInstall's plan and journal (main loop only, as every bankInstall call)
 __NOINIT(EXTERNAL_RAM) IndexEntry s_sidx[kLibMax];
 __NOINIT(EXTERNAL_RAM) ScanStats s_sscan;
 FileSystem* s_sfs;
@@ -189,14 +194,9 @@ struct NvmFlash
 
 struct SdIo
 {
-    int readIndex(char* b, int cap)
-    {
-        auto [ok, f] = s_sfs->openFile(kIndexPath, FileSystem::FileOpenMode::kRead);
-        if (!ok) return -1;
-        const int n = int(s_sfs->readFile(b, size_t(cap), f));
-        s_sfs->closeFile(f);
-        return n;
-    }
+    // after moving back an interrupted replace's installed.txt.bak (writeText). -1 for no file and for a card error alike: the
+    // boot then writes nothing back, and the bank is a cache (an engine it forgets is installed again from its .plg)
+    int readIndex(char* b, int cap) { return readText(kIndexPath, b, cap); }
     bool writeIndex(const char* t, int n) { return writeText(kIndexPath, t, n); }
     // the .plg of e, rebased for e's flash and pool addresses, in the stage: text, rw initial bytes, then zeros (bss, padding)
     const uint8_t* image(const BankEntry& e)
@@ -255,7 +255,7 @@ bool checkSynth(const plug_ext_synth* x, uintptr_t t, uint32_t tn, uintptr_t rw,
     if (!x || !(in(x, t, tn) || in(x, rw, rwn)) || x->struct_size < sizeof(plug_ext_synth) || x->layout != kLayout) return false;
     const uint32_t np = x->param_count;
     if (!in(x->name, t, tn) || !x->name[0] || strnlen(x->name, 9) > 8 || strchr(x->name, '/') || np > kSynthParamMax ||
-        x->section_count > 8 || x->macro_count > 6 || x->max_voices - 1u > 3u || x->volume_param >= int32_t(np) ||
+        x->section_count > kSynthSectionMax || x->macro_count > 6 || x->max_voices - 1u > 3u || x->volume_param >= int32_t(np) ||
         x->volume_param < -1 || !fn(reinterpret_cast<const void*>(x->note_on), t, tn, true) ||
         !fn(reinterpret_cast<const void*>(x->note_off), t, tn, true) || !fn(reinterpret_cast<const void*>(x->render), t, tn, true))
         return false;
@@ -496,7 +496,7 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
         const uint32_t ms0 = systick_millis_count;
         const uint64_t cy0 = nvmCommandCycles();
         const BankInstallStatus st = bankInstall(f, io, w, rank, onEvict, uintptr_t(s_pool), kPoolBytes, s_bank, s_sec, s_itext,
-                                                 int(sizeof(s_itext)));
+                                                 int(sizeof(s_itext)), s_bankWork);
         // systick stops inside a flash command (interrupts off): the command time is counted from the DWT (90 MHz there)
         const uint32_t cmdMs = uint32_t((nvmCommandCycles() - cy0) / 90000u);
         Install& l = s_log[s_logN++ % 8];

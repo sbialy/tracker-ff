@@ -17,7 +17,7 @@ bool cFileManager::createNewProjectInWorkspace()
     clearWorkspace();
     createWorkspaceDirs();
 #ifdef FEATURE_PLUG_HOST
-    plug::projectLoaded(cWorkspacePath); // no sidecar in a new project: both insert slots empty
+    plug::projectLoaded(cWorkspacePath, true); // no sidecar in a new project: both insert slots empty
 #endif
 
     report(" crating new project ");

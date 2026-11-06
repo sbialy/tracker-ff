@@ -10,6 +10,10 @@
 #include "elapsedMillis.h"
 
 #include "polyassert.h"
+#ifdef FEATURE_SYNTH_OPEN
+#include <cr_section_macros.h>
+#include "mainLoopScratch.h"
+#endif
 
 // FONTS
 #include "RobotoMono-Bold_17_L4.h"
@@ -378,6 +382,18 @@ void cDisplay::begin(DisplayDriver* displayDriver, Timer* timer)
 
 // elapsedMillis printTajner;
 
+#ifdef FEATURE_SYNTH_OPEN
+// Main-loop scratch, see mainLoopScratch.h for the rules. Users: the image load chunk in update(), the JPEG
+// header read in readImgFromSd(), the screenshot row buffer in doScreenShot() and the streamed sample copy in
+// cFileManager::saveSampleDataToWorkspace(). update() runs only on the main loop and holds the buffer only inside
+// the loadImage block for one chunk (read, then FT812 CPU SPI write), doScreenShot() runs from update() before that
+// block and returns first, readImgFromSd() and the sample save run from UI and file manager code, which never runs
+// inside update() and is never reached from it. SDRAM is fine: the SD read (ADMA2) already targets SDRAM for
+// samples and the FatFs pools, and the FT812 transfers are CPU SPI loops.
+__NOINIT(EXTERNAL_RAM) __attribute__((aligned(32))) uint8_t g_mainLoopScratch[kMainLoopScratchSize];
+static_assert(kMainLoopScratchSize >= imgBufforSize, "image load chunk must fit the main-loop scratch");
+#endif
+
 void cDisplay::update()
 {
     if (!state)
@@ -418,7 +434,11 @@ void cDisplay::update()
             if (fileSystem->getFileAvailable(imgFile))
             {
                 int32_t readBytes = 0;
+#ifdef FEATURE_SYNTH_OPEN
+                uint8_t* const currentBuffer = g_mainLoopScratch;
+#else
                 uint8_t currentBuffer[imgBufforSize];
+#endif
                 readBytes = fileSystem->readFile(currentBuffer, imgBufforSize, imgFile);
 
                 if (readBytes < 0)
@@ -1052,7 +1072,12 @@ uint8_t cDisplay::readImgFromSd(char* path, uint32_t address, int16_t max_w, int
     }
 
     int32_t readBytes = 0;
+#ifdef FEATURE_SYNTH_OPEN
+    uint8_t* const currentBuffer = g_mainLoopScratch;
+    static_assert(kMainLoopScratchSize >= 5000, "JPEG header read must fit the main-loop scratch");
+#else
     uint8_t currentBuffer[5000];
+#endif
     readBytes = fileSystem->readFile(currentBuffer, 5000, imgFile);
 
     if (readBytes < 0)

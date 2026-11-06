@@ -1,4 +1,4 @@
-# Tracker FF plugin SDK (`.plg`, ABI 1.0)
+# Tracker FF plugin SDK (`.plg`, ABI 1.1)
 
 Runtime plugins for tracker-ff on the original Polyend Tracker (MK66, Cortex-M4F). Phase 2 of the design
 (`~/prj/poly/ref/plugin-architecture.md`) hosts **master inserts**: two slots after the tracks and sends mixer (and the
@@ -235,7 +235,10 @@ that is touched a few times per sample (a delay line), never hot per-sample stat
 
 Files go to `/Plugins/Synth/`. Build the engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma
 default of `-Os`, `--synth` with the engine's numbers), and prove bit identity with `synth_render_compare.sh` (the firmware's
-objects behind the same wrapper, rendered by `emu_synth.py`).
+objects behind the same wrapper, rendered by `emu_synth.py`). Then run the firmware's own attach check on it,
+`tools/validate_synth.py` (the real `checkSynth` in Unicorn, no device needed): an engine it rejects is listed but shows
+Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sections, 6 macros, 4 voices, formats
+`PLUG_FMT_PCT` to `PLUG_FMT_UNIT` (0 to 15, the higher shim formats are the built-in PERC's).
 
 ### Library and cache (round E)
 
