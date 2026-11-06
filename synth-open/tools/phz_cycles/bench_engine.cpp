@@ -8,7 +8,13 @@
 // on top of the defaults and scenario 9 is the default patch held in sustain (Decay 0.01 s). Scenario 20: every parameter at
 // the top of its range, 21: every parameter at the middle of its range, 22: every parameter at the bottom (stress cases for any
 // engine; a case that goes silent is flagged by the host side and not counted).
+// Synth automation (open_mod.h): scenario 30 ramps every parameter a slot may drive (triangle over its range, 64 blocks, Volume
+// kept) with serial++ and moving every block: the upper bound of the engine side, more than 4 slots can do. 31 ramps the first 4
+// of the picker order (wave like params first) the same way: the realistic 4 slot case. 32 is the default patch plus the
+// modulator alone (4 slots: 2 LFOs, 2 envelopes, stepped and added per slot as OpenPatch::effective adds them, amount 0 so the
+// engine sees the same values): 32 minus 0 is what the automation itself costs per part and block.
 #include "open_engine.h"
+#include "open_mod.h"
 
 using namespace ot::audio;
 
@@ -33,6 +39,12 @@ bool gKit;
 int gBlock;
 int gActive;
 bool gStarted; // the kit voice has had its first note-on (the shim reuses it for every further note)
+int gScen;
+int gTick;
+int16_t gRamp[polysynth::open::kMaxParams];
+int gRampN;
+polysynth::open::ModSlot gMod[polysynth::open::kModSlots];
+polysynth::open::ModState gModSt[polysynth::open::kModSlots];
 
 const polysynth::open::EngineDef& def() { return polysynth::open::BENCH_DEF; }
 
@@ -69,9 +81,55 @@ void startNotes()
     }
 }
 
+// scenarios 30 / 31: the ramped parameters move, as the shim's refreshParams makes it with a modulated destination
+void ramp()
+{
+    const auto& d = def();
+    const int t = gTick++ & 63;
+    const float tri = t < 32 ? float(t) / 32.0f : float(64 - t) / 32.0f;
+    for (int i = 0; i < d.paramCount; i++)
+    {
+        gP.start[i] = gP.end[i];
+    }
+    for (int k = 0; k < gRampN; k++)
+    {
+        const auto& pd = d.params[gRamp[k]];
+        gP.end[gRamp[k]] = pd.min + (pd.max - pd.min) * tri;
+    }
+    gP.moving = true;
+    gP.serial++;
+}
+
+// scenario 32: the modulator alone, what the automation adds per part and block: the 4 slot steps (modAdvance) and the per slot add
+// and clamp of OpenPatch::effective. The add[] / hit[] zeroing and the clamp loop of effective run without automation too (macros),
+// so they are not counted here. Amount 0: the engine sees the same values as in scenario 0.
+__attribute__((noinline)) void modulate()
+{
+    using namespace polysynth::open;
+    const auto& d = def();
+    for (int s = 0; s < kModSlots; s++)
+    {
+        modStep(gMod[s], gModSt[s], 120.0f);
+    }
+    for (int s = 0; s < kModSlots; s++)
+    {
+        const int i = gMod[s].dest;
+        const float v = gP.end[i] + gModSt[s].out * (d.params[i].max - d.params[i].min);
+        gP.end[i] = v < d.params[i].min ? d.params[i].min : (v > d.params[i].max ? d.params[i].max : v);
+    }
+}
+
 void block()
 {
     for (uint32_t i = 0; i < kBlock; i++) gL[i] = gR[i] = 0.0f;
+    if (gScen == 30 || gScen == 31)
+    {
+        ramp();
+    }
+    else if (gScen == 32)
+    {
+        modulate();
+    }
     gEng->prepare(gScratch, gP);
     for (int i = 0; i < gActive; i++)
     {
@@ -116,6 +174,50 @@ extern "C" void bench_setup(int sc)
         if (d.volumeParam >= 0)
         {
             gP.start[d.volumeParam] = gP.end[d.volumeParam] = d.params[d.volumeParam].def;
+        }
+    }
+    gScen = sc;
+    gTick = 0;
+    gRampN = 0;
+    if (sc == 30 || sc == 31)
+    {
+        int16_t pick[polysynth::open::kModPickMax];
+        const int n = polysynth::open::modPicker(&d, pick);
+        for (int k = 0; k < n && (sc == 30 || gRampN < polysynth::open::kModSlots); k++)
+        {
+            if (pick[k] < polysynth::open::kModPickMacro && pick[k] != d.volumeParam)
+            {
+                gRamp[gRampN++] = pick[k];
+            }
+        }
+    }
+    if (sc == 32)
+    {
+        int16_t pick[polysynth::open::kModPickMax];
+        const int n = polysynth::open::modPicker(&d, pick);
+        int got = 0;
+        for (int k = 0; k < n && got < polysynth::open::kModSlots; k++)
+        {
+            if (pick[k] < polysynth::open::kModPickMacro)
+            {
+                polysynth::open::ModSlot& m = gMod[got];
+                m = polysynth::open::ModSlot{};
+                m.type = got < 2 ? polysynth::open::ModType::kLfo : polysynth::open::ModType::kEnv;
+                m.shape = uint8_t(got == 0 ? 2 : 4);
+                m.speed = 14;
+                m.dest = pick[k];
+                m.amount = 0;
+                polysynth::open::modReset(gModSt[got], got);
+                polysynth::open::modNoteOn(m, gModSt[got], true);
+                got++;
+            }
+        }
+        for (; got < polysynth::open::kModSlots; got++)
+        {
+            gMod[got] = polysynth::open::ModSlot{};
+            gMod[got].type = polysynth::open::ModType::kEnv;
+            gMod[got].dest = 0;
+            gMod[got].amount = 0;
         }
     }
     gKit = d.maxVoices == 1;

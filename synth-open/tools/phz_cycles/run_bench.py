@@ -170,14 +170,22 @@ if ENGINE != "PHZ":
             ["2A03 Pulse", "SID Saw/Tri", "Noise / LFSR", "FM Bell", "Super Square", "Zap / Laser", "Arp Chord", "Chip Drum"])]
         cases += [(9, "default patch held in sustain (Decay 0.01 s)")]
     cases += [(20, "all parameters max"), (21, "all parameters mid"), (22, "all parameters min")]
+    # synth automation (bench_engine.cpp): 30 every drivable param moving, 31 the first 4 of the picker order, 32 the modulator alone
+    auto = [(30, "automation: every drivable parameter moving"), (31, "automation: 4 parameters moving (picker order)"),
+            (32, "automation: default patch + 4 slot modulator")]
     valid = []
-    for sc, n in cases:
+    got = {}
+    for sc, n in cases + auto:
         pb = line(f"{name} {n}", sc, detail=(sc == 0))
-        if pb >= 5000:   # voices alive and rendering (a dead voice costs about 1.5k cycles); quiet output still costs real cycles
+        got[sc] = pb
+        if pb >= 5000 and sc < 30:   # voices alive and rendering (a dead voice costs about 1.5k cycles); quiet output still costs real cycles
             valid.append((pb, n))
     if valid:
         w = max(valid)
         print(f"WORST {name}: {w[0]:.0f} cycles per block = {100 * w[0] / BLOCK_CYCLES:.2f} % of a block ({w[1]})")
+    p = lambda c: 100 * c / BLOCK_CYCLES
+    print(f"AUTOMATION {name}: s0 {p(got[0]):.2f} %, s30 {p(got[30]):.2f} % ({p(got[30] - got[0]):+.2f}), "
+          f"s31 {p(got[31]):.2f} % ({p(got[31] - got[0]):+.2f}), modulator s32-s0 {got[32] - got[0]:.0f} cycles ({p(got[32] - got[0]):+.2f})")
     sys.exit(0)
 for sc in range(3):
     line(NAMES[sc], sc, detail=True)
