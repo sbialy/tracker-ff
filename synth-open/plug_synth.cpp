@@ -42,7 +42,7 @@ constexpr uint32_t kLayout = PLUG_SYNTH_LAYOUT(sizeof(SynthVoice), sizeof(SynthP
 
 constexpr const char* kSynthDir = "/Plugins/Synth";
 constexpr const char* kIndexPath = "/Plugins/installed.txt";
-constexpr uint32_t kPoolBytes = 2560;    // rw + bss of the installed engines (JU6 1,648 B with its chorus lines, FM4 112 B)
+constexpr uint32_t kPoolBytes = 2560;    // rw + bss of the installed engines (JU6 1,648 B with its chorus lines, FM4 112 B, B-Type 120 B)
 constexpr uint32_t kStageBytes = 32768;  // one engine's image + bss while it is rebased for the flash
 
 // The engines' rw segments at a fixed SRAM address: the text in the flash holds their addresses, so they never move while

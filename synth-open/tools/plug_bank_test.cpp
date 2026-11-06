@@ -7,6 +7,7 @@
 //   - installed.txt round trip, damaged lines dropped
 //   - a fresh install of JU6 and FM4 sized engines, then a reboot that issues no flash command and no index write
 //   - packing: engines share sectors (no whole sector per engine), all 11 phase 4 engines at their linked sizes fit
+//   - the shipped JU6, FM4 and B-Type plugins fit the bank and the SRAM pool together, bytes left printed
 //   - replacing the engine in the middle (new version) erases the shared sectors and keeps the neighbours intact, the ones
 //     behind it move and are rewritten, a new engine goes after the installed ones (nothing else moves)
 //   - removing engines and adding a bigger one lays the bank out again, every engine stays valid
@@ -262,6 +263,29 @@ int main()
         st = boot(g, none, {}, b);
         check(none.indexWrites == 0 && !none.haveIndex && b.n == 0, "no synth plugin, no index: nothing written");
         check(insert2Blank(f), "insert 2 sectors untouched");
+    }
+
+    // ---- the shipped synth plugins at their build_plugs.sh sizes (image, text, rw + bss): JU6, FM4 and B-Type together
+    {
+        Io io;
+        io.card["ju6.plg"] = plg("ju6.plg", 0x73ac7ee0, 6948, 6944, 1648);
+        io.card["fm4.plg"] = plg("fm4.plg", 0xea3d5a7a, 8172, 8168, 112);
+        io.card["btype.plg"] = plg("btype.plg", 0x5e9b11f7, 11296, 11288, 120);
+        const std::vector<std::string> three = {"ju6.plg", "fm4.plg", "btype.plg"};
+        Flash f;
+        Bank b;
+        BankStatus st = boot(f, io, three, b);
+        check(st.installed == 3 && st.skipped == 0 && b.n == 3 && exact(f, io, b), "JU6, FM4 and B-Type all install");
+        check(insert2Blank(f), "JU6, FM4 and B-Type: insert 2 sectors untouched");
+        uint32_t end = 0, rw = 0;
+        for (int i = 0; i < b.n; i++)
+        {
+            end = b.e[i].off + b.e[i].len > end ? b.e[i].off + b.e[i].len : end;
+            rw = b.e[i].rwRun + b.e[i].rwLen - uint32_t(kPool) > rw ? b.e[i].rwRun + b.e[i].rwLen - uint32_t(kPool) : rw;
+        }
+        check(end <= kBankBytes && rw <= kPoolBytes, "JU6, FM4 and B-Type inside the bank and the pool");
+        printf("info  JU6 + FM4 + B-Type: bank %u of %u B used, %u B left, SRAM pool %u of %u B used, %u B left\n", end, kBankBytes,
+               kBankBytes - end, rw, kPoolBytes, kPoolBytes - rw);
     }
 
     // ---- the 11 engines of phase 4 at their linked sizes (BUILD.txt) + 5 % plugin overhead

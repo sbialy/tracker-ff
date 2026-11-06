@@ -3,7 +3,7 @@
 #
 #   TOOLCHAIN=.../agt/10.3/bin/arm-none-eabi- PY=/tmp/phzvenv/bin/python synth-open/plug/synth_render_compare.sh OUT
 #
-# OUT holds ju6.plg and fm4.plg (build_plugs.sh). The harness (synth/synth_harness.cpp) is built here, it never ships. The reference is what the firmware itself compiled when
+# OUT holds ju6.plg, fm4.plg and btype.plg (build_plugs.sh). The harness (synth/synth_harness.cpp) is built here, it never ships. The reference is what the firmware itself compiled when
 # the engine was built in: make -n of the 1.1.0 release engine set (TRIM=1, JU6 and FM4 in) gives the exact compile lines of
 # engine_<e>.cpp and ot-synths/<e>/<e>.cpp, they are run as they are, and those objects behind the same plugin wrapper make
 # <e>-fwobj.plg. Both render the harness script (scenario 0 at the defaults, 1 with every parameter moved and ramped) in
@@ -23,7 +23,7 @@ SET="ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE BTYPE
 python3 "$HERE/build_plug.py" --id ff.test.synthharness --kind offline --opt "-O2 -fno-builtin" --out "$TMP/synth-harness.plg" \
     -I "$SO" -I "$SO/ot" -I "$ROOT/synth/include" "$HERE/synth/synth_harness.cpp" > /dev/null
 fail=0
-for e in ju6 fm4; do
+for e in ju6 fm4 btype; do
     for src in "synth-open/engine_$e.cpp" "synth-open/ot-synths/$e/$e.cpp"; do
         line=$(grep -F "$ROOT/$src\"" "$TMP/make-n.txt" | grep -E '(c\+\+|g\+\+) ' | head -1)
         [ -n "$line" ] || { echo "no firmware compile line for $src"; exit 1; }

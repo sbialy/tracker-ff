@@ -402,6 +402,16 @@ int main() {
               open::engineAt(0).builtin == 0, "the engine list is the built-in set (and the plugin engine), by stored number");
     }
 #endif
+#ifndef SYNTH_ENGINE_BTYPE
+    // B-Type (stored 16, type id and .patch engine 0x88) is a plugin since phase 3 (btype.plg): without it installed, a project
+    // that used it names the missing placeholder, and its stored number has no picker row
+    {
+      const open::EngineDef* bd = open::missingDef(16);
+      check(bd && !open::engineOf(bd) && bd->paramCount == 0 && std::string(bd->name) == "BTYPE" && open::typeForStored(16) == 0x88 &&
+              open::typeForEngineId(0x88) == 0x88 && open::engineDefForType(0x88) == bd && open::engineUiForStored(16) == -1,
+            "B-Type not built in and not installed: stored 16 and engine id 0x88 name the missing placeholder BTYPE");
+    }
+#endif
     // workspace store: flat N.patch, as Synth::savePatchToWorkspace / loadPatchFromWorkspace use it
     auto w0 = ws->createPatch(kLead); const float w0v = float(w0->getMetadata().params[0].maxValue); w0->setParamValue(0, w0v, Patch::ParamChangeSource::kKnob);
     check(ws->savePatch("0", *w0) && mw->files.count("0.patch") == 1, "workspace store writes Workspace/0.patch (no type folder)");

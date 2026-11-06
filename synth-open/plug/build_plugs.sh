@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds the shipped master insert plugins (dirt, tape, lofi, console, tube, bbd, phaser: .plg) and the synth engine plugins
-# (ju6, fm4: .plg, render compare against the firmware's own objects in synth_render_compare.sh) and checks each one on the Mac:
+# (ju6, fm4, btype: .plg, render compare against the firmware's own objects in synth_render_compare.sh) and checks each one on the Mac:
 #   - no R_ARM_GOT* relocation in the linked ELF, the rebase table holds every R_ARM_ABS32 word (count equal, > 0)
 #   - emu_plug.py runs it at the insert 1 home (SRAM_L 0x1FFF0BD0), the insert 2 home (text at 0x1001E000 in the FlexNVM,
 #     rw at 0x20026C00 on the heap) and in SDRAM, and the output checksum is the same at all three
@@ -43,7 +43,7 @@ python3 plug/build_plug.py --id org.opentracker.fx.phaser --kind master --versio
 # Synth engines (phase 3): the engine sources exactly as the firmware compiled them when they were built in (the flags of
 # make -n for ot-synths/ at TRIM=1: -Os, fp-contract left at its fused default, see synth_render_compare.sh, which proves it)
 FWFLAGS="-std=gnu++20 -felide-constructors -include cstdint -fno-rtti -fno-exceptions -fno-common -ffunction-sections -fdata-sections -ffreestanding -fno-builtin -O2 -DNDEBUG -mfp16-format=ieee"
-for e in ju6 fm4; do
+for e in ju6 fm4 btype; do
     E=$(echo $e | tr a-z A-Z)
     python3 plug/build_plug.py --id org.opentracker.synth.$e --kind synth --version 1.0.0 --opt "-Os -fno-builtin" \
         --src-opt "$e.cpp=$FWFLAGS -Os -DSYNTH_ENGINE_$E" --src-opt "engine_$e.cpp=$FWFLAGS -DSYNTH_ENGINE_$E" \
@@ -96,7 +96,7 @@ if [ -n "$FW_OBJ" ]; then
     if [ "$f" = 3b1f3dc5 ]; then echo "dirt  ok  the firmware's ff_dirt.o + ff_dirt_ctl.o give 3b1f3dc5 too"; else echo "dirt  FAIL firmware objects give $f"; fail=1; fi
     rm -f "$OUT/dirt-fwobj.plg"
 fi
-for e in ju6 fm4; do
+for e in ju6 fm4 btype; do
     got=$("${TOOLCHAIN}objdump" -r "$OUT/$e.elf" | grep -c 'R_ARM_GOT' || true)
     reb=$(python3 -c "import struct,sys; print(struct.unpack_from('<I', open(sys.argv[1],'rb').read(), 32)[0])" "$OUT/$e.plg")
     abs=$("${TOOLCHAIN}objdump" -r "$OUT/$e.elf" | grep -c 'R_ARM_ABS32' || true)

@@ -222,11 +222,14 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
 A `PLUG_KIND_SYNTH` plugin answers `query(PLUG_EXT_SYNTH)` with a `plug_ext_synth` (plug_abi.h): the engine's numbers
 (`stored` for projects, `patch_engine` for `.patch` field 1, `type_id`), its name (on screen and the `Patches/<name>/`
 folder), parameter, section and macro tables in the shim's `ParamDef` / `SectionDef` / `MacroDef` layout, and the
-`ISynthEngine` calls as C functions. An engine that used to be built in keeps its numbers (JU6 7 / 0x81, FM4 9 / 0x80), so
-old projects and patches find it. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
+`ISynthEngine` calls as C functions. An engine that used to be built in keeps its numbers (JU6 7 / 0x81, FM4 9 / 0x80, B-Type 16 / 0x88),
+so old projects and patches find it. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
 lines (`synth/ju6_plug.cpp`). Large working RAM comes from the host (`work_bytes`, `set_work`), not from bss.
 
 Files go to `/Plugins/Synth/`. At boot the host installs them into the FlexNVM bank (`synth-open/plug_bank.h`, index
 `/Plugins/installed.txt`, status `/Plugins/synth.txt`) and adds them to the engine list before the synth starts. Build the
 engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma default of `-Os`), and prove bit identity with
 `synth_render_compare.sh` (the firmware's objects behind the same wrapper, rendered by `emu_synth.py`).
+
+The shipped synth plugins are `ju6.plg`, `fm4.plg` and `btype.plg` (the PLUGS image leaves all three out). Together they take
+26,424 B of the 122,880 B bank and 1,880 B of the 2,560 B SRAM pool (`plug_bank_test`).
