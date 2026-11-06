@@ -48,6 +48,15 @@ typedef struct
     float hp, lp, s1, s2, held;
 } Chan;
 
+// The derived coefficients, in their own struct so process() can keep a local copy: a float store to the output may alias
+// any float in Inst, so read through the instance GCC reloads every coefficient after each sample (13 % of the block)
+typedef struct
+{
+    float q, iq, amount, period;
+    float ghp, glp, bp_g, bp_h, kg, bump_gain;
+    int bits, quant, hold, use_ladder, use_speaker, use_bump;
+} Kon;
+
 typedef struct
 {
     float fs;
@@ -55,10 +64,8 @@ typedef struct
     // raw parameters
     int bits, rate, ladder, speaker;
     float mix;
-    // derived
-    int quant, hold, use_ladder, use_speaker, use_bump, rate_new;
-    float q, iq, amount, period;
-    float ghp, glp, bp_g, bp_h, kg, bump_gain;
+    int rate_new;
+    Kon k;   // derived
     // state
     float phase;
     Chan c[2];
@@ -75,43 +82,44 @@ static float one_pole_g(const Inst* s, float hz)
 
 static void recompute(Inst* s)
 {
-    s->quant = s->bits < 16;   // a ladder at 16 bits would be -90 dB: not run
-    s->use_ladder = s->quant && s->ladder > 0;
-    s->q = (float)(1 << (s->bits < 16 ? s->bits - 1 : 15));
-    s->iq = 1.0f / s->q;
-    s->amount = (float)s->ladder * 0.01f;
-    s->hold = s->rate != 0;
-    s->period = 1.0f;
-    if (s->hold)
+    s->k.bits = s->bits;
+    s->k.quant = s->bits < 16;   // a ladder at 16 bits would be -90 dB: not run
+    s->k.use_ladder = s->k.quant && s->ladder > 0;
+    s->k.q = (float)(1 << (s->bits < 16 ? s->bits - 1 : 15));
+    s->k.iq = 1.0f / s->k.q;
+    s->k.amount = (float)s->ladder * 0.01f;
+    s->k.hold = s->rate != 0;
+    s->k.period = 1.0f;
+    if (s->k.hold)
     {
-        s->period = s->fs / k_rate_hz[s->rate];
-        if (s->period < 1.0f) s->period = 1.0f;
+        s->k.period = s->fs / k_rate_hz[s->rate];
+        if (s->k.period < 1.0f) s->k.period = 1.0f;
     }
     if (s->rate_new)
     {
-        s->phase = s->period;
+        s->phase = s->k.period;
         s->rate_new = 0;
     }
-    s->use_speaker = s->speaker != 0;
-    s->use_bump = 0;
-    if (s->use_speaker)
+    s->k.use_speaker = s->speaker != 0;
+    s->k.use_bump = 0;
+    if (s->k.use_speaker)
     {
         const float* sh = k_shape[s->speaker];
-        s->ghp = one_pole_g(s, sh[0]);
-        s->glp = one_pole_g(s, sh[1]);
-        s->use_bump = sh[2] > 0.0f;
-        if (s->use_bump)
+        s->k.ghp = one_pole_g(s, sh[0]);
+        s->k.glp = one_pole_g(s, sh[1]);
+        s->k.use_bump = sh[2] > 0.0f;
+        if (s->k.use_bump)
         {
             const float kk = 1.0f;   // the bump's damping (Q 1)
             const float g = tanf(3.14159265f * sh[2] / s->fs);
-            s->bp_g = g;
-            s->bp_h = 1.0f / (1.0f + g * (g + kk));
-            s->kg = g + kk;
+            s->k.bp_g = g;
+            s->k.bp_h = 1.0f / (1.0f + g * (g + kk));
+            s->k.kg = g + kk;
             // the bump's peak is scaled so the whole shape reaches its dB there (the one-poles' own loss at the bump made
             // up: an analog estimate)
             const float f = sh[2], a = f / sh[1], b = sh[0] / f;
             const float loss = sqrtf((1.0f + a * a) * (1.0f + b * b));
-            s->bump_gain = (powf(10.0f, sh[3] / 20.0f) * loss - 1.0f) * kk;
+            s->k.bump_gain = (powf(10.0f, sh[3] / 20.0f) * loss - 1.0f) * kk;
         }
         else
             for (int k = 0; k < 2; k++) s->c[k].s1 = s->c[k].s2 = 0.0f;   // a band-pass that comes in later starts clean
@@ -163,7 +171,7 @@ static int32_t init(void* p, const plug_host* host)
 
 // The DAC on one sample: rounded to 2^bits levels (mid-tread, clamped, an exact .5 rounds away from zero), the ladder's
 // weight errors on the code's top six bits.
-static inline float dac(const Inst* s, float x)
+static inline float dac(const Kon* s, const float* err, float x)
 {
     const float q = s->q;
     float y = x * q;
@@ -174,13 +182,13 @@ static inline float dac(const Inst* s, float x)
     {
         const uint32_t code = (uint32_t)(c + (1 << (s->bits - 1)));   // offset binary 0 .. 2^bits - 1
         const uint32_t top = s->bits >= 6 ? (code >> (s->bits - 6)) & 63u : (code << (6 - s->bits)) & 63u;
-        out += s->amount * s->err[top] * s->iq;
+        out += s->amount * err[top] * s->iq;
     }
     return out;
 }
 
 // The speaker on one sample: high-pass, the bump (an SVF band-pass), low-pass.
-static inline float speak(const Inst* s, Chan* c, float x)
+static inline float speak(const Kon* s, Chan* c, float x)
 {
     float v = (x - c->hp) * s->ghp;
     const float lo = v + c->hp;
@@ -204,10 +212,15 @@ static inline float speak(const Inst* s, Chan* c, float x)
 
 static void process(void* p, float* const* ch, uint32_t channels, uint32_t frames)
 {
-    Inst* s = (Inst*)p;
+    Inst* inst = (Inst*)p;
     if (channels < 2) return;
-    const float wet = s->mix, dry = 1.0f - s->mix;
-    float ph = s->phase;
+    // coefficients and filter state in locals for the block (see Kon), written back once at the end
+    const Kon kon = inst->k;
+    const Kon* s = &kon;
+    const float* err = inst->err;
+    Chan cs[2] = {inst->c[0], inst->c[1]};
+    const float wet = inst->mix, dry = 1.0f - inst->mix;
+    float ph = inst->phase;
     for (uint32_t i = 0; i < frames; i++)
     {
         int take = 0;
@@ -222,24 +235,25 @@ static void process(void* p, float* const* ch, uint32_t channels, uint32_t frame
         }
         for (int k = 0; k < 2; k++)
         {
-            Chan* c = &s->c[k];
+            Chan* c = &cs[k];
             const float d = ch[k][i];
             float x = d;
             if (s->hold)
             {
-                if (take) c->held = s->quant ? dac(s, x) : x;
+                if (take) c->held = s->quant ? dac(s, err, x) : x;
                 x = c->held;
             }
             else if (s->quant)
-                x = dac(s, x);
+                x = dac(s, err, x);
             if (s->use_speaker) x = speak(s, c, x);
             ch[k][i] = x * wet + d * dry;
         }
     }
-    s->phase = ph;
+    inst->phase = ph;
     for (int k = 0; k < 2; k++)
     {
-        Chan* c = &s->c[k];
+        Chan* c = &inst->c[k];
+        *c = cs[k];
         c->hp = flush(c->hp);
         c->lp = flush(c->lp);
         c->s1 = flush(c->s1);

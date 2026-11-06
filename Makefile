@@ -26,9 +26,11 @@ ifeq ($(SYNTH_OPEN),1)
 # Engine picker: make original SYNTH_OPEN=1 SYNTH_ENGINES="ACD VAP WTFM CHIP" (names in synth-open/engines.mk, default
 # ACD FAT VAP WTFM). Unknown names stop the build with the list of valid ones. make synth-engines prints the flash cost.
 include $(SYNTH_OPEN_DIR)/engines.mk
-# Flash fit (see synth-open/README.md): engines and cold synth GUI files at -Os. Override with
-# SYNTH_OPT_ENGINES= SYNTH_OPT_GUI= (empty = -O2) and give each variant its own SYNTH_TAG=-x.
-SYNTH_OPT_ENGINES ?= -Os
+# Engine DSP at -O2 (CPU: at -Os GCC keeps the per-sample helpers svfStep, limit and fastSine as calls, -O2 saves up to 28.7
+# points of a block at 4 voices for +14.9 KB, ref cpu-optimisation-plan item 1), FM4 and B-Type at -O3 (SYNTH_OPT_FM4,
+# SYNTH_OPT_BTYPE in core/makefile). Cold synth GUI files at -Os for the flash fit (see synth-open/README.md). Override with
+# SYNTH_OPT_ENGINES=-Os SYNTH_OPT_GUI= (empty = -O2) and give each variant its own SYNTH_TAG=-x.
+SYNTH_OPT_ENGINES ?= -O2
 SYNTH_OPT_GUI ?= -Os
 SYNTH_OPT_COLD ?= -Os
 # FAT at -O2 costs about +120 B over -Os in the linked image. It stays at -O2 as long as text+data keeps

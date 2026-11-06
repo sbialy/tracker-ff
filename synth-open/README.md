@@ -28,8 +28,8 @@ All twelve are in the model list from boot, installed or not. The FlexNVM bank (
 an engine is installed when a part needs it (model list after a 500 ms rest, project load) and the least recently used engines
 that no part plays make room (`plug/README.md`, Library and cache). A Tracker has 3 synth parts (`kSynthInstrumentsCount` in
 `mtStructs.h`), each with one engine, and Patch FX slots keep the part's engine, so at most 3 engines play at once, 4 while one
-part changes engine. Budgets (`tools/plug_bank_test.cpp`): the twelve need 38 whole sectors, 9 to 10 stay resident, the 3 biggest
-plus the one being picked need 17. Engine rw and bss: 2,976 B of the 3,072 B SRAM pool for all twelve (the worst 3 at once
+part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set): the twelve need 43 whole sectors, 7 to 8 stay resident, the 3
+biggest plus the one being picked need 18 (73,728 of 122,880 B). Engine rw and bss: 2,976 B of the 3,072 B SRAM pool for all twelve (the worst 3 at once
 need 1,928 B, the pool stays at all twelve so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
 work arena (`plug_synth.cpp`), no engine takes internal heap.
 RAM_G logos: 12 slots, one per listed plugin, installed or not. CPU: FlexNVM runs code at flash speed (device bench run 3), the plugin executes the same
@@ -133,7 +133,7 @@ CPU: the first device run of CHIP on a pre-release build showed the red line at 
 
 Upstream tracker-ce 23db9c3 and 9d209ca (merged at 998b06d) rewrote the voice the same way for every platform: per block constants, `sdk::fastPow2` and `sdk::fastSine` (in `SynthVoiceSDK.h`, now also behind `sdk::noteToFreq` and `sdk::detuneMult`), a recurrence for the drum decay and the filter coefficient cached on the envelope level. Our polynomials were dropped for theirs. On the M4F their `__builtin_floorf` and `__builtin_roundf`, and the voice's `std::round`, are still newlib calls (no `VRINT`), so the merged voice took 72.0 % (default) and 88.3 % (worst) at 4 voices against 57.9 % and 82.0 % before. Under `FEATURE_SYNTH_OPEN` the voice now uses the same two polynomials with integer `floor` and `round` (`roundOf` gives the same bits as `roundf` for every float below 2^31, checked over all 2.65 billion of them), forced inline, and computes the pitch only when the note moves: 57.1 % and 75.0 %, bit identical to the SDK version in all 13 bench scenarios (24 blocks, CRC of the output). Against the pre-merge voice the pitch differs by at most 0.0004 cent (2e-7) and the renders by flips of the quantisers, the polyBLEP edges and the LFSR clock (rms -50 to -68 dB for the tonal models, -35 dB Noise, -20 dB Chip Drum, levels within 0.003 dB). With every parameter at its maximum the two stay equal for about 60 blocks, then drift apart in phase (resonance at the top, level +0.3 dB). The drum decay constant 0.99971659 is e^(-1 / (0.08 x 44100)), 44100 Hz instead of the 44117.6 Hz the voice runs at, restarted from `fastPow2` every block, so the error is at most 1.5e-5 of the decay.
 
-Emulated cost per voice per block, `-Os` / `-O2`: default patch 14.4 / 12.7 %, held in sustain 12.1 / 10.6 %, worst model (Super Square) 18.6 / 15.6 %. Four voices of the worst model are about 74 % (`-Os`), so CHIP is still the most expensive engine here. `SYNTH_OPT_CHIP=-O2` saves 12 % of that for +3.6 KB and would put the 16 engine image past the highest end known to boot, so the default stays `-Os`. Further savings would mean control rate updates of the filter coefficient, which changes the sound. The figures are emulated (no flash wait states), not read from a device.
+Emulated cost per voice per block, `-Os` / `-O2`: default patch 14.4 / 12.7 %, held in sustain 12.1 / 10.6 %, worst model (Super Square) 18.6 / 15.6 %. CHIP follows `SYNTH_OPT_ENGINES`, which is `-O2` since the engine DSP moved off `-Os` (see "Engine DSP at -O2"): four voices of the worst model take 62.3 % instead of 75.0 %, so CHIP is still the most expensive built-in engine. Further savings would mean control rate updates of the filter coefficient, which changes the sound. The figures are emulated (no flash wait states), not read from a device.
 
 ### PHZ
 
@@ -166,7 +166,7 @@ JU6 has a slot effect (chorus). With an engine that sets `EngineDef::slotFx` the
 | B-Type (BTYPE) | 16 | 0x88 | 27 | 5 | 4 | 9,740 |
 | Arc-Type (ARCTYPE) | 17 | 0x89 | 62 | 8 | 4 | 13,939 |
 
-The on-screen names are the picker names (`DTYPE`, `HANDTYPE` and so on), not OpenTracker's "D-Type". The folder `Patches/<NAME>/` and the model list use the same string. The model list scrolls (7 rows) and the widest names (HANDTYPE, ARCTYPE) were not looked at on a device. The engines keep their state in the slot scratch (384 B, `static_assert`ed in each engine) and the voice state, so the only static RAM is T-Type's send tap pointers (48 B), JU6's chorus lines (1,536 B) and about 10 B of `.data` per engine. They compile at `SYNTH_OPT_ENGINES` (`-Os`) and none needed `-O2`.
+The on-screen names are the picker names (`DTYPE`, `HANDTYPE` and so on), not OpenTracker's "D-Type". The folder `Patches/<NAME>/` and the model list use the same string. The model list scrolls (7 rows) and the widest names (HANDTYPE, ARCTYPE) were not looked at on a device. The engines keep their state in the slot scratch (384 B, `static_assert`ed in each engine) and the voice state, so the only static RAM is T-Type's send tap pointers (48 B), JU6's chorus lines (1,536 B) and about 10 B of `.data` per engine. They compile at `SYNTH_OPT_ENGINES` (`-O2`), FM4 and B-Type at `-O3` (`SYNTH_OPT_FM4`, `SYNTH_OPT_BTYPE`).
 
 What the host smoke test checks for every engine: the Init patch sounds (finite, non silent), a sweep of every parameter to its far end changes the output for a share of them (at least 3 and a fifth of the parameters, the ones that do not change it at the Init patch are things like a muted operator or a section behind a switch), velocity 32 and 127 both sound and the level follows velocity, a second note makes 2 voices (1 for T-Type) and a fifth note steals, a patch save and load round trip and ids that are unique and equal to the poly-editor's table. Known gaps, not features invented to hide them:
 
@@ -177,54 +177,57 @@ What the host smoke test checks for every engine: the Init patch sounds (finite,
 
 ### CPU at four voices
 
-Emulated with `tools/phz_cycles/run_bench.sh fw <ENGINE>` (522,240 cycles per block, firmware flags per engine, no flash wait states, the shim's own mixing and the rest of the tracker's block not included). The bench renders the voices as the shim does (4 voices playing the chord 57 61 64 68, `slotPost` for JU6). Kit engines (PERC, T-Type) are one voice that gets 5 hits every 8 blocks. "Worst" is the most expensive of: default patch, every parameter at its max, at its middle (voices still alive) and, for CHIP, each model. Percent of a block:
+Emulated with `tools/phz_cycles/run_bench.sh <FLAGS> <ENGINE>` (522,240 cycles per block, no flash wait states, the shim's own mixing and the rest of the tracker's block not included). The bench renders the voices as the shim does (4 voices playing the chord 57 61 64 68, `slotPost` for JU6). Kit engines (PERC, T-Type) are one voice that gets 5 hits every 8 blocks. "Worst" is the most expensive of: default patch, every parameter at its max, at its middle (voices still alive) and, for CHIP, each model. The bench's cost table reads about 5 % high against the device (Dirt block 21,786 emulated, 20,685 on the device). Percent of a block, `-Os` is the flags up to 1.1.0, `-O2` today's (`-O3` for FM4 and B-Type):
 
-| engine | 4 voices, default patch | 4 voices, worst | note |
-|---|---:|---:|---|
-| ACD | 12.8 | 24.9 | |
-| FAT | 13.7 | 22.7 | |
-| VAP | 13.2 | 18.7 | |
-| WTFM | 16.1 | 52.0 | |
-| PERC | 13.8 | 13.8 | 1 voice, 5 hits |
-| CHIP | 57.1 | 75.0 | upstream voice (998b06d) with the MK66 fast path, 57.9 / 82.0 before the merge |
-| JU6 | 21.1 | 24.0 | with chorus |
-| PHZ | 17.4 | 23.5 | worst model x 4 from the dedicated bench (5.87 %) |
-| FM4 | 32.5 | 32.6 | |
-| D-Type | 27.0 | 42.8 | |
-| CS-Type | 46.8 | 74.9 | close to the line |
-| A-Type | 27.3 | 37.0 | |
-| T-Type | 10.9 | 11.2 | 1 voice, kit |
-| 8-Type | 24.3 | 61.4 | |
-| Hand-Type | 12.2 | 12.7 | |
-| B-Type | 14.1 | 21.8 | |
-| Arc-Type | 33.2 | 41.7 | |
+| engine | default patch, `-Os` | default patch, `-O2` | worst, `-Os` | worst, `-O2` | note |
+|---|---:|---:|---:|---:|---|
+| ACD | 12.8 | 11.6 | 24.9 | 20.5 | |
+| FAT | 13.7 | 13.7 | 22.7 | 22.7 | always `-O2` |
+| VAP | 13.2 | 12.8 | 18.7 | 18.0 | |
+| WTFM | 16.1 | 13.4 | 52.0 | 31.6 | |
+| PERC | 13.8 | 9.1 | 13.8 | 9.1 | 1 voice, 5 hits |
+| CHIP | 57.1 | 48.8 | 75.0 | 62.3 | upstream voice (998b06d) with the MK66 fast path |
+| JU6 | 21.1 | 18.6 | 24.0 | 21.4 | with chorus |
+| PHZ | 17.4 | 17.4 | 23.5 | 23.5 | always `-O2 -ffp-contract=off`, worst model x 4 from the dedicated bench (5.87 %) |
+| FM4 | 32.5 | 16.6 | 32.6 | 16.8 | `-O3` |
+| D-Type | 27.0 | 25.9 | 42.8 | 34.9 | |
+| CS-Type | 46.8 | 30.5 | 74.9 | 46.3 | |
+| A-Type | 27.3 | 22.5 | 37.0 | 27.3 | |
+| T-Type | 10.9 | 9.2 | 11.2 | 9.2 | 1 voice, kit |
+| 8-Type | 24.3 | 14.8 | 61.4 | 42.5 | |
+| Hand-Type | 12.2 | 9.3 | 12.7 | 9.3 | |
+| B-Type | 14.1 | 8.8 | 21.8 | 16.2 | `-O3` |
+| Arc-Type | 33.2 | 21.0 | 41.7 | 27.7 | |
+| PLK | 5.6 | 5.6 | 6.3 | 6.3 | always `-O2 -ffp-contract=off` |
 
-Synth automation (bench scenarios 30 to 32, `bench_engine.cpp`): 30 ramps every parameter a slot may drive (triangle over its range, Volume kept) with `serial` and `moving` set every block, an upper bound no 4 slots reach. 31 ramps the first 4 of the picker order (wave group first), the realistic 4 slot case. 32 is the modulator alone (4 slots stepped and added, the engine sees the default values): 554 cycles per part and block (0.11 points) for every engine. Percent of a block at 4 voices, delta against the default patch:
+The bench's `memset` is a byte loop like the plugin runtime's was. The plugins now store words (`plug/plug_rt.c`), which takes another 1.2 to 2.3 % off CS-Type, B-Type and 8-Type and 0.7 % off PLK (worst block instructions in `emu_synth.py`, the same harness on both sides). The built-in engines always had the firmware's word-wise `fastmem.S`.
+
+Synth automation (bench scenarios 30 to 32, `bench_engine.cpp`): 30 ramps every parameter a slot may drive (triangle over its range, Volume kept) with `serial` and `moving` set every block, an upper bound no 4 slots reach. 31 ramps the first 4 of the picker order (wave group first), the realistic 4 slot case. 32 is the modulator alone (4 slots stepped and added, the engine sees the default values): 554 cycles per part and block (0.11 points) for every engine (469 for FM4 and B-Type at `-O3`). Percent of a block at 4 voices with the engine DSP at `-O2` (`-O3` for FM4 and B-Type), delta against the default patch:
 
 | engine | default | 31: 4 params moving | 30: every param moving |
 |---|---:|---:|---:|
-| ACD | 12.8 | 13.1 (+0.3) | 19.6 (+6.8) |
+| ACD | 11.6 | 11.9 (+0.3) | 16.7 (+5.0) |
 | FAT | 13.7 | 19.1 (+5.4) | 20.4 (+6.8) |
-| VAP | 13.2 | 19.6 (+6.4) | 19.6 (+6.4) |
-| WTFM | 16.2 | 23.8 (+7.6) | 43.4 (+27.2) |
-| PERC | 13.8 | 14.1 (+0.3) | silent, not valid |
-| CHIP | 57.1 | 57.1 (+0.1) | 65.0 (+7.9) |
-| JU6 | 21.1 | 21.3 (+0.2) | 21.4 (+0.3) |
+| VAP | 12.8 | 19.0 (+6.2) | 19.0 (+6.2) |
+| WTFM | 13.4 | 15.4 (+2.0) | 24.9 (+11.5) |
+| PERC | 9.1 | 9.2 (+0.2) | 7.3 (-1.8) |
+| CHIP | 48.8 | 48.8 (+0.1) | 58.7 (+9.9) |
+| JU6 | 18.6 | 18.8 (+0.2) | 18.8 (+0.3) |
 | PHZ (4 voice generic bench) | 17.4 | 17.7 (+0.3) | 18.0 (+0.7) |
-| FM4 | 32.5 | 33.0 (+0.5) | 33.3 (+0.8) |
-| D-Type | 27.0 | 27.4 (+0.4) | 33.1 (+6.1) |
-| CS-Type | 46.8 | 47.3 (+0.5) | 73.6 (+26.8) |
-| A-Type | 27.3 | 27.7 (+0.4) | 31.3 (+4.0) |
-| T-Type | 10.9 | 11.1 (+0.3) | 11.7 (+0.8) |
-| 8-Type | 24.3 | 24.9 (+0.7) | 29.9 (+5.6) |
-| Hand-Type | 12.2 | 21.5 (+9.3) | 21.8 (+9.6) |
-| B-Type | 14.1 | 21.4 (+7.4) | silent, not valid |
-| Arc-Type | 33.2 | 33.7 (+0.5) | silent, not valid |
-| PLK | 7.8 | 10.6 (+2.7) | 10.6 (+2.8) |
+| FM4 | 16.6 | 17.1 (+0.5) | 17.4 (+0.8) |
+| D-Type | 25.9 | 26.3 (+0.3) | 28.7 (+2.8) |
+| CS-Type | 30.5 | 31.4 (+0.9) | 45.4 (+14.9) |
+| A-Type | 22.5 | 22.8 (+0.4) | 25.8 (+3.3) |
+| T-Type | 9.2 | 9.3 (+0.2) | 8.8 (-0.3) |
+| 8-Type | 14.8 | 15.4 (+0.6) | 19.7 (+4.9) |
+| Hand-Type | 9.3 | 14.1 (+4.8) | 14.5 (+5.2) |
+| B-Type | 8.8 | 13.0 (+4.2) | silent, not valid |
+| Arc-Type | 21.0 | 21.4 (+0.4) | silent, not valid |
+| PLK | 5.6 | 7.4 (+1.9) | 7.4 (+1.9) |
 
-The modulator is cheap, the cost is the engine's recompute when its values move: most engines refresh once per part and block (under 1 point), FAT, VAP, WTFM, B-Type, Hand-Type and PLK also work per voice while `moving` is set on their wave and pitch params (+2.7 to +9.3 points). Every engine stays far below its own worst case, CHIP (57.1) and CS-Type (47.3) with 4 moving params are the highest. Emulated, not measured on a device.
+The modulator is cheap, the cost is the engine's recompute when its values move: most engines refresh once per part and block (under 1 point), FAT, VAP, WTFM, B-Type, Hand-Type and PLK also work per voice while `moving` is set on their wave and pitch params (+1.9 to +6.2 points). Every engine stays far below its own worst case, CHIP (48.8) and CS-Type (31.4) with 4 moving params are the highest. PERC and T-Type are kits: with every param moving the hits are cheaper than the default patch. Emulated, not measured on a device.
 
-Read against the governor (cuts at a block >= 98 to 100 %, or an average >= 80 %): with the default pool of 4, one slot at 4 voices or three slots sharing 4 sound at most 4 voices, so the worst total is the 4 voice figure of the dearest engine. CHIP worst (Super Square, 75 %) and CS-Type worst (75 %) are close to the line, 8-Type worst at 61 % is next, the rest fit with room. Three slots each asking for 4 voices is 12 voices on paper, 3 x the figures above, which only the pool (4) keeps from happening. Raising the pool budget to 8 would overload the same engines. Not measured on a device.
+Read against the governor (cuts at a block >= 98 to 100 %, or an average >= 80 %): with the default pool of 4, one slot at 4 voices or three slots sharing 4 sound at most 4 voices, so the worst total is the 4 voice figure of the dearest engine. CHIP worst (Super Square, 62 %) is the dearest, then CS-Type (46 %) and 8-Type (42 %), the rest fit with room. Three slots each asking for 4 voices is 12 voices on paper, 3 x the figures above, which only the pool (4) keeps from happening. Raising the pool budget to 8 would overload the same engines. Not measured on a device.
 
 ## Engine icons
 
@@ -335,12 +338,12 @@ What it does:
 2. `InstrumentTypeRegistry.h` uses `std::map` instead of `std::unordered_map` (`POLYSYNTH_REGISTRY_MAP`, only lookups by id).
 3. Float instead of double math at 6 call sites: `cosf` and `tanf` in `mtEffectEQ.cpp`, `expf` in `mtEffectOverdrive.cpp`, `value == floorf(value)` in `fSongEdit.cpp` and `powf` in `control_sgtl5000.cpp` (MK66 copy). This drops pow, exp, fmod, remainder and the trig kernels from libm.
 4. The PERC icons are out of the bitmap table unless PERC or T-Type is picked (`FW_ICON_PERC`), and the other lettered icons follow the same rule.
-5. `-Os` (appended after `-O2`, per-path pattern rules `TRIM_OS_PATHS` in `core/makefile`) for `interface FileManager libs/NewDisplay effector Exporter synth source` and for the whole MK66 platform (teensy core, FatFs, SDMMC, USB, I2S). A list of `AudioEngine` files that run once at start or once per event, not per block, is also `-Os` (`TRIM_OS_FILES`: AudioInput, MixerAndFxs, AudioVoice, AudioOutput, ExportQueues, mtAudioPerformanceMode, mtAudioNoteOnHandle and mtAudioSequencer). The sequencer entry is the one that paid for the merge of upstream's relicense and file hardening. Only the note on handler of that file runs in the sequencer interrupt, a few hundred cycles per note at worst. Not touched: the per-block audio code in `AudioEngine`, `libs/Audio` and the engine DSP, which keeps its own flags (`SYNTH_OPT_ENGINES` `-Os`, FAT `-O2`, PHZ `-O2 -ffp-contract=off`, an explicit per-object `EXTRA_OPT` wins over the TRIM pattern rules).
+5. `-Os` (appended after `-O2`, per-path pattern rules `TRIM_OS_PATHS` in `core/makefile`) for `interface FileManager libs/NewDisplay effector Exporter synth source` and for the whole MK66 platform (teensy core, FatFs, SDMMC, USB, I2S). A list of `AudioEngine` files that run once at start or once per event, not per block, is also `-Os` (`TRIM_OS_FILES`: AudioInput, MixerAndFxs, AudioVoice, AudioOutput, ExportQueues, mtAudioPerformanceMode, mtAudioNoteOnHandle and mtAudioSequencer). The sequencer entry is the one that paid for the merge of upstream's relicense and file hardening. Only the note on handler of that file runs in the sequencer interrupt, a few hundred cycles per note at worst. Not touched: the per-block audio code in `AudioEngine`, `libs/Audio` and the engine DSP, which keeps its own flags (`SYNTH_OPT_ENGINES` `-O2`, FM4 and B-Type `-O3`, PHZ and PLK `-O2 -ffp-contract=off`, an explicit per-object `EXTRA_OPT` wins over the TRIM pattern rules).
 6. `platforms/mk66/source/fastmem.S`, a word-wise `memcpy` and `memset`, see "Idle audio load".
 
 Source level trims sit behind `-DFW_TRIM`. TRIM uses its own build directories (`core/build-MK66-ORIGINAL-SYNTHOPEN[-E<names>]-trim` and `platforms/mk66/build-trim`) so trim and plain objects never mix. Not in TRIM: LTO, font recompression, a printf replacement and any feature removal. The three size guards and `make synth-engines` all work with TRIM=1.
 
-The cold shim code is split for the same reason: `open_synth.cpp` keeps the render path (instrument, voice pool, `OpenPatch::effective`) at `-O2`, and everything else (`open_cold.cpp`, `open_patchio.cpp`, `stub_fmt.cpp`) is built at `-Os` (`SYNTH_OPT_COLD`). The knobs `SYNTH_OPT_ENGINES`, `SYNTH_OPT_GUI`, `SYNTH_OPT_SHIM`, `SYNTH_OPT_COLD`, `SYNTH_OPT_FAT`, `SYNTH_OPT_CHIP` and `SYNTH_OPT_PHZ` set the `-O` level of each file group. A stray `<iostream>` anywhere pulls about 150 KB of locale code on MK66, so after a change `nm` the `.axf` for `std::locale`.
+The cold shim code is split for the same reason: `open_synth.cpp` keeps the render path (instrument, voice pool, `OpenPatch::effective`) at `-O2`, and everything else (`open_cold.cpp`, `open_patchio.cpp`, `stub_fmt.cpp`) is built at `-Os` (`SYNTH_OPT_COLD`). The knobs `SYNTH_OPT_ENGINES`, `SYNTH_OPT_GUI`, `SYNTH_OPT_SHIM`, `SYNTH_OPT_COLD`, `SYNTH_OPT_FAT`, `SYNTH_OPT_CHIP`, `SYNTH_OPT_FM4`, `SYNTH_OPT_BTYPE`, `SYNTH_OPT_PHZ` and `SYNTH_OPT_PLK` set the `-O` level of each file group. A stray `<iostream>` anywhere pulls about 150 KB of locale code on MK66, so after a change `nm` the `.axf` for `std::locale`.
 
 ### Flash budget of the 1.1.0 image
 
@@ -472,6 +475,17 @@ Emulated cost per block (**estimated**): 3 voices playing with sends -1.4 points
 This fixes a dead feature: the code used inputs 18 to 20 (the Tracker+ layout) of the delay and reverb pre-FX mixers, which have 10 inputs on MK66. `AudioConnection::connect` returned before it linked anything (`dest_index > dst->num_inputs`) and `AudioMixer::gain` ignored the channel, so nothing was written out of bounds and the synth sends were silently dead.
 
 Proof that every `connect()` succeeds: the bench builds the six synth send connections with the firmware's constants and reads `AudioConnection::isConnected` after each one (6 of 6 accepted in all scenarios, and 0 of 6 with the old index as a negative control). The previous and the new graph are byte identical in scenarios 0 to 6 (the stand-in synth sends transmit nothing there), and scenario 7 has the three sends sounding. The cost is the 6 extra empty inputs of the two send mixers, 6 NULL `receiveReadOnly` calls and ramp updates, **+252 emulated cycles per block (0.05 points)**. With a synth part sounding and its send above zero the fx wake up, which is the feature and not the mixer: three synth sends at 0.4 and 0.3 with no track voice cost 22.9 points, the same as a track send of that level.
+
+### Engine DSP at -O2 and small fixes
+
+From `ref/cpu-optimisation-plan.md` (items 1 and 3 to 6 and 10), all output bit identical or below -119 dBFS, all SYNTH_OPEN or plugin only (the stock image is unchanged):
+
+- Engine DSP at `-O2` (`SYNTH_OPT_ENGINES`), FM4 and B-Type at `-O3` (`SYNTH_OPT_FM4`, `SYNTH_OPT_BTYPE`), the synth plugins with the same flags (`plug/synth_engines.sh`). At `-Os` GCC 10.3 kept the per-sample helpers (`svfStep`, `limit`, `fastSine`, `fastPow2`) as calls with the filter state in memory. The table above has the gains. Output: 12 of 18 engines bit identical, the others differ by at most VAP -180.6, CHIP -162.6, CS-Type -119.2, A-Type -125.6, 8-Type -132.5 and Hand-Type -138.5 dBFS (where GCC places a fused multiply add, bench scenarios and plugin render compare). The PLUGS image grows by 14.9 KB, the twelve plugins by 15.5 KB.
+- Lo-Fi and Tape keep their coefficients and filter state in locals for the block (a float store to the output may alias any float of the instance, so GCC reloaded them after every sample): Lo-Fi 26.6k to 23.0k emulated cycles per block, Tape 18.4k to 17.9k, bit identical. Dirt, Console, Tube, BBD and Phaser already did.
+- `saturateSoftClip` (`SynthVoiceSDK.h`, twice per sounding part per block) multiplies by `1 / 6.72` instead of dividing, 3,328 cycles per part and block. 1.3 % of the results move 1 ulp (at most -144.5 dBFS). Stock keeps the divide.
+- The plugin runtime's `memset` and `memcpy` store words when aligned (see the CPU table).
+
+`-ffp-contract=off` on the engines (plan item 2) would take another 0.7 to 10.4 points (PLUGF test image: `SYNTH_TAG=-fpc SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT=... SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE=...`, plugins with `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3`), but it changes the output (worst -69 dBFS, Hand-Type) and its cost model is not device calibrated, so it waits for a device A/B.
 
 ### Summary
 

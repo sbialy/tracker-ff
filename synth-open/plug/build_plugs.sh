@@ -44,8 +44,8 @@ python3 plug/build_plug.py --id org.opentracker.fx.bbd --kind master --version 1
 python3 plug/build_plug.py --id org.opentracker.fx.phaser --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
     --keep "$OUT/phaser.elf" --out "$OUT/phaser.plg" plug/fx/ot_phaser_plug.c
 # Synth engines (phase 3): the engine sources exactly as the firmware compiled them when they were built in (the flags of
-# make -n at TRIM=1, per engine in synth_engines.sh: -Os and fp-contract left at its fused default for the OpenTracker
-# modules, -O2 -ffp-contract=off for PHZ and PLK, see synth_render_compare.sh, which proves it)
+# make -n at TRIM=1, per engine in synth_engines.sh: -O2 (FM4 and B-Type -O3) and fp-contract left at its fused default for
+# the OpenTracker modules, -O2 -ffp-contract=off for PHZ and PLK, see synth_render_compare.sh, which proves it)
 . "$HERE/synth_engines.sh"
 FWFLAGS="-std=gnu++20 -felide-constructors -include cstdint -fno-rtti -fno-exceptions -fno-common -ffunction-sections -fdata-sections -ffreestanding -fno-builtin -O2 -DNDEBUG -mfp16-format=ieee"
 build_synth() {   # build_synth <plugin> <out.plg> [extra build_plug.py args]

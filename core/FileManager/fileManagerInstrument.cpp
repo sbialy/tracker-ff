@@ -541,6 +541,22 @@ bool cFileManager::promoteStreamedInstrumentToRam(int idx)
     return true;
 }
 
+#ifdef FEATURE_SYNTH_OPEN
+#include <cr_section_macros.h>
+// The two path buffers of demoteRamInstrumentToStream off the stack: as locals they gave it a 584 B frame, the deepest one
+// on the main loop's project load chain (WorkspaceProjectLoad, loadSampleData, here, resolveProjectInstrumentPtiPath),
+// and MK66 leaves only about 8,440 B between SP and the heap with the audio interrupt taking up to 6.4 KB of that (see
+// libs/NewDisplay/mainLoopScratch.h). Safe as statics: the callers (loadSampleData, SampleImport's import finish and the
+// sample importer's memory mode toggle) are main-loop file manager and UI code, none is reachable from an interrupt, and
+// nothing it calls (FileSystem, getPtiFileDataOffset, resolveProjectInstrumentPtiPath with its own statics,
+// VoiceStreamManager::setupInstrumentStream, which copies the path, the sample memory moves) calls it again, so it never
+// nests. Not the main-loop scratch: the project load can hold that around it. Byte strings only touched by the CPU
+// (FatFs and the stream manager copy them), so any alignment does. NOINIT: no static constructor may touch the SDRAM
+// before it is up, and the function writes both before it reads them.
+__NOINIT(EXTERNAL_RAM) static char s_demotePath[PATCH_SIZE];
+__NOINIT(EXTERNAL_RAM) static char s_demoteProjectPath[PATCH_SIZE];
+#endif
+
 bool cFileManager::demoteRamInstrumentToStream(int idx,
                                                const char* backingPtiPath,
                                                uint32_t dataOffset,
@@ -571,12 +587,18 @@ bool cFileManager::demoteRamInstrumentToStream(int idx,
         return false;
     }
 
+#ifdef FEATURE_SYNTH_OPEN
+    char* const resolvedPath = s_demotePath;
+    constexpr size_t kPathSize = sizeof(s_demotePath);
+#else
     char resolvedPath[PATCH_SIZE];
+    constexpr size_t kPathSize = sizeof(resolvedPath);
+#endif
     resolvedPath[0] = 0;
     if (backingPtiPath != nullptr)
     {
-        strncpy(resolvedPath, backingPtiPath, sizeof(resolvedPath));
-        resolvedPath[sizeof(resolvedPath) - 1] = 0;
+        strncpy(resolvedPath, backingPtiPath, kPathSize);
+        resolvedPath[kPathSize - 1] = 0;
     }
     uint32_t resolvedOffset = dataOffset;
     uint32_t fileSize =
@@ -586,16 +608,22 @@ bool cFileManager::demoteRamInstrumentToStream(int idx,
 
     if (fileSize <= resolvedOffset || fileSize <= sizeof(strInstrumentFile))
     {
+#ifdef FEATURE_SYNTH_OPEN
+        char* const projectPtiPath = s_demoteProjectPath;
+        constexpr size_t kProjectPathSize = sizeof(s_demoteProjectPath);
+#else
         char projectPtiPath[PATCH_SIZE];
+        constexpr size_t kProjectPathSize = sizeof(projectPtiPath);
+#endif
         uint32_t projectDataOffset = resolvedOffset;
-        if (resolveProjectInstrumentPtiPath(idx, projectPtiPath, sizeof(projectPtiPath)) &&
+        if (resolveProjectInstrumentPtiPath(idx, projectPtiPath, kProjectPathSize) &&
             getPtiFileDataOffset(projectPtiPath, projectDataOffset))
         {
             uint32_t projectFileSize = fileSystem->getFileSize(projectPtiPath);
             if (projectFileSize > projectDataOffset)
             {
-                strncpy(resolvedPath, projectPtiPath, sizeof(resolvedPath));
-                resolvedPath[sizeof(resolvedPath) - 1] = 0;
+                strncpy(resolvedPath, projectPtiPath, kPathSize);
+                resolvedPath[kPathSize - 1] = 0;
                 resolvedOffset = projectDataOffset;
                 fileSize = projectFileSize;
             }
