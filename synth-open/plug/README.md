@@ -121,6 +121,9 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
 /tmp/phzvenv/bin/python -I emu_plug.py gain.plg --base 0x1FFF0BD0 --param 0=150 --wav gain.wav
 ```
 
+`--param-at BLOCK:INDEX=VALUE` sets a parameter just before that block, to test ramps and crossfades (a plugin that treats the first block differently from the later ones only shows it there).
+
+- `dirt.plg` is a worked example of a plugin that rebuilds coefficients in `set_param` (powf and tanf through the host table, once per change, never in `process`) and fades from the old setting to the new one over the next block: it keeps the pre-change coefficients and state, runs the block twice and crossfades. Mix is a wet ramp. Its parameters are those of the OpenTracker DIRT: Type (Soft Hard Fold Asym), Drive 0-100 %, Bits 4-16, Rate 1-32, Tone 0-100 (200 Hz to 20 kHz, 100 = off), Mix 0-100 %.
 - Use the pinned GNU Arm 10.3-2021.10 compiler. `-ffp-contract=off` is recommended for new plugins: a fused multiply add
   costs 3 cycles on the M4F against 2 for multiply then add.
 - **Ports of firmware DSP:** two builds of one source are bit identical only with the same FP contraction. Build each object

@@ -80,6 +80,8 @@ def main():
                     help="put the writable segment here (default: right after the text)")
     ap.add_argument("--blocks", type=int, default=64)
     ap.add_argument("--param", action="append", default=[], help="INDEX=VALUE, set_param after init (repeatable)")
+    ap.add_argument("--param-at", dest="param_at", action="append", default=[],
+                    help="BLOCK:INDEX=VALUE, set_param just before that block runs (repeatable, tests the ramps after the first block)")
     ap.add_argument("--wav")
     ap.add_argument("--inwav", dest="inwav")
     a = ap.parse_args()
@@ -185,15 +187,23 @@ def main():
     dump = lambda when: print("inst %s (%d B): %s" % (when, inst_size, " ".join(
         "%08x" % w for w in struct.unpack("<%dI" % (inst_size // 4), bytes(uc.mem_read(inst, inst_size & ~3))))))
     dump("init")
-    for pv in a.param:
+    def set_param(pv):
         idx, val = pv.split("=")
         uc.reg_write(UC_ARM_REG_SP, WORK + 0xE000)
         uc.reg_write(UC_ARM_REG_LR, TRAP | 1)
         uc.reg_write(UC_ARM_REG_R0, inst)
         uc.reg_write(UC_ARM_REG_R1, int(idx))
         wf(UC_ARM_REG_S0, float(val))
+        count[0] = 0
         uc.emu_start(f_set | 1, TRAP)
         print("set_param(%s, %s)" % (idx, val))
+        return count[0]
+    for pv in a.param:
+        set_param(pv)
+    at = {}
+    for pv in a.param_at:
+        blk, rest = pv.split(":")
+        at.setdefault(int(blk), []).append(rest)
 
     L, R = WORK + 0x2000, WORK + 0x2200
     io = WORK + 0x2400
@@ -209,6 +219,8 @@ def main():
         src = bench_input(a.blocks)
     chk, counts, out = 0x811C9DC5, [], []
     for b in range(a.blocks):
+        for pv in at.get(b, []):
+            print("  (before block %d, set_param took %d instructions)" % (b, set_param(pv)))
         uc.mem_write(L, struct.pack("<%df" % N, *src[b][0]))
         uc.mem_write(R, struct.pack("<%df" % N, *src[b][1]))
         _, c = call(f_proc, inst, io, 2, N)

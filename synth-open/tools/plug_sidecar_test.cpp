@@ -133,6 +133,15 @@ int main()
         float v;
         check(sidecarValue(b.slot[1], "Good", v) && v == 2.5f && !sidecarValue(b.slot[1], "Bad", v), "lookup by parameter name");
     }
+    {   // a project saved by the Dirt with the single Preset parameter: the host asks for each parameter of the plugin by
+        // name, so the stored Preset is never asked for (the new Dirt starts at its defaults) and nothing fails
+        const char* old = "tffplug 1\nformat 2\nslot 1 92b586d4 10000 Dirt\np Preset=3\n";
+        float v = -1.0f;
+        check(sidecarRead(old, int(strlen(old)), b) && b.slot[0].uid == 0x92b586d4u && b.slot[0].count == 1 &&
+                !sidecarValue(b.slot[0], "Type", v) && !sidecarValue(b.slot[0], "Drive", v) && !sidecarValue(b.slot[0], "Mix", v) &&
+                v == -1.0f && sidecarValue(b.slot[0], "Preset", v) && v == 3.0f,
+              "an old Dirt sidecar (Preset only) reads, the new parameter names find no value and keep their defaults");
+    }
 
     // ---- the file rules (what the firmware does on the card)
     const char* ws = "Workspace/plugins.txt";
