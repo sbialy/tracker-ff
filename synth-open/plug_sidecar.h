@@ -3,12 +3,17 @@
 // tests the codec on the Mac). The binary project (strMtValues) does not change: older firmware ignores the file.
 //
 //   tffplug 1
+//   format 2                               since the "Inserts" Saturation entry (older files have no such line, format 1)
 //   slot 1 3a51c2e0 00010000 Tape          slot (1 or 2), uid, version (hex), the name shown when the plugin is missing
 //   p Drive=30                             one line per parameter, by name, until the next slot line
 //   p Mix=100
 //
 // Unknown lines are skipped, a value that does not parse is skipped, a file without the first line reads as empty. A project
 // with no plugin has no file at all (write returns 0 and the caller removes the file).
+//
+// Whether the inserts play is not in the sidecar: the binary project's saturationType holds kSatInserts (the "Inserts" entry
+// of the Saturation list) or a built-in entry (the inserts are bypassed and kept). Stock firmware clamps kSatInserts to Hard
+// Clip, the mixer setting the inserts run on.
 #pragma once
 
 #include <stdint.h>
@@ -21,6 +26,11 @@ constexpr int kSlots = 2;           // master insert slots (decision 9)
 constexpr int kMaxParams = 32;      // plug::checkDesc refuses more
 constexpr int kNameLen = 16;        // 15 chars + NUL, plugin and parameter names
 constexpr int kSidecarMax = 2560;   // bytes: 2 x (40 + 32 x 31) fits
+constexpr int kSidecarFormat = 2;   // written by this host: "format 2" (format 1 files predate the Inserts entry)
+// Reserved saturationType of the binary project: the "Inserts" entry (above every built-in type of any build, stock firmware
+// loads it as Hard Clip, fProjEdit.cpp)
+constexpr uint8_t kSatInserts = 0x80;
+constexpr uint8_t kSatHardClip = 0;   // SaturationType::kHardClip
 
 struct SlotRef
 {
@@ -35,6 +45,7 @@ struct SlotRef
 struct Sidecar
 {
     SlotRef slot[kSlots];
+    uint8_t format;      // 0 no sidecar, 1 before the Inserts entry, 2 this host
 };
 
 inline void copyName(char* dst, const char* src, int len)
@@ -127,7 +138,9 @@ inline int sidecarWrite(const Sidecar& s, char* b, int cap)
     bool any = false;
     for (const SlotRef& r : s.slot) any = any || r.uid;
     if (!any) return 0;
-    int n = sc::putStr(b, 0, cap, "tffplug 1\n");
+    int n = sc::putStr(b, 0, cap, "tffplug 1\nformat ");
+    n = sc::putU(b, n, cap, uint32_t(kSidecarFormat));
+    n = sc::putStr(b, n, cap, "\n");
     for (int k = 0; k < kSlots; k++)
     {
         const SlotRef& r = s.slot[k];
@@ -165,11 +178,14 @@ inline bool sidecarRead(const char* b, int len, Sidecar& s)
     };
     const char* e = lineEnd(p);
     if (e - p < 9 || memcmp(p, "tffplug 1", 9) != 0) return false;
+    s.format = 1;
     SlotRef* cur = nullptr;
     for (p = e + 1; p < end; p = e + 1)
     {
         e = lineEnd(p);
-        if (e - p > 7 && memcmp(p, "slot ", 5) == 0 && (p[5] == '1' || p[5] == '2') && p[6] == ' ')
+        if (e - p >= 8 && memcmp(p, "format ", 7) == 0 && p[7] >= '2' && p[7] <= '9')
+            s.format = uint8_t(p[7] - '0');
+        else if (e - p > 7 && memcmp(p, "slot ", 5) == 0 && (p[5] == '1' || p[5] == '2') && p[6] == ' ')
         {
             cur = nullptr;
             const char* q = p + 7;
@@ -206,6 +222,59 @@ inline bool sidecarValue(const SlotRef& r, const char* name, float& v)
             return true;
         }
     return false;
+}
+
+// Project load: whether the inserts play, from the binary project's saturationType (sat) and the sidecar. A format 1 sidecar
+// (b8e37c8 and older) had no Inserts entry: a plugin picked in the Saturation list left Hard Clip in the project, so Hard
+// Clip with a used slot turns into kSatInserts here (sat is changed) and the old project sounds as before.
+inline bool insertsOnAfterLoad(uint8_t& sat, const Sidecar& s)
+{
+    if (s.format == 1 && sat == kSatHardClip && (s.slot[0].uid || s.slot[1].uid)) sat = kSatInserts;
+    return sat == kSatInserts;
+}
+
+// The Saturation value text of the Inserts entry: "Inserts" with both slots empty, else "Ins: A+B" (insert 1 first) cut to
+// maxChars (the master screen field holds 9 characters of font 2, Roboto Mono 17 at 10 px in a 94 px label). Cuts in this
+// order: the space, then for two names the "Ins:" prefix, then the longer name loses its last letters one at a time
+// (the second one on a tie, a name keeps at least one letter). out holds maxChars + 1 bytes.
+inline void insertsLabel(const char* a, const char* b, char* out, int maxChars)
+{
+    if (!a[0] && b[0])
+    {
+        a = b;
+        b = "";
+    }
+    int la = int(strlen(a)), lb = int(strlen(b));
+    int n = 0;
+    auto put = [&](const char* t, int l) {
+        for (int i = 0; i < l && n < maxChars; i++) out[n++] = t[i];
+    };
+    if (!la)
+        put("Inserts", 7);
+    else if (!lb)
+    {
+        put(4 + 1 + la <= maxChars ? "Ins: " : "Ins:", 4 + (4 + 1 + la <= maxChars));
+        put(a, la);
+    }
+    else
+    {
+        const int full = la + 1 + lb;
+        if (4 + 1 + full <= maxChars)
+            put("Ins: ", 5);
+        else if (4 + full <= maxChars)
+            put("Ins:", 4);
+        while (la + 1 + lb > maxChars && (la > 1 || lb > 1))
+        {
+            if (lb >= la && lb > 1)
+                lb--;
+            else
+                la--;
+        }
+        put(a, la);
+        put("+", 1);
+        put(b, lb);
+    }
+    out[n] = 0;
 }
 
 // ---- the file rules, over any file system with

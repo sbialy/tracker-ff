@@ -258,6 +258,9 @@ void cMasterParams::initDisplayControls()
     saturationListProperties.data = &saturationListData;
     saturationListProperties.colors = nullptr;
     saturationList = display.createControl<cList>(&saturationListProperties);
+#ifdef FEATURE_PLUG_HOST
+    plugUiInitControls(); // the Master Inserts page's two extra list columns, the page starts closed
+#endif
 }
 
 void cMasterParams::showMasterScreen()

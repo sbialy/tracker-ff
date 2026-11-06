@@ -1,13 +1,16 @@
 // Plugin host UI (FEATURE_PLUG_HOST): the master insert plugins in the master screen's Saturation list and the generic
 // "Master Inserts" page. See plug_host.h and synth-open/plug/README.md (Device use).
 //
-// Saturation list: the built-in entries, then one entry per plugin in /Plugins/Master. Picking a plugin entry puts it into
-// insert 1 and runs the mixers at hard clip (the same rule as the built-in Dirt entries), picking a built-in entry empties
-// insert 1. The project file keeps saturationType (hard clip for a plugin), the plugin itself lives in the sidecar.
+// Saturation list: the built-in entries, then one "Inserts" entry (shown once a plugin is on the card or in the project).
+// Inserts plays both master insert slots on top of hard clip (saturationType = plug::kSatInserts, stock firmware loads it as
+// Hard Clip), its value text names what is loaded ("Ins: Tape", "Tape+Dirt"). A built-in entry bypasses the inserts and keeps
+// them (loaded, in the sidecar): Inserts again brings both back. Plugins are picked on the Inserts page only.
 //
 // Inserts page (Shift + the Saturation button on the master screen): column 1 and 2 pick the plugin of insert 1 and 2 (the
 // encoder, Delete empties), columns 3 to 7 are the parameters of the focused insert, five at a time (press the insert's
-// button again for the next five), the last column goes back.
+// button again for the next five), the last column goes back. The plugin columns and every enum parameter are the stock list
+// control (the master screen's own cList controls at their columns, two more for columns 4 and 7), numeric parameters a bar.
+// Picking a plugin while a built-in Saturation entry is on switches the Saturation to Inserts.
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
@@ -36,8 +39,15 @@ const uint16_t kPlaces[8][4] = {
     {(800 / 8) * 7 + 1, 31, 800 / 8 - 3, 391},
 };
 constexpr int kParamCols = 5;   // columns 2..6
+constexpr int kListLines = 14;  // rows of a 394 px list (27 px each), as the delay screen's sync rate list
 
-const char* s_sat[kSaturationTypeEnd + plug::kIndexMax];
+const char* s_sat[kSaturationTypeEnd + 1];
+const char* s_pick[plug::kIndexMax + 1];   // "None", then the index names: both plugin columns
+strList s_list[7];                          // the data of the list in column c
+hControl s_extra[2] = {-1, -1};             // the lists of columns 3 and 6 (created with the module's controls)
+const char* const* s_bound[7];              // the entries list c was bound to (null: not bound, setData next time)
+bool s_listsMine;                           // the master screen's lists carry s_list data
+char s_satText[12];
 bool s_active;
 uint8_t s_place, s_focus, s_page;
 char s_val[8][20];
@@ -65,6 +75,68 @@ void markChanged()
     newFileManager.setProjectStructChanged();
 }
 
+// The master screen's list controls sit at columns 0, 1, 2, 4 and 5 already (gMasterParams.cpp)
+hControl listAt(int col)
+{
+    switch (col)
+    {
+        case 0: return MP->delayPingpongEnableList;
+        case 1: return MP->delaySyncEnableList;
+        case 2: return MP->delaySyncRateList;
+        case 3: return s_extra[0];
+        case 4: return MP->limiterSidechainList;
+        case 5: return MP->saturationList;
+        case 6: return s_extra[1];
+        default: return -1;
+    }
+}
+
+// Column col as a list of n entries with entry pos highlighted (-1: none), or no list (n 0)
+void showList(int col, const char* const* names, int n, int pos)
+{
+    const hControl h = listAt(col);
+    if (h < 0) return;
+    if (n <= 0)
+    {
+        s_bound[col] = nullptr;   // the plugin may unload: never keep its names bound
+        display.setControlHide(h);
+        display.refreshControl(h);
+        return;
+    }
+    strList& l = s_list[col];
+    if (n > LIST_LENGTH_MAX) n = LIST_LENGTH_MAX;
+    if (s_bound[col] != names || l.length != n)
+    {   // new entries: bind them with the window on pos. Same entries: only the value, the list animates to it as stock
+        l.data = const_cast<char**>(names);
+        l.length = uint16_t(n);
+        l.linesCount = kListLines;
+        l.start = int16_t(pos < 0 ? 0 : (pos >= n ? n - 1 : pos));
+        display.setControlData(h, &l);
+        s_bound[col] = names;
+    }
+    display.setControlValue(h, pos);
+    display.setControlShow(h);
+    display.refreshControl(h);
+}
+
+// Back to the master screen's own list data (its show functions set the values again)
+void restoreLists()
+{
+    if (!s_listsMine) return;
+    s_listsMine = false;
+    memset(s_bound, 0, sizeof(s_bound));
+    display.setControlData(MP->delayPingpongEnableList, &MP->pingpongEnableData);
+    display.setControlData(MP->delaySyncEnableList, &MP->syncEnableData);
+    display.setControlData(MP->delaySyncRateList, &MP->syncRateData);
+    display.setControlData(MP->limiterSidechainList, &MP->limiterSidechainData);
+    display.setControlData(MP->saturationList, &MP->saturationListData);
+    for (int c = 0; c < 7; c++)
+    {
+        display.setControlHide(listAt(c));
+        display.refreshControl(listAt(c));
+    }
+}
+
 void showFrame()
 {
     display.setControlValue(MP->frameControl, s_place);
@@ -74,8 +146,16 @@ void showFrame()
 
 void showSlot(int k)
 {
+    const int n = plug::indexCount();
+    s_pick[0] = "None";
+    for (int i = 0; i < n; i++) s_pick[i + 1] = plug::indexAt(i)->name;
+    // the assigned plugin highlighted, None when empty, no highlight when it is not on the card (the label says Missing)
+    const int ix = plug::slotIndex(k);
+    showList(k, s_pick, n + 1, ix >= 0 ? ix + 1 : (plug::slotName(k)[0] ? -1 : 0));
     if (plug::slotState(k) == plug::SlotState::kRunning)
         snprintf(s_val[k], sizeof(s_val[k]), "%s", plug::slotName(k));
+    else if (plug::slotState(k) == plug::SlotState::kBypassed)
+        snprintf(s_val[k], sizeof(s_val[k]), "Bypassed");
     else if (plug::slotName(k)[0] && plug::slotState(k) != plug::SlotState::kPending)
         snprintf(s_val[k], sizeof(s_val[k]), "%.8s %s", stateText(k), plug::slotName(k));
     else
@@ -94,18 +174,21 @@ void showParam(int col)
         display.setControlText(MP->label[col], " ");
         display.setControlText2(MP->label[col], " ");
         display.setControlHide(MP->barControl[col]);
+        showList(col, nullptr, 0, 0);
     }
     else
     {
         const float v = plug::paramValue(s_focus, i);
         if (pp->enum_count)
-        {
+        {   // every entry in the stock list control, the current one highlighted
             const int e = int(v + 0.5f);
             snprintf(s_val[col], sizeof(s_val[col]), "%s", e >= 0 && e < pp->enum_count ? pp->enum_names[e] : "?");
             display.setControlHide(MP->barControl[col]);
+            showList(col, pp->enum_names, pp->enum_count, e);
         }
         else
         {
+            showList(col, nullptr, 0, 0);
             const bool whole = pp->step >= 1.0f;
             snprintf(s_val[col], sizeof(s_val[col]), whole ? "%.0f%s" : "%.2f%s", double(v), pp->unit ? pp->unit : "");
             const float span = pp->max - pp->min;
@@ -128,12 +211,14 @@ void showTitle()
                  (unsigned long)(plug::slotCycles(0) / 522 % 10), (unsigned long)(plug::slotCycles(1) / 5222),
                  (unsigned long)(plug::slotCycles(1) / 522 % 10));
     else
-        snprintf(s_title, sizeof(s_title), "Master Inserts%s", plug::paramCount(s_focus) > kParamCols ? (s_page ? " 2/2" : " 1/2") : "");
+        snprintf(s_title, sizeof(s_title), "Master Inserts%s%s", plug::paramCount(s_focus) > kParamCols ? (s_page ? " 2/2" : " 1/2") : "",
+                 mtProject.values.saturationType == plug::kSatInserts ? "" : ", bypassed");
     MP->titleBar->setTitle(s_title);
 }
 
 void showAll()
 {
+    s_listsMine = true;
     showTitle();
     showSlot(0);
     showSlot(1);
@@ -190,6 +275,8 @@ void changePlugin(int k, int delta)
     const int n = plug::indexCount() + 1;
     pos = pos < 0 ? 0 : (pos >= n ? n - 1 : pos);
     plug::assign(k, pos - 1);
+    // a plugin picked under a built-in Saturation entry: the Saturation goes to Inserts, or the pick would not be heard
+    if (pos > 0 && mtProject.values.saturationType != plug::kSatInserts) plugUiSatSet(int(kSaturationTypeEnd));
     s_page = 0;
     markChanged();
     showAll();
@@ -214,26 +301,38 @@ bool plugUiShiftHeld()
 }
 
 // ------------------------------------------------------------------------------------------------ Saturation list
+namespace
+{
+bool satHasInserts()
+{
+    return plug::indexCount() > 0 || plug::slotName(0)[0] || plug::slotName(1)[0] ||
+           mtProject.values.saturationType == plug::kSatInserts;
+}
+}   // namespace
+
 int plugUiSatCount()
 {
-    return int(kSaturationTypeEnd) + plug::indexCount();
+    return int(kSaturationTypeEnd) + (satHasInserts() ? 1 : 0);
 }
 
 int plugUiSatPos()
 {
-    const int ix = plug::slotIndex(0);
-    return ix >= 0 ? int(kSaturationTypeEnd) + ix : int(mtProject.values.saturationType);
+    const uint8_t t = mtProject.values.saturationType;
+    return t == plug::kSatInserts ? int(kSaturationTypeEnd) : (t < kSaturationTypeEnd ? int(t) : 0);
 }
 
 const char* plugUiSatText()
 {
-    return plug::slotName(0)[0] ? stateText(0) : saturationListTexts[mtProject.values.saturationType];
+    const uint8_t t = mtProject.values.saturationType;
+    if (t != plug::kSatInserts) return saturationListTexts[t < kSaturationTypeEnd ? t : 0];
+    plug::insertsLabel(plug::slotName(0), plug::slotName(1), s_satText, 9);   // 9 characters fit the 94 px value field
+    return s_satText;
 }
 
 void plugUiSatList(strList* data)
 {
     for (int i = 0; i < int(kSaturationTypeEnd); i++) s_sat[i] = saturationListTexts[i];
-    for (int i = 0; i < plug::indexCount(); i++) s_sat[kSaturationTypeEnd + i] = plug::indexAt(i)->name;
+    s_sat[kSaturationTypeEnd] = "Inserts";
     data->data = const_cast<char**>(s_sat);
     data->length = uint16_t(plugUiSatCount());
 }
@@ -241,17 +340,10 @@ void plugUiSatList(strList* data)
 void plugUiSatSet(int pos)
 {
     pos = pos < 0 ? 0 : (pos >= plugUiSatCount() ? plugUiSatCount() - 1 : pos);
-    if (pos < int(kSaturationTypeEnd))
-    {
-        if (plug::slotName(0)[0]) plug::assign(0, -1);
-        mtProject.values.saturationType = uint8_t(pos);
-    }
-    else
-    {   // a plugin in insert 1, the mixers at hard clip under it (stock firmware plays this project with hard clip)
-        mtProject.values.saturationType = uint8_t(SaturationType::kHardClip);
-        plug::assign(0, pos - int(kSaturationTypeEnd));
-    }
+    // Inserts: the reserved value, the engine runs hard clip under it. A built-in entry bypasses the inserts, they stay.
+    mtProject.values.saturationType = pos < int(kSaturationTypeEnd) ? uint8_t(pos) : plug::kSatInserts;
     engine.setSaturationType(SaturationType(mtProject.values.saturationType));
+    plug::setInsertsOn(mtProject.values.saturationType == plug::kSatInserts);
     markChanged();
 }
 
@@ -263,7 +355,33 @@ bool plugUiActive()
 
 void plugUiLeave()
 {
+    if (s_active) restoreLists();   // the master screen's lists get their own data back
     s_active = false;
+}
+
+void plugUiInitControls()
+{   // the master module's controls were just created: the page is closed, two more lists for columns 3 and 6
+    s_active = false;
+    s_listsMine = false;
+    memset(s_bound, 0, sizeof(s_bound));
+    for (int i = 0; i < 2; i++)
+    {
+        strList& l = s_list[i ? 6 : 3];
+        l.data = const_cast<char**>(s_sat);
+        l.length = 1;
+        l.linesCount = kListLines;
+        l.start = 0;
+        strControlProperties p;
+        p.style = controlStyleBackground | (display.getTheme().bottomScreenShadow > 0 ? controlStyleBottomShadow : 0);
+        p.x = (800 / 8) * (i ? 6 : 3) + 2;
+        p.y = 29;
+        p.w = 800 / 8 - 3;
+        p.h = 394;
+        p.data = &l;
+        p.colors = nullptr;
+        s_extra[i] = display.createControl<cList>(&p);   // -1 when the pool is full: that column keeps the value text only
+        display.setControlHide(s_extra[i]);
+    }
 }
 
 void plugUiOpen()

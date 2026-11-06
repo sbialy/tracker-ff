@@ -1648,6 +1648,10 @@ void audioEngine::setSnapToZeroEnable(bool enabled)
 
 void audioEngine::setSaturationType(SaturationType type)
 {
+#ifdef FEATURE_PLUG_HOST
+    // the reserved "Inserts" value (plug::kSatInserts): the master insert plugins on top of hard clip
+    if (type >= SaturationType::kSaturationTypeEnd) type = SaturationType::kHardClip;
+#endif
 #ifdef FEATURE_FF_DIRT
     // the Dirt entries run the mixers at hard clip and the master bus insert (synth-open/ff_dirt.h) on top
     const bool dirt = type >= SaturationType::kDirtSoft;

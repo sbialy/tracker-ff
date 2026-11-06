@@ -75,7 +75,8 @@ enum class SlotState : uint8_t
     kMissing,    // the project names a plugin that is not on the card: audio passes, the values are kept and saved back
     kFailed,     // the file is there but did not load (slotError() says why): audio passes, the values are kept
     kSafe,       // safe mode: not loaded this session, the values are kept
-    kTripped,    // over its CPU budget three blocks in a row: bypassed until the next load
+    kTripped,    // over its CPU budget three blocks in a row: bypassed until the next load (or Inserts off and on)
+    kBypassed,   // loaded, but a built-in Saturation entry is picked: no audio through it, values editable and kept
 };
 SlotState slotState(int slot);
 Err slotError(int slot);
@@ -89,12 +90,20 @@ void setParam(int slot, uint32_t i, float v);   // clamped and rounded to the st
 uint32_t slotCycles(int slot);       // DWT cycles of the last process() call, 0 when not running
 uint32_t slotMaxCycles(int slot);
 
+// Whether the inserts play: the project's saturationType is kSatInserts (the "Inserts" entry of the Saturation list). A built-in
+// entry bypasses both slots, they stay loaded and in the sidecar. tick() follows saturationType on its own, the UI calls
+// this for an immediate change.
+void setInsertsOn(bool on);
+bool insertsOn();
+
 bool safeMode();
 const char* safeReason();            // "" or why: the crash marker named a plugin, or Shift was held at power on
 
 // ---- project sidecar (the file manager calls these, dir is "Workspace" or a project folder)
 constexpr const char* kSidecarName = "plugins.txt";
-void projectLoaded(const char* dir);   // after a project load from the Workspace: read the sidecar, queue the loads
+// after a project load from the Workspace: read the sidecar, queue the loads (bypassed ones too), turn a format 1 sidecar's
+// Hard Clip into kSatInserts (insertsOnAfterLoad)
+void projectLoaded(const char* dir);
 bool projectSave(const char* dir);     // Workspace save: write the sidecar (remove it when no slot is used)
 void copySidecar(const char* srcDir, const char* dstDir);   // project open and save: the file follows the project
 

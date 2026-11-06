@@ -202,6 +202,23 @@ int main(int argc, char** argv)
     for (int i = 0; i < n; i++) named = named && ix[i].name[0] && ix[i].numParams > 0;
     check(named, "user card: every entry has a manifest name and parameters");
     check(n < 2 || (ix[0].uid != ix[1].uid && ix[1].uid != ix[2].uid && ix[0].uid != ix[2].uid), "three different uids");
+    {   // the master screen with the Inserts entry: every pair of the shipped plugins names both in the 9 character field
+        bool ok = n == 3;
+        for (int i = 0; i < n; i++)
+            for (int j = -1; j < n; j++)
+            {
+                char out[16];
+                const char* b2 = j < 0 ? "" : ix[j].name;
+                insertsLabel(ix[i].name, b2, out, 9);
+                const char* plus = strchr(out, '+');
+                ok = ok && strlen(out) <= 9 &&
+                     (j < 0 ? strncmp(out, "Ins:", 4) == 0 && strstr(out, ix[i].name) != nullptr
+                            : plus && plus - out >= 2 && strlen(plus + 1) >= 2 && strncmp(out, ix[i].name, 2) == 0 &&
+                                strncmp(plus + 1, ix[j].name, 2) == 0);
+                if (i == 0) printf("      Saturation value with %s%s%s: \"%s\"\n", ix[i].name, j < 0 ? "" : " + ", b2, out);
+            }
+        check(ok, "user card: one plugin shows Ins:<full name>, every pair shows both names (2+ letters each) in 9 chars");
+    }
 
     // ---- the call the firmware made before the fix: count 0 on the way in lists nothing
     {

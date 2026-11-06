@@ -4,6 +4,7 @@
 #include "plug_host.h"
 
 #include "Platform.h"
+#include "mtStructs.h"
 #include "cr_section_macros.h"
 #include "interruptsControl.h"
 
@@ -61,7 +62,7 @@ Slot s_slots[kSlots];
 int s_allocSlot = -1;
 int s_count;
 FileSystem* s_fs;
-bool s_safe, s_windowOpen;
+bool s_safe, s_windowOpen, s_on;
 char s_reason[48];
 Timer* s_timer;
 uint32_t s_bootMs, s_pickMs, s_markerMs;
@@ -159,9 +160,9 @@ bool writeText(const char* p, const char* text, int n)
 // /Plugins/host.txt: what each slot holds, after every load and on every Workspace save (the device test reads it back)
 void writeStatus()
 {
-    char t[640];
-    int n = snprintf(t, sizeof(t), "plugin host 1, index %d, safe %d %s, nvm commands %lu\r\n", s_count, int(s_safe), s_reason,
-                     (unsigned long)nvmCommands());
+    char t[660];
+    int n = snprintf(t, sizeof(t), "plugin host 1, index %d, inserts %s, safe %d %s, nvm commands %lu\r\n", s_count,
+                     s_on ? "on" : "bypassed", int(s_safe), s_reason, (unsigned long)nvmCommands());
     n += snprintf(t + n, sizeof(t) - size_t(n), "scan %s: listed %d, rejected %d\r\n", kDir, s_scan.listed, s_scan.rejected);
     for (int i = 0; i < s_scan.rejected && i < 3 && n < int(sizeof(t)); i++)
         n += snprintf(t + n, sizeof(t) - size_t(n), "rejected %s err %ld\r\n", s_scan.reject[i].file, long(s_scan.reject[i].err));
@@ -192,6 +193,22 @@ void unload(int k)
     s.desc = nullptr;
     s.inst = nullptr;
     s.err = kOk;
+}
+
+// Slot k on the node when the inserts are on, off it when bypassed. A slot that goes on gets every value first: the plugin is
+// not running here (detached), and values set while it was bypassed only reached the host's copy.
+void connect(int k)
+{
+    Slot& s = s_slots[k];
+    if (!plugInsert() || !s.desc) return;
+    if (!s_on)
+    {
+        plugInsert()->attach(k, nullptr, nullptr, 0);
+        return;
+    }
+    if (s.desc->set_param)
+        for (uint32_t i = 0; i < s.desc->num_params; i++) s.desc->set_param(s.inst, i, s.val[i]);
+    plugInsert()->attach(k, s.desc, s.inst, kBudget);
 }
 
 // Loads what s_side.slot[k] names into slot k now. Main thread.
@@ -273,7 +290,7 @@ void apply(int k)
         if (v != pp.def && l.desc->set_param) l.desc->set_param(s.inst, i, v);
     }
     s.state = SlotState::kRunning;
-    if (plugInsert()) plugInsert()->attach(k, s.desc, s.inst, kBudget);
+    if (s_on && plugInsert()) plugInsert()->attach(k, s.desc, s.inst, kBudget);   // bypassed: loaded, off the node
     writeStatus();
 }
 
@@ -484,6 +501,7 @@ SlotState slotState(int k)
 {
     const Slot& s = s_slots[k];
     if (s.pending) return SlotState::kPending;
+    if (s.state == SlotState::kRunning && !s_on) return SlotState::kBypassed;
     if (s.state == SlotState::kRunning && plugInsert() && plugInsert()->tripped(k)) return SlotState::kTripped;
     return s.state;
 }
@@ -562,6 +580,19 @@ uint32_t slotMaxCycles(int k)
     return s_slots[k].desc && plugInsert() ? plugInsert()->maxCycles(k) : 0;
 }
 
+void setInsertsOn(bool on)
+{
+    if (on == s_on) return;
+    s_on = on;
+    for (int k = 0; k < kSlots; k++)
+        if (s_slots[k].state == SlotState::kRunning && !s_slots[k].pending) connect(k);
+}
+
+bool insertsOn()
+{
+    return s_on;
+}
+
 bool safeMode()
 {
     return s_safe;
@@ -599,6 +630,7 @@ void projectLoaded(const char* dir)
     path(p, sizeof(p), dir, kSidecarName);
     SdFs fs;
     sidecarLoad(fs, p, s_text, sizeof(s_text), s_side);   // no sidecar: no plugin, as stock
+    s_on = insertsOnAfterLoad(mtProject.values.saturationType, s_side);
     for (int k = 0; k < kSlots; k++)
     {
         unload(k);
@@ -663,6 +695,8 @@ void boot(Platform* platform)
 void tick()
 {
     if (!s_fs) return;
+    // any path that changes saturationType (the master screen, a new project, Delete on the Saturation column)
+    setInsertsOn(mtProject.values.saturationType == kSatInserts);
     if (s_windowOpen)
     {
         if (plugUiShiftHeld()) enterSafe("Safe mode: Shift at power on");

@@ -138,17 +138,25 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
 
 - Copy `.plg` files to `/Plugins/Master/` on the SD card. The host reads only their headers at boot and when the Inserts
   page opens.
-- Master screen, Saturation list: after the built-in entries come the plugins. Picking one puts it into insert 1 (the
-  mixers run hard clip under it, like the built-in Dirt entries). Picking a built-in entry empties insert 1.
+- Master screen, Saturation list: after the built-in entries comes one `Inserts` entry (when a plugin is on the card or in
+  the project). Inserts plays both insert slots, the mixers run hard clip under them, and the Saturation value names what
+  is loaded in 9 characters: `Inserts` (both empty), `Ins: Tape`, `Ins:Lo-Fi`, `Tape+Dirt`, `Lo-F+Tape`. A built-in
+  entry bypasses both inserts and keeps them (loaded, values kept, saved in the sidecar), so Inserts again brings both
+  back. Plugins are picked on the Inserts page only.
 - Shift + Saturation opens the Master Inserts page: columns 1 and 2 pick the plugin of insert 1 and insert 2 (encoder or
   Up and Down, Delete empties), columns 3 to 7 are the parameters of the focused insert (`*` marks it), five at a time, a
-  second press on the insert's button shows the next five. The last column goes back. With `/.develop` on the card the
-  title shows the last block's cycles of each insert in percent.
+  second press on the insert's button shows the next five. The last column goes back. The plugin columns (`None` and every
+  plugin on the card) and every parameter with `enum_count > 0` show all their entries in the stock list control with the
+  current one highlighted, numeric parameters show their value and a bar. Picking a plugin while a built-in Saturation
+  entry is on switches the Saturation to Inserts. With `/.develop` on the card the title shows the last block's cycles of
+  each insert in percent.
 - Insert 1 runs from the 8 KB SRAM_L slot. Insert 2 runs its text from the FlexNVM data flash at 0x1001E000 (two 4 KB
   sectors, erased and programmed when a different plugin is loaded there, no flash command when the bytes are already
   there) and its data from a fixed 1 KB SRAM buffer.
-- The project stores the inserts in `plugins.txt` next to the project file (`tffplug 1`, `slot <n> <uid> <version> <name>`,
-  `p <param>=<value>`), never in the binary project. A project without plugins has no such file and stays what stock
+- The project stores the inserts in `plugins.txt` next to the project file (`tffplug 1`, `format 2`,
+  `slot <n> <uid> <version> <name>`, `p <param>=<value>`). The binary project only holds the reserved saturationType
+  `0x80` for the Inserts entry, which stock firmware loads as Hard Clip. A file without the `format` line (hosts before
+  the Inserts entry) still loads: with Hard Clip in the project its inserts come back on. A project without plugins has no such file and stays what stock
   firmware writes. A plugin that is missing from the card shows as `Missing <name>`, the audio passes and its values are
   kept and saved back.
 - Safety: before a plugin starts, the host writes `/Plugins/.loading` with its name and deletes it after 3 s of running.

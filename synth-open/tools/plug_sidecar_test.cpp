@@ -89,9 +89,10 @@ int main()
            {{"Bits", 8}, {"Rate", 4}, {"Ladder", 0.35f}, {"Speaker", 1}, {"Mix", -2.5f}});
     int n = sidecarWrite(a, buf, sizeof(buf));
     printf("---- written (%d B)\n%.*s----\n", n, n, buf);
-    check(n > 0 && memcmp(buf, "tffplug 1\n", 10) == 0, "write: the text starts with the magic line");
-    check(sidecarRead(buf, n, b) && sameRef(a.slot[0], b.slot[0]) && sameRef(a.slot[1], b.slot[1]),
-          "round trip: both slots, uid, version, name with a space, names and values (0.35, -2.5) come back");
+    check(n > 0 && memcmp(buf, "tffplug 1\nformat 2\n", 19) == 0,
+          "write: the magic line (older hosts read it), then format 2 (the Inserts entry exists)");
+    check(sidecarRead(buf, n, b) && sameRef(a.slot[0], b.slot[0]) && sameRef(a.slot[1], b.slot[1]) && b.format == 2,
+          "round trip: format 2, both slots, uid, version, name with a space, names and values (0.35, -2.5) come back");
     {
         Sidecar full;
         memset(&full, 0, sizeof(full));
@@ -184,6 +185,111 @@ int main()
         sidecarLoad(fs, ws, buf, sizeof(buf), b);
         sidecarSave(fs, ws, b, buf, sizeof(buf));
         check(fs.files[ws] == before, "load then save without changes writes the same bytes (a missing plugin keeps its values)");
+    }
+
+    // ---- the Inserts entry: saturationType kSatInserts plays the inserts, a built-in entry bypasses and keeps them
+    // A sidecar as b8e37c8 wrote it (no format line): Tape picked in the Saturation list, Lo-Fi on the Inserts page
+    const char* oldFile = "tffplug 1\nslot 1 3a51c2e0 00010000 Tape\np Drive=30\nslot 2 92b586d4 00000100 Lo-Fi\np Bits=8\n";
+    check(sidecarRead(oldFile, int(strlen(oldFile)), b) && b.format == 1 && b.slot[0].uid == 0x3a51c2e0u &&
+            b.slot[1].uid == 0x92b586d4u && b.slot[0].count == 1,
+          "old sidecar (b8e37c8, no format line) still loads: format 1, both slots and values");
+    {
+        uint8_t sat = kSatHardClip;
+        check(insertsOnAfterLoad(sat, b) && sat == kSatInserts,
+              "old sidecar + Hard Clip (what a plugin pick left in the project): turns into Inserts, plays as before");
+        sat = 1;   // Soft Clip
+        check(!insertsOnAfterLoad(sat, b) && sat == 1, "old sidecar + a built-in other than Hard Clip: kept, inserts bypassed");
+        Sidecar none;
+        memset(&none, 0, sizeof(none));
+        none.format = 1;
+        sat = kSatHardClip;
+        check(!insertsOnAfterLoad(sat, none) && sat == kSatHardClip, "old sidecar with no slot: Hard Clip stays Hard Clip");
+    }
+    {
+        n = sidecarWrite(a, buf, sizeof(buf));
+        sidecarRead(buf, n, b);
+        uint8_t sat = kSatHardClip;
+        check(!insertsOnAfterLoad(sat, b) && sat == kSatHardClip,
+              "new sidecar + Hard Clip picked by the user: stays bypassed (no migration for format 2)");
+        sat = kSatInserts;
+        check(insertsOnAfterLoad(sat, b) && sat == kSatInserts, "new sidecar + Inserts: on");
+        Sidecar none;
+        memset(&none, 0, sizeof(none));
+        sat = kSatInserts;
+        check(insertsOnAfterLoad(sat, none), "Inserts with no sidecar (both slots empty): still the Inserts entry");
+        sat = 4;
+        check(!insertsOnAfterLoad(sat, none) && sat == 4, "a stock project (no sidecar): untouched");
+    }
+    {   // bypass keeps them: a project saved under a built-in entry keeps the sidecar, Inserts again finds both slots
+        MemFs fs;
+        n = sidecarWrite(a, buf, sizeof(buf));
+        fs.files[ws] = std::string(buf, size_t(n));
+        sidecarLoad(fs, ws, buf, sizeof(buf), b);
+        uint8_t sat = 2;   // Saturate picked: bypassed, the host saves the same references
+        const bool off = !insertsOnAfterLoad(sat, b);
+        sidecarSave(fs, ws, b, buf, sizeof(buf));
+        sidecarCopy(fs, ws, proj, buf, sizeof(buf));
+        Sidecar c;
+        sidecarLoad(fs, proj, buf, sizeof(buf), c);
+        sat = kSatInserts;   // the user picks Inserts again
+        check(off && sameRef(a.slot[0], c.slot[0]) && sameRef(a.slot[1], c.slot[1]) && insertsOnAfterLoad(sat, c),
+              "a built-in entry keeps both slots and values through save, Inserts again brings both back");
+    }
+    {   // an old file becomes format 2 on the first save and keeps its meaning
+        MemFs fs;
+        fs.files[ws] = oldFile;
+        sidecarLoad(fs, ws, buf, sizeof(buf), b);
+        uint8_t sat = kSatHardClip;
+        const bool on1 = insertsOnAfterLoad(sat, b);   // migrated, the binary project now holds kSatInserts
+        sidecarSave(fs, ws, b, buf, sizeof(buf));
+        Sidecar c;
+        sidecarLoad(fs, ws, buf, sizeof(buf), c);
+        const bool on2 = insertsOnAfterLoad(sat, c);
+        uint8_t stockSaved = kSatHardClip;   // stock firmware saved the project in between: it clamps kSatInserts
+        check(on1 && on2 && c.format == 2 && fs.files[ws].find("format 2\n") != std::string::npos &&
+                !insertsOnAfterLoad(stockSaved, c),
+              "old file: migrated once, saved as format 2, Inserts stays on; a stock save (Hard Clip) leaves it bypassed");
+    }
+
+    // ---- the Saturation value text (9 characters fit the master screen field)
+    {
+        struct
+        {
+            const char *a, *b, *want;
+        } t[] = {
+            {"", "", "Inserts"},         {"Tape", "", "Ins: Tape"},     {"", "Dirt", "Ins: Dirt"},
+            {"Lo-Fi", "", "Ins:Lo-Fi"},  {"Tape", "Dirt", "Tape+Dirt"}, {"Lo-Fi", "Tape", "Lo-F+Tape"},
+            {"Dirt", "Lo-Fi", "Dirt+Lo-F"}, {"Saturator Pro X", "", "Ins:Satur"}, {"A", "Bcdefghijklmnop", "A+Bcdefgh"},
+            {"Abcdefghijklmno", "Pqrstuvwxyzabcd", "Abcd+Pqrs"},
+        };
+        bool all = true;
+        for (auto& x : t)
+        {
+            char out[16];
+            insertsLabel(x.a, x.b, out, 9);
+            if (strcmp(out, x.want))
+            {
+                printf("      insertsLabel(\"%s\", \"%s\") = \"%s\", want \"%s\"\n", x.a, x.b, out, x.want);
+                all = false;
+            }
+        }
+        check(all, "Inserts value: Inserts / Ins: Tape / Ins:Lo-Fi / Tape+Dirt / Lo-F+Tape and long names cut to 9");
+        char wide[32];
+        insertsLabel("Tape", "Dirt", wide, 20);
+        check(strcmp(wide, "Ins: Tape+Dirt") == 0, "a wider field keeps the full \"Ins: Tape+Dirt\"");
+        bool fits = true;
+        for (int la = 0; la < kNameLen; la++)
+            for (int lb = 0; lb < kNameLen; lb++)
+            {
+                char na[kNameLen] = {}, nb[kNameLen] = {}, out[16];
+                memset(na, 'a', size_t(la));
+                memset(nb, 'b', size_t(lb));
+                insertsLabel(na, nb, out, 9);
+                const int l = int(strlen(out));
+                const bool two = la && lb;
+                fits = fits && l >= 1 && l <= 9 && (!two || (strchr(out, 'a') && strchr(out, '+') && strchr(out, 'b')));
+            }
+        check(fits, "every name length pair (0..15): at most 9 characters, both names and the + when two are loaded");
     }
     printf("%s: %d failed\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;

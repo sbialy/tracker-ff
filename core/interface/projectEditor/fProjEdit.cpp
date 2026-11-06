@@ -8,6 +8,9 @@
 #include "projectEditor/projectEditor.h"
 
 #include "mtAudioEngine.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_sidecar.h"
+#endif
 #include "mtPadBoard.h"
 #include "sampleRecorder/sampleRecorder.h"
 
@@ -354,7 +357,13 @@ uint8_t cProjectEditor::loadProjectValues()
         mtProject.values.isHeadroomEnabled = 0;
     }
 
+#ifdef FEATURE_PLUG_HOST
+    // the reserved "Inserts" value stays (plug_sidecar.h kSatInserts), the audio engine runs hard clip under it
+    if (mtProject.values.saturationType >= SaturationType::kSaturationTypeEnd &&
+        mtProject.values.saturationType != plug::kSatInserts)
+#else
     if (mtProject.values.saturationType >= SaturationType::kSaturationTypeEnd)
+#endif
     {
         mtProject.values.saturationType = SaturationType::kHardClip;
     }

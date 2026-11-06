@@ -6,14 +6,15 @@
 
 struct strList;
 
-// Saturation list: the built-in entries, then the master insert plugins (a plugin entry is insert 1)
+// Saturation list: the built-in entries, then "Inserts" (both master insert slots, plug::kSatInserts in the project)
 int plugUiSatCount();
 int plugUiSatPos();
 const char* plugUiSatText();
-void plugUiSatList(strList* data);   // points the list at the built-in texts plus the plugin names
+void plugUiSatList(strList* data);   // points the list at the built-in texts plus "Inserts"
 void plugUiSatSet(int pos);
 
 // The Master Inserts page (Shift + Saturation button)
+void plugUiInitControls();   // end of cMasterParams::initDisplayControls: the page's two extra lists
 bool plugUiActive();
 void plugUiOpen();
 void plugUiLeave();
