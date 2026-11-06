@@ -12,6 +12,7 @@
 #endif
 
 #include "plug/plug_abi.h"
+#include "plug_index.h"
 #include "plug_sidecar.h"
 #include <stdint.h>
 
@@ -20,22 +21,6 @@ class Platform;
 
 namespace plug
 {
-
-enum Err : int32_t
-{
-    kOk = 0,
-    kNoFile,
-    kHeader,     // magic / header size
-    kAbi,        // abi major, min_host, cpu, kind, an unsupported flag (PLUG_F_S16)
-    kTooBig,     // image + bss over the slot
-    kRead,
-    kCrc,
-    kRebase,     // a rebase offset or the word it names is outside the image
-    kEntry,      // entry returned NULL (the plugin refused this host)
-    kDesc,       // descriptor or one of its pointers outside the image, wrong kind, struct too small
-    kCommit,     // Place::commit failed (the flash erase, program or verify of a FlexNVM text segment)
-    kInit,       // no memory for the instance or init() failed
-};
 
 struct Loaded
 {
@@ -75,16 +60,7 @@ void syncCode();   // after writing code: DSB, ISB, invalidate the LMEM code cac
 bool nvmInstall(const uint8_t* src, uintptr_t run, uint32_t len);
 uint32_t nvmCommands();   // flash commands issued since boot (0 when every load found its bytes in place)
 
-// ---- the plugin index: /Plugins/Master/*.plg, header and manifest only, nothing executes
-constexpr int kIndexMax = 16;
-struct IndexEntry
-{
-    uint32_t uid, version;
-    char name[kNameLen];
-    char file[40];               // name in /Plugins/Master
-    uint32_t imageSize, rwOffset, bssSize;
-    uint16_t numParams;
-};
+// ---- the plugin index: /Plugins/Master/*.plg, header and manifest only, nothing executes (IndexEntry: plug_index.h)
 int indexCount();
 const IndexEntry* indexAt(int i);
 int indexFind(uint32_t uid);    // -1: no file with that uid on the card

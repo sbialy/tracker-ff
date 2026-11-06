@@ -29,8 +29,9 @@ __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_stage[kNvmBytes];  
 __NOINIT(EXTERNAL_RAM) Sidecar s_side;                                            // the project's references and values
 __NOINIT(EXTERNAL_RAM) char s_text[kSidecarMax];                                  // sidecar file text
 __NOINIT(EXTERNAL_RAM) IndexEntry s_index[kIndexMax];
-__NOINIT(EXTERNAL_RAM) char s_names[kIndexMax * 40];
-__NOINIT(EXTERNAL_RAM) char* s_nameList[kIndexMax];
+__NOINIT(EXTERNAL_RAM) char s_names[kScanMax * 40];
+__NOINIT(EXTERNAL_RAM) char* s_nameList[kScanMax];
+__NOINIT(EXTERNAL_RAM) ScanStats s_scan;
 // insert 2's rw and bss at a fixed SRAM address: its text (rebased against this address) is then the same bytes on every
 // load and a reload issues no flash command. Plugins with more rw + bss than this are refused for insert 2.
 constexpr uint32_t kRw2Bytes = 1024;
@@ -114,17 +115,6 @@ const plug_host s_host = {
     hostAlloc,         hostCycles,      hostQuery,
 };
 
-uint32_t crc32(uint32_t c, const uint8_t* p, uint32_t n)
-{
-    c = ~c;
-    while (n--)
-    {
-        c ^= *p++;
-        for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
-    }
-    return ~c;
-}
-
 bool readAll(FileSystem* fs, FileSystem::FileHandle f, uint8_t* dst, uint32_t n)
 {
     while (n)
@@ -140,17 +130,6 @@ bool readAll(FileSystem* fs, FileSystem::FileHandle f, uint8_t* dst, uint32_t n)
 inline bool inImage(uintptr_t p, uintptr_t base, uint32_t size)
 {
     return size == 0 || (p >= base && p < base + size);
-}
-
-Err checkHeader(const plug_file_header& h, uint32_t wantKind)
-{
-    if (h.magic != PLUG_MAGIC || h.header_size < sizeof(h)) return kHeader;
-    if (h.abi_major != PLUG_ABI_MAJOR || h.min_host > PLUG_HOST_LEVEL || h.cpu != PLUG_CPU_CM4F || h.kind != wantKind ||
-        (h.flags & PLUG_F_S16))
-        return kAbi;
-    // the CRC does not cover these 64 bytes: bound every size before any sum (no wrap with a damaged file)
-    if (h.header_size > 1024 || h.image_size > 65536 || h.bss_size > 65536 || h.rebase_count > 16384) return kTooBig;
-    return kOk;
 }
 
 void path(char* out, int cap, const char* dir, const char* name)
@@ -180,9 +159,15 @@ bool writeText(const char* p, const char* text, int n)
 // /Plugins/host.txt: what each slot holds, after every load and on every Workspace save (the device test reads it back)
 void writeStatus()
 {
-    char t[320];
+    char t[640];
     int n = snprintf(t, sizeof(t), "plugin host 1, index %d, safe %d %s, nvm commands %lu\r\n", s_count, int(s_safe), s_reason,
                      (unsigned long)nvmCommands());
+    n += snprintf(t + n, sizeof(t) - size_t(n), "scan %s: listed %d, rejected %d\r\n", kDir, s_scan.listed, s_scan.rejected);
+    for (int i = 0; i < s_scan.rejected && i < 3 && n < int(sizeof(t)); i++)
+        n += snprintf(t + n, sizeof(t) - size_t(n), "rejected %s err %ld\r\n", s_scan.reject[i].file, long(s_scan.reject[i].err));
+    for (int i = 0; i < s_count && n < int(sizeof(t)); i++)
+        n += snprintf(t + n, sizeof(t) - size_t(n), "plugin %s uid %08lx v %lu file %s\r\n", s_index[i].name,
+                      (unsigned long)s_index[i].uid, (unsigned long)s_index[i].version, s_index[i].file);
     for (int k = 0; k < kSlots && n < int(sizeof(t)); k++)
     {
         const Slot& s = s_slots[k];
@@ -192,7 +177,7 @@ void writeStatus()
                       (unsigned long)(s.desc ? uintptr_t(s.desc->process) & ~1u : 0), (unsigned long)uintptr_t(s.inst),
                       (unsigned long)slotCycles(k), (unsigned long)slotMaxCycles(k));
     }
-    if (n > int(sizeof(t))) n = int(sizeof(t)) - 1;
+    if (n >= int(sizeof(t))) n = int(sizeof(t)) - 1;
     writeText("/Plugins/host.txt", t, n);
 }
 
@@ -379,12 +364,9 @@ Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, L
     Err e = readAll(fs, f, reinterpret_cast<uint8_t*>(&h), sizeof(h)) ? checkHeader(h, wantKind) : kHeader;
     // text = [0, rw_offset) (code, constants: may run from flash), rw = [rw_offset, image_size) + bss (always RAM)
     const uint32_t rwOff = h.rw_offset ? h.rw_offset : h.image_size;
-    const uint32_t rwLen = h.image_size - rwOff + h.bss_size;
     uint8_t* const rwDst = pl.rwDst ? pl.rwDst : pl.textDst + rwOff;
     const uintptr_t rwRun = pl.rwDst ? pl.rwRun : pl.textRun + rwOff;
-    if (e == kOk && ((h.image_size & 3u) || (rwOff & 7u) || rwOff > h.image_size || h.rebase_count > h.image_size / 4 ||
-                     h.entry_offset >= rwOff || rwOff > pl.textLen || (pl.rwDst ? rwLen > pl.rwLen : rwOff + rwLen > pl.textLen)))
-        e = kTooBig;
+    if (e == kOk) e = checkLayout(h, pl.textLen, pl.rwDst ? pl.rwLen : 0);
     // the CRC covers everything after the 64 byte header: the manifest first
     uint32_t crc = 0;
     for (uint32_t done = sizeof(h); e == kOk && done < h.header_size;)
@@ -467,49 +449,34 @@ int indexFind(uint32_t uid)
     return -1;
 }
 
+namespace
+{
+// FileSystem for scanIndex (plug_index.h)
+struct ScanFs
+{
+    void list(const char* dir, bool (*filter)(const char*), char* names, int namesSize, int maxNameLen, int& count,
+              char** list)
+    {
+        s_fs->listDirContents(dir, FileSystem::kFiles, filter, names, namesSize, maxNameLen, count, list);
+    }
+    int read(const char* p, void* buf, int cap)
+    {
+        auto [ok, f] = s_fs->openFile(p, FileSystem::FileOpenMode::kRead);
+        if (!ok) return -1;
+        const int n = int(s_fs->readFile(buf, size_t(cap), f));
+        s_fs->closeFile(f);
+        return n;
+    }
+};
+}   // namespace
+
 void rescan()
 {
     s_count = 0;
     if (!s_fs) return;
-    int n = 0;
-    s_fs->listDirContents(
-      kDir, FileSystem::kFiles,
-      [](const char* name) {
-          const size_t l = strlen(name);
-          return l > 4 && l < 40 && (strcmp(name + l - 4, ".plg") == 0 || strcmp(name + l - 4, ".PLG") == 0);
-      },
-      s_names, sizeof(s_names), 40, n, s_nameList);
-    for (int i = 0; i < n && s_count < kIndexMax; i++)
-    {
-        char p[64];
-        path(p, sizeof(p), kDir, s_nameList[i]);
-        auto [ok, f] = s_fs->openFile(p, FileSystem::FileOpenMode::kRead);
-        if (!ok) continue;
-        struct
-        {
-            plug_file_header h;
-            plug_manifest m;
-        } hm;
-        memset(&hm, 0, sizeof(hm));
-        const int32_t got = s_fs->readFile(&hm, sizeof(hm), f);
-        s_fs->closeFile(f);
-        if (got < int32_t(sizeof(plug_file_header)) || checkHeader(hm.h, PLUG_KIND_MASTER_INSERT) != kOk) continue;
-        IndexEntry& e = s_index[s_count];
-        e.uid = hm.h.uid;
-        e.version = hm.h.version;
-        e.imageSize = hm.h.image_size;
-        e.rwOffset = hm.h.rw_offset;
-        e.bssSize = hm.h.bss_size;
-        const bool man = hm.h.header_size >= sizeof(hm) && got == int32_t(sizeof(hm)) && hm.m.struct_size >= sizeof(plug_manifest);
-        e.numParams = man ? hm.m.num_params : 0;
-        copyName(e.name, man && hm.m.name[0] ? hm.m.name : s_nameList[i], man ? kNameLen : int(strlen(s_nameList[i])) - 4);
-        snprintf(e.file, sizeof(e.file), "%s", s_nameList[i]);
-        const int dup = indexFind(e.uid);   // two files with one uid: the newer version wins
-        if (dup < 0)
-            s_count++;
-        else if (s_index[dup].version < e.version)
-            s_index[dup] = e;
-    }
+    ScanFs fs;
+    s_count = scanIndex(fs, kDir, s_index, kIndexMax, s_names, s_nameList, s_scan);
+    if (s_scan.listed) writeStatus();   // what the scan kept and refused, also when nothing loads
 }
 
 // ------------------------------------------------------------------------------------------------ slots API
@@ -541,6 +508,7 @@ void assign(int k, int ix)
     SlotRef& r = s_side.slot[k];
     const IndexEntry* e = indexAt(ix);
     const SlotState st = slotState(k);
+    if (!e && !r.uid && st != SlotState::kPending) return;   // None again (the encoder at the end of the list): no reload
     if (e && r.uid == e->uid && (st == SlotState::kRunning || st == SlotState::kPending)) return;   // a missing, failed,
                                                                                                     // safe or tripped one reloads
     const bool keep = e && r.uid == e->uid;   // the same plugin again: keep its values
@@ -669,6 +637,7 @@ void boot(Platform* platform)
     s_timer = platform->getTimer();
     memset(&s_side, 0, sizeof(s_side));
     memset(s_slots, 0, sizeof(s_slots));
+    memset(&s_scan, 0, sizeof(s_scan));
 #ifdef FEATURE_PLUG_BENCH
     if (fs->exists("/plugbench.plg")) bench(fs);
 #endif
