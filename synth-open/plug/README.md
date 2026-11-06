@@ -216,3 +216,17 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
 - Safety: before a plugin starts, the host writes `/Plugins/.loading` with its name and deletes it after 3 s of running.
   If the Tracker died in between, the next boot loads no plugin on its own and the Inserts page title says which one
   crashed. Holding Shift during the first 4 s after power on does the same. Picking a plugin by hand still works in both.
+
+## Synth engine plugins (phase 3, ABI 1.1)
+
+A `PLUG_KIND_SYNTH` plugin answers `query(PLUG_EXT_SYNTH)` with a `plug_ext_synth` (plug_abi.h): the engine's numbers
+(`stored` for projects, `patch_engine` for `.patch` field 1, `type_id`), its name (on screen and the `Patches/<name>/`
+folder), parameter, section and macro tables in the shim's `ParamDef` / `SectionDef` / `MacroDef` layout, and the
+`ISynthEngine` calls as C functions. An engine that used to be built in keeps its numbers (JU6 7 / 0x81, FM4 9 / 0x80), so
+old projects and patches find it. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
+lines (`synth/ju6_plug.cpp`). Large working RAM comes from the host (`work_bytes`, `set_work`), not from bss.
+
+Files go to `/Plugins/Synth/`. At boot the host installs them into the FlexNVM bank (`synth-open/plug_bank.h`, index
+`/Plugins/installed.txt`, status `/Plugins/synth.txt`) and adds them to the engine list before the synth starts. Build the
+engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma default of `-Os`), and prove bit identity with
+`synth_render_compare.sh` (the firmware's objects behind the same wrapper, rendered by `emu_synth.py`).
