@@ -124,6 +124,8 @@ def main():
     ap.add_argument("--entry", default="plug_entry", help="entry symbol (plug_entry_dirt for the firmware object)")
     ap.add_argument("--licence", default="MIT", help="SPDX id for the manifest")
     ap.add_argument("--role", default="insert", choices=ROLES)
+    ap.add_argument("--synth", help="STORED,PATCH_ENGINE,TYPE_ID of a synth engine (decimal or 0x hex) into the manifest, so a "
+                    "host lists the engine before it is installed (plug_abi.h PLUG_SYNTH_MANIFEST)")
     ap.add_argument("--logo", help="a .plgi logo record to append as a trailer (synth engines, plug_logo.h)")
     ap.add_argument("--strip-ctors", dest="strip_ctors", action="store_true",
                     help="test references: drop .init_array from prebuilt objects (firmware objects of a render compare)")
@@ -202,8 +204,16 @@ def main():
                 sys.exit("%s is not a PLGI 1 logo record (make it with tools/make_plgi.py)" % a.logo)
         # the trailer's file offset: after the header, the manifest, the image and the rebase table
         logo_off = 64 + MANIFEST_SIZE + image_end + 4 * len(table) if logo else 0
-        manifest = struct.pack("<I16s32s16sHBBI20x", MANIFEST_SIZE, name, author[:31], a.licence.encode()[:15], nparams,
-                               ROLES[a.role], 0, logo_off)
+        syn = (0, 0, 0, 0)
+        if a.synth:
+            if a.kind != "synth":
+                sys.exit("--synth is for --kind synth")
+            nums = [int(x, 0) for x in a.synth.split(",")]
+            if len(nums) != 3 or min(nums) < 0 or max(nums) > 0x7FFFFFFF:
+                sys.exit("--synth wants STORED,PATCH_ENGINE,TYPE_ID")
+            syn = (nums[0], nums[1], nums[2], 0x314E5953)   # PLUG_SYNTH_MANIFEST "SYN1"
+        manifest = struct.pack("<I16s32s16sHBBIIIII4x", MANIFEST_SIZE, name, author[:31], a.licence.encode()[:15], nparams,
+                               ROLES[a.role], 0, logo_off, *syn)
         assert len(manifest) == MANIFEST_SIZE
         payload = manifest + image + b"".join(struct.pack("<I", o) for o in table)
         assert not logo or 64 + len(payload) == logo_off
@@ -219,7 +229,8 @@ def main():
             shutil.copy(elf, a.keep)
         print("%s: %s, %d params, image %d B (text %d, rw %d), bss %d B, %d rebase words, entry 0x%x, uid 0x%08x, file %d B" % (
             a.out, name.decode(), nparams, image_end, syms["__rw_start"], image_end - syms["__rw_start"], bss_end - image_end,
-            len(table), syms["plug_entry"], fnv1a(a.id), 64 + len(payload) + len(logo)) + (", logo trailer at %d" % logo_off if logo else ""))
+            len(table), syms["plug_entry"], fnv1a(a.id), 64 + len(payload) + len(logo)) + (", logo trailer at %d" % logo_off if logo else "")
+            + (", synth numbers %s" % a.synth if a.synth else ""))
 
 
 if __name__ == "__main__":

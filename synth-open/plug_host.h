@@ -66,14 +66,25 @@ void syncCode();   // after writing code: DSB, ISB, invalidate the LMEM code cac
 // skips every flash command when the flash already holds those bytes. Only ERSSCR and PGM8, only these two sectors.
 bool nvmInstall(const uint8_t* src, uintptr_t run, uint32_t len);
 uint32_t nvmCommands();   // flash commands issued since boot (0 when every load found its bytes in place)
+uint64_t nvmCommandCycles();   // DWT cycles spent inside them (the core runs at 90 MHz there: HSRUN is left for each command)
 // One command on the synth bank (plug_bank.h, [0x10000000, 0x1001E000)): ERSSCR of the sector at bank offset off, PGM8 of the
 // phrase at off. The caches are invalidated after it, so the flash reads back what it holds.
 bool nvmErase(uint32_t off);
 bool nvmProgram(uint32_t off, const uint8_t* data8);
 
-// ---- synth engine plugins (plug_synth.cpp, phase 3): /Plugins/Synth/*.plg installed into the FlexNVM bank (plug_bank.h),
-// attached to the shim's engine list before the synth starts (TrackerImpl::init, before Synth::init)
+// ---- synth engine plugins (plug_synth.cpp, phase 3): /Plugins/Synth/*.plg is the library, every engine in it is in the
+// shim's engine list from boot (TrackerImpl::init, before Synth::init), installed or not. The FlexNVM bank (plug_bank.h) is a
+// cache: an engine is installed when a part needs it (synthEnsure), the least recently used ones that no part needs make room.
+constexpr int kLibMax = 16;   // synth plugins listed (open_cold.cpp kPlugMax), the first 12 get a card logo
 void synthBoot(FileSystem* fs);
+// Main thread. Makes the plugin engines of the types in want[] installed and attached (built-in types are skipped). The engines
+// of want[] are never evicted for each other, the ones of keep[] (what the parts play now) only when nothing else frees room.
+// An install shows "Loading <name>" (plugUiSynthLoading) and takes about 0.1 to 1 s. False: at least one could not be loaded
+// (no room, file gone, flash error, safe mode): its parts stay silent and show "Missing: <name>", /Plugins/synth.txt says why.
+bool synthEnsure(const int* want, int nWant, const int* keep, int nKeep);
+bool synthLoaded(int typeId);       // a library engine that is attached now (false for built-in and unknown types)
+bool synthIsPlugin(int typeId);     // a type of the library
+bool synthUiUp();                   // the display is up (synthLogos ran): an install may show its popup
 // The attached engines' card logos into the RAM_G logo pool (plug_logo.h): boot() calls it once, the display is up by then
 void synthLogos(DisplayDriver* dd);
 // The bitmap id of a plugin engine's logo (the list image, or the editor image), -1: none, show its name
@@ -147,6 +158,8 @@ void bench(FileSystem* fs);  // plug_bench.cpp
 // plug_ui.cpp
 bool plugUiShiftHeld();
 void plugUiSlotGone(int slot);
+void plugUiSynthLoading(const char* name);
+void synthModelTick();   // SynthEditor.cpp: installs and picks the engine the model list rests on (main loop)   // "Loading <name>" popup, drawn now (the install that follows blocks the main loop)
 
 #include "AudioStream.h"
 

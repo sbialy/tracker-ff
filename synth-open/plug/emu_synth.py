@@ -56,7 +56,10 @@ def load(uc, path, base, rwbase=None):
         struct.pack_into("<I", image, off, (base + v) if v < rwoff else (rwbase + v - rwoff))
     uc.mem_write(base, bytes(image[:rwoff]))
     uc.mem_write(rwbase, bytes(image[rwoff:]) + bytes(bss))
-    return dict(kind=kind, uid=uid, entry=base + entry, lo=base, hi=base + rwoff, text=rwoff, rw=img - rwoff + bss)
+    # a synth engine's numbers in the manifest (build_plug.py --synth, plug_abi.h PLUG_SYNTH_MANIFEST): reserved[1..4]
+    syn = struct.unpack_from("<IIII", data, 64 + 76) if hsize >= 64 + 96 else (0, 0, 0, 0)
+    syn = syn[:3] if syn[3] == 0x314E5953 else None
+    return dict(kind=kind, uid=uid, entry=base + entry, lo=base, hi=base + rwoff, text=rwoff, rw=img - rwoff + bss, syn=syn)
 
 
 def main():
@@ -143,6 +146,10 @@ def main():
     print("engine %s: stored %d, patch engine 0x%x, type 0x%x, %d params, %d sections, %d macros, volume %d, voices %d, flags %d, "
           "work %d B, text %d B, rw+bss %d B" % (cstr(x[5]), x[2], x[3], x[4], x[7], x[9], x[11], x[12], x[13], x[14],
                                                  u32(ext + 60), eng["text"], eng["rw"]))
+    if eng["syn"] is not None:   # the host lists the engine by these before it runs any code: they must be the extension's
+        assert tuple(eng["syn"]) == (x[2] & 0xFFFFFFFF, x[3] & 0xFFFFFFFF, x[4] & 0xFFFFFFFF), \
+            "manifest numbers %s differ from the extension's %s" % (eng["syn"], (x[2], x[3], x[4]))
+        print("manifest numbers: stored %d, patch engine 0x%x, type 0x%x (equal to the extension)" % tuple(eng["syn"]))
     work = u32(ext + 60)
     if work:   # the host's work memory (plug_synth.cpp: SDRAM arena, zeroed), given before any audio call
         assert work <= 0x80000, "work memory larger than the emulator's arena"

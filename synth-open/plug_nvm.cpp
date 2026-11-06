@@ -37,6 +37,8 @@ inline volatile uint8_t& fccob(int n)
 alignas(4) uint16_t s_flashCmd[8];
 const uint16_t kFlashCmd[8] = {0xf06f, 0x037f, 0x7003, 0x7803, 0xf013, 0x0f80, 0xd0fb, 0x4770};
 uint32_t s_cmds;
+uint64_t s_cmdCycles;   // DWT cycles inside the commands (HSRUN left: the core runs at 90 MHz there, not 180)
+volatile uint32_t* const kDwtCyccnt = reinterpret_cast<volatile uint32_t*>(0xE0001004);
 
 void flushCaches()
 {
@@ -66,7 +68,9 @@ bool ftfe(uint8_t cmd, uint32_t nvmOff, const uint8_t* data8)
     const uint32_t div = *reinterpret_cast<volatile uint32_t*>(0x40048044);   // SIM_CLKDIV1
     const int left = kinetis_hsrun_disable();
     asm volatile("dsb 0xf\n isb 0xf" ::: "memory");
+    const uint32_t c0 = *kDwtCyccnt;
     reinterpret_cast<void (*)(volatile uint8_t*)>(uintptr_t(s_flashCmd) | 1u)(kFstat);
+    s_cmdCycles += *kDwtCyccnt - c0;
     const uint8_t after = *kFstat;
     if (left) kinetis_hsrun_enable();
     if (*reinterpret_cast<volatile uint32_t*>(0x40048044) != div) *reinterpret_cast<volatile uint32_t*>(0x40048044) = div;
@@ -85,6 +89,11 @@ bool blank(uintptr_t run, uint32_t len)
 uint32_t nvmCommands()
 {
     return s_cmds;
+}
+
+uint64_t nvmCommandCycles()
+{
+    return s_cmdCycles;
 }
 
 // The synth bank: only below insert 2's sectors

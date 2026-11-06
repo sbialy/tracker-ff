@@ -4,17 +4,25 @@
 //
 // The bank is [0x10000000, 0x1001E000) of the data flash (120 KB, 30 sectors of 4 KB). The last two sectors belong to master
 // insert 2 (plug_nvm.cpp) and are never touched here. An installed engine is one entry: its text (rebased for its flash
-// address) followed by its rw segment's initial bytes (rebased for its rw address in the host's SRAM pool), 8 aligned and
-// packed back to back across sector boundaries, so a sector may hold the end of one engine and the start of the next.
+// address) followed by its rw segment's initial bytes (rebased for its rw address in the host's SRAM pool).
+//
+// Cache (phase 3 round E): /Plugins/Synth on the card is the library, the bank is a cache of it. Nothing is installed at boot:
+// bankOpen only checks the index and drops what must not run. bankInstall puts one engine in when a part needs it. A new engine
+// starts on a sector boundary and takes whole sectors that hold no byte of another live entry, so an install never erases a
+// sector of an engine that may be playing, and the engines in the bank never move. When there is no room (sectors or the rw
+// pool), the entries the caller ranks lowest are dropped from the index first (least recently used, never one a part needs).
+// Dropping costs no flash command: the sectors are erased by the install that reuses them, and an engine that comes back to the
+// sectors it left finds its bytes there and costs no command at all.
 //
 // Power cut rules:
 //   - installed.txt is the index. An entry runs only when its state is 'o' AND the CRC-32 of its bytes in the flash equals the
 //     CRC the index holds (bankCheck). Anything else is dropped at boot and never runs.
-//   - before any flash command the index is rewritten with every entry about to be written in state 'w'. A cut during the
-//     write leaves a 'w' (dropped) or, when a shared sector was erased, a neighbour with a CRC mismatch (dropped). Both come
-//     back from their .plg on the card at that boot (bankPlan installs what /Plugins/Synth has and the bank does not).
-//   - an erase only happens when a sector holds bytes that differ and are not blank. The bytes of the other live entries in that
-//     sector are copied to RAM first and programmed back. A flash command is never issued when the bytes are already there.
+//   - before any flash command the index is rewritten without the evicted entries and with the new one in state 'w' (the
+//     journal). A cut during the write leaves a 'w', dropped at the next boot, the engine is installed again when a part needs
+//     it. The other entries' sectors are never erased or programmed by an install.
+//   - a flash command is never issued when the bytes are already there.
+//   - the index carries one erase counter per sector ("c" line, wear): the erases an install will do are counted in the
+//     journal, before the first command, so a cut can only count one too many, never one too few.
 #pragma once
 
 #include "plug_index.h"
@@ -28,7 +36,8 @@ namespace plug
 constexpr uintptr_t kBankRun = 0x10000000u;   // data flash (FlexNVM) base, executable
 constexpr uint32_t kBankBytes = 0x1E000u;     // up to insert 2's two sectors at 0x1001E000
 constexpr uint32_t kBankSector = 4096;
-constexpr int kBankMax = 12;                  // installed engines (open_cold.cpp kPlugMax)
+constexpr int kBankSectors = int(kBankBytes / kBankSector);   // 30
+constexpr int kBankMax = 12;                  // installed engines at once (the 12 shipped ones need 34 sectors, 30 exist)
 constexpr int kBankFileLen = 24;
 
 struct BankEntry
@@ -46,13 +55,21 @@ struct Bank
 {
     int n;
     BankEntry e[kBankMax];
+    uint32_t wear[kBankSectors];   // erases of each sector since the counters began (the "c" line of installed.txt)
 };
 
 // ------------------------------------------------------------------------------------------------ installed.txt
-// "tffbank 1" then one line per entry: state uid version fileCrc off len text rwRun rwLen entry crc file (hex, 8 digits)
+// "tffbank 1", "c" and the 30 erase counters (hex), then one line per entry: state uid version fileCrc off len text rwRun rwLen
+// entry crc file (hex, 8 digits). Hosts before round E drop the "c" line (its state is not 'o' or 'w') and lose the counters.
 inline int bankWrite(const Bank& b, char* t, int cap)
 {
-    int n = sc::putStr(t, 0, cap, "tffbank 1\r\n");
+    int n = sc::putStr(t, 0, cap, "tffbank 1\r\nc");
+    for (int k = 0; k < kBankSectors; k++)
+    {
+        if (n < cap) t[n++] = ' ';
+        n = sc::putHex(t, n, cap, b.wear[k]);
+    }
+    n = sc::putStr(t, n, cap, "\r\n");
     for (int i = 0; i < b.n; i++)
     {
         const BankEntry& e = b.e[i];
@@ -74,6 +91,7 @@ inline int bankWrite(const Bank& b, char* t, int cap)
 inline void bankRead(const char* t, int len, Bank& b)
 {
     b.n = 0;
+    memset(b.wear, 0, sizeof(b.wear));
     const char* p = t;
     const char* e = t + (len > 0 ? len : 0);
     if (len < 9 || memcmp(t, "tffbank 1", 9) != 0) return;
@@ -82,6 +100,16 @@ inline void bankRead(const char* t, int len, Bank& b)
         const char* eol = p;
         while (eol < e && *eol != '\n') eol++;
         const char* q = p;
+        if (*q == 'c')
+        {   // the erase counters: all 30 or none
+            uint32_t w[kBankSectors];
+            bool ok = true;
+            q++;
+            for (int k = 0; k < kBankSectors && ok; k++) ok = q < eol && *q++ == ' ' && sc::getHex(q, eol, w[k]);
+            if (ok) memcpy(b.wear, w, sizeof(w));
+            p = eol + 1;
+            continue;
+        }
         BankEntry& x = b.e[b.n];
         memset(&x, 0, sizeof(x));
         x.state = *q++;
@@ -136,37 +164,72 @@ struct BankWant   // a synth .plg on the card (scanIndex): what it needs
     char file[kBankFileLen];
 };
 
-// The bank after this boot: the wanted engines back to back from the start of the bank and of the rw pool, the ones already
-// installed first in their old order, new ones after them (adding an engine moves nothing). An engine whose place and file
-// did not change keeps its bytes ('o'), every other one is to be written ('w'). Engines that do not fit are left out.
-inline void bankPlan(const Bank& cur, const BankWant* w, int nw, uintptr_t pool, uint32_t poolBytes, Bank& out, int* skipped)
+inline uint32_t align8(uint32_t v)
 {
-    *skipped = 0;
-    out.n = 0;
-    uint32_t off = 0, rw = uint32_t(pool);
-    for (int r = 0; r <= cur.n; r++)   // round r < cur.n: the want installed as cur.e[r], last round: the new ones
-        for (int i = 0; i < nw; i++)
+    return (v + 7u) & ~7u;
+}
+
+// Sectors [first, first + count) of an entry
+inline int sectorFirst(const BankEntry& x)
+{
+    return int(x.off / kBankSector);
+}
+inline int sectorEnd(const BankEntry& x)
+{
+    return int((x.off + x.len + kBankSector - 1) / kBankSector);
+}
+
+// A run of whole sectors for len bytes that touches no sector of an entry of b. Of the runs that fit, the one whose most erased
+// sector has the fewest erases (b.wear), the lowest one of those: installs spread over the free sectors instead of wearing out the
+// first free run. False when there is none.
+inline bool bankFindFlash(const Bank& b, uint32_t len, uint32_t* off)
+{
+    const int need = int((len + kBankSector - 1) / kBankSector);
+    bool used[kBankSectors] = {};
+    for (int i = 0; i < b.n; i++)
+        for (int s = sectorFirst(b.e[i]); s < sectorEnd(b.e[i]) && s < kBankSectors; s++) used[s] = true;
+    int best = -1;
+    uint32_t bestWear = 0;
+    for (int s = 0; s + need <= kBankSectors; s++)
+    {
+        bool free = true;
+        uint32_t w = 0;
+        for (int k = s; k < s + need && free; k++)
         {
-            const BankWant& x = w[i];
-            int at = cur.n;
-            for (int k = 0; k < cur.n; k++)
-                if (cur.e[k].uid == x.uid && cur.e[k].fileCrc == x.fileCrc) at = k;
-            if (at != r) continue;
-            const uint32_t len = (x.len + 7u) & ~7u, rl = (x.rwLen + 7u) & ~7u;
-            if (out.n == kBankMax || len > kBankBytes - off || rl > poolBytes - (rw - uint32_t(pool)))
-            {
-                (*skipped)++;
-                continue;
-            }
-            BankEntry& e = out.e[out.n++];
-            if (at < cur.n && cur.e[at].off == off && cur.e[at].rwRun == rw)
-                e = cur.e[at];   // same file, same place: same bytes
-            else
-                e = {x.uid, x.version, x.fileCrc, off, len, x.text, rw, rl, x.entry, 0, 'w', {}};
-            memcpy(e.file, x.file, kBankFileLen);
-            off += len;
-            rw += rl;
+            free = !used[k];
+            w = b.wear[k] > w ? b.wear[k] : w;
         }
+        if (free && (best < 0 || w < bestWear))
+        {
+            best = s;
+            bestWear = w;
+        }
+    }
+    if (best < 0) return false;
+    *off = uint32_t(best) * kBankSector;
+    return true;
+}
+
+// rw bytes in the pool that overlap no entry of b (first fit from the pool start). False when there is no gap.
+inline bool bankFindRw(const Bank& b, uintptr_t pool, uint32_t poolBytes, uint32_t rl, uint32_t* rw)
+{
+    uint32_t at = uint32_t(pool);
+    for (;;)
+    {
+        if (rl > uint32_t(pool) + poolBytes - at) return false;
+        bool moved = false;
+        for (int i = 0; i < b.n; i++)
+            if (overlaps(at, rl, b.e[i].rwRun, b.e[i].rwLen))
+            {
+                at = align8(b.e[i].rwRun + b.e[i].rwLen);
+                moved = true;
+            }
+        if (!moved)
+        {
+            *rw = at;
+            return true;
+        }
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ flash writer
@@ -215,75 +278,190 @@ bool bankProgram(Flash& f, uint32_t off, const uint8_t* src, uint32_t len, const
     return memcmp(f.at(off), src, len) == 0;
 }
 
-// ------------------------------------------------------------------------------------------------ boot sync
-struct BankStatus
+
+// ------------------------------------------------------------------------------------------------ boot: open the cache
+struct BankOpenStatus
 {
-    int dropped;     // index entries that must not run (half written, damaged, outside the bank): dropped at this boot
-    int installed;   // engines written at this boot
-    int failed;      // could not be loaded or written (left out, the next boot tries again)
-    int skipped;     // no room in the bank or the rw pool
-    int commands;    // flash commands of this boot (0 when every engine was already in place)
+    int dropped;   // index entries that must not run (half written, damaged, outside the bank): dropped
+    int stale;     // entries whose .plg left the card or changed (another version): dropped, installed again on demand
 };
 
-// The whole boot step: read and check the index, plan, journal, write, verify, write the index back. Io:
+// Io (both steps):
 //   int readIndex(char* buf, int cap)            installed.txt bytes, -1 when there is none
 //   bool writeIndex(const char* t, int n)        replace installed.txt (temp file and rename: all or nothing)
 //   const uint8_t* image(const BankEntry& e)     the .plg named by e (e.file, checked against e.uid and e.fileCrc) loaded
-//                                                and rebased for kBankRun + e.off and e.rwRun, e.len bytes (padding 0xFF),
+//                                                and rebased for kBankRun + e.off and e.rwRun, e.len bytes (padding 0),
 //                                                nullptr when it does not load
-// Flash also counts its commands (int commands). out: the bank as it is now ('o' entries only), in index order.
+// Boot: read and check the index, keep the entries whose file is still on the card (w: the library), write the index back
+// only when something was dropped. Never a flash command. text: cap bytes of scratch.
 template <class Flash, class Io>
-BankStatus bankSync(Flash& f, Io& io, const BankWant* w, int nw, uintptr_t pool, uint32_t poolBytes, Bank& out, uint8_t* sec,
-                    char* text, int cap)
+BankOpenStatus bankOpen(Flash& f, Io& io, const BankWant* w, int nw, uintptr_t pool, uint32_t poolBytes, Bank& out, char* text,
+                        int cap)
 {
-    BankStatus st = {};
-    Bank cur;
-    const int half = cap / 2;   // text: the index as read, then the index as written
-    const int got = io.readIndex(text, half);
-    bankRead(text, got, cur);
-    st.dropped = bankCheck(cur, f, pool, poolBytes);
-    bankPlan(cur, w, nw, pool, poolBytes, out, &st.skipped);
-    const int c0 = f.commands;
-    int n = bankWrite(out, text + half, cap - half);
-    bool pend = false;
-    for (int i = 0; i < out.n; i++) pend = pend || out.e[i].state == 'w';
-    // the journal: every entry about to be written is 'w' in the index before the first flash command. No journal, no command.
-    if (pend && (n < 0 || !io.writeIndex(text + half, n)))
-    {
-        int k = 0;
-        for (int i = 0; i < out.n; i++)
-            if (out.e[i].state == 'o') out.e[k++] = out.e[i];
-        st.failed = out.n - k;
-        out.n = k;
-        return st;
-    }
-    for (int i = 0; i < out.n; i++)
-    {
-        BankEntry& e = out.e[i];
-        if (e.state != 'w') continue;
-        const uint8_t* img = io.image(e);
-        if (img && bankProgram(f, e.off, img, e.len, out, sec))
-        {
-            e.crc = crc32(0, f.at(e.off), e.len);
-            e.state = 'o';
-            st.installed++;
-        }
-        else
-        {
-            e.state = 'x';
-            st.failed++;
-        }
-    }
+    BankOpenStatus st = {};
+    const int got = io.readIndex(text, cap);
+    bankRead(text, got, out);
+    st.dropped = bankCheck(out, f, pool, poolBytes);
     int k = 0;
     for (int i = 0; i < out.n; i++)
-        if (out.e[i].state == 'o') out.e[k++] = out.e[i];
+    {
+        bool want = false;
+        for (int j = 0; j < nw && !want; j++) want = w[j].uid == out.e[i].uid && w[j].fileCrc == out.e[i].fileCrc;
+        if (want)
+            out.e[k++] = out.e[i];
+        else
+            st.stale++;
+    }
     out.n = k;
-    st.commands = f.commands - c0;
-    n = bankWrite(out, text + half, cap - half);
-    // the index as it is now. Unchanged since the read (the usual boot) or never needed (no file, no engine): no SD write.
-    if (n >= 0 && (got >= 0 || out.n) && (pend || st.dropped || n != got || memcmp(text, text + half, size_t(n)) != 0))
-        io.writeIndex(text + half, n);
+    if (got >= 0 && (st.dropped || st.stale))
+    {
+        const int n = bankWrite(out, text, cap);
+        if (n >= 0) io.writeIndex(text, n);
+    }
     return st;
+}
+
+// ------------------------------------------------------------------------------------------------ install one engine
+enum BankErr
+{
+    kBankOk = 0,
+    kBankTooBig = 1,    // more than the whole bank or the whole rw pool, or the index is full of engines a part needs
+    kBankNoRoom = 2,    // the engines that must stay leave no room
+    kBankNoFile = 3,    // the .plg did not load (gone, changed, unreadable)
+    kBankJournal = 4,   // installed.txt could not be written: no flash command was issued
+    kBankFlash = 5,     // erase, program or verify failed (the entry is dropped, its sectors are free again)
+};
+
+struct BankInstallStatus
+{
+    int err;          // BankErr
+    int at;           // index of the engine in the bank (when err == 0)
+    int evicted;      // entries dropped to make room
+    int commands;     // flash commands of this install (0: the bytes were already there)
+    int erases;       // sector erases of this install
+};
+
+// Puts engine w into the bank b unless it is there. rank(const BankEntry&) says what may go to make room: < 0 never (a part
+// needs it), else the lowest rank goes first (the caller ranks by last use, and the engines of the parts above all others).
+// onEvict(const BankEntry&) runs for every dropped entry after the journal is on the card and before the first flash command
+// (the firmware detaches the engine there). sec: kBankSector bytes, text: cap bytes of scratch.
+template <class Flash, class Io, class Rank, class OnEvict>
+BankInstallStatus bankInstall(Flash& f, Io& io, const BankWant& w, Rank rank, OnEvict onEvict, uintptr_t pool, uint32_t poolBytes,
+                              Bank& b, uint8_t* sec, char* text, int cap)
+{
+    BankInstallStatus st = {};
+    st.at = -1;
+    for (int i = 0; i < b.n; i++)
+        if (b.e[i].uid == w.uid && b.e[i].fileCrc == w.fileCrc && b.e[i].state == 'o')
+        {
+            st.at = i;
+            return st;
+        }
+    const uint32_t len = align8(w.len), rl = align8(w.rwLen);
+    if (!len || len > kBankBytes || rl > poolBytes)
+    {
+        st.err = kBankTooBig;
+        return st;
+    }
+    // the plan, on a copy: drop the lowest ranked entries until the engine has whole free sectors and an rw gap
+    Bank plan = b;
+    bool gone[kBankMax] = {};
+    uint32_t off = 0, rw = 0;
+    for (;;)
+    {
+        if (plan.n < kBankMax && bankFindFlash(plan, len, &off) && bankFindRw(plan, pool, poolBytes, rl, &rw)) break;
+        int victim = -1;
+        long best = 0;
+        for (int i = 0; i < plan.n; i++)
+        {
+            const long r = long(rank(plan.e[i]));
+            if (r >= 0 && (victim < 0 || r < best))
+            {
+                victim = i;
+                best = r;
+            }
+        }
+        if (victim < 0)
+        {
+            st.err = kBankNoRoom;
+            return st;
+        }
+        for (int i = 0; i < b.n; i++)
+            if (b.e[i].uid == plan.e[victim].uid && b.e[i].off == plan.e[victim].off) gone[i] = true;
+        plan.e[victim] = plan.e[--plan.n];
+    }
+    // the new entry, rebased for its place
+    BankEntry e = {w.uid, w.version, w.fileCrc, off, len, w.text, rw, rl, w.entry, 0, 'w', {}};
+    memcpy(e.file, w.file, kBankFileLen);
+    const uint8_t* img = io.image(e);
+    if (!img)
+    {
+        st.err = kBankNoFile;
+        return st;
+    }
+    // the journal: the evicted entries gone, the new one 'w', the erases about to happen counted, in the index before any command
+    Bank j;
+    j.n = 0;
+    memcpy(j.wear, b.wear, sizeof(j.wear));
+    for (int i = 0; i < b.n; i++)
+        if (!gone[i]) j.e[j.n++] = b.e[i];
+    for (uint32_t s = off; s < off + len; s += kBankSector)
+    {
+        const uint32_t hi = s + kBankSector < off + len ? s + kBankSector : off + len;
+        bool erase = false;   // as bankProgram decides it: a phrase that differs and is not blank
+        for (uint32_t i = s; i < hi && !erase; i += 8)
+            if (memcmp(f.at(i), img + (i - off), 8) != 0)
+                for (int k = 0; k < 8 && !erase; k++) erase = f.at(i)[k] != 0xFF;
+        if (erase)
+        {
+            j.wear[s / kBankSector]++;
+            st.erases++;
+        }
+    }
+    const int at = j.n;
+    j.e[j.n++] = e;
+    int n = bankWrite(j, text, cap);
+    if (n < 0 || !io.writeIndex(text, n))
+    {
+        st.err = kBankJournal;
+        st.erases = 0;
+        return st;
+    }
+    for (int i = 0; i < b.n; i++)
+        if (gone[i])
+        {
+            onEvict(b.e[i]);
+            st.evicted++;
+        }
+    const int c0 = f.commands;
+    const bool ok = bankProgram(f, off, img, len, j, sec);
+    st.commands = f.commands - c0;
+    if (ok)
+    {
+        j.e[at].crc = crc32(0, f.at(off), len);
+        j.e[at].state = 'o';
+        st.at = at;
+    }
+    else
+    {
+        j.n--;   // its sectors are free again, the next install there erases them
+        st.err = kBankFlash;
+    }
+    b = j;
+    n = bankWrite(b, text, cap);
+    if (n >= 0) io.writeIndex(text, n);   // a cut here leaves the 'w' of the journal: dropped at the next boot, nothing runs
+    return st;
+}
+
+// Drops entry i from the bank and the index (no flash command)
+template <class Io>
+bool bankForget(Io& io, Bank& b, int i, char* text, int cap)
+{
+    if (i < 0 || i >= b.n) return false;
+    for (int k = i; k + 1 < b.n; k++) b.e[k] = b.e[k + 1];
+    b.n--;
+    const int n = bankWrite(b, text, cap);
+    return n >= 0 && io.writeIndex(text, n);
 }
 
 }   // namespace plug

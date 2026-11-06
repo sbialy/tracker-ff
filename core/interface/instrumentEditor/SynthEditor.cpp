@@ -12,6 +12,8 @@
 #include "util_math.h"
 #include "util_string.h"
 #ifdef FEATURE_PLUG_HOST
+#include "core/interface.h"
+#include "elapsedMillis.h"
 #include "plug_host.h"
 #endif
 
@@ -64,13 +66,12 @@ static int fillSynthModelList()
 // are no parameters, and the files must stay as they are until the plugin is back)
 static bool synthPartMissing(int part)
 {
-    const polysynth::open::EngineDef* d = polysynth::open::missingDef(mtProject.values.synthPart[part].synthType);
-    if (!Synth::storedIsMissing(mtProject.values.synthPart[part].synthType) || !d)
+    if (!Synth::storedIsMissing(mtProject.values.synthPart[part].synthType))
     {
         return false;
     }
     static char text[32];
-    snprintf(text, sizeof(text), "%s not installed", d->name);
+    snprintf(text, sizeof(text), "%s not installed", Synth::storedName(mtProject.values.synthPart[part].synthType));
     mtPopups.show(0, text);
     return true;
 }
@@ -490,6 +491,43 @@ static void functSynthEditPatch()
     IE->setSynthPatchEditorScreenFunct();
 }
 
+#ifdef FEATURE_PLUG_HOST
+// The model list over plugin engines that are not installed (round E): stepping onto one only moves the list, the engine is
+// installed and picked once the list rests there for kModelRestMs (synthModelTick), so scrolling past engines writes no flash.
+namespace
+{
+constexpr uint32_t kModelRestMs = 500;
+struct PendingModel
+{
+    int part = -1;
+    int ui = -1;
+};
+PendingModel s_pendModel;
+bool s_applyModel; // synthModelTick applies the pending one: no new wait
+elapsedMillis s_pendTimer;
+} // namespace
+
+// Main loop (Tracker.cpp, after plug::tick)
+void synthModelTick()
+{
+    if (s_pendModel.ui < 0 || s_pendTimer < kModelRestMs)
+    {
+        return;
+    }
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    const PendingModel p = s_pendModel;
+    s_pendModel = {};
+    if (part != p.part || IE->mode != mtInstEditModeSynth || !mtInterface.isInstrumentParamsScreenActive())
+    {
+        return; // the screen or the part changed while the list moved: nothing is picked
+    }
+    const int cur = std::max(Synth::storedToUi(mtProject.values.synthPart[part].synthType), 0);
+    s_applyModel = true;
+    IE->changeSynthModel(int16_t(p.ui - cur));
+    s_applyModel = false;
+}
+#endif
+
 void cInstrumentEditor::changeSynthModel(int16_t value)
 {
     int syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
@@ -503,7 +541,13 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
 
     // The project stores the engine's canonical number, the list on screen is the engines of this build
     int32_t previousSynthType = mtProject.values.synthPart[syntPartIdx].synthType;
+#ifdef FEATURE_PLUG_HOST
+    const int currentUi = std::max(Synth::storedToUi(previousSynthType), 0);
+    // while the list waits on an engine that is not installed, the next step goes on from there
+    const int previousUi = !s_applyModel && s_pendModel.part == syntPartIdx && s_pendModel.ui >= 0 ? s_pendModel.ui : currentUi;
+#else
     const int previousUi = std::max(Synth::storedToUi(previousSynthType), 0);
+#endif
     int newUi;
 
     if (IE->rollListOver && previousUi + value > modelMaxValue)
@@ -514,6 +558,27 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     {
         newUi = clamp<int>(previousUi + value, 0, modelMaxValue);
     }
+#ifdef FEATURE_PLUG_HOST
+    {
+        const int t = static_cast<int>(Synth::synthTypeAt(newUi));
+        if (!s_applyModel && newUi != currentUi && plug::synthIsPlugin(t) && !plug::synthLoaded(t))
+        {   // not installed: the list shows it, synthModelTick installs and picks it when the list rests
+            s_pendModel = { syntPartIdx, newUi };
+            s_pendTimer = 0;
+            display.setControlValue(modelListControl, newUi);
+            display.refreshControl(modelListControl);
+            return;
+        }
+        if (!s_applyModel)
+        {
+            s_pendModel = {}; // back on the current one, or on an engine that is there: no wait
+            if (newUi == currentUi)
+            {
+                showSynthModel(syntPartIdx);
+            }
+        }
+    }
+#endif
     mtProject.values.synthPart[syntPartIdx].synthType = Synth::uiToStored(newUi);
 
     if (previousSynthType == mtProject.values.synthPart[syntPartIdx].synthType)
@@ -1206,7 +1271,7 @@ void cInstrumentEditor::showSynthPatchName(uint8_t synthPart)
     if (Synth::storedIsMissing(mtProject.values.synthPart[synthPart].synthType))
     {   // the engine is a plugin that is not installed: say which (the project keeps the part, the patch name stays saved)
         snprintf(synthPatchNameText, sizeof(synthPatchNameText), "Missing: %s",
-                 polysynth::open::missingDef(mtProject.values.synthPart[synthPart].synthType)->name);
+                 Synth::storedName(mtProject.values.synthPart[synthPart].synthType));
     }
 #endif
     display.setControlText(noteLabel, synthPatchPanelLabel(synthPart));

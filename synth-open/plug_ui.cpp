@@ -441,6 +441,16 @@ void plugUiSlotGone(int k)
     for (int c = kParamCol0; c < kParamCol0 + kParamCols; c++) blankList(c);
 }
 
+void plugUiSynthLoading(const char* name)
+{   // plug_synth.cpp synthEnsure, before an install: the main loop stops until it is done, so the popup is drawn here and now.
+    // Before the display is up (the boot project's engines) there is nothing to draw on.
+    if (!plug::synthUiUp()) return;
+    static char text[24];
+    snprintf(text, sizeof(text), "Loading %s", name);
+    mtPopups.show(0, text);
+    display.processDisplayUpdateImmediate();
+}
+
 bool plugUiShiftHeld()
 {
     return ModuleBase::buttons && ModuleBase::buttons->isButtonPressed(interfaceButtonShift);

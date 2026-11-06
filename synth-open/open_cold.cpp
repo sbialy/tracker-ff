@@ -268,7 +268,7 @@ constexpr Builtin kBuiltin[] = {
 #undef SYNTH_ENGINE
 };
 constexpr int kBuiltinCount = int(sizeof(kBuiltin) / sizeof(kBuiltin[0]));
-constexpr int kPlugMax = 12;   // plug::kBankMax
+constexpr int kPlugMax = 16;   // plug::kLibMax: the synth plugin library, installed or not
 // The engines that can be missing: the numbers 7 to 18 of engine_list.h (type id = .patch engine id for all of them).
 // 0 to 6 are Polyend's (always built in when they exist in this firmware family), DIRT (5) never had an open engine.
 constexpr int kKnownCount = 12;
@@ -1702,6 +1702,13 @@ bool patchBankApply(int part, int slot)
     }
     p->setValuesRaw(b.vals + size_t(slot) * n);
     return true;
+}
+
+bool patchStale(const Patch& patch)
+{
+    const OpenPatch* op = static_cast<const OpenPatch*>(&patch);   // every patch of the shim is one (no RTTI on the device)
+    const EngineDef* d = op ? op->getDef() : nullptr;
+    return d && engineOf(d) && op->paramCount() != d->paramCount;
 }
 
 } // namespace open

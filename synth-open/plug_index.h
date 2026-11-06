@@ -83,6 +83,11 @@ struct IndexEntry
     uint32_t crc;                // header crc32: the identity of the file (the synth bank reinstalls an engine whose file changed)
     uint32_t entry;              // entry_offset
     uint32_t logoOff;            // file offset of a logo trailer (plug_manifest.reserved[0], plug_logo.h), 0 for none
+    // A synth engine's numbers from the manifest (build_plug.py --synth, PLUG_SYNTH_MANIFEST): the host lists an engine that is
+    // not installed by them. stored -1: the file has none (built before round E), it cannot be listed until it is rebuilt.
+    int32_t synthStored;         // plug_manifest.reserved[1] when reserved[4] is PLUG_SYNTH_MANIFEST
+    int32_t synthPatch;          // reserved[2]: the .patch engine id
+    int32_t synthType;           // reserved[3]: the type id
 };
 
 // What the last scan saw, for /Plugins/host.txt
@@ -145,6 +150,10 @@ int scanIndex(Fs& fs, const char* dir, IndexEntry* index, int cap, char* names, 
         const bool man = hm.h.header_size >= sizeof(hm) && got == int(sizeof(hm)) && hm.m.struct_size >= sizeof(plug_manifest);
         e.numParams = man ? hm.m.num_params : 0;
         e.logoOff = man && hm.m.reserved[0] >= hm.h.header_size ? hm.m.reserved[0] : 0;
+        const bool syn = man && hm.m.reserved[4] == PLUG_SYNTH_MANIFEST && int32_t(hm.m.reserved[1]) >= 0;
+        e.synthStored = syn ? int32_t(hm.m.reserved[1]) : -1;
+        e.synthPatch = syn ? int32_t(hm.m.reserved[2]) : -1;
+        e.synthType = syn ? int32_t(hm.m.reserved[3]) : -1;
         copyName(e.name, man && hm.m.name[0] ? hm.m.name : nameList[i], man ? kNameLen : int(strlen(nameList[i])) - 4);
         snprintf(e.file, sizeof(e.file), "%s", nameList[i]);
         int dup = -1;   // two files with one uid: the newer version wins

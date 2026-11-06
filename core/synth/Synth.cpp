@@ -26,6 +26,9 @@
 #include "PolySynth/Patch.h"
 #include "fileManager.h"
 #include "interruptsControl.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 #include "mtStructs.h"
 #include <numeric>
 #ifdef FEATURE_SYNTH_OPEN
@@ -493,7 +496,28 @@ int Synth::getMaxVoiceCount(int part)
 void Synth::setInstrumentType(int partIdx, polysynth::InstrumentTypeId typeId)
 {
     auto& part = parts[partIdx];
+#ifdef FEATURE_PLUG_HOST
+    // A plugin engine that is not installed is installed now (plug_synth.cpp, "Loading <name>"): the engines of the other parts
+    // stay, this part's old engine goes only when nothing else frees room. When it cannot be loaded the part gets its placeholder
+    // (silent, "Missing: <name>"). A patch made while the engine was missing is made again once the engine is there.
+    {
+        int want[kSynthParts], keep = static_cast<int>(part.instrumentTypeId), n = 0;
+        want[n++] = static_cast<int>(typeId);
+        for (int p = 0; p < kSynthParts; p++)
+        {
+            const int t = static_cast<int>(parts[p].instrumentTypeId);
+            if (p != partIdx && parts[p].patch && (plug::synthLoaded(t) || !plug::synthIsPlugin(t)))
+            {
+                want[n++] = t; // pinned, never loaded here: a part whose engine is missing stays missing
+            }
+        }
+        plug::synthEnsure(want, n, &keep, part.patch ? 1 : 0);
+    }
+    const bool stale = part.patch && polysynth::open::patchStale(*part.patch);
+    if (part.instrumentTypeId != typeId || stale)
+#else
     if (part.instrumentTypeId != typeId)
+#endif
     {
         part.instrumentTypeId = typeId;
         setPatch(partIdx, patchStore->createPatch(*typeId), kInitPatchName);
@@ -647,6 +671,25 @@ void Synth::updateToSettings(const strMtValues& settings, bool resetAllVoices)
         }
     }
 
+#ifdef FEATURE_PLUG_HOST
+    // Every plugin engine the project needs is installed before any part changes (plug_synth.cpp): only the project's engines are
+    // kept for each other, the ones the parts play now go first when the bank is full. With 3 parts the worst 3 engines and the
+    // one being picked fit the bank together (plug_bank_test), an engine that still does not fit stays "Missing: <name>".
+    {
+        int want[kSynthParts], keep[kSynthParts], nk = 0;
+        for (int part = 0; part < kSynthParts; part++)
+        {
+            SynthPartSettings ps = settings.synthPart[part];
+            validateSynthPartSettings(part, ps);
+            want[part] = polysynth::open::typeForStored(ps.synthType);
+            if (parts[part].patch)
+            {
+                keep[nk++] = static_cast<int>(parts[part].instrumentTypeId);
+            }
+        }
+        plug::synthEnsure(want, kSynthParts, keep, nk);
+    }
+#endif
     for (int part = 0; part < kSynthParts; part++)
     {
         // The project is validated only after this (loadProjectValues), but kSynthTypes.at() aborts

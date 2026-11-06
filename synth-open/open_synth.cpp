@@ -153,6 +153,16 @@ class OpenInstrument final : public Instrument
         paramsValid = false;
     }
 
+    // plug_synth.cpp detaches the plugin engine of def (open::engineGone): nothing may call into it from here on
+    void engineGone(const EngineDef* d)
+    {
+        if (def == d && engine)
+        {
+            cutAll();
+            engine = nullptr;
+        }
+    }
+
     void connect(MidiSource& midiSource) override
     {
         callback = std::make_shared<MidiSource::MidiEventCallback>(
@@ -590,6 +600,16 @@ class OpenSynth final
         meter.addBlock(cycles);
         governor.evaluate(meter);
     }
+    void engineGone(const EngineDef* d)
+    {
+        for (const auto& i : instruments)
+        {
+            if (i)
+            {
+                static_cast<OpenInstrument&>(*i).engineGone(d);
+            }
+        }
+    }
     void projectLoaded()
     {
         for (const auto& i : instruments)
@@ -764,6 +784,13 @@ void open::setOffline(bool offline)
     if (gActive)
     {
         gActive->setOffline(offline);
+    }
+}
+void open::engineGone(const EngineDef* def)
+{
+    if (gActive)
+    {
+        gActive->engineGone(def);
     }
 }
 void open::resetOnProjectLoad()

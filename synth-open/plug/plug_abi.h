@@ -104,7 +104,8 @@ typedef struct
     uint16_t num_params;     // plug_desc.num_params
     uint8_t role;            // PLUG_ROLE_*
     uint8_t reserved0;
-    uint32_t reserved[6];    // 0
+    uint32_t reserved[6];    // 0, except [0] the file offset of a logo trailer (synth engines, plug_logo.h) and [1] to [4] the
+                             // numbers of a synth engine: stored, patch_engine, type_id, PLUG_SYNTH_MANIFEST (below)
 } plug_manifest;
 
 typedef struct
@@ -199,6 +200,10 @@ enum
 {
     PLUG_SYNTH_SLOT_FX = 1u << 0,   // slot_post is the engine's slot effect (JU6's chorus): the host renders the slot on a private bus
 };
+// plug_manifest.reserved[4] of a synth engine whose numbers (plug_ext_synth stored, patch_engine, type_id) are in reserved[1..3]
+// (build_plug.py --synth). The host lists such an engine before it is installed and refuses to attach it when the extension
+// says otherwise. "SYN1"
+#define PLUG_SYNTH_MANIFEST 0x314E5953u
 // sizeof SynthVoice, SynthParams, SynthNote and SynthSlotScratch of the OpenTracker 3.x interface the plugin was built with
 #define PLUG_SYNTH_LAYOUT(voice, params, note, scratch) \
     ((uint32_t)(voice) | ((uint32_t)(params) << 8) | ((uint32_t)(note) << 20) | ((uint32_t)((scratch) >> 3) << 26))

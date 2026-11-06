@@ -181,6 +181,7 @@ void TrackerImpl::update()
     mtInterface.update();
 #ifdef FEATURE_PLUG_HOST
     plug::tick();
+    synthModelTick(); // SynthEditor.cpp: the model list rested on a plugin engine that is not installed
 #endif
     engine.updateSdStream();
     sequencer.update();

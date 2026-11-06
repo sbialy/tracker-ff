@@ -127,6 +127,14 @@ int main() {
   const bool dupStored = open::engineListAdd(&dupDef, 0, 0x90);    // ACD's stored number
   dupDef.typeId = 0x91;
   const bool dupPatch = open::engineListAdd(&dupDef, 30, 0x81);    // JU6's .patch id
+  // A library engine that is not installed yet (round E): listed by its manifest numbers (PHZ's, stored 8, 0x82) with a placeholder
+  // definition, no parameters and no engine, attached later
+  static open::EngineDef libDef = {};
+  libDef.name = "PHZ";
+  libDef.typeId = 0x82;
+  libDef.volumeParam = -1;
+  libDef.maxVoices = open::kMaxVoicesPerInstrument;
+  const bool libOk = open::engineListAdd(&libDef, 8, 0x82);
 #endif
   auto synth = Synth::createSynth([](size_t){return nullptr;});
   auto store = synth->createPatchStore(Synth::FileSystemId::kPatches, true);
@@ -394,12 +402,12 @@ int main() {
               ws->loadPatch("0", *hp, true) && ws->savePatch("0", *hp) && mw->files["0.patch"] == before && !mw->files.count("0.patch.tmp"),
             "a Hand-Type part is the placeholder: no parameters, its Workspace file loads as done and is never written over");
 #ifdef SMOKE_PLUGIN_ENGINE
-      const int nList = nKinds + 1;
+      const int nList = nKinds + 2;   // the attached plugin engine and the library engine that is not installed
 #else
       const int nList = nKinds;
 #endif
       check(open::engineCount() == nList && open::engineUiForStored(open::engineAt(nList - 1).stored) == nList - 1 &&
-              open::engineAt(0).builtin == 0, "the engine list is the built-in set (and the plugin engine), by stored number");
+              open::engineAt(0).builtin == 0, "the engine list is the built-in set (and the two plugin engines), by stored number");
     }
 #endif
 #ifndef SYNTH_ENGINE_BTYPE
@@ -1719,6 +1727,37 @@ int main() {
     check(pj->getMetadata().instrumentTypeId == 0x81 && int(pj->getMetadata().params.size()) == plugDef.paramCount && pd.engine == 0x81 &&
             pn && open::decodePatch(pb, pn, back) && open::typeForEngineId(back.engine) == 0x81 && open::engineIdForType(0x81) == 0x81,
           "plugin engine: its patch carries engine 0x81 and reads back as the plugin's type");
+
+    // round E: a listed engine that is not installed, then attached; a plugin engine detached while a part plays it
+    const int lui = open::engineUiForStored(8);
+    check(libOk && lui >= 0 && open::engineAt(lui).def == &libDef && !open::engineOf(&libDef) && !open::missingDef(8),
+          "library engine: listed before it is installed, no engine yet");
+    auto pl = pst->createPatch(0x82);
+    check(pl && pl->getMetadata().params.empty() && !open::patchStale(*pl), "library engine not attached: a patch without parameters, not stale");
+    libDef = open::kAcdDef;   // what plug_synth.cpp attach() fills in
+    libDef.name = "PHZ";
+    libDef.typeId = 0x82;
+    libDef.inst = open::kAcdDef.engine();
+    check(open::patchStale(*pl) && !open::patchStale(*pst->createPatch(0x82)),
+          "attached: the patch made without it is stale (Synth::setInstrumentType makes it again), a new one is not");
+    std::shared_ptr<Patch> pg(pst->createPatch(0x81));
+    Src srcG; auto iG = sp->createInstrument(0); iG->assignPatch(pg); iG->connect(srcG); iG->setVoiceCount(1); iG->setMidiChannel(0);
+    std::shared_ptr<Instrument> aG[1] = { iG };
+    sp->setup(std::span<std::shared_ptr<Instrument>>(aG,1), {}, nullptr, []{ return tiny::optional<float>(120.0f); });
+    float GL[kAudioBufferSize], GR[kAudioBufferSize];
+    std::array<AudioBufferRef, 2> gaux = { AudioBufferRef(GL), AudioBufferRef(GR) };
+    auto blkG = [&]() { sp->renderAudioBuffer({AudioBufferRef(GL),AudioBufferRef(GR)}, std::span<AudioBufferRef>(gaux), 0);
+                        float m = 0; for (float v : GL) m = std::max(m, std::fabs(v)); return m; };
+    srcG.send(MidiEvent::Type::kNoteOn, 0, 57, 100);
+    float pkG = 0; for (int b = 0; b < 20; b++) pkG = std::max(pkG, blkG());
+    ot::audio::ISynthEngine* const was = plugDef.inst;
+    plugDef.inst = nullptr;     // plug_synth.cpp detach(): the adapter goes first ...
+    open::engineGone(&plugDef); // ... and the parts on it let go
+    float afterG = 0; for (int b = 0; b < 4; b++) afterG = std::max(afterG, blkG());
+    srcG.send(MidiEvent::Type::kNoteOn, 0, 60, 100);
+    for (int b = 0; b < 4; b++) afterG = std::max(afterG, blkG());
+    check(pkG > 1e-3f && afterG == 0.0f && open::partIdle(0), "engineGone: a part playing the engine is cut and stays silent, even for new notes");
+    plugDef.inst = was;
   }
 #endif
   return bad ? 1 : 0;

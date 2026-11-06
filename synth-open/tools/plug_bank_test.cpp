@@ -1,24 +1,27 @@
-// Host test of the synth engine bank (synth-open/plug_bank.h): the code the firmware runs at boot to install /Plugins/Synth
-// into the FlexNVM data flash, against a simulated flash that can lose power after any command.
+// Host test of the synth engine bank (synth-open/plug_bank.h): the FlexNVM cache of /Plugins/Synth that the firmware fills on
+// demand (plug_synth.cpp synthEnsure), against a simulated flash that can lose power after any command.
 //
 //   c++ -std=c++20 -O1 -Wall -I synth-open synth-open/tools/plug_bank_test.cpp -o /tmp/plug_bank_test && /tmp/plug_bank_test
 //
 // Checked:
-//   - installed.txt round trip, damaged lines dropped
-//   - a fresh install of JU6 and FM4 sized engines, then a reboot that issues no flash command and no index write
-//   - packing: engines share sectors (no whole sector per engine)
-//   - the 12 synth plugins at their build_plugs.sh sizes: together 139,768 B, more than the bank, so the one that comes last
-//     is skipped (never half written); the 11 without 8-Type fit, and all 12 fit the SRAM pool
-//   - the shipped JU6, FM4 and B-Type plugins fit the bank and the SRAM pool together, bytes left printed
-//   - replacing the engine in the middle (new version) erases the shared sectors and keeps the neighbours intact, the ones
-//     behind it move and are rewritten, a new engine goes after the installed ones (nothing else moves)
-//   - removing engines and adding a bigger one lays the bank out again, every engine stays valid
-//   - power cut after EVERY flash command of an install and of a replace: the next boot never keeps an entry whose bytes
-//     differ from its image (it is dropped), and installs everything again; the bank then equals an uncut run
+//   - installed.txt round trip with the erase counters, an index without them (hosts before round E), damaged lines dropped
+//   - boot (bankOpen): no index and no plugin writes nothing, a damaged entry and the entry of a .plg that left the card or
+//     changed are dropped, never a flash command
+//   - install on demand: every engine starts on a sector boundary and shares no sector, an engine already there costs nothing
+//   - the 12 shipped plugins at their build_plugs.sh sizes: how many fit at once (30 sectors), LRU eviction when the bank is full,
+//     the engines the parts use (pinned) are never evicted and their bytes never change while the others come and go
+//   - an engine that comes back to the sectors it left finds its bytes there: only what another engine overwrote is written
+//   - a project whose engines do not fit together: the one that does not fit fails (kBankNoRoom), nothing else changes
+//   - the rw pool is a limit too: an engine whose rw does not fit evicts by rw
+//   - power cut after EVERY flash command of an install that evicts and erases: the next boot never keeps an inexact entry, the
+//     pinned engines are intact, the install then completes; a journal that cannot be written issues no command
+//   - wear: the "c" counters equal the erases the flash really did (never fewer after a cut), installs spread over the free
+//     sectors, worst case erases per pick for a user cycling through more engines than the bank holds (printed)
 //   - insert 2's sectors (0x1E000..) are never erased or programmed
 #include "plug_bank.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <map>
 #include <string>
@@ -50,6 +53,7 @@ struct Flash
     int cutAt = -1;   // the command with this number (0 based) is cut half way, every later one fails
     bool dead = false;
     uint32_t rng = 1;
+    uint32_t erased[32] = {};   // real erases per sector (the wear the counters must follow)
     Flash() { memset(m, 0xFF, sizeof(m)); }
     const uint8_t* at(uint32_t off) { return m + off; }
     uint8_t noise()
@@ -76,10 +80,14 @@ struct Flash
         if (!begin())
         {
             if (cut)
+            {
                 for (uint32_t i = 0; i < kBankSector / 2; i++) m[s + i] = 0xFF;   // half erased
+                erased[s / kBankSector]++;
+            }
             return false;
         }
         memset(m + s, 0xFF, kBankSector);
+        erased[s / kBankSector]++;
         return true;
     }
     bool program(uint32_t off, const uint8_t* d)
@@ -100,7 +108,7 @@ struct Flash
 };
 
 // An engine on the card: its bytes depend on where it is placed (the loader rebases text for the flash address, rw for the pool
-// address), so a moved engine really must be rewritten.
+// address), so an engine at another place really is other bytes.
 struct Plg
 {
     uint32_t uid, version, fileCrc, len, text, rwLen;
@@ -109,7 +117,7 @@ struct Plg
 
 std::vector<uint8_t> imageOf(const Plg& p, uint32_t off, uint32_t rwRun, uint32_t padLen)
 {
-    std::vector<uint8_t> v(padLen, 0xFF);
+    std::vector<uint8_t> v(padLen, 0);
     uint32_t h = p.uid ^ p.fileCrc;
     for (uint32_t i = 0; i < p.len; i++)
     {
@@ -129,6 +137,7 @@ struct Io
     std::string index;
     bool haveIndex = false;
     int indexWrites = 0;
+    bool failWrite = false;
     Flash* f = nullptr;
     std::map<std::string, Plg> card;
     std::vector<uint8_t> stage;
@@ -141,7 +150,7 @@ struct Io
     }
     bool writeIndex(const char* t, int n)
     {
-        if (f->dead) return false;   // the power is gone: the old file stays
+        if (failWrite || (f && f->dead)) return false;   // the power is gone: the old file stays
         index.assign(t, size_t(n));
         haveIndex = true;
         indexWrites++;
@@ -156,33 +165,51 @@ struct Io
     }
 };
 
-std::vector<BankWant> wants(const Io& io, const std::vector<std::string>& order)
+BankWant want(const Plg& p)
 {
-    std::vector<BankWant> w;
-    for (const auto& name : order)
-    {
-        const Plg& p = io.card.at(name);
-        BankWant x = {};
-        x.uid = p.uid;
-        x.version = p.version;
-        x.fileCrc = p.fileCrc;
-        x.len = p.len;
-        x.text = p.text;
-        x.rwLen = p.rwLen;
-        x.entry = 0;
-        snprintf(x.file, sizeof(x.file), "%s", p.file.c_str());
-        w.push_back(x);
-    }
-    return w;
+    BankWant x = {};
+    x.uid = p.uid;
+    x.version = p.version;
+    x.fileCrc = p.fileCrc;
+    x.len = p.len;
+    x.text = p.text;
+    x.rwLen = p.rwLen;
+    snprintf(x.file, sizeof(x.file), "%s", p.file.c_str());
+    return x;
 }
 
-BankStatus boot(Flash& f, Io& io, const std::vector<std::string>& order, Bank& out)
+char g_text[4096];
+uint8_t g_sec[kBankSector];
+
+BankOpenStatus open(Flash& f, Io& io, Bank& b)
 {
     io.f = &f;
-    static uint8_t sec[kBankSector];
-    static char text[4096];
-    auto w = wants(io, order);
-    return bankSync(f, io, w.data(), int(w.size()), kPool, kPoolBytes, out, sec, text, int(sizeof(text)));
+    std::vector<BankWant> w;
+    for (const auto& kv : io.card) w.push_back(want(kv.second));
+    return bankOpen(f, io, w.data(), int(w.size()), kPool, kPoolBytes, b, g_text, int(sizeof(g_text)));
+}
+
+// The firmware's ranking: engines on a part never go (-1), else the least recently used first
+struct Cache
+{
+    std::map<uint32_t, uint32_t> lastUse;   // uid -> tick
+    std::vector<uint32_t> pinned;            // uids the parts use
+    uint32_t tick = 0;
+    std::vector<uint32_t> evicted;
+};
+
+BankInstallStatus install(Flash& f, Io& io, Bank& b, const std::string& file, Cache& c, uint32_t pool = kPoolBytes)
+{
+    io.f = &f;
+    const Plg& p = io.card.at(file);
+    c.lastUse[p.uid] = ++c.tick;
+    auto rank = [&](const BankEntry& e) -> long {
+        for (uint32_t u : c.pinned)
+            if (u == e.uid) return -1;
+        return long(c.lastUse.count(e.uid) ? c.lastUse[e.uid] : 0);
+    };
+    auto onEvict = [&](const BankEntry& e) { c.evicted.push_back(e.uid); };
+    return bankInstall(f, io, want(p), rank, onEvict, kPool, pool, b, g_sec, g_text, int(sizeof(g_text)));
 }
 
 // Every entry of the bank holds exactly the image of its file for its place (what "never run a half-written entry" needs)
@@ -191,9 +218,25 @@ bool exact(Flash& f, const Io& io, const Bank& b)
     for (int i = 0; i < b.n; i++)
     {
         const BankEntry& e = b.e[i];
-        const Plg& p = io.card.at(e.file);
-        const auto img = imageOf(p, e.off, e.rwRun, e.len);
+        auto it = io.card.find(e.file);
+        if (it == io.card.end()) return false;
+        const auto img = imageOf(it->second, e.off, e.rwRun, e.len);
         if (e.state != 'o' || memcmp(f.at(e.off), img.data(), e.len) != 0) return false;
+    }
+    return true;
+}
+
+bool layoutOk(const Bank& b, uint32_t pool = kPoolBytes)
+{
+    for (int i = 0; i < b.n; i++)
+    {
+        const BankEntry& x = b.e[i];
+        if (x.off % kBankSector || x.off + x.len > kBankBytes || x.rwRun < kPool || x.rwRun + x.rwLen > kPool + pool) return false;
+        for (int k = 0; k < b.n; k++)
+            if (k != i && (overlaps(uint32_t(sectorFirst(x)), uint32_t(sectorEnd(x) - sectorFirst(x)), uint32_t(sectorFirst(b.e[k])),
+                                    uint32_t(sectorEnd(b.e[k]) - sectorFirst(b.e[k]))) ||
+                           overlaps(x.rwRun, x.rwLen, b.e[k].rwRun, b.e[k].rwLen)))
+                return false;
     }
     return true;
 }
@@ -205,17 +248,43 @@ bool insert2Blank(const Flash& f)
     return true;
 }
 
+int find(const Bank& b, uint32_t uid)
+{
+    for (int i = 0; i < b.n; i++)
+        if (b.e[i].uid == uid) return i;
+    return -1;
+}
+
 Plg plg(const char* file, uint32_t uid, uint32_t len, uint32_t text, uint32_t rwLen, uint32_t crc = 0)
 {
     return Plg{uid, 0x10000, crc ? crc : uid * 7u + len, (len + 3u) & ~3u, text, rwLen, file};
 }
 
-bool sharesSector(const Bank& b)
+// The 12 shipped synth plugins at their build_plugs.sh sizes (image, text, rw + bss)
+struct P
 {
-    for (int i = 0; i < b.n; i++)
-        for (int k = 0; k < b.n; k++)
-            if (i != k && (b.e[i].off + b.e[i].len - 1) / kBankSector == b.e[k].off / kBankSector) return true;
-    return false;
+    const char* f;
+    uint32_t uid, len, text, rw;
+};
+const P kAll[12] = {
+    {"ju6.plg", 0x73ac7ee0, 6956, 6952, 1648},    {"fm4.plg", 0xea3d5a7a, 8172, 8168, 112},
+    {"btype.plg", 0x5e9b11f7, 11296, 11288, 120}, {"phz.plg", 0x6670b917, 14568, 14560, 120},
+    {"dtype.plg", 0x6754cf41, 10788, 10784, 112}, {"cstype.plg", 0xf73018f5, 11804, 11800, 112},
+    {"atype.plg", 0x24084bf2, 11060, 11056, 112}, {"ttype.plg", 0x318f12b1, 15028, 15024, 160},
+    {"hand.plg", 0xf00e588e, 11224, 11216, 120},  {"arc.plg", 0xc66464e9, 14664, 14656, 120},
+    {"pluck.plg", 0xb4a152b0, 6420, 6416, 120},   {"eight.plg", 0x9d7c57e2, 17760, 17752, 120},
+};
+
+Io allTwelve()
+{
+    Io io;
+    for (const P& p : kAll) io.card[p.f] = plg(p.f, p.uid, p.len, p.text, p.rw);
+    return io;
+}
+
+uint32_t sectorsOf(uint32_t len)
+{
+    return (align8(len) + kBankSector - 1) / kBankSector;
 }
 }   // namespace
 
@@ -226,205 +295,327 @@ int main()
         Bank b = {};
         b.n = 2;
         b.e[0] = {0x73ac7ee0, 0x10000, 0x1234, 0, 6952, 6944, 0x20027000, 1648, 0, 0xdeadbeef, 'o', "ju6.plg"};
-        b.e[1] = {0xea3d5a7a, 0x10000, 0x5678, 6952, 8168, 8160, 0x20027670, 112, 0, 0xfeedf00d, 'w', "fm4.plg"};
-        char t[1024];
+        b.e[1] = {0xea3d5a7a, 0x10000, 0x5678, 8192, 8168, 8160, 0x20027670, 112, 0, 0xfeedf00d, 'w', "fm4.plg"};
+        for (int k = 0; k < kBankSectors; k++) b.wear[k] = uint32_t(k * 3 + 1);
+        char t[2048];
         const int n = bankWrite(b, t, sizeof(t));
         Bank r;
         bankRead(t, n, r);
-        check(n > 0 && r.n == 2 && memcmp(&r.e[0], &b.e[0], sizeof(BankEntry)) == 0 && memcmp(&r.e[1], &b.e[1], sizeof(BankEntry)) == 0,
-              "installed.txt round trip");
+        check(n > 0 && r.n == 2 && memcmp(&r.e[0], &b.e[0], sizeof(BankEntry)) == 0 && memcmp(&r.e[1], &b.e[1], sizeof(BankEntry)) == 0 &&
+                memcmp(r.wear, b.wear, sizeof(b.wear)) == 0,
+              "installed.txt round trip, erase counters included");
         std::string s(t, size_t(n));
         s.insert(s.find("\r\no ") + 2, "o 1 2\r\n");   // a cut line before the real one
         bankRead(s.data(), int(s.size()), r);
         check(r.n == 2, "a damaged line is dropped, the others stay");
+        std::string old = s;
+        const size_t c0 = old.find("\r\nc ") + 2;
+        old.erase(c0, old.find("\r\n", c0) + 2 - c0);
+        bankRead(old.data(), int(old.size()), r);
+        uint32_t sum = 0;
+        for (uint32_t w : r.wear) sum += w;
+        check(r.n == 2 && sum == 0, "an index of a host before round E (no c line): entries kept, counters start at 0");
         bankRead("garbage", 7, r);
         check(r.n == 0, "no header: empty bank");
         check(bankWrite(b, t, 40) < 0, "a full buffer is refused");
     }
 
-    Io card;
-    card.card["ju6.plg"] = plg("ju6.plg", 0x73ac7ee0, 6948, 6944, 1648);
-    card.card["fm4.plg"] = plg("fm4.plg", 0xea3d5a7a, 8164, 8160, 112);
-    const std::vector<std::string> two = {"ju6.plg", "fm4.plg"};
-
-    // ---- fresh install, then a quiet reboot
+    // ---- boot: no plugin, no index: nothing written. Stale and damaged entries dropped without a flash command.
     {
         Flash f;
-        Io io = card;
+        Io none;
         Bank b;
-        BankStatus st = boot(f, io, two, b);
-        check(st.installed == 2 && b.n == 2 && exact(f, io, b), "fresh install of JU6 and FM4");
-        check(sharesSector(b), "JU6 and FM4 share a sector (packed, not one sector each)");
-        check(b.e[1].off == ((b.e[0].len + 7u) & ~7u), "FM4 right after JU6");
-        const int writes = io.indexWrites;
-        st = boot(f, io, two, b);
-        check(st.commands == 0 && st.installed == 0 && io.indexWrites == writes && b.n == 2, "reboot: no flash command, no index write");
-        Flash g;
-        Io none = card;
-        none.card.clear();
-        st = boot(g, none, {}, b);
-        check(none.indexWrites == 0 && !none.haveIndex && b.n == 0, "no synth plugin, no index: nothing written");
-        check(insert2Blank(f), "insert 2 sectors untouched");
+        BankOpenStatus st = open(f, none, b);
+        check(none.indexWrites == 0 && !none.haveIndex && b.n == 0 && st.dropped == 0 && f.commands == 0,
+              "no synth plugin, no index: nothing written");
+        Io io = allTwelve();
+        Cache c;
+        open(f, io, b);
+        check(install(f, io, b, "ju6.plg", c).err == 0 && install(f, io, b, "fm4.plg", c).err == 0 &&
+                install(f, io, b, "phz.plg", c).err == 0 && b.n == 3 && exact(f, io, b),
+              "three engines installed on demand");
+        const int cmd = f.commands, wr = io.indexWrites;
+        open(f, io, b);
+        check(b.n == 3 && f.commands == cmd && io.indexWrites == wr, "reboot: the cache stays, no flash command, no index write");
+        io.card["fm4.plg"] = plg("fm4.plg", 0xea3d5a7a, 8172, 8168, 112, 0x4242);   // a new version on the card
+        io.card.erase("phz.plg");                                                    // removed from the card
+        BankOpenStatus o = open(f, io, b);
+        check(o.stale == 2 && b.n == 1 && b.e[0].uid == 0x73ac7ee0 && f.commands == cmd && io.indexWrites == wr + 1,
+              "reboot after the card changed: the old FM4 and the gone PHZ are dropped (index only), JU6 stays");
+        f.m[b.e[0].off + 100] ^= 0x10;   // a damaged JU6
+        o = open(f, io, b);
+        check(o.dropped == 1 && b.n == 0, "a damaged entry is dropped at boot");
+        check(insert2Blank(f), "boot: insert 2 sectors untouched");
     }
 
-    // ---- the shipped synth plugins at their build_plugs.sh sizes (image, text, rw + bss): JU6, FM4 and B-Type together
+    // ---- install on demand: sector aligned, nothing shared, an installed engine costs nothing
     {
-        Io io;
-        io.card["ju6.plg"] = plg("ju6.plg", 0x73ac7ee0, 6948, 6944, 1648);
-        io.card["fm4.plg"] = plg("fm4.plg", 0xea3d5a7a, 8172, 8168, 112);
-        io.card["btype.plg"] = plg("btype.plg", 0x5e9b11f7, 11296, 11288, 120);
-        const std::vector<std::string> three = {"ju6.plg", "fm4.plg", "btype.plg"};
         Flash f;
+        Io io = allTwelve();
         Bank b;
-        BankStatus st = boot(f, io, three, b);
-        check(st.installed == 3 && st.skipped == 0 && b.n == 3 && exact(f, io, b), "JU6, FM4 and B-Type all install");
-        check(insert2Blank(f), "JU6, FM4 and B-Type: insert 2 sectors untouched");
-        uint32_t end = 0, rw = 0;
-        for (int i = 0; i < b.n; i++)
-        {
-            end = b.e[i].off + b.e[i].len > end ? b.e[i].off + b.e[i].len : end;
-            rw = b.e[i].rwRun + b.e[i].rwLen - uint32_t(kPool) > rw ? b.e[i].rwRun + b.e[i].rwLen - uint32_t(kPool) : rw;
-        }
-        check(end <= kBankBytes && rw <= kPoolBytes, "JU6, FM4 and B-Type inside the bank and the pool");
-        printf("info  JU6 + FM4 + B-Type: bank %u of %u B used, %u B left, SRAM pool %u of %u B used, %u B left\n", end, kBankBytes,
-               kBankBytes - end, rw, kPoolBytes, kPoolBytes - rw);
+        Cache c;
+        open(f, io, b);
+        BankInstallStatus a = install(f, io, b, "ju6.plg", c);
+        BankInstallStatus m = install(f, io, b, "fm4.plg", c);
+        check(a.err == 0 && m.err == 0 && b.n == 2 && exact(f, io, b) && layoutOk(b), "JU6 and FM4: exact, own sectors, own rw");
+        check(a.erases == 0 && m.erases == 0, "a blank bank: programs only, no erase");
+        const int cmd = f.commands, wr = io.indexWrites;
+        BankInstallStatus again = install(f, io, b, "fm4.plg", c);
+        check(again.err == 0 && again.at == find(b, 0xea3d5a7a) && f.commands == cmd && io.indexWrites == wr,
+              "FM4 again: already there, no command, no index write");
+        printf("info  JU6 install: %d commands (%d phrases), FM4: %d commands\n", a.commands, int(align8(6956) / 8), m.commands);
     }
 
-    // ---- the 12 synth plugins at their build_plugs.sh sizes (image, text, rw + bss)
+    // ---- the 12 shipped plugins: how many fit, LRU, pinned engines untouched
     {
-        struct P { const char* f; uint32_t uid, len, text, rw; };
-        const P kAll[12] = {
-            {"ju6.plg", 0x73ac7ee0, 6956, 6952, 1648},    {"fm4.plg", 0xea3d5a7a, 8172, 8168, 112},
-            {"btype.plg", 0x5e9b11f7, 11296, 11288, 120}, {"phz.plg", 0x6670b917, 14568, 14560, 120},
-            {"dtype.plg", 0x6754cf41, 10788, 10784, 112}, {"cstype.plg", 0xf73018f5, 11804, 11800, 112},
-            {"atype.plg", 0x24084bf2, 11060, 11056, 112}, {"ttype.plg", 0x318f12b1, 15028, 15024, 160},
-            {"hand.plg", 0xf00e588e, 11224, 11216, 120},  {"arc.plg", 0xc66464e9, 14664, 14656, 120},
-            {"pluck.plg", 0xb4a152b0, 6420, 6416, 120},   {"eight.plg", 0x9d7c57e2, 17760, 17752, 120},
-        };
-        uint32_t total = 0, rwTotal = 0;
-        Io io;
-        std::vector<std::string> all, eleven;
+        uint32_t total = 0, sectors = 0, rwTotal = 0;
         for (const P& p : kAll)
         {
-            io.card[p.f] = plg(p.f, p.uid, p.len, p.text, p.rw);
-            all.push_back(p.f);
-            if (strcmp(p.f, "eight.plg")) eleven.push_back(p.f);
-            total += (p.len + 7) & ~7u;
-            rwTotal += (p.rw + 7) & ~7u;
+            total += align8(p.len);
+            sectors += sectorsOf(p.len);
+            rwTotal += align8(p.rw);
         }
-        printf("info  12 synth plugins: bank %u of %u B (%d B over), SRAM pool %u of %u B\n", total, kBankBytes,
-               int(total) - int(kBankBytes), rwTotal, kPoolBytes);
-        check(total > kBankBytes && rwTotal <= kPoolBytes, "all 12: more than the bank, inside the SRAM pool");
+        printf("info  12 synth plugins: %u B packed, %u whole sectors of %d, rw %u of %u B\n", total, sectors, kBankSectors, rwTotal,
+               kPoolBytes);
+        check(sectors > uint32_t(kBankSectors) && rwTotal <= kPoolBytes, "all 12: more sectors than the bank, inside the rw pool");
+        uint32_t big3 = 0, big3rw = 0;
         {
-            Flash f;
-            Bank b;
-            BankStatus st = boot(f, io, all, b);
-            check(st.installed == 11 && st.skipped == 1 && b.n == 11 && exact(f, io, b) && insert2Blank(f),
-                  "all 12 on the card: 11 install, the last one (8-Type) is skipped, insert 2 untouched");
+            std::vector<uint32_t> s, r;
+            for (const P& p : kAll)
+            {
+                s.push_back(sectorsOf(p.len));
+                r.push_back(align8(p.rw));
+            }
+            std::sort(s.rbegin(), s.rend());
+            std::sort(r.rbegin(), r.rend());
+            big3 = s[0] + s[1] + s[2] + s[3];
+            big3rw = r[0] + r[1] + r[2];
+            printf("info  worst 3 parts + the engine being picked: %u sectors of %d; worst 3 at once rw %u B, + the one picked %u B\n",
+                   big3, kBankSectors, big3rw, big3rw + r[3]);
         }
-        {
-            Flash f;
-            Bank b;
-            BankStatus st = boot(f, io, eleven, b);
-            uint32_t end = 0;
-            for (int i = 0; i < b.n; i++) end = b.e[i].off + b.e[i].len > end ? b.e[i].off + b.e[i].len : end;
-            check(st.installed == 11 && st.skipped == 0 && exact(f, io, b), "the 11 without 8-Type all install");
-            printf("info  11 without 8-Type: bank %u of %u B, %u B left\n", end, kBankBytes, kBankBytes - end);
-        }
-    }
+        check(big3 <= uint32_t(kBankSectors), "the 3 biggest engines on the parts plus the 4th biggest fit the bank together");
 
-    // ---- a new version of the engine in the middle: shared sectors erased, neighbours kept
-    {
-        Io io = card;
-        io.card["mid.plg"] = plg("mid.plg", 0x5555, 5000, 4992, 64);
-        const std::vector<std::string> three = {"ju6.plg", "mid.plg", "fm4.plg"};
         Flash f;
+        Io io = allTwelve();
         Bank b;
-        boot(f, io, three, b);
-        check(b.n == 3 && exact(f, io, b), "three packed");
-        io.card["mid.plg"] = plg("mid.plg", 0x5555, 4000, 3992, 64, 0x9999);   // smaller: fits its old gap
-        BankStatus st = boot(f, io, three, b);
-        check(st.installed == 2 && b.n == 3 && exact(f, io, b) && b.e[1].uid == 0xea3d5a7a && b.e[1].off == b.e[0].len,
-              "a new version goes last: FM4 moves up into its old place behind JU6 (shared sectors erased), all exact");
-        io.card["mid.plg"] = plg("mid.plg", 0x5555, 9000, 8992, 64, 0x7777);   // bigger: goes after FM4
-        st = boot(f, io, three, b);
-        check(st.installed == 1 && b.n == 3 && exact(f, io, b), "a new version of the last one: only it is rewritten, all exact");
-        io.card["new.plg"] = plg("new.plg", 0x6666, 3000, 2992, 64);
-        const std::vector<std::string> four = {"new.plg", "ju6.plg", "mid.plg", "fm4.plg"};   // listed first on the card
-        st = boot(f, io, four, b);
-        check(st.installed == 1 && st.commands > 0 && b.n == 4 && exact(f, io, b) && b.e[3].uid == 0x6666,
-              "a new engine goes after the installed ones whatever the listing order: nothing else moves");
+        Cache c;
+        open(f, io, b);
+        int failed = 0, firstEvict = -1;
+        for (int i = 0; i < 12; i++)
+        {
+            BankInstallStatus st = install(f, io, b, kAll[i].f, c);
+            failed += st.err != 0;
+            if (st.evicted && firstEvict < 0) firstEvict = i;
+        }
+        check(failed == 0 && exact(f, io, b) && layoutOk(b) && insert2Blank(f), "all 12 picked in turn: every install works");
+        check(firstEvict > 0 && !c.evicted.empty() && c.evicted[0] == kAll[0].uid, "the bank fills, then the least recently used goes first (JU6)");
+        printf("info  12 in card order: %d resident before the first eviction, %d resident at the end, %zu evicted\n", firstEvict, b.n,
+               c.evicted.size());
+
+        // three parts pin PHZ, T-Type and 8-Type (three of the biggest), the others are picked again and again
+        c.pinned = {0x6670b917, 0x318f12b1, 0x9d7c57e2};
+        for (uint32_t u : c.pinned)
+            for (const P& p : kAll)
+                if (p.uid == u) install(f, io, b, p.f, c);
+        std::vector<std::vector<uint8_t>> keep;
+        std::vector<uint32_t> keepOff;
+        for (uint32_t u : c.pinned)
+        {
+            const int i = find(b, u);
+            keep.emplace_back(f.at(b.e[i].off), f.at(b.e[i].off) + b.e[i].len);
+            keepOff.push_back(b.e[i].off);
+        }
+        c.evicted.clear();
+        int bad = 0;
+        for (int round = 0; round < 40; round++)
+        {
+            const P& p = kAll[(round * 5) % 12];
+            if (install(f, io, b, p.f, c).err) bad++;
+            if (!exact(f, io, b) || !layoutOk(b)) bad++;
+        }
+        bool pinnedEvicted = false, pinnedChanged = false;
+        for (uint32_t u : c.evicted)
+            for (uint32_t q : c.pinned) pinnedEvicted = pinnedEvicted || u == q;
+        for (size_t k = 0; k < c.pinned.size(); k++)
+        {
+            const int i = find(b, c.pinned[k]);
+            pinnedChanged = pinnedChanged || i < 0 || b.e[i].off != keepOff[k] || memcmp(f.at(keepOff[k]), keep[k].data(), keep[k].size()) != 0;
+        }
+        check(bad == 0 && !c.evicted.empty(), "40 picks with three engines pinned: all installs work, evictions happen");
+        check(!pinnedEvicted && !pinnedChanged, "the pinned engines are never evicted, their bytes never change (never erased)");
+        check(insert2Blank(f), "12 plugins: insert 2 sectors untouched");
     }
 
-    // ---- remove two of eight and add a bigger one: the bank is laid out again, everything exact
+    // ---- an engine that comes back to the sectors it left
     {
+        Flash f;
         Io io;
-        std::vector<std::string> order;
-        for (int i = 0; i < 8; i++)
-        {
-            const std::string n = "f" + std::to_string(i) + ".plg";
-            io.card[n] = plg(n.c_str(), 0x2000 + i, 14000, 13992, 64);
-            order.push_back(n);
-        }
-        Flash f;
+        io.card["a.plg"] = plg("a.plg", 0xA, 40000, 39992, 64);
+        io.card["b.plg"] = plg("b.plg", 0xB, 40000, 39992, 64);
+        io.card["c.plg"] = plg("c.plg", 0xC, 40000, 39992, 64);
+        io.card["d.plg"] = plg("d.plg", 0xD, 4000, 3992, 64);
         Bank b;
-        boot(f, io, order, b);
-        check(b.n == 8 && exact(f, io, b), "eight 14 KB engines");
-        order.erase(order.begin() + 1);   // f1 and f5 removed: two 14 KB gaps
-        order.erase(order.begin() + 4);
-        io.card["big.plg"] = plg("big.plg", 0x3000, 20000, 19992, 64);
-        order.push_back("big.plg");
-        BankStatus st = boot(f, io, order, b);
-        check(b.n == 7 && st.skipped == 0 && exact(f, io, b) && insert2Blank(f), "20 KB engine after a relayout, all exact");
+        Cache c;
+        open(f, io, b);
+        install(f, io, b, "a.plg", c);
+        install(f, io, b, "b.plg", c);
+        install(f, io, b, "c.plg", c);   // 3 x 10 sectors: the bank is full
+        const uint32_t aOff = b.e[find(b, 0xA)].off;
+        BankInstallStatus d = install(f, io, b, "d.plg", c);   // evicts A (least recent)
+        check(d.err == 0 && d.evicted == 1 && find(b, 0xA) < 0, "a small engine evicts the least recently used big one");
+        check(b.e[find(b, 0xD)].off == aOff && d.erases == 1, "it goes into A's sectors (erases only the one sector it needs)");
+        c.pinned = {0xB, 0xC};
+        BankInstallStatus back = install(f, io, b, "a.plg", c);   // D must go, A's other 9 sectors still hold A
+        check(back.err == 0 && find(b, 0xD) < 0 && b.e[find(b, 0xA)].off == aOff && exact(f, io, b),
+              "A comes back to its own sectors when D goes");
+        printf("info  A back in its sectors: %d commands, %d erase (only the sector D used), a full install is %d commands\n",
+               back.commands, back.erases, int(align8(40000) / 8));
+        check(back.erases == 1 && back.commands <= 1 + int(kBankSector / 8), "only the sector D took is erased and programmed again");
     }
 
-    // ---- power cut after every command: install of two, replace of the middle one of three by a bigger one (written to blank
-    // space) and by a smaller one (FM4 moves into the old place: the sectors it shares with JU6 are erased, JU6's bytes put back)
-    const char* const kScen[3] = {"install", "replace bigger", "replace, FM4 moves up"};
-    for (int scenario = 0; scenario < 3; scenario++)
+    // ---- engines that do not fit together, and an engine bigger than the bank
     {
-        Io base = card;
-        base.card["mid.plg"] = plg("mid.plg", 0x5555, 5000, 4992, 64);
-        const std::vector<std::string> order = scenario ? std::vector<std::string>{"ju6.plg", "mid.plg", "fm4.plg"} : two;
+        Flash f;
+        Io io;
+        io.card["a.plg"] = plg("a.plg", 0xA, 40000, 39992, 64);
+        io.card["b.plg"] = plg("b.plg", 0xB, 40000, 39992, 64);
+        io.card["c.plg"] = plg("c.plg", 0xC, 40000, 39992, 64);
+        io.card["d.plg"] = plg("d.plg", 0xD, 5000, 4992, 64);
+        io.card["huge.plg"] = plg("huge.plg", 0xE, 130000, 129992, 64);
+        io.card["fat.plg"] = plg("fat.plg", 0xF, 4000, 3992, 4000);
+        Bank b;
+        Cache c;
+        open(f, io, b);
+        c.pinned = {0xA, 0xB, 0xC, 0xD};   // a project with A B C on the parts, and D asked for
+        install(f, io, b, "a.plg", c);
+        install(f, io, b, "b.plg", c);
+        install(f, io, b, "c.plg", c);
+        const std::string idx = io.index;
+        const int cmd = f.commands;
+        BankInstallStatus d = install(f, io, b, "d.plg", c);
+        check(d.err == kBankNoRoom && b.n == 3 && io.index == idx && f.commands == cmd && exact(f, io, b),
+              "the 4th engine does not fit next to 3 pinned ones: kBankNoRoom, nothing changes (Missing: D)");
+        check(install(f, io, b, "huge.plg", c).err == kBankTooBig && f.commands == cmd, "an engine bigger than the bank: kBankTooBig");
+        check(install(f, io, b, "fat.plg", c).err == kBankTooBig, "rw bigger than the pool: kBankTooBig");
+    }
+
+    // ---- the rw pool is a limit too
+    {
+        Flash f;
+        Io io;
+        io.card["r1.plg"] = plg("r1.plg", 0x11, 3000, 2000, 1500);
+        io.card["r2.plg"] = plg("r2.plg", 0x12, 3000, 2000, 1500);
+        io.card["r3.plg"] = plg("r3.plg", 0x13, 3000, 2000, 1500);
+        Bank b;
+        Cache c;
+        open(f, io, b);
+        install(f, io, b, "r1.plg", c);
+        install(f, io, b, "r2.plg", c);
+        BankInstallStatus r = install(f, io, b, "r3.plg", c);
+        check(r.err == 0 && r.evicted == 1 && find(b, 0x11) < 0 && layoutOk(b) && exact(f, io, b),
+              "3 x 1,500 B rw in a 3,072 B pool: the third evicts the oldest by rw, with sectors to spare");
+    }
+
+    // ---- power cut after every command of an install that evicts and erases, and a journal that cannot be written
+    {
+        Io base = allTwelve();
         Flash f0;
         Bank b0;
-        if (scenario) boot(f0, base, order, b0);   // the bank before the replace
-        Io after = base;
-        if (scenario == 1) after.card["mid.plg"] = plg("mid.plg", 0x5555, 7000, 6992, 64, 0x4242);
-        if (scenario == 2) after.card["mid.plg"] = plg("mid.plg", 0x5555, 4000, 3992, 64, 0x4343);
-        // the uncut run: how many commands, and the end state
-        Flash ref = f0;
-        Io refIo = after;
-        Bank refB;
-        const int total = boot(ref, refIo, order, refB).commands;
-        int bad = 0, notExact = 0, neighbourLost = 0;
-        for (int cut = 0; cut < total; cut++)
+        Cache c0;
+        open(f0, base, b0);
+        for (int i = 0; i < 11; i++) install(f0, base, b0, kAll[i].f, c0);   // a full, used bank
+        c0.pinned = {kAll[8].uid, kAll[9].uid, kAll[10].uid};                // three parts
+        Flash ref = f0;   // the uncut run of 8-Type (the biggest, evicts and erases)
+        Io refIo = base;
+        Bank refB = b0;
+        Cache refC = c0;
+        BankInstallStatus rs = install(ref, refIo, refB, "eight.plg", refC);
+        check(rs.err == 0 && rs.evicted > 0 && rs.erases > 0 && exact(ref, refIo, refB), "8-Type into a full bank: evicts, erases, exact");
+        printf("info  8-Type into a full bank: %d commands, %d erases, %d evicted\n", rs.commands, rs.erases, rs.evicted);
+        int notExact = 0, pinnedLost = 0, notDone = 0, underCounted = 0;
+        for (int cut = 0; cut < rs.commands; cut++)
         {
             Flash f = f0;
             f.cutAt = f.commands + cut;
             f.rng = uint32_t(cut * 2654435761u);
-            Io io = after;
-            Bank b;
-            boot(f, io, order, b);   // dies at command `cut`
+            Io io = base;
+            Bank b = b0;
+            Cache c = c0;
+            install(f, io, b, "eight.plg", c);   // dies at command `cut`
             f.dead = false;
             f.cutAt = -1;
-            // next boot: what passes the check must be exact
-            Bank chk;
-            bankRead(io.index.data(), int(io.index.size()), chk);
-            const int dropped = bankCheck(chk, f, kPool, kPoolBytes);
-            if (!exact(f, io, chk)) notExact++;
-            if (dropped && scenario == 2) neighbourLost += chk.n < 2;
-            boot(f, io, order, b);
-            if (!(b.n == refB.n && exact(f, io, b) && insert2Blank(f))) bad++;
+            Bank nb;
+            open(f, io, nb);   // the next boot
+            if (!exact(f, io, nb)) notExact++;
+            for (uint32_t u : c0.pinned)
+                if (find(nb, u) < 0) pinnedLost++;
+            for (int k = 0; k < kBankSectors; k++)
+                if (nb.wear[k] < f.erased[k] - f0.erased[k] + b0.wear[k]) underCounted++;
+            if (install(f, io, nb, "eight.plg", c).err || !exact(f, io, nb) || find(nb, kAll[11].uid) < 0 || !insert2Blank(f)) notDone++;
         }
-        char what[120];
-        snprintf(what, sizeof(what), "%s: cut after each of %d commands, nothing inexact survives the check", kScen[scenario], total);
+        char what[160];
+        snprintf(what, sizeof(what), "cut after each of %d commands: nothing inexact survives the next boot", rs.commands);
         check(notExact == 0, what);
-        snprintf(what, sizeof(what), "%s: cut after each of %d commands, the next boot completes the bank", kScen[scenario], total);
-        check(bad == 0, what);
-        if (scenario == 2)
-            check(neighbourLost > 0, "replace in place: some cuts do destroy a neighbour (the CRC path is exercised)");
-        printf("info  %s: %d flash commands uncut\n", kScen[scenario], total);
+        check(pinnedLost == 0, "cut: the pinned engines are still installed and exact");
+        check(underCounted == 0, "cut: the erase counters never count fewer erases than the flash did");
+        check(notDone == 0, "cut: picking 8-Type again after the boot installs it, exact");
+        Flash f = f0;
+        Io io = base;
+        io.failWrite = true;
+        Bank b = b0;
+        Cache c = c0;
+        c.evicted.clear();
+        const int cmd = f.commands;
+        BankInstallStatus j = install(f, io, b, "eight.plg", c);
+        check(j.err == kBankJournal && f.commands == cmd && b.n == b0.n && c.evicted.empty(),
+              "the journal cannot be written: no flash command, nothing evicted");
+    }
+
+    // ---- wear: counters follow the flash, installs spread, worst case per pick
+    {
+        Flash f;
+        Io io = allTwelve();
+        Bank b;
+        Cache c;
+        open(f, io, b);
+        c.pinned = {kAll[3].uid, kAll[7].uid, kAll[9].uid};   // PHZ, T-Type, Arc-Type on the parts
+        for (uint32_t u : c.pinned)
+            for (const P& p : kAll)
+                if (p.uid == u) install(f, io, b, p.f, c);
+        // the worst user: a cycle through the 9 other engines, so with LRU every pick misses the cache once the bank is full
+        const int picks = 900;
+        int misses = 0, erases = 0;
+        for (int i = 0; i < picks; i++)
+        {
+            static const int kCycle[9] = {0, 1, 2, 4, 5, 6, 8, 10, 11};
+            BankInstallStatus st = install(f, io, b, kAll[kCycle[i % 9]].f, c);
+            misses += st.commands > 0;
+            erases += st.erases;
+        }
+        bool same = true;
+        uint32_t maxW = 0, minW = ~0u;
+        int used = 0;
+        for (int k = 0; k < kBankSectors; k++)
+        {
+            same = same && b.wear[k] == f.erased[k];
+            if (f.erased[k])
+            {
+                used++;
+                maxW = f.erased[k] > maxW ? f.erased[k] : maxW;
+                minW = f.erased[k] < minW ? f.erased[k] : minW;
+            }
+        }
+        check(same, "the c counters equal the erases the flash did, sector by sector");
+        check(exact(f, io, b) && insert2Blank(f), "after 900 picks: exact, insert 2 untouched");
+        const double perPick = double(maxW) / picks;
+        printf("info  wear, 900 picks cycling 9 engines past 3 pinned: %d misses, %d erases, %d sectors erased, per sector min %u max %u "
+               "(%.3f erases of the worst sector per pick)\n",
+               misses, erases, used, minW, maxW, perPick);
+        printf("info  wear: 10,000 cycles / %.3f = %.0f such picks until the first sector reaches 10,000, %.1f picks a day for 10 years\n",
+               perPick, 10000.0 / perPick, 10000.0 / perPick / 3652.0);
+        const double avg = double(erases) / used;
+        printf("info  wear: %.1f erases per erased sector on average, the worst %u (%.2f x the average)\n", avg, maxW, maxW / avg);
+        check(maxW <= 1.25 * avg, "installs spread over the free sectors (the most erased within 1.25 x the average)");
     }
 
     printf("%s  %d checks, %d failed\n", g_fail ? "FAILED" : "PASSED", g_checks, g_fail);

@@ -21,6 +21,17 @@ synth_plug_info() {
         *) return 1 ;;
     esac
 }
+# The numbers of each engine (stored, .patch engine id, type id: the PLUG_SYNTH_PLUGIN line of plug/synth/<name>_plug.cpp and
+# the definition's typeId), written into the manifest by build_plug.py --synth so the host lists the engine before it is installed.
+# emu_synth.py checks them against the extension.
+synth_plug_numbers() {
+    case "$1" in
+        ju6) echo 7,0x81,0x81 ;; phz) echo 8,0x82,0x82 ;; fm4) echo 9,0x80,0x80 ;; dtype) echo 10,0xA2,0xA2 ;;
+        cstype) echo 11,0x83,0x83 ;; atype) echo 12,0x84,0x84 ;; ttype) echo 13,0x85,0x85 ;; eight) echo 14,0x86,0x86 ;;
+        hand) echo 15,0x87,0x87 ;; btype) echo 16,0x88,0x88 ;; arc) echo 17,0x89,0x89 ;; pluck) echo 18,0x8A,0x8A ;;
+        *) return 1 ;;
+    esac
+}
 # The on-card logo text of each engine (tools/make_plgi.py --text)
 synth_plug_logo() {
     case "$1" in

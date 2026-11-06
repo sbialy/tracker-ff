@@ -51,7 +51,7 @@ build_synth() {   # build_synth <plugin> <out.plg> [extra build_plug.py args]
     local e="$1" out="$2"; shift 2
     read -r E def dsp dspopt <<< "$(synth_plug_info "$e")"
     python3 plug/build_plug.py --id org.opentracker.synth.$e --kind synth --version 1.0.0 --opt "-Os -fno-builtin" \
-        --src-opt "$(basename "$dsp")=$FWFLAGS $dspopt -DSYNTH_ENGINE_$E" --src-opt "$def=$FWFLAGS -DSYNTH_ENGINE_$E" \
+        --synth "$(synth_plug_numbers "$e")" --src-opt "$(basename "$dsp")=$FWFLAGS $dspopt -DSYNTH_ENGINE_$E" --src-opt "$def=$FWFLAGS -DSYNTH_ENGINE_$E" \
         "$@" --out "$out" -I . -I ot -I ../synth/include plug/synth/${e}_plug.cpp "$def" "$dsp"
 }
 for e in $SYNTH_PLUGS; do
@@ -132,6 +132,14 @@ python3 plug/build_plug.py --id ff.test.synthharness --kind offline --opt "-O2 -
     -I . -I ot -I ../synth/include plug/synth/synth_harness.cpp > /dev/null
 esum() { "$PY" -I plug/emu_synth.py "$1" "$OUT/logo-test/h.plg" --scenario 0 --base 0x10000000 --rw-base 0x20027000 2>&1 |
     sed -n 's/^output checksum //p'; }
+# every synth plugin carries its numbers in the manifest (the host lists it by them before it is installed), equal to the extension's
+for e in $SYNTH_PLUGS; do
+    m=$("$PY" -I plug/emu_synth.py "$OUT/$e.plg" "$OUT/logo-test/h.plg" --scenario 0 --blocks 1 2>&1 | grep -E "^manifest numbers|Error|differ" || true)
+    case "$m" in
+        "manifest numbers:"*"(equal to the extension)") echo "synth ok  $e.plg $m" ;;
+        *) echo "synth FAIL $e.plg manifest numbers: '$m'"; fail=1 ;;
+    esac
+done
 s1=$(esum "$OUT/ju6.plg")
 s2=$(esum "$OUT/logo-test/ju6.plg")
 rm -f "$OUT/logo-test/h.plg"
