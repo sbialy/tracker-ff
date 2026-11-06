@@ -56,6 +56,7 @@ class PlatformImpl final : public Platform
     void saveStartState(uint8_t state);
     PowerButtonCallback getPowerButtonCallback();
     PowerControl* getPowerControl() { return &powerControl; };
+    FileSystemImpl* getFileSystemImpl() { return &fileSystem; }
 
   protected:
     PowerButtonCallback powerButtonCallback;

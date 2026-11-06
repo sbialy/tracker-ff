@@ -43,6 +43,15 @@ static inline void convertChannel(uint8_t* inputData,
                                   uint32_t outputSamples,
                                   int16_t* output)
 {
+    if (sampleRateRatio == 1.0f)
+    {
+        for (uint32_t outIdx = 0; outIdx < outputSamples; outIdx++)
+        {
+            output[outIdx] =
+              getInputSample(inputData, outIdx, sourceFormat, sourceBitsPerSample, bytesPerSample);
+        }
+        return;
+    }
 
     for (uint32_t outIdx = 0; outIdx < outputSamples; outIdx++)
     {
@@ -85,26 +94,69 @@ uint32_t convertAudioData(ConversionConfig& conversionConfig)
         return 0;
     }
 
-    if (conversionConfig.sourceBitsPerSample / conversionConfig.sourceChannelCount)
-    {
-    }
-
-    float sampleRateRatio =
-      (float)conversionConfig.sourceSampleRate / (float)conversionConfig.destSampleRate;
-
     uint8_t* inputData = conversionConfig.inputData;
     uint32_t inputSamples = conversionConfig.inputSize / bytesPerSample;
     uint32_t outputSamples =
       inputSamples * conversionConfig.destSampleRate / conversionConfig.sourceSampleRate;
 
-    convertChannel(inputData,
-                   inputSamples,
-                   bytesPerSample,
-                   conversionConfig.sourceFormat,
-                   conversionConfig.sourceBitsPerSample,
-                   sampleRateRatio,
-                   outputSamples,
-                   conversionConfig.outPtrL);
+    if (conversionConfig.sourceSampleRate == conversionConfig.destSampleRate &&
+        conversionConfig.sourceFormat == wavFormatPCM &&
+        conversionConfig.sourceBitsPerSample == 16)
+    {
+        const int16_t* src = reinterpret_cast<const int16_t*>(inputData);
+        int16_t* outL = conversionConfig.outPtrL;
+        int16_t* outR = conversionConfig.outPtrR;
+
+        if (conversionConfig.sourceChannelCount == 2)
+        {
+            if (outR != nullptr && outR != outL)
+            {
+                for (uint32_t i = 0; i < outputSamples; i++)
+                {
+                    outL[i] = src[2 * i];
+                    outR[i] = src[2 * i + 1];
+                }
+            }
+            else if (outR == outL)
+            {
+                for (uint32_t i = 0; i < outputSamples; i++)
+                {
+                    outR[i] = src[2 * i + 1];
+                }
+            }
+            else
+            {
+                for (uint32_t i = 0; i < outputSamples; i++)
+                {
+                    outL[i] = src[2 * i];
+                }
+            }
+            return outputSamples;
+        }
+        else if (conversionConfig.sourceChannelCount == 1)
+        {
+            for (uint32_t i = 0; i < outputSamples; i++)
+            {
+                outL[i] = src[i];
+            }
+            return outputSamples;
+        }
+    }
+
+    float sampleRateRatio =
+      (float)conversionConfig.sourceSampleRate / (float)conversionConfig.destSampleRate;
+
+    if (conversionConfig.outPtrR != conversionConfig.outPtrL)
+    {
+        convertChannel(inputData,
+                       inputSamples,
+                       bytesPerSample,
+                       conversionConfig.sourceFormat,
+                       conversionConfig.sourceBitsPerSample,
+                       sampleRateRatio,
+                       outputSamples,
+                       conversionConfig.outPtrL);
+    }
 
     if (conversionConfig.outPtrR != nullptr)
     {

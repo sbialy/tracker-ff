@@ -13,6 +13,7 @@ When extending the **Polyend Tracker Community Edition (CE)** firmware, adding n
 5. [Sample Editor & `.ptfx` Plugin Constraints](#5-sample-editor--ptfx-plugin-constraints)
 6. [UI, FT812 Display, Config & Bootloader Gotchas](#6-ui-ft812-display-config--bootloader-gotchas)
 7. [Conditional Compilation: Targeting Specific Platforms or Devices](#7-conditional-compilation-targeting-specific-platforms-or-devices)
+8. [Development Console & Logging over USB (Tracker+ & Tracker Mini)](#8-development-console--logging-over-usb-tracker--tracker-mini)
 
 ---
 
@@ -188,3 +189,63 @@ All three devices share the same `core/` codebase and are differentiated at comp
   2. **Use `#if GUI_HANDLE_SYNTH` (not `#ifdef GUI_HANDLE_SYNTH`)**: In [`core/interface/core/interfaceDefs.h`](../core/interface/core/interfaceDefs.h), `GUI_HANDLE_SYNTH` is always defined (`1` on `PLATFORM_IMX`, `0` on `MK66`), so `#ifdef GUI_HANDLE_SYNTH` will mistakenly evaluate to true on the Original Tracker.
   3. **Custom Build Flags (`CUSTOM_DEFINES`)**: You can pass ad-hoc feature flags from the command line without editing makefiles via `make all CUSTOM_DEFINES="-DMY_EXPERIMENTAL_FEATURE"`.
   4. **Platform-Specific `.ptfx` Plugins**: `.ptfx` Sample Editor plugins are compiled once for all devices, but can restrict themselves to Tracker+ / Tracker Mini by setting `PTFX_FLAG_IMX_ONLY` in their `PtfxHeader::flags` ([`editor-fx-sdk/tracker_plugin.h`](../editor-fx-sdk/tracker_plugin.h)), or adapt dynamically at runtime by checking `channels` (`1` vs `2`) in `plugin_process_block()`.
+
+---
+
+## 8. Development Console & Logging over USB (Tracker+ & Tracker Mini)
+
+Tracker+ and Tracker Mini (`PLATFORM_IMX`) can expose a USB serial port that carries the firmware's log output and a small command console. Together with the existing USB storage mode, it lets a host script copy a new `.ptf` to the SD card and start the firmware update without touching the device or removing the card.
+
+It is **off unless you ask for it twice**: the code is only compiled in with a build flag, and the port is only enumerated when the SD card is marked for development. A normal build on a normal card is unaffected.
+
+| Switch | Where | Effect |
+| :--- | :--- | :--- |
+| `ENABLE_DEV_CONSOLE` | Build flag | Compiles the console ([`platforms/imx/source/DevConsole.cpp`](../platforms/imx/source/DevConsole.cpp)) and its `4 KB` output buffer in `SRAM_DTC`. Without it the console is replaced by empty inline stubs. |
+| `ENABLE_LOG` | Build flag | Compiles the `LOG()` / `LOGF()` call sites ([`core/source/log.h`](../core/source/log.h)) at the normal `-O2` optimization level. `DEBUG=1` also enables them, but additionally switches to `-Og` and changes boot behavior. |
+| `/.develop` | Empty file in the SD card root | Develop mode (`interfaceGlobals.devMode`). With `ENABLE_DEV_CONSOLE`, the firmware adds the serial port to its USB configuration shortly after boot. Also shows the diagnostics on the Config screen. |
+
+```bash
+# Build a Tracker Mini image with the console and logging:
+make mini CUSTOM_DEFINES="-DENABLE_DEV_CONSOLE -DENABLE_LOG"
+```
+
+The makefiles do not track compiler flags, so run `make clean` when switching `CUSTOM_DEFINES`.
+
+### Logging
+
+```cpp
+#include "log.h"
+
+LOG("sequencer stop");                              // appends a newline
+LOGF("sequencer play from step %d\n", fromPos);     // printf-style, no newline added
+```
+
+* Output is queued in a ring buffer and sent from the main loop, so `LOG()` / `LOGF()` may be called from the audio interrupt. If the buffer overflows, the excess is dropped and reported as `@log dropped N bytes`.
+* **Do not format floats (`%f`) from interrupt context**: newlib allocates from the heap to format them. Log scaled integers there instead.
+* Messages logged before the host opens the port are kept (up to the buffer size) and delivered when it does, so the boot log is not lost.
+
+### Console Protocol
+
+The port is a plain CDC-ACM serial port (baud rate is irrelevant). The host sends one command per line, terminated by `\n` or `\r`. Every reply is a single line that **starts with `@`**; anything else on the port is log output. A reply always begins on a fresh line, even if a log message was mid-line.
+
+| Command | Reply | Action |
+| :--- | :--- | :--- |
+| `ping` | `@tracker-dev <mini\|plus> <build id>` | Identifies the device and the running build (`BUILD_ID`, see `make version`). |
+| `storage on` / `storage off` | `@ok storage on\|off`, or `@err storage is still on\|off` | Enters or leaves **Config > USB > Storage** mode. Refused while the interface is not in its normal run state (for example during project load). |
+| `flash <name>` | `@ok flash pending`, then the device resets; or `@err ...` | Remounts the SD card, checks that `/Firmware/<name>` exists, then starts the same bootloader hand-off as **Config > Firmware > Firmware update**. `<name>` is a bare filename of at most `31` characters. |
+| `reboot` | `@ok reboot pending` | Resets the MCU (and makes a Tracker Mini start again without the power button). |
+| `help` | `@ok commands: ...` | Lists the commands. |
+
+Anything else answers `@err unknown command: ...`; an over-long line answers `@err line too long`.
+
+A scripted deployment is therefore:
+
+1. `ping`, to find the device and note the running build.
+2. `storage on`, then **close the serial port**. The device waits for the port to close before it re-enumerates with the storage class.
+3. Copy the `.ptf` into `/Firmware/` on the mounted volume and eject it.
+4. Reopen the port and send `flash <name>`. The device resets into the bootloader, which flashes the file.
+5. When the port reappears, `ping` again and compare the build id.
+
+> **Keep the port closed when using USB storage mode from the device's own menu.** While a host holds the serial port open (for example to follow the log), the device postpones the USB re-enumeration that entering or leaving storage mode needs.
+
+> **Recovery**: a build that fails to boot has no console. Keep a known-good `.ptf` in `/Firmware/` and use the recessed reset button as described in the [README](../README.md#4-flashing-on-hardware--emergency-recovery).

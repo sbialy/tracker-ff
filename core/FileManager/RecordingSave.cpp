@@ -170,6 +170,7 @@ void RecordingSave::prepareInstrumentStruct(int idx, char* name)
     {
         newFileManager.setDefaultActiveInstrument(&mtProject.instrument[idx]);
     }
+    mtProject.instrument[idx].setStreamPreferred(false);
 
     mtProject.instrument[idx].sample.length = recorder.getLength();
     strncpy(mtProject.instrument[idx].sample.file_name, name, SAMPLE_NAME_SIZE);

@@ -195,6 +195,8 @@ bool WorkspaceProjectSave::saveProjectToWorkspace(bool forceSaveAll)
         mtProject.values.projectNotSavedFlag |= 1;
     }
 
+    LOG("workspace save");
+
     operationStep = WorkspaceProjectSaveStep::initStep;
     newFileManager.setStatus(fmSavingProjectToWorkspace);
     newFileManager.setCurrentOperation(fmSaveWorkspaceProject);

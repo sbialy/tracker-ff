@@ -311,6 +311,8 @@ uint16_t EVE_IncCMDOffset(uint16_t currentOffset, uint16_t commandSize)
 
 // ------ Wait for co-processor read and write pointers to be equal ------------
 
+extern uint16_t* cmdOffset;
+
 uint8_t EVE_WaitCmdFifoEmpty(void)
 {
     uint32_t ReadPointer, WritePointer;
@@ -324,8 +326,9 @@ uint8_t EVE_WaitCmdFifoEmpty(void)
 
     if (ReadPointer == 0xFFF)
         return 0xFF; // Return 0xFF if an error occurred
-    else
-        return 0; // Return 0 if pointers became equal successfully
+    if (cmdOffset != nullptr)
+        *cmdOffset = (uint16_t)WritePointer;
+    return 0; // Return 0 if pointers became equal successfully
 }
 
 uint32_t error_counter = 0;
@@ -334,15 +337,6 @@ uint8_t EVE_IsCmdFifoEmpty(void)
 {
     uint32_t ReadPointer = EVE_MemRead32(REG_CMD_READ);
     uint32_t WritePointer = EVE_MemRead32(REG_CMD_WRITE);
-
-    /*
-        uint8_t flag = 0;
-        if(flag == 1)
-        {
-            EVE_MemWrite32(REG_CMD_READ, WritePointer);
-            EVE_MemWrite32(REG_CMD_WRITE, WritePointer);
-        }
-    */
 
     if (ReadPointer == 0xFFF || error_counter > 100000)
     {
@@ -357,6 +351,8 @@ uint8_t EVE_IsCmdFifoEmpty(void)
         EVE_MemWrite32(REG_CMD_READ, 0);
         EVE_MemWrite32(REG_CMD_WRITE, 0);
         EVE_MemWrite32(REG_CPURESET, 0);
+        if (cmdOffset != nullptr)
+            *cmdOffset = 0;
 
         return 1;
         // cmdOffset = 0;
@@ -365,6 +361,8 @@ uint8_t EVE_IsCmdFifoEmpty(void)
     if (WritePointer == ReadPointer)
     {
         error_counter = 0;
+        if (cmdOffset != nullptr)
+            *cmdOffset = (uint16_t)WritePointer;
         return 1;
     }
     else

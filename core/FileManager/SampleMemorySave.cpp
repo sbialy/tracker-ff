@@ -61,6 +61,7 @@ void SampleMemorySave::sampleMemorySaveInit()
 {
     // save samples count in pti file struct
     mtProject.instrument[currentInstrument].sample.length = memorySizeBytes / 2;
+    mtProject.instrument[currentInstrument].setStreamPreferred(false);
 }
 
 bool SampleMemorySave::saveStereoDataToWorkspace(int idx,

@@ -348,6 +348,9 @@ class FileSystem
 
     virtual bool isSdCardInserted() = 0;
     virtual void setMountEventCallback(CardStateChangeCallback funct) = 0;
+    // Reads the volume from the card again, for after something else wrote to
+    // it. Every open file becomes invalid. False if no volume got mounted.
+    virtual bool remount() = 0;
 
     virtual bool exists(const char* path) = 0;
     virtual bool rename(const char* oldPath, const char* newPath) = 0;

@@ -1766,8 +1766,21 @@ status_t SD_WaitAsyncRead(sd_card_t* card)
 
 bool SD_IsAsyncBusy(sd_card_t* card)
 {
-    (void)card;
-    return SDMMCHOST_IsAsyncBusy();
+    if (SDMMCHOST_IsAsyncBusy())
+    {
+        return true;
+    }
+    if ((card != NULL) && (card->host.base != NULL))
+    {
+        if (((GET_SDMMCHOST_STATUS(card->host.base) & CARD_DATA0_STATUS_MASK) !=
+             CARD_DATA0_NOT_BUSY) ||
+            ((SDHC_GetPresentStatusFlags(card->host.base) &
+              ((uint32_t)kSDHC_CommandInhibitFlag | (uint32_t)kSDHC_DataInhibitFlag)) != 0U))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 status_t SD_WriteBlocks(sd_card_t* card,

@@ -362,9 +362,11 @@ void cPatternEditor::showPattern(uint8_t forceShow, uint8_t shiftPressed)
             lastShownPattern_blinkState = 1;
         }
     }
-    else
+    else if (lastShownPattern_blinkState != 0)
     {
         lastShownPattern_blinkState = 0;
+        display.setControlColors(label[0], display.getTheme().activeLabelsColors);
+        display.refreshControl(label[0]);
     }
 
     // refresh value
@@ -375,12 +377,16 @@ void cPatternEditor::showPattern(uint8_t forceShow, uint8_t shiftPressed)
           mtConfig.general.numberingMode == NumberingMode::kHexadecimal ? "%02X" : "%d";
 
         snprintf(cPattern, 5, numberFormat, patternToShow);
+        if (lastShownPattern_blinkState == 0)
+        {
+            display.setControlColors(label[0], display.getTheme().activeLabelsColors);
+        }
         display.setControlText2(label[0], cPattern);
         display.refreshControl(label[0]);
     }
 
     // refresh colors
-    if (lastShownPattern_blinkTimer >= 200)
+    if (lastShownPattern_blinkState != 0 && lastShownPattern_blinkTimer >= 200)
     {
         lastShownPattern_blinkTimer = 0;
 
@@ -392,10 +398,6 @@ void cPatternEditor::showPattern(uint8_t forceShow, uint8_t shiftPressed)
         else if (lastShownPattern_blinkState == 2)
         {
             lastShownPattern_blinkState = 1;
-            display.setControlColors(label[0], display.getTheme().activeLabelsColors);
-        }
-        else
-        {
             display.setControlColors(label[0], display.getTheme().activeLabelsColors);
         }
         display.refreshControl(label[0]);

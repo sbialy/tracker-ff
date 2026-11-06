@@ -12,6 +12,7 @@ static void Number2HexBitmaps(int16_t x, int16_t y, uint8_t font_x, uint8_t font
 #define ROW_NUM 1
 
 static constexpr uint8_t text_font = 1;
+static int16_t s_lastCell = -1;
 
 #if ROW_NUM
 // uint8_t fourParamsOffset[4] =		{	4,44,73,130,	};	// stara koncepcja z numerami
@@ -294,7 +295,8 @@ void cTracker::update()
     // colors[10] = tracks->selectColor;
     displayMode = value;
 
-    lastFontHandle = -1; // zerowanie ostatnio uzywanej czcionki
+    lastFontHandle = -1;
+    s_lastCell = -1; // zerowanie ostatnio uzywanej czcionki
 
     rightOffset = 0;
     leftOffset = 0;
@@ -975,6 +977,7 @@ void cTracker::tracksNumbers()
     API_SAVE_CONTEXT();
     API_COLOR(actualColor);
     lastFontHandle = -1;
+    s_lastCell = -1;
     API_BEGIN(BITMAPS);
 
     for (uint8_t i = 0; i < columnsCount; i++)
@@ -997,6 +1000,7 @@ void cTracker::notes()
     actualColor = lastFontColor = colors[2];
     // API_BITMAP_HANDLE(fonts[1].handle);
     lastFontHandle = -1;
+    s_lastCell = -1;
     API_BEGIN(BITMAPS);
 
     uint8_t offset_y = posY + 12;
@@ -1053,6 +1057,7 @@ void cTracker::instruments()
     actualColor = lastFontColor = colors[3];
     // API_BITMAP_HANDLE(fonts[1].handle);
     lastFontHandle = -1;
+    s_lastCell = -1;
     API_BEGIN(BITMAPS);
 
     uint8_t offset_y = posY + 12;
@@ -1118,6 +1123,7 @@ void cTracker::fxes1()
     API_COLOR(colors[4]);
     actualColor = lastFontColor = colors[4];
     lastFontHandle = -1;
+    s_lastCell = -1;
     // API_BITMAP_HANDLE(fonts[1].handle);
     API_BEGIN(BITMAPS);
 
@@ -1170,6 +1176,7 @@ void cTracker::fxes2()
     API_COLOR(colors[5]);
     actualColor = lastFontColor = colors[5];
     lastFontHandle = -1;
+    s_lastCell = -1;
     // API_BITMAP_HANDLE(fonts[1].handle);
     API_BEGIN(BITMAPS);
 
@@ -1273,11 +1280,16 @@ void cTracker::String2Bitmaps(int16_t x,
         {
             if ((x > 511 || y > 511) && font->data[ch])
             {
-                API_CELL(ch);
+                if (s_lastCell != (int16_t)ch)
+                {
+                    API_CELL(ch);
+                    s_lastCell = (int16_t)ch;
+                }
                 API_VERTEX2F(x, y);
             }
             else if (font->data[ch])
             {
+                s_lastCell = -1;
                 API_VERTEX2II(x, y, font->handle, ch);
             }
         }

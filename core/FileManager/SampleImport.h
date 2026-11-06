@@ -18,7 +18,8 @@ class SampleImport : public FileManagerOperation
                                 uint16_t dataFrom,
                                 uint16_t dataTo,
                                 bool isLofi,
-                                SampleChannelMode sampleMode);
+                                SampleChannelMode sampleMode,
+                                SampleLoadMode loadMode = SampleLoadMode::kRam);
     bool importSampleToProject(char* filePath,
                                char* fileName,
                                uint8_t instrumentSlot,
@@ -36,6 +37,7 @@ class SampleImport : public FileManagerOperation
     };
 
     SampleImportStep operationStep;
+    SampleLoadMode importLoadMode = SampleLoadMode::kRam;
 
     uint32_t currentInstrumentFileStructSize;
     int currentInstrument;
@@ -74,6 +76,8 @@ class SampleImport : public FileManagerOperation
                           uint16_t dataTo);
 
     bool loadSampleDataToMemeory(int idx, FileManagerOperation::SampleLoadData* sampleImportData);
+    bool saveStreamedImportSampleToWorkspace(
+      int idx, FileManagerOperation::SampleLoadData* sampleImportData);
 };
 
 #endif /* FILEMANAGER_SAMPLEIMPORT_H_ */

@@ -23,6 +23,13 @@ class FileManagerOperation
         kLeftAndRight,
     };
 
+    enum class SampleLoadMode : uint8_t
+    {
+        kRam = 0,
+        kAuto = 1,
+        kStream = 2,
+    };
+
     struct SampleLoadData
     {
         char* filePath;
@@ -45,6 +52,7 @@ class FileManagerOperation
 
         uint16_t destChannelCount;
         uint32_t destSampleCountPerChannel;
+        bool shouldStream;
     };
 
   protected:

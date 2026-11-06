@@ -29,6 +29,45 @@ using EditorElement = Patch::Metadata::EditorLayout::EditorElement;
 using Param = Patch::Metadata::Param;
 
 /**
+ * Fast polynomial approximation of sin(2 * pi * phase) for any phase in turns.
+ * Accurate to within -124 dB (~6e-7 max absolute error). Safe for per-sample audio callbacks.
+ */
+inline float fastSine(float phase)
+{
+    float t = phase - __builtin_roundf(phase);
+    if (t > 0.25f)
+    {
+        t = 0.5f - t;
+    }
+    else if (t < -0.25f)
+    {
+        t = -0.5f - t;
+    }
+    const float t2 = t * t;
+    return t * (6.283164f + t2 * (-41.337143f + t2 * (81.340782f + t2 * -70.993568f)));
+}
+
+/**
+ * Fast minimax polynomial + IEEE-754 exponent approximation of 2^x.
+ * Accurate to within 0.0002 cents (~1.1e-7 max relative error). Safe for per-sample audio callbacks.
+ */
+inline float fastPow2(float x)
+{
+    x = std::clamp(x, -126.0f, 127.0f);
+    const float whole = __builtin_floorf(x);
+    const float f = x - whole;
+    const float mantissa =
+      1.0f + f * (0.69315249f +
+                  f * (0.24015281f + f * (0.05583591f + f * (0.0089734f + f * 0.00188529f))));
+    const union
+    {
+        uint32_t bits;
+        float value;
+    } scale = { static_cast<uint32_t>(static_cast<int32_t>(whole) + 127) << 23 };
+    return mantissa * scale.value;
+}
+
+/**
  * Convert decibels to linear amplitude multiplier.
  */
 constexpr float dbToAmplitude(float db)
@@ -64,9 +103,8 @@ inline void saturateSoftClip(std::span<sample_t> buf, float gainDb)
 inline float noteToFreq(note_t note, float detuneSemitones = 0.0f)
 {
     return kNoteA4Freq *
-           std::pow(2.0f,
-                    (static_cast<float>(note - kNoteA4) + detuneSemitones) /
-                      static_cast<float>(kOneOctaveNotes));
+           fastPow2((static_cast<float>(note - kNoteA4) + detuneSemitones) *
+                    (1.0f / static_cast<float>(kOneOctaveNotes)));
 }
 
 /**
@@ -74,7 +112,7 @@ inline float noteToFreq(note_t note, float detuneSemitones = 0.0f)
  */
 inline float detuneMult(float detuneSemitones)
 {
-    return std::pow(2.0f, detuneSemitones / static_cast<float>(kOneOctaveNotes));
+    return fastPow2(detuneSemitones * (1.0f / static_cast<float>(kOneOctaveNotes)));
 }
 
 enum class MidiCCs : uint8_t

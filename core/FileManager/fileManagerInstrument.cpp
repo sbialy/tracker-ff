@@ -143,8 +143,13 @@ bool cFileManager::startNewInstrumentSampleLoad(int idx,
         bool stereo = isStereo && stereoSampleMode;
         uint32_t channels = stereo ? 2 : 1;
         uint32_t totalBytes = mtProject.instrument[idx].sample.length * channels * sizeof(int16_t);
-        bool shouldStream = (totalBytes >= kStreamThresholdBytes) &&
-                            isPlayModeStreamable(mtProject.instrument[idx].playMode);
+        uint32_t freeRam = (mtProject.max_memory > mtProject.used_memory)
+                             ? (mtProject.max_memory - mtProject.used_memory)
+                             : 0;
+        bool shouldStream = (mtProject.instrument[idx].sample.length > kStreamPreCacheFrames) &&
+                            isPlayModeStreamable(mtProject.instrument[idx].playMode) &&
+                            (mtProject.instrument[idx].isStreamPreferred() || totalBytes > freeRam);
+        mtProject.instrument[idx].setStreamPreferred(shouldStream);
 
         if (shouldStream)
         {
@@ -330,9 +335,18 @@ bool cFileManager::loadSampleData(int idx,
         bool saveResult = newFileManager.saveSampleDataToWorkspace(idx);
         if (saveResult)
         {
-            char instrPath[PATCH_SIZE];
-            snprintf(instrPath, sizeof(instrPath), cWorkspaceInstrumentFileFormatNew, idx + 1);
-            demoteRamInstrumentToStream(idx, instrPath, sizeof(strInstrumentFile));
+            uint32_t channels = isInstrumentStereo(idx) ? 2 : 1;
+            uint32_t totalBytes =
+              mtProject.instrument[idx].sample.length * channels * sizeof(int16_t);
+            uint32_t freeRam = (mtProject.max_memory > mtProject.used_memory)
+                                 ? (mtProject.max_memory - mtProject.used_memory)
+                                 : 0;
+            if (mtProject.instrument[idx].isStreamPreferred() || totalBytes > freeRam)
+            {
+                char instrPath[PATCH_SIZE];
+                snprintf(instrPath, sizeof(instrPath), cWorkspaceInstrumentFileFormatNew, idx + 1);
+                demoteRamInstrumentToStream(idx, instrPath, sizeof(strInstrumentFile), true);
+            }
 
             // after save old sample as new instrument all is done
             sampleLoadStep = 0;
@@ -521,13 +535,16 @@ bool cFileManager::promoteStreamedInstrumentToRam(int idx)
     mtProject.sampleMemory[idx].hasWaveformPeaks = hadPeaks;
     mtProject.sampleMemory[idx].ramFrames = fullFrames;
     mtProject.sampleMemory[idx].preCacheFrames = fullFrames;
+    mtProject.instrument[idx].setStreamPreferred(false);
+    setInstrumentStructChanged(idx);
     mtProject.used_memory = getSampleMemorySize(0, kSampleInstrumentsCount - 1);
     return true;
 }
 
 bool cFileManager::demoteRamInstrumentToStream(int idx,
                                                const char* backingPtiPath,
-                                               uint32_t dataOffset)
+                                               uint32_t dataOffset,
+                                               bool forceStream)
 {
     if (idx < 0 || idx >= kSampleInstrumentsCount || !mtProject.instrument[idx].isActive ||
         mtProject.sampleMemory[idx].isStreamed)
@@ -540,8 +557,9 @@ bool cFileManager::demoteRamInstrumentToStream(int idx,
     uint32_t channels = stereo ? 2 : 1;
     uint32_t totalBytes = fullFrames * channels * sizeof(int16_t);
 
-    bool shouldStream = (totalBytes >= kStreamThresholdBytes) &&
-                        isPlayModeStreamable(mtProject.instrument[idx].playMode);
+    bool shouldStream =
+      (forceStream ? (fullFrames > kStreamPreCacheFrames) : (totalBytes >= kStreamThresholdBytes)) &&
+      isPlayModeStreamable(mtProject.instrument[idx].playMode);
     if (!shouldStream)
     {
         return false;
@@ -553,13 +571,50 @@ bool cFileManager::demoteRamInstrumentToStream(int idx,
         return false;
     }
 
+    char resolvedPath[PATCH_SIZE];
+    resolvedPath[0] = 0;
+    if (backingPtiPath != nullptr)
+    {
+        strncpy(resolvedPath, backingPtiPath, sizeof(resolvedPath));
+        resolvedPath[sizeof(resolvedPath) - 1] = 0;
+    }
+    uint32_t resolvedOffset = dataOffset;
+    uint32_t fileSize =
+      (resolvedPath[0] != 0 && fileSystem->exists(resolvedPath))
+        ? fileSystem->getFileSize(resolvedPath)
+        : 0;
+
+    if (fileSize <= resolvedOffset || fileSize <= sizeof(strInstrumentFile))
+    {
+        char projectPtiPath[PATCH_SIZE];
+        uint32_t projectDataOffset = resolvedOffset;
+        if (resolveProjectInstrumentPtiPath(idx, projectPtiPath, sizeof(projectPtiPath)) &&
+            getPtiFileDataOffset(projectPtiPath, projectDataOffset))
+        {
+            uint32_t projectFileSize = fileSystem->getFileSize(projectPtiPath);
+            if (projectFileSize > projectDataOffset)
+            {
+                strncpy(resolvedPath, projectPtiPath, sizeof(resolvedPath));
+                resolvedPath[sizeof(resolvedPath) - 1] = 0;
+                resolvedOffset = projectDataOffset;
+                fileSize = projectFileSize;
+            }
+        }
+    }
+
+    if (fileSize < resolvedOffset + totalBytes)
+    {
+        return false;
+    }
+
     if (stereo)
     {
         mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kRight] =
           mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kLeft] + preCache;
     }
 
-    if (!voiceStreamManager.setupInstrumentStream(idx, backingPtiPath, dataOffset, fullFrames, stereo))
+    if (!voiceStreamManager.setupInstrumentStream(
+          idx, resolvedPath, resolvedOffset, fullFrames, stereo))
     {
         if (stereo)
         {
@@ -569,6 +624,8 @@ bool cFileManager::demoteRamInstrumentToStream(int idx,
         return false;
     }
 
+    mtProject.instrument[idx].setStreamPreferred(true);
+    setInstrumentStructChanged(idx);
     int32_t freedBytes = (int32_t)((fullFrames - preCache) * channels * sizeof(int16_t));
     uint8_t firstSlotToMove = calcFirstSlotToMoveInMemory(idx + 1);
     moveSampleMemory(firstSlotToMove, -freedBytes);

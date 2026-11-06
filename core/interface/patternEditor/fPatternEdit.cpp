@@ -21,8 +21,8 @@
 
 #include <cr_section_macros.h>
 
-__NOINIT(EXTERNAL_RAM) strTrackerPattern cPatternEditor::trackerPattern;
-__NOINIT(EXTERNAL_RAM) cPatternEditor::strFill cPatternEditor::fillData[6];
+strTrackerPattern cPatternEditor::trackerPattern;
+cPatternEditor::strFill cPatternEditor::fillData[6];
 
 cPatternEditor patternEditor;
 static cPatternEditor* PTE = &patternEditor;
@@ -807,14 +807,14 @@ void cPatternEditor::refreshPattern()
             }
             else
             {
-                uint8_t type_temp = interfaceGlobals.fxIdToName(seqStep.fx[1].type);
+                uint8_t type_temp = (seqStep.fx[1].type != 0) ? interfaceGlobals.fxIdToName(seqStep.fx[1].type) : 0;
                 if (type_temp > 0 && type_temp < FX_COUNT)
                 {
                     row.fx[0][0] = 0;
                     row.fx[0][1] = 0;
                     row.fx[0][2] = 0;
 
-                    strncat(&row.fx[0][0], &interfaceGlobals.fxNames[type_temp][0], 1);
+                    row.fx[0][0] = interfaceGlobals.fxNames[type_temp][0];
 
                     sequencer.makeFxValLabelForSeqStep(&row.fx[0][1], 4, 1, trackIdx, seqStepIdx);
                 }
@@ -826,14 +826,14 @@ void cPatternEditor::refreshPattern()
                     row.fx[0][3] = '-';
                 }
                 //--------------------------------------------------------------------------------------------
-                type_temp = interfaceGlobals.fxIdToName(seqStep.fx[0].type);
+                type_temp = (seqStep.fx[0].type != 0) ? interfaceGlobals.fxIdToName(seqStep.fx[0].type) : 0;
                 if (type_temp > 0 && type_temp < FX_COUNT)
                 {
                     row.fx[1][0] = 0;
                     row.fx[1][1] = 0;
                     row.fx[1][2] = 0;
 
-                    strncat(&row.fx[1][0], &interfaceGlobals.fxNames[type_temp][0], 1);
+                    row.fx[1][0] = interfaceGlobals.fxNames[type_temp][0];
 
                     sequencer.makeFxValLabelForSeqStep(&row.fx[1][1], 4, 0, trackIdx, seqStepIdx);
                 }

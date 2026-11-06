@@ -30,6 +30,10 @@ class VoiceStreamManager
     // Synchronous pump for offline rendering (call from mtAudioExport::updateRender)
     void updateSynchronous();
 
+    // For while something else, like a USB host, owns the card: update() reads
+    // nothing from it. Voices keep playing what they have in RAM, then silence.
+    void setSuspended(bool suspended);
+
     // Voice lifecycle notifications (safe to call from Audio ISR)
     void notifyNoteOn(int voiceIdx,
                       int instrIdx,
@@ -84,6 +88,8 @@ class VoiceStreamManager
     bool rebindInstrumentStreamFile(int instrIdx,
                                     const char* filePath,
                                     uint32_t dataOffset);
+    // For after the card was remounted: the files may have moved on it.
+    void rebindAllInstrumentStreamFiles();
     void refreshInstrumentSliceCache(int instrIdx);
     void refreshInstrumentSingleSliceCache(int instrIdx, uint8_t sliceIdx);
 
@@ -156,7 +162,9 @@ class VoiceStreamManager
     FileSystem* fs = nullptr;
     VoiceStreamState voices[kVoiceCount];
     AsyncJob currentJob;
+    bool isSuspended = false;
 
+    bool rebuildInstrumentClmt(int instrIdx);
     bool startAsyncSectorReadForJob(uint8_t channel);
     void completeChannelTransfer();
     bool scheduleNextVoiceJob(bool synchronous);

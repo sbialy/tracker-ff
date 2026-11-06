@@ -360,6 +360,8 @@ class Sequencer
         uint16_t sequencialSwitch_pattern = 0;
         bool sequencialSwitch_isArmed = 0;
         bool sequencialSwitch_loaded = 0;
+        // Set by stop() in the audio callback, carried out by update().
+        bool reloadPatternAfterStop = 0;
         int activePatternIdx = -1;
 
         bool isPlay = 0;
@@ -1024,6 +1026,16 @@ class Sequencer
     void updateExternalClockTempo(seqtimesec_t deltaTime);
 
     void updatePatternManagment();
+
+    // The audio callback must not use the SD card, so stop() needs to know
+    // whether it may reload the pattern itself.
+    enum class StopContext
+    {
+        mainLoop,
+        audioCallback,
+    };
+    void stop(StopContext context);
+    void reloadPatternAfterStop();
 
     strPattern* currentPattern;
     strPattern* bufferPattern;

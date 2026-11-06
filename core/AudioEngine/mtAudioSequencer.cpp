@@ -22,7 +22,33 @@ AUDIO_CORE_RAM void playerEngine::seqFx(uint8_t fx_id, uint8_t fx_val, uint8_t f
           currentInstrument_idx); // play mem dopiero aktualizuje index na play, a czasem korzysta
                                   // sie wczesniej z funkcji
     }
-    endFx(lastSeqFx[fx_n], fx_n);
+    const uint8_t prevFx = lastSeqFx[fx_n];
+    const bool isPrevFilter =
+      (prevFx == Sequencer::strFxConsts::FX_TYPE_FILTER_BANDPASS ||
+       prevFx == Sequencer::strFxConsts::FX_TYPE_FILTER_HIGHPASS ||
+       prevFx == Sequencer::strFxConsts::FX_TYPE_FILTER_LOWPASS);
+    const bool isNewFilter =
+      (fx_id == Sequencer::strFxConsts::FX_TYPE_FILTER_BANDPASS ||
+       fx_id == Sequencer::strFxConsts::FX_TYPE_FILTER_HIGHPASS ||
+       fx_id == Sequencer::strFxConsts::FX_TYPE_FILTER_LOWPASS);
+    const bool skipEndFx =
+      (isPrevFilter && isNewFilter) ||
+      (prevFx != 0 && prevFx == fx_id &&
+       (fx_id == Sequencer::strFxConsts::FX_TYPE_GLIDE ||
+        fx_id == Sequencer::strFxConsts::FX_TYPE_MICROTUNING ||
+        fx_id == Sequencer::strFxConsts::FX_TYPE_PANNING ||
+        fx_id == Sequencer::strFxConsts::FX_TYPE_BIT_DEPTH ||
+        fx_id == Sequencer::strFxConsts::FX_TYPE_DELAY_SEND ||
+        fx_id == Sequencer::strFxConsts::FX_TYPE_REVERB_SEND ||
+        fx_id == Sequencer::strFxConsts::FX_TYPE_REVERSE_PLAYBACK ||
+        fx_id == Sequencer::strFxConsts::FX_TYPE_OVERDRIVE ||
+        fx_id == Sequencer::strFxConsts::FX_TYPE_TUNE ||
+        fx_id == Sequencer::strFxConsts::FX_TYPE_GRANULAR_LENGTH ||
+        fx_id == Sequencer::strFxConsts::FX_TYPE_VOLUME));
+    if (!skipEndFx)
+    {
+        endFx(prevFx, fx_n);
+    }
     switch (fx_id)
     {
         case 0: break; // na 0 mial wywolywac endFx ale wywoluje go zawsze i tak
@@ -1639,8 +1665,8 @@ void playerEngine::endFxVolume(uint8_t fx_n)
         if (trackControlParameter[(int)controlType::sequencerMode + otherFx_n]
                                  [(int)parameterList::volume])
         {
-            uint8_t maxFxVolume = sequencer.getFxMax(Sequencer::strFxConsts::FX_TYPE_POSITION);
-            uint8_t minFxVolume = sequencer.getFxMin(Sequencer::strFxConsts::FX_TYPE_POSITION);
+            uint8_t maxFxVolume = sequencer.getFxMax(Sequencer::strFxConsts::FX_TYPE_VOLUME);
+            uint8_t minFxVolume = sequencer.getFxMin(Sequencer::strFxConsts::FX_TYPE_VOLUME);
 
             currentSeqModValues.volume = mapClamped<int>(
               lastSeqVal[otherFx_n], minFxVolume, maxFxVolume, 0, MAX_INSTRUMENT_VOLUME);

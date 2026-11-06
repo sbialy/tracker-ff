@@ -53,6 +53,7 @@ SD Card Root/
     ├── add_silence.ptfx
     ├── analog_kick_gen.ptfx
     ├── chiptune_gen.ptfx
+    ├── haas.ptfx
     ├── multimode_filter.ptfx
     ├── stereo_delay.ptfx
     └── stereo_to_mono.ptfx
@@ -69,6 +70,7 @@ All reference plugins in [`editor-fx-sdk/effects/`](../editor-fx-sdk/effects) ca
 | [`add_silence.c`](../editor-fx-sdk/effects/add_silence.c) | `Add Silence` | `EFFECT \| STEREO` | `0 B` | `Where` (List: `Beginning\|End`), `Length` (`10–5000 ms`, default `2500 ms`). Prepends or appends silence via `host->set_extra_samples()`. |
 | [`analog_kick_gen.c`](../editor-fx-sdk/effects/analog_kick_gen.c) | `Analog Kick Gen` | `GENERATOR` | `0 B` | `TopFreq` (`60–250 Hz`), `SubFreq` (`30–80 Hz`), `Decay` (`100–900 ms`), `Click` (`0.0–1.0`). Synthesizes analog-style kick drums onto any slot. |
 | [`chiptune_gen.c`](../editor-fx-sdk/effects/chiptune_gen.c) | `Chiptune Voice Gen` | `GENERATOR` | `0 B` | `Voice` (List: `Kick\|Snare\|HiHat\|Pulse12\|Pulse25\|Pulse50\|Triangle\|NESNoise`), `Note` (`24–84 st`), `Arp` (List), `Speed` (`10–60 Hz`), `Decay` (`30–1500 ms`), `Sweep` (`-24..+24 st`), `Crush` (List), `Length` (List: `DecayLen\|SingleCyc`). |
+| [`haas.c`](../editor-fx-sdk/effects/haas.c) | `Haas Effect` | `EFFECT \| STEREO \| IMX_ONLY` | `8,820 B` | `Delay` (`1–100 ms`, default `10 ms`), `Chan` (List: `Left\|Right`). Psychoacoustic stereo Haas widener delaying L or R channel with appended tail fade-out. |
 | [`multimode_filter.c`](../editor-fx-sdk/effects/multimode_filter.c) | `Multi-Mode Filter` | `EFFECT \| STEREO` | `0 B` | `Mode` (List: `LPF 24dB\|LPF 12dB\|BPF 12dB\|HPF 12dB\|Notch\|Peak`), `Cutoff` (`40–16000 Hz`), `Reso` (`0–95 %`), `Drive` (List: `Clean\|SoftSat\|WarmTube\|HardClip\|Foldback`). Zero-delay feedback Cytomic SVF filter. |
 | [`stereo_delay.c`](../editor-fx-sdk/effects/stereo_delay.c) | `Stereo Delay` | `EFFECT \| STEREO` | `176,404 B` | `Time` (`10–1000 ms`), `Fdbk` (`0–95 %`), `Mix` (`0–100 %`), `Tail` (List: `Ring Out\|Cut Off`). Stereo delay line with optional tail ring-out. |
 | [`stereo_to_mono.c`](../editor-fx-sdk/effects/stereo_to_mono.c) | `Stereo to Mono` | `STEREO \| CONVERT_TO_MONO` | `0 B` | `Source` (List: `Merge L+R\|Left Only\|Right Only\|Side L-R`), `Gain` (`-12.0 to +6.0 dB`). Converts a stereo sample on Tracker+ / Mini into a true mono sample, reclaiming 50% sample RAM. |

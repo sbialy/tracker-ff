@@ -61,6 +61,8 @@ class Interface
     void handleCardSlotAction(bool state);
     void handlePowerButtonAction(uint8_t state);
     void handleFileTransferMode(uint8_t state);
+    // Enters or leaves USB storage mode without the UI; returns the resulting state.
+    bool setFileTransferMode(bool enable);
 
     void refreshInterfaceControlsColors();
 

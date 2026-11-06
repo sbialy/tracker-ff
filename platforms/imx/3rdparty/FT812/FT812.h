@@ -73,6 +73,7 @@ void MCU_set_sleepMode(void);
 void MCU_set_runMode(void);
 void FT812_SetFastTransferMode();
 uint8_t MCU_SPIReadWrite(uint8_t DataToWrite);
+void MCU_SPIWrite32(uint32_t DataToWrite);
 
 void MCU_InitSpi(uint32_t baudrate, uint32_t sourceClock);
 void MCU_StopSpi();

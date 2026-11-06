@@ -112,6 +112,13 @@ void FileSystemImpl::setMountEventCallback(CardStateChangeCallback funct)
     cardStateChangeCallback = funct;
 }
 
+bool FileSystemImpl::remount()
+{
+    // Nothing else writes to the card here: this platform has no USB storage
+    // mode.
+    return false;
+}
+
 bool FileSystemImpl::exists(const char* path)
 {
     return SD.exists(path);

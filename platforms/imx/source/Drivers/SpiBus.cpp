@@ -68,17 +68,27 @@ void SpiBus::setSpeed(uint32_t baudRate)
 uint8_t SpiBus::transferByte(uint8_t data, int pcs, bool pcsContinous)
 {
     assert(spiBase != nullptr);
+    (void)pcs;
+    (void)pcsContinous;
 
-    uint32_t pcsMask = pcs << LPSPI_MASTER_PCS_SHIFT;
-    uint32_t pcsContinousMask = pcsContinous ? kLPSPI_MasterPcsContinuous : 0;
-    uint8_t receivedData;
-    lpspi_transfer_t masterXfer;
-    masterXfer.txData = &data;
-    masterXfer.rxData = &receivedData;
-    masterXfer.dataSize = 1;
-    masterXfer.configFlags = pcsMask | pcsContinousMask;
+    while ((spiBase->FSR & LPSPI_FSR_TXCOUNT_MASK) != 0U)
+    {
+    }
+    while ((spiBase->FSR & LPSPI_FSR_RXCOUNT_MASK) != 0U)
+    {
+        (void)spiBase->RDR;
+    }
 
-    LPSPI_MasterTransferBlocking((LPSPI_Type*)spiBase, &masterXfer);
+    spiBase->TDR = data;
+
+    while ((spiBase->FSR & LPSPI_FSR_RXCOUNT_MASK) == 0U)
+    {
+    }
+    uint8_t receivedData = (uint8_t)spiBase->RDR;
+
+    while ((spiBase->SR & LPSPI_SR_MBF_MASK) != 0U)
+    {
+    }
 
     return receivedData;
 }
@@ -87,16 +97,32 @@ uint32_t SpiBus::transfer4Bytes(uint32_t data)
 {
     assert(spiBase != nullptr);
 
-    uint32_t receivedData;
-    lpspi_transfer_t masterXfer;
-    masterXfer.txData = (uint8_t*)&data;
-    masterXfer.rxData = (uint8_t*)&receivedData;
-    masterXfer.dataSize = 4;
-    masterXfer.configFlags = kLPSPI_MasterPcs0 | kLPSPI_MasterPcsContinuous;
+    while ((spiBase->FSR & LPSPI_FSR_TXCOUNT_MASK) != 0U)
+    {
+    }
+    while ((spiBase->FSR & LPSPI_FSR_RXCOUNT_MASK) != 0U)
+    {
+        (void)spiBase->RDR;
+    }
 
-    LPSPI_MasterTransferBlocking((LPSPI_Type*)spiBase, &masterXfer);
+    spiBase->TDR = (uint8_t)(data);
+    spiBase->TDR = (uint8_t)(data >> 8);
+    spiBase->TDR = (uint8_t)(data >> 16);
+    spiBase->TDR = (uint8_t)(data >> 24);
 
-    return receivedData;
+    for (int i = 0; i < 4; ++i)
+    {
+        while ((spiBase->FSR & LPSPI_FSR_RXCOUNT_MASK) == 0U)
+        {
+        }
+        (void)spiBase->RDR;
+    }
+
+    while ((spiBase->SR & LPSPI_SR_MBF_MASK) != 0U)
+    {
+    }
+
+    return 0;
 }
 
 void SpiBus::init(LPSPI_Type* spiBase, int pcs, int cpha)
@@ -127,6 +153,13 @@ void SpiBus::start()
     uint32_t spiClock = CLOCK_GetClockRootFreq(kCLOCK_LpspiClkRoot);
     LPSPI_Enable(spiBase, false);
     LPSPI_MasterInit(spiBase, &masterConfig, spiClock);
+    spiBase->TCR = (spiBase->TCR & ~(LPSPI_TCR_CONT_MASK | LPSPI_TCR_CONTC_MASK |
+                                     LPSPI_TCR_RXMSK_MASK | LPSPI_TCR_TXMSK_MASK |
+                                     LPSPI_TCR_PCS_MASK)) |
+                   LPSPI_TCR_PCS(pcs);
+    while ((spiBase->FSR & LPSPI_FSR_TXCOUNT_MASK) != 0U)
+    {
+    }
 }
 
 //--------------------------------------   DMA   -------------------------------------------

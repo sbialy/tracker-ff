@@ -632,6 +632,10 @@ struct strInstrument
 
     char name[4];
 
+    static constexpr char kStreamPrefMagic = 'S';
+    bool isStreamPreferred() const { return name[3] == kStreamPrefMagic; }
+    void setStreamPreferred(bool streamed) { name[3] = streamed ? kStreamPrefMagic : 0; }
+
     uint8_t playMode;
     uint16_t startPoint;
     uint16_t loopPoint1;

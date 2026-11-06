@@ -71,6 +71,14 @@ void onSDCardSlotChange(bool state)
     mtInterface.handleCardSlotAction(state);
 }
 
+#ifdef ENABLE_DEV_CONSOLE
+// For the platform's development console (USB serial, develop mode only).
+bool onDevStorageMode(bool enable)
+{
+    return mtInterface.setFileTransferMode(enable);
+}
+#endif
+
 void onBatteryCharging()
 {
     // mtInterface.showChargingBatteryPopup();
