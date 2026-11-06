@@ -3,6 +3,7 @@
 #   - no R_ARM_GOT* relocation in the linked ELF, the rebase table holds every R_ARM_ABS32 word (count equal, > 0)
 #   - emu_plug.py runs it at the insert 1 home (SRAM_L 0x1FFF0BD0), the insert 2 home (text at 0x1001E000 in the FlexNVM,
 #     rw at 0x20026C00 on the heap) and in SDRAM, and the output checksum is the same at all three
+#   - Dirt: entering Asym leaves no DC step (dirt_asym_check.py)
 #   - Dirt: the checksum is 3b1f3dc5, the device rule of section 11 (runs 2 and 3: the in-image Dirt gives 3b1f3dc5), and the
 #     firmware's own ff_dirt.o and ff_dirt_ctl.o (FW_OBJ, from the PLUG_HOST image build) linked as a plugin give it too
 #
@@ -45,6 +46,9 @@ for p in dirt tape lofi; do
         if [ "$l" = 3b1f3dc5 ]; then echo "dirt  ok  checksum 3b1f3dc5 = the device's in-image Dirt (section 11)"; else echo "dirt  FAIL checksum $l, want 3b1f3dc5"; fail=1; fi
     fi
 done
+# entering Asym from Soft, Hard and Fold: no DC step (the follower of opentracker-fx cbedea9)
+python3 plug/dirt_asym_check.py "$PY" plug/emu_plug.py "$OUT/dirt.plg" "$OUT" || fail=1
+rm -f "$OUT"/asym_*.wav
 if [ -n "$FW_OBJ" ]; then
     # the image's own Dirt kernel and coefficient objects behind the plugin wrapper: must give the same output as dirt.plg
     python3 plug/build_plug.py --id ff.dirt --kind master --opt "-O2 -ffp-contract=off -fno-builtin" --out "$OUT/dirt-fwobj.plg" \
