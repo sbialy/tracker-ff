@@ -60,6 +60,13 @@ class Keys
 
     uint8_t keyInt = 0;
 
+#ifdef ENABLE_DEV_CONSOLE
+    // USB test console: a synthetic key event, applied at the top of update() with the same lines a real TCA8418 event
+    // runs, so Shift combos (isButtonPressed) and the hold auto repeat behave as with a finger. False if the queue is full.
+    bool inject(uint8_t button, bool down);
+    bool injectPending() const { return injHead != injTail; }
+#endif
+
   private:
     I2cBusController* i2cBusController;
 
@@ -79,6 +86,13 @@ class Keys
     uint8_t buttonPush[BUTTON_MAX] = { 0 };
     uint32_t holdTimeMs[BUTTON_MAX];
     uint8_t holdFactor[BUTTON_MAX] = { 0 };
+
+#ifdef ENABLE_DEV_CONSOLE
+    static constexpr uint8_t kInjectQueue = 16; // power of two
+    uint8_t injQueue[kInjectQueue] = { 0 };     // bit 7 = press, low bits = button
+    uint8_t injHead = 0;
+    uint8_t injTail = 0;
+#endif
 
     uint8_t getKeyEvent();
     uint8_t getKeyEventCount();

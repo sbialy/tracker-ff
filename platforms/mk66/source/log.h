@@ -5,8 +5,9 @@ extern void _debuglog(const char* msg);
 extern void _debuglogf(const char* format, ...);
 
 // Print msg to a debug console/log. ENABLE_LOG turns logging on without the
-// rest of what DEBUG changes (optimization level, boot behavior).
-#if defined(DEBUG) || defined(ENABLE_LOG)
+// rest of what DEBUG changes (optimization level, boot behavior). ENABLE_DEV_CONSOLE (USB test console) turns it on
+// as well, the text goes through the console ring (UsbTest.h), never straight to the serial port.
+#if defined(DEBUG) || defined(ENABLE_LOG) || defined(ENABLE_DEV_CONSOLE)
 #define LOG(msg) (_debuglog(msg))
 #define LOGF(format, ...) _debuglogf(format, __VA_ARGS__)
 #else

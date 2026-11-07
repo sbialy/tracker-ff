@@ -399,6 +399,11 @@ void cDisplay::update()
     if (!state)
         return;
 
+#ifdef ENABLE_DEV_CONSOLE
+    if (devShotFrozen)
+        return;
+#endif
+
     if (updateDisplaySettings)
     {
         updateDisplaySettings = 0;

@@ -108,9 +108,43 @@ uint8_t Keys::getKeyEventCount()
     return (count & 0x0F);
 }
 
+#ifdef ENABLE_DEV_CONSOLE
+bool Keys::inject(uint8_t button, bool down)
+{
+    if (button >= BUTTON_MAX || (uint8_t)(injHead - injTail) >= kInjectQueue)
+    {
+        return false;
+    }
+    injQueue[injHead & (kInjectQueue - 1)] = (down ? 0x80 : 0x00) | button;
+    injHead++;
+    return true;
+}
+#endif
+
 uint8_t Keys::update()
 {
     uint8_t result = 0;
+
+#ifdef ENABLE_DEV_CONSOLE
+    while (injTail != injHead)
+    {
+        const uint8_t event = injQueue[injTail & (kInjectQueue - 1)];
+        injTail++;
+        const uint8_t button = event & 0x7F;
+        if (event & 0x80)
+        {
+            holdTimeMs[button] = millis();
+            holdFactor[button] = 0;
+            onPush(button);
+            buttonPush[button] = 1;
+        }
+        else
+        {
+            onRelease(button);
+            buttonPush[button] = 0;
+        }
+    }
+#endif
     // keyInt = 1; // debug i2c errors
     if (keyInt)
     {
