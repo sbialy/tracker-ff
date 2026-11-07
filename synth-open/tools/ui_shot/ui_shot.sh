@@ -56,6 +56,7 @@ script_for() {   # page[:state] -> commands, empty when the page does not exist 
         config) echo 'tap Config; wait 1000' ;;
         performance) echo 'tap Performance; wait 1000' ;;
         sample-play) echo 'tap SamplePlay; wait 1000' ;;
+        sample-load) echo 'tap SampleLoad; wait 1500' ;;
         instrument) echo 'instr 0; tap Params; wait 1200' ;;
         master:inserts) echo "$INS_ON" ;;
         inserts:empty) echo "$INS_OPEN" ;;
@@ -74,7 +75,7 @@ script_for() {   # page[:state] -> commands, empty when the page does not exist 
         *) echo "" ;;
     esac
 }
-ALL_PAGES="pattern master master:inserts song config performance sample-play instrument inserts:empty inserts:running inserts:bbd inserts:dirt2 inserts:safe inserts:safe-mixed engines engines:library synth-params synth-edit synth-edit:filter synth-macros automation automation:lfo"
+ALL_PAGES="pattern master master:inserts song config performance sample-play sample-load instrument inserts:empty inserts:running inserts:bbd inserts:dirt2 inserts:safe inserts:safe-mixed engines engines:library synth-params synth-edit synth-edit:filter synth-macros automation automation:lfo"
 
 build() { make -s -C "$HERE" -j"$(sysctl -n hw.ncpu)" >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 1; }; }
 

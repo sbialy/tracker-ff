@@ -11,7 +11,7 @@ this directory is part of a firmware image, nothing under core/ or synth-open/ o
     synth-open/tools/ui_shot/ui_shot.sh list
 
 PNGs go to `$OUT_DIR` (default `~/prj/poly/build/ui-shot/`), build products and the staged SD cards to `build/ui-shot/` of the
-worktree. Pages and states: `pattern master master:inserts song config performance sample-play instrument inserts:empty
+worktree. Pages and states: `pattern master master:inserts song config performance sample-play sample-load instrument inserts:empty
 inserts:running inserts:bbd inserts:dirt2 inserts:safe inserts:safe-mixed engines engines:library synth-params synth-edit
 synth-edit:filter synth-macros automation automation:lfo`. A page is a script for `ui_shot` (see `script_for` in ui_shot.sh and the
 command list in ui_shot_main.cpp): button taps, encoder turns, waits, `shot`. Needs clang++, make, python3 and the plugin set in

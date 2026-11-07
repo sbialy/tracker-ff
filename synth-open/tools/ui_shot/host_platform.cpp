@@ -311,11 +311,21 @@ class HFileSystem : public FileSystem
     }
     int createInstrumentsList(const char*, char**, uint8_t, uint32_t* sizeOut) override { if (sizeOut) *sizeOut = 0; return 0; }
     int countContainedFiles(const char* path) override { return int(names(abs(path), false).size()); }
-    int createFilesList(const char* path, uint8_t, char** list, uint8_t length, uint16_t, enListFileFilter filter, uint16_t skip, uint16_t, enListFileFilter) override
+    // Like SdDir::createFilesList: frees the entries the list still holds, then allocates one string per entry from start_line on
+    // (folders get a leading "/"), so a caller may pass a list of null pointers. Returns the index after the last entry.
+    int createFilesList(const char* path, uint8_t start_line, char** list, uint8_t length, uint16_t, enListFileFilter filter, uint16_t skip, uint16_t, enListFileFilter) override
     {
-        auto v = names(abs(path), filter == enListFileFilter_folder);
-        int n = 0;
-        for (size_t i = skip; i < v.size() && n < length; i++, n++) { strncpy(list[n], v[i].c_str(), 63); list[n][63] = 0; }
+        for (uint8_t i = 0; i < length; i++)
+            if (list[i] != nullptr) { delete list[i]; list[i] = nullptr; }   // the firmware allocates with new char[] and frees with delete
+        const bool folders = filter == enListFileFilter_folder;
+        auto v = names(abs(path), folders);
+        int n = start_line;
+        for (size_t i = skip; i < v.size() && n < length; i++, n++)
+        {
+            const std::string s = (folders ? "/" : "") + v[i];
+            list[n] = new char[s.size() + 1];
+            strcpy(list[n], s.c_str());
+        }
         return n;
     }
     void listDirContents(const char* dir, DirContentType type, std::function<bool(const char*)> nameFilter, char* buf, int bufSize, int maxNameLen, int& outCount, char** fileList) override
