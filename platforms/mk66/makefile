@@ -26,6 +26,9 @@ FLASH_IMG_MAX	?= 1044480
 TRIM		?=
 # Extra linker flags (the SYNTH_OPEN build asks for a link map: -Xlinker -Map=...)
 LINK_EXTRA	?=
+# binutils 2.39 and newer warn about the RWX LOAD segment (the AUDIO_CORE_RAM code is meant to be there, the MK66 has no
+# MMU or NX). Older ld (the pinned 10.3, binutils 2.35) rejects the flag, so ask ld whether it knows it. Image bytes are unchanged.
+NO_WARN_RWX	:= $(shell $(TOOLCHAIN)ld --help 2>/dev/null | grep -q -e --no-warn-rwx-segments && echo -Xlinker --no-warn-rwx-segments)
 BUILD_DIR	:= build
 OBJ_DIR 	:= $(BUILD_DIR)/obj/
 RM 			:= rm -rf
@@ -104,7 +107,7 @@ $(OBJ_DIR)/%.o: %.S
 	$(TOOLCHAIN)gcc -c -x assembler-with-cpp $(DEFINES) $(INCLUDES) -g -o "$@" "$<"
  
 $(TARGET): $(OBJS)
-	$(TOOLCHAIN)c++ -L ./3rdparty/teensy_core -L ./3rdparty/Audio -L $(CORE_BUILD_DIR) -Xlinker --defsym=__rtc_localtime=0 -Xlinker -print-memory-usage -Xlinker --gc-sections -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -T mk66fx1m0.ld $(LINK_EXTRA) $(TRIM_LINK) -o "$(BUILD_DIR)/$(TARGET).axf" $(OBJS) $(LIBS) 
+	$(TOOLCHAIN)c++ -L ./3rdparty/teensy_core -L ./3rdparty/Audio -L $(CORE_BUILD_DIR) -Xlinker --defsym=__rtc_localtime=0 -Xlinker -print-memory-usage -Xlinker --gc-sections -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -T mk66fx1m0.ld $(LINK_EXTRA) $(NO_WARN_RWX) $(TRIM_LINK) -o "$(BUILD_DIR)/$(TARGET).axf" $(OBJS) $(LIBS) 
 	$(MAKE) --no-print-directory post-build
 	
 # Main rules
