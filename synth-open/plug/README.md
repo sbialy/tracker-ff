@@ -20,7 +20,8 @@ OpenTracker code, except Console and Tube, which are original. See `fx/NOTICE.md
 | `plug.ld` | Link at address 0: entry first, then code, the descriptor (`__plug_desc`), constants, then the writable segment |
 | `build_plug.py` | Compile, link, check relocations, write header + manifest + image + rebase table |
 | `emu_plug.py` | The host loader re-done in Python, the plugin's ARM code in Unicorn: checks, instructions per block, output checksum, wav |
-| `build_plugs.sh` | Builds and checks the shipped plugins (dirt, tape, lofi, console, tube, bbd, phaser) |
+| `build_plugs.sh` | Builds and checks the shipped inserts (dirt, tape, lofi, console, tube, bbd, phaser) and the examples. The synth engines have their own standalone build in `engines/` (`make -C engines`, `engines/README.md`) |
+| `synth_engines.sh` | The engine table as shell functions for `synth_render_compare.sh`, generated from `engines/engines.json` |
 | `fx_dirt_plug.cpp`, `fx/` | The shipped plugins |
 | `examples/` | `tilt.c` (a master insert) and `saw_synth.cpp` (a synth engine), the worked examples of the developer guide `docs/plugin_sdk.md`. `build_plugs.sh` builds and checks them into `OUT/examples` |
 
@@ -241,11 +242,12 @@ scratch off the audio interrupt's stack, which is one stack with the main loop a
 keeps the two Links of its voice pass there (1,544 B, `-DEIGHT_WORK_POOL`) and T-Type its 512 B square bank block (`-DTTYPE_WORK_POOL`),
 cold data that a pass reads only when it syncs, rings or plays a hat or a cymbal. A hot buffer (an oscillator bus) stays on the stack.
 
-Files go to `/Plugins/Synth/`. Build the engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma
-default at `-O2`, `-O3` for FM4 and B-Type, `--synth` with the engine's numbers, `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3` in
-`synth_engines.sh` set other flags for a test set and the render compare follows them), and prove bit identity with `synth_render_compare.sh` (the firmware's
-objects behind the same wrapper, rendered by `emu_synth.py`). Then run the firmware's own attach check on it,
-`tools/validate_synth.py` (the real `checkSynth` in Unicorn, no device needed): an engine it rejects is listed but shows
+Files go to `/Plugins/Synth/`. Build the engine sources with the firmware's own flags (`make -C engines`, which owns the flags,
+the `--synth` numbers and the versions in `engines/engines.json`, flavour `autof` = `-ffp-contract=off` on every engine for the
+1.2.0 release, `fused` = the compiler default, `-O3` for FM4 and B-Type, `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3` set other
+flags for a test set and the render compare follows them), and prove bit identity with `synth_render_compare.sh` (the firmware's
+objects behind the same wrapper, rendered by `emu_synth.py`, run by `engines/crosscheck.sh`). Then run the firmware's own attach check on it,
+`tools/validate_synth.py` (the real `checkSynth` in Unicorn, no device needed, also run by `crosscheck.sh`): an engine it rejects is listed but shows
 Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sections, 6 macros, 4 voices, formats
 `PLUG_FMT_PCT` to `PLUG_FMT_UNIT` (0 to 15, the higher shim formats are the built-in PERC's).
 
@@ -283,7 +285,7 @@ resident at once. The 3 biggest on the parts plus the one being picked need 18 s
 never decides what is evicted. The worst 3 at once need 1,928 B (2,048 B with the one being picked): a pool of that size would
 save 1,024 B of SRAM but then hold JU6 and three others only, and the 5th engine picked would rewrite the flash.
 
-The shipped synth plugins are the twelve custom engines (`plug/synth_engines.sh`, the PLUGS image builds in only ACD FAT VAP
+The shipped synth plugins are the twelve custom engines (`engines/engines.json`, the PLUGS image builds in only ACD FAT VAP
 WTFM PERC CHIP):
 
 | Plugin | Engine | Image B | rw + bss B | Worst block, 4 voices (instructions, scenario 1, engine DSP at `-Os` as in 1.1.0) |
@@ -323,5 +325,5 @@ controls cache), one per listed engine whether it is installed or not (the first
 `/Plugins/synth.txt` (`logo <file> sidecar|trailer|text err <n>`). Make a record
 with `synth-open/tools/make_plgi.py`: from a PNG (white or opaque is drawn, black or transparent is not, scaled to both
 sizes), from two PNGs, or `--text NAME` for a text logo in the stock style. `--check` tests a `.plgi` or a `.plg` trailer,
-`--selftest` round-trips the stock logos. The twelve shipped `.plgi` files are text logos (`synth_plug_logo` in `synth_engines.sh`), `tools/plgi_sheet.py` stacks
+`--selftest` round-trips the stock logos. The twelve shipped `.plgi` files are text logos (`logo` in `engines/engines.json`), `tools/plgi_sheet.py` stacks
 their previews into one sheet.

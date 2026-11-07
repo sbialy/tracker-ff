@@ -480,7 +480,7 @@ Proof that every `connect()` succeeds: the bench builds the six synth send conne
 
 From `ref/cpu-optimisation-plan.md` (items 1 and 3 to 6 and 10), all output bit identical or below -119 dBFS, all SYNTH_OPEN or plugin only (the stock image is unchanged):
 
-- Engine DSP at `-O2` (`SYNTH_OPT_ENGINES`), FM4 and B-Type at `-O3` (`SYNTH_OPT_FM4`, `SYNTH_OPT_BTYPE`), the synth plugins with the same flags (`plug/synth_engines.sh`). At `-Os` GCC 10.3 kept the per-sample helpers (`svfStep`, `limit`, `fastSine`, `fastPow2`) as calls with the filter state in memory. The table above has the gains. Output: 12 of 18 engines bit identical, the others differ by at most VAP -180.6, CHIP -162.6, CS-Type -119.2, A-Type -125.6, 8-Type -132.5 and Hand-Type -138.5 dBFS (where GCC places a fused multiply add, bench scenarios and plugin render compare). The PLUGS image grows by 14.9 KB, the twelve plugins by 15.5 KB.
+- Engine DSP at `-O2` (`SYNTH_OPT_ENGINES`), FM4 and B-Type at `-O3` (`SYNTH_OPT_FM4`, `SYNTH_OPT_BTYPE`), the synth plugins with the same flags (`engines/engines.json`). At `-Os` GCC 10.3 kept the per-sample helpers (`svfStep`, `limit`, `fastSine`, `fastPow2`) as calls with the filter state in memory. The table above has the gains. Output: 12 of 18 engines bit identical, the others differ by at most VAP -180.6, CHIP -162.6, CS-Type -119.2, A-Type -125.6, 8-Type -132.5 and Hand-Type -138.5 dBFS (where GCC places a fused multiply add, bench scenarios and plugin render compare). The PLUGS image grows by 14.9 KB, the twelve plugins by 15.5 KB.
 - Lo-Fi and Tape keep their coefficients and filter state in locals for the block (a float store to the output may alias any float of the instance, so GCC reloaded them after every sample): Lo-Fi 26.6k to 23.0k emulated cycles per block, Tape 18.4k to 17.9k, bit identical. Dirt, Console, Tube, BBD and Phaser already did.
 - `saturateSoftClip` (`SynthVoiceSDK.h`, twice per sounding part per block) multiplies by `1 / 6.72` instead of dividing, 3,328 cycles per part and block. 1.3 % of the results move 1 ulp (at most -144.5 dBFS). Stock keeps the divide.
 - The plugin runtime's `memset` and `memcpy` store words when aligned (see the CPU table).
@@ -532,9 +532,12 @@ E=-EACD_FAT_VAP_WTFM_PERC_CHIP
 make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTOF SYNTH_TAG=-fpc SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
   SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
   SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off" BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
-# the plugin set of the release (needs python3 with unicorn in PY), FW_OBJ is the obj/synth-open dir of the image build above
-SYNTH_PLUG_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_PLUG_OPT_O3="-O3 -ffp-contract=off" TOOLCHAIN=... PY=/tmp/phzvenv/bin/python \
-  synth-open/plug/build_plugs.sh OUT core/build-MK66-ORIGINAL-SYNTHOPEN-fpc$E-trim/obj/synth-open
+# the engine plugin set of the release: its own standalone build, no firmware build needed (engines/README.md, flavour autof is the default,
+# needs python3 with unicorn in PY for the render checks), then the firmware side checks (render compare, checkSynth, logos)
+make -C engines TOOLCHAIN=... PY=/tmp/phzvenv/bin/python OUT=OUT/engines
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/crosscheck.sh OUT/engines
+# the seven inserts and the examples, FW_OBJ is the obj/synth-open dir of the image build above
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT/inserts core/build-MK66-ORIGINAL-SYNTHOPEN-fpc$E-trim/obj/synth-open
 ```
 
 Against the plain AUTO build the default patch differs by at most -103 dBFS on every engine except A-Type (-80 dBFS), and the all-parameters-max scenarios of Arc-Type, WTFM and Hand-Type differ far more (Arc-Type -7 dBFS, WTFM -44, Hand-Type -69), measured on the 12.3.rel1 bench dumps. The user listened to both and chose AUTOF for all engines. Its CPU saving is an emulated figure, not device calibrated.
@@ -544,7 +547,9 @@ The plain **AUTO** build stays buildable as an unpublished fallback: the same tw
 ```
 make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTO SYNTH_TAG=-pa SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
   BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
-TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT core/build-MK66-ORIGINAL-SYNTHOPEN-pa$E-trim/obj/synth-open
+make -C engines FLAVOUR=fused TOOLCHAIN=... PY=/tmp/phzvenv/bin/python OUT=OUT/engines
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/crosscheck.sh OUT/engines
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT/inserts core/build-MK66-ORIGINAL-SYNTHOPEN-pa$E-trim/obj/synth-open
 ```
 
 - `package-release` only packages. The default engine set is the 4 engine one, so build with the explicit 16 engine list first. `synth-open/tools/package_release.sh build/<image>.ptf` does the same packaging for an existing image.

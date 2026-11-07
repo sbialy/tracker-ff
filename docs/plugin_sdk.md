@@ -148,7 +148,7 @@ It prints the sizes, for example `image 664 B (text 664, rw 0), bss 8 B, 16 reba
 
 New plugins use `-O2 -ffp-contract=off`. `-O2` matters: at `-Os` GCC 10.3 kept small per-sample helpers as calls with their state in memory, and moving the shipped engines from `-Os` to `-O2` saved up to about 28 points of CPU at four voices (CS-Type 74.9 to 46.3 percent worst case, see [section 10](#10-memory-and-cpu-budgets)). `-ffp-contract=off` stops GCC from fusing a multiply and an add into a `vfma`, which costs 3 cycles on the M4F against 2 for a multiply followed by an add.
 
-The shipped synth plugins are compiled with the **firmware's own flags per engine**: `-O2 -ffp-contract=off` for the OpenTracker modules, PHZ and PLK, `-O3 -ffp-contract=off` for FM4 and B-Type (the 1.2.0 release recipe, synth-open/README.md, "Release 1.2.0 lines"). They are the same sources the firmware compiled when those engines were built in, and they render bit identical to the built-in engine. A new plugin has nothing to match, so it uses the defaults.
+The shipped synth plugins are compiled with the **firmware's own flags per engine**: `-O2 -ffp-contract=off` for the OpenTracker modules, PHZ and PLK, `-O3 -ffp-contract=off` for FM4 and B-Type (the 1.2.0 release recipe, synth-open/README.md, "Release 1.2.0 lines"). They are the same sources the firmware compiled when those engines were built in, and they render bit identical to the built-in engine. The flags of each engine are in `engines/engines.json`. A new plugin has nothing to match, so it uses the defaults.
 
 ### Ports of firmware code
 
@@ -162,14 +162,24 @@ export PY=/tmp/phzvenv/bin/python
 synth-open/plug/build_plugs.sh build/plugins        # optional second argument: folder of the firmware's ff_dirt objects
 ```
 
-It builds the seven shipped inserts, the twelve shipped engines and the two examples of this guide, and checks each one:
+It builds the seven shipped inserts and the two examples of this guide, and checks each one:
 
 - no `R_ARM_GOT*` relocation, and the rebase table holds exactly the `R_ARM_ABS32` words of the ELF
 - the insert renders to the same checksum at the SRAM_L home, the FlexNVM home with rw on the heap and in SDRAM, with default settings and again with every parameter moved and one more change in block 5
-- every synth plugin passes the firmware's own attach check ([`validate_synth.py`](#13-validation-safe-mode-and-the-crash-marker)), renders bit identical to the firmware objects of the same engine, and carries its numbers in the manifest
-- the logo records parse
+- the synth example passes the firmware's own attach check ([`validate_synth.py`](#13-validation-safe-mode-and-the-crash-marker)) and renders to the same checksum at two homes
 
 The examples build into `build/plugins/examples/`, apart from the shipped set. The script prints `PASSED` or `FAILED` last.
+
+### Building the shipped engines: `engines/`
+
+The twelve shipped synth engines have their own standalone build in [`engines/`](../engines/README.md). It needs no firmware build and writes nothing into the source tree:
+
+```bash
+make -C engines TOOLCHAIN=$PWD/agt/10.3/bin/arm-none-eabi- PY=/tmp/phzvenv/bin/python OUT=$PWD/build/engines
+make -C engines verify OUT=$PWD/build/engines
+```
+
+`OUT` then holds the twelve `.plg` and `.plgi` files, `SET.json` (set version, compiler, flags, SDK version and ABI, one record per engine) and `SHA256SUMS`: copy the folder to `/Plugins/Synth/`. `FLAVOUR=fused` builds the set without `-ffp-contract=off`. Each build starts from a scratch copy of the files listed in `engines/sdk/` (the header set the engines compile against), so an engine cannot depend on a header outside it. The checks that need a firmware tree (the attach check and the render compare against the firmware's own objects) run as `engines/crosscheck.sh OUT`.
 
 ---
 
@@ -1007,7 +1017,7 @@ What `checkSynth` checks:
 
 It also prints the facts (sections, formats used), and fails when a plugin uses a format the firmware has only for a built-in engine.
 
-`build_plugs.sh` runs it on every synth plugin, and on the example.
+`build_plugs.sh` runs it on the example, and `engines/crosscheck.sh` on the shipped engines.
 
 ### Crash marker and safe mode
 

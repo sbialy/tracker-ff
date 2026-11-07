@@ -1,4 +1,4 @@
-// 8TYPE as a synth plugin: engine_eight.cpp and ot-synths/eight/eight.cpp as they are (built with the firmware's own flags, build_plugs.sh),
+// 8TYPE as a synth plugin: engine_eight.cpp and ot-synths/eight/eight.cpp as they are (built with the firmware's own flags, engines/),
 // with -DEIGHT_WORK_POOL: the two Links of the voice pass in host work memory (work_bytes, SDRAM on the device) instead of the audio
 // interrupt's stack (3,728 B voicePass frame before). The render compare links the firmware's own objects (Links on the stack) behind
 // this file with -DPLUG_FWOBJ: no work memory then, and the same checksum proves the same DSP.
