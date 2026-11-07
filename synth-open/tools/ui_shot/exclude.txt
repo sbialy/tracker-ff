@@ -1,0 +1,3 @@
+# one path per line, relative to core/ or synth-open/, left out of the host link (host stand-ins live in this dir)
+plug_nvm.cpp
+source/Profiler.cpp
