@@ -609,7 +609,6 @@ def main(argv=None):
     if args.suite == 'none':
         do_suite = {i: False for i in range(len(seq))}
     out = os.path.abspath(args.out or 'ab-out-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
-    os.makedirs(out, exist_ok=True)
     print('A: %-24s %s  build %s  %d B  %d plugin files' % (fa.label, fa.ptf_name, fa.build, fa.ptf_bytes, len(fa.files)))
     print('B: %-24s %s  build %s  %d B  %d plugin files' % (fb.label, fb.ptf_name, fb.build, fb.ptf_bytes, len(fb.files)))
     print('plugin sets: %d files differ, %d identical' % (len(diff['differ']), len(diff['same'])))
@@ -617,6 +616,7 @@ def main(argv=None):
         ' '.join(seq), [i for i in range(len(seq)) if do_suite[i]], args.sweep_repeats, args.voices, args.restore, out))
     if args.check_only:
         return EXIT_CLEAN
+    os.makedirs(out, exist_ok=True)
 
     goldens = os.path.abspath(args.goldens or os.path.join(out, 'goldens'))
     if args.sim and not args.goldens:
