@@ -2,6 +2,7 @@
 # executed Thumb-2 instructions (single stepped) and
 # converts them to Cortex-M4F cycles with the cost table below. Not cycle accurate: no flash wait states, no cache,
 # loads and stores at 2 cycles, taken branches at 3, VMLA at 3, VDIV and VSQRT at 14. Run with python -I.
+import os
 import struct
 import subprocess
 import sys
@@ -38,6 +39,12 @@ for line in sh(TC + "-nm", "-S", "-C", "--defined-only", ELF).splitlines():
         syms[name] = a
         ranges.append((a, a + n, name))
 ranges.sort()
+syms_d = {}
+for line in sh(TC + "-nm", "--defined-only", ELF).splitlines():
+    parts = line.split()
+    if len(parts) == 3:
+        syms_d[parts[2]] = int(parts[0], 16)
+LAST_HASH = 0
 
 
 def func_of(addr):
@@ -123,17 +130,23 @@ def measure(sc):
     peak_bits = uc.reg_read(UC_ARM_REG_S0) & 0xFFFFFFFF
     stepped(PK, 0)
     peak = struct.unpack("<f", struct.pack("<I", uc.reg_read(UC_ARM_REG_S0) & 0xFFFFFFFF))[0]
+    global LAST_HASH
+    LAST_HASH = struct.unpack("<I", bytes(uc.mem_read(syms_d["gBenchHash"], 4)))[0]
+    uc.mem_write(syms_d["gBenchHash"], struct.pack("<I", 0x811C9DC5))
+    if os.environ.get("DUMP_DIR"):
+        open(os.path.join(os.environ["DUMP_DIR"], "sc%d.f32" % sc), "wb").write(bytes(uc.mem_read(syms_d["gDump"], 16 * 2 * 128 * 4)))
+    uc.mem_write(syms_d["gDumpN"], struct.pack("<I", 0))
     cycles = 0
     per_fn = defaultdict(float)
     for i, a in enumerate(trace):
         size, mn, ops = info(a)
-        if func_of(a) == "bench_run":   # the harness: zeroing the two output buffers, not engine work
+        if func_of(a) in ("bench_run", "bench_hash"):   # the harness: zeroing the two output buffers, not engine work
             continue
         taken = i + 1 < len(trace) and trace[i + 1] != a + size
         c = cost(mn, ops, taken)
         cycles += c
         per_fn[func_of(a)] += c
-    return len(trace) - sum(1 for a in trace if func_of(a) == "bench_run"), cycles, per_fn, peak
+    return len(trace) - sum(1 for a in trace if func_of(a) in ("bench_run", "bench_hash")), cycles, per_fn, peak
 
 
 LAST_PEAK = 0.0
@@ -144,7 +157,7 @@ def line(name, sc, detail=False):
     insns, cycles, per_fn, peak = measure(sc)
     LAST_PEAK = peak if peak == peak else 0.0
     pb = cycles / NB
-    print(f"{name:<62} {insns / NB:>9.0f} {pb:>9.0f} {100 * pb / BLOCK_CYCLES:>6.2f}%  peak {peak:.2f}")
+    print(f"{name:<62} {insns / NB:>9.0f} {pb:>9.0f} {100 * pb / BLOCK_CYCLES:>6.2f}%  peak {peak:.2f}  hash {LAST_HASH:08x}")
     if peak != peak:
         print("      !! output not finite, the figure is not valid")
     elif peak < 0.01 and pb < 5000:
@@ -175,6 +188,9 @@ if ENGINE != "PHZ":
             (32, "automation: default patch + 4 slot modulator")]
     valid = []
     got = {}
+    if os.environ.get("SCENARIOS"):
+        keep = [int(v) for v in os.environ["SCENARIOS"].split()]
+        cases = [c for c in cases if c[0] in keep]
     for sc, n in cases + auto:
         pb = line(f"{name} {n}", sc, detail=(sc == 0))
         got[sc] = pb

@@ -239,11 +239,37 @@ extern "C" void bench_setup(int sc)
     }
 }
 
+// FNV-1a over the float bits of every rendered block (cpu-opt: output compare between flag sets), excluded from the cycle count
+extern "C" {
+unsigned gBenchHash = 0x811C9DC5u;
+unsigned gDumpN = 0;
+float gDump[16 * 2 * kBlock];
+}
+extern "C" __attribute__((noinline)) void bench_hash()
+{
+    if (gDumpN < 16)
+    {
+        for (uint32_t i = 0; i < kBlock; i++)
+        {
+            gDump[gDumpN * 2 * kBlock + i] = gL[i];
+            gDump[gDumpN * 2 * kBlock + kBlock + i] = gR[i];
+        }
+        gDumpN++;
+    }
+    const unsigned* a = reinterpret_cast<const unsigned*>(gL);
+    const unsigned* b = reinterpret_cast<const unsigned*>(gR);
+    for (uint32_t i = 0; i < kBlock; i++)
+    {
+        gBenchHash = (gBenchHash ^ a[i]) * 0x01000193u;
+        gBenchHash = (gBenchHash ^ b[i]) * 0x01000193u;
+    }
+}
 extern "C" void bench_run(int blocks)
 {
     for (int b = 0; b < blocks; b++)
     {
         block();
+        bench_hash();
     }
 }
 

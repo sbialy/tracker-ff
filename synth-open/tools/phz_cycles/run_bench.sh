@@ -7,13 +7,13 @@
 #   shim renders them, BENCH_VOICES=n for another count; scenarios default patch, all parameters max / mid / min, CHIP per model),
 #   PHZG is PHZ through that generic bench,
 #   engine and voice sources with OPT, libm and libc from the toolchain's newlib-nano as in the firmware link
-# Needs the pinned toolchain in agt/10.3 and a python with unicorn + capstone:
+# Needs the pinned toolchain in agt/10.3 (or TC=/path/to/arm-none-eabi, the 12.3 release compiler) and a python with unicorn + capstone:
 #   python3 -m venv /tmp/phzvenv && /tmp/phzvenv/bin/pip install unicorn capstone     (PYTHON=/tmp/phzvenv/bin/python)
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 OPT=${1:-fw}
 PY=${PYTHON:-/tmp/phzvenv/bin/python}
-TC=$ROOT/agt/10.3/bin/arm-none-eabi
+TC=${TC:-$ROOT/agt/10.3/bin/arm-none-eabi}
 OUT=${KEEP_DIR:-${TMPDIR:-/tmp}/phz_cycles_$$}
 mkdir -p "$OUT"
 ENGINE=${2:-PHZ}
