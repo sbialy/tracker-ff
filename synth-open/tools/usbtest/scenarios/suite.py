@@ -108,10 +108,12 @@ def load_scenarios():
     return lib.REGISTRY
 
 
-def pick(registry, only, tags):
+def pick(registry, only, tags, exclude=()):
     out = []
     for name, fn, meta in registry:
         if only and not any(fnmatch.fnmatch(name, p) for p in only):
+            continue
+        if exclude and any(fnmatch.fnmatch(name, p) for p in exclude):
             continue
         if tags and not set(tags) & set(meta['tags']):
             continue
@@ -340,6 +342,7 @@ def main(argv=None):
     ap.add_argument('--out', default='suite-out')
     ap.add_argument('--name', default='suite', help='basename of the report files')
     ap.add_argument('--only', help='comma separated scenario names or globs')
+    ap.add_argument('--exclude', help='comma separated scenario names or globs that are left out (ab_run.py leaves out project.*: opening a project changes the card)')
     ap.add_argument('--tag', action='append', default=[])
     ap.add_argument('--list', action='store_true')
     ap.add_argument('--goldens', help='folder for the goldens (default: goldens/<mac|device> next to this file)')
@@ -359,7 +362,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     registry = load_scenarios()
-    chosen = pick(registry, [p for p in (args.only or '').split(',') if p], args.tag)
+    chosen = pick(registry, [p for p in (args.only or '').split(',') if p], args.tag, [p for p in (args.exclude or '').split(',') if p])
     if args.list:
         for name, fn, meta in chosen:
             print('%-26s %-22s %s%s%s' % (name, ','.join(meta['tags']), meta['summary'], ' [writes]' if meta['writes'] else '', ' [device only]' if not meta['sim'] else ''))

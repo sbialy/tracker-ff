@@ -50,6 +50,9 @@ echo "== firmware update: the two .ptf validators agree"
 echo "== firmware update: usbtest.py update against the Mac build with a simulated bootloader, success and every failure case"
 python3 -I "$T/flash_e2e.py" "$UI" "$OUT/flash"
 
+echo "== A/B runner: ab_run.py against the Mac build, two fake build ids, ABAB, a differing scenario, a crash marker, the plugin set mismatch abort, a stuck update"
+python3 -I "$T/ab_e2e.py" "$UI" "$OUT/ab"
+
 echo "== fault injection: a threshold that is too tight must fail"
 if UISHOT_FAKE_CPU=2000,3500 python3 -I "$T/usbtest.py" --sim "$UI" --sd "$OUT/sd_cpu" --out "$OUT" --cpu-thresholds "$T/cpu_thresholds.json" "$T/scripts/smoke.ut" > "$OUT/cpu_fail.log" 2>&1; then
   echo "FAIL: the budget check did not fail"; exit 1

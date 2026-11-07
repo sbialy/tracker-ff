@@ -138,6 +138,12 @@ On the Mac the same flow runs against `ui_shot --serve` with a simulated bootloa
 `$UISHOT_BOOTLOADER_LOG` and ends the process with exit code 77 (a reset). The next start installs the named image and reports its build id. `UISHOT_BOOTLOADER_STUCK=1` never comes back,
 `UISHOT_BOOTLOADER_FAIL=1` lets the hand-off return, `UISHOT_FREE_BYTES=N` sets the free space. `flash_e2e.py` drives all of it.
 
+### A/B runs
+
+`synth-open/tools/usbtest/ab_run.py` chains this update with a plugin set swap, the scenario suite and a CPU sweep for two flavours of the test image, see the README next to it. After a run `/Firmware` holds both
+flavours (`PolyendTracker_AUTOT_*.ptf` and `..._AUTOTF_*.ptf`): for a card recovery keep exactly one `.ptf` there as described below. The Mac proof is `ab_e2e.py` (`UISHOT_FAKE_CPU_BUILD="ID=avg,max ID=avg,max"`,
+`UISHOT_FAKE_CPU_JITTER=N`, `UISHOT_FAKE_FAULT_BUILD=ID` for the simulated unit).
+
 ### Recovery
 
 A hand-off that does not end in a running console (the build id is wrong, the node never returns, the bootloader loops from 0 to 100 %, the new image hangs) is recovered through the card. The bootloader is a separate

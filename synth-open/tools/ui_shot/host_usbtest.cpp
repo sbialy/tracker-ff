@@ -237,7 +237,14 @@ bool UsbTestPlatform_InputPending()
     return hostp::g_buttons.injectPending() || hostp::g_pads.injectPending() || hostp::g_encoderDelta != 0;
 }
 uint32_t UsbTestPlatform_ResetStatus() { return 0; }
-bool UsbTestPlatform_FaultRecord(uint32_t*, uint32_t*, uint32_t*, uint32_t*) { return false; }
+// UISHOT_FAKE_FAULT_BUILD=ID: the simulated unit that runs build ID reports a fault record (markers fault=1), for the crash marker case of ab_e2e.py
+bool UsbTestPlatform_FaultRecord(uint32_t* pc, uint32_t* lr, uint32_t* psr, uint32_t* cfsr)
+{
+    const char* id = getenv("UISHOT_FAKE_FAULT_BUILD");
+    if (!id || strcmp(id, hostp::simBuildId()) != 0) return false;
+    *pc = 0x0001A2B4; *lr = 0x0001A2A1; *psr = 0x61000000; *cfsr = 0x00000100;
+    return true;
+}
 long UsbTestPlatform_FreeBytes() { return hostp::simFreeBytes(); }
 
 // LOG() of the core (core/source/log.h): into the console ring, like on the device

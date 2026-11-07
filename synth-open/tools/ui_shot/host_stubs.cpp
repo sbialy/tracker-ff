@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 #include <sys/stat.h>
 
 // ---- interrupts and mute (platforms/mk66/source/hardware.cpp, interruptsControl.cpp)
@@ -41,10 +42,31 @@ size_t Profiler::freeRamBytes() { return 40000; }
 size_t Profiler::maxStackBytes() { return 3000; }
 // The host has no audio interrupt. The USB test console's cpu command gets fixed numbers, UISHOT_FAKE_CPU=avg,max (us) changes them
 // (that is how the runner's threshold check is exercised without a device)
+// UISHOT_FAKE_CPU_BUILD="ID=avg,max ID=avg,max" picks the numbers by the build id the simulated unit reports (after a simulated firmware update
+// it is the new image's), that is how ab_e2e.py gives the two flavours of an A/B run different CPU. UISHOT_FAKE_CPU_JITTER=N adds 0..N us to
+// both (a fixed pseudo random sequence), so the repeats of a sweep have a spread.
 void Profiler::getAudioProcessingUsageUs(AudioProcessorUsage& u, bool)
 {
     int avg = 300, max = 900;
     if (const char* e = getenv("UISHOT_FAKE_CPU")) sscanf(e, "%d,%d", &avg, &max);
+    if (const char* e = getenv("UISHOT_FAKE_CPU_BUILD"))
+    {
+        const std::string id = std::string(hostp::simBuildId()) + "=";
+        const std::string list = std::string(" ") + e;
+        const size_t at = list.find(" " + id);
+        if (at != std::string::npos) sscanf(list.c_str() + at + 1 + id.size(), "%d,%d", &avg, &max);
+    }
+    if (const char* j = getenv("UISHOT_FAKE_CPU_JITTER"))
+    {
+        static uint32_t s_rng = 12345u;
+        s_rng = s_rng * 1664525u + 1013904223u;
+        const int span = atoi(j);
+        if (span > 0)
+        {
+            avg += int((s_rng >> 16) % uint32_t(span + 1));
+            max += int((s_rng >> 8) % uint32_t(span + 1));
+        }
+    }
     u = AudioProcessorUsage{avg / 3, max, max * 2 / 3, avg, avg - 40};
 }
 void Profiler::getAudioProcessingUsagePercent(AudioProcessorUsage& u, bool) { u = AudioProcessorUsage{}; }
