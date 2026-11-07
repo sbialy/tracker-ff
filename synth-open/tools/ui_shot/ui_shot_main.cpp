@@ -2,6 +2,11 @@
 // FT812 model and writes the framebuffer as PNG. NOT firmware.
 //
 //   ui_shot SD_DIR "script"
+//   ui_shot --serve SD_DIR [--no-develop] [--tx-rate BYTES_PER_5MS]
+//                      the USB test console of the firmware (core/source/UsbTest*.cpp) on stdin and stdout, the same line protocol as the
+//                      device's serial port (docs/usb-test-console.md), driven by tools/usbtest/usbtest.py. Time is virtual: it runs
+//                      while commands are being handled and by "_advance MS". Host only lines (start with _): _advance MS, _link 0|1,
+//                      _rate BYTES. A reboot command ends the process with exit code 77.
 //
 // The script is a ';' separated list of commands, run after the UI has started (pattern screen up):
 //   wait MS            run the main loop for MS virtual milliseconds
@@ -16,6 +21,7 @@
 #include "host_platform.h"
 
 #include "Tracker.h"
+#include "UsbTest.h"
 #include "core/interface.h"
 #include "display.h"
 #include "mtStructs.h"
@@ -28,6 +34,7 @@
 #undef private
 
 #include <execinfo.h>
+#include <poll.h>
 #include <mach-o/dyld.h>
 #include <map>
 #include <signal.h>
@@ -132,6 +139,135 @@ bool command(const std::string& line)
 }
 }   // namespace
 
+// ---- --serve: the USB test console
+namespace
+{
+bool g_sawReady;
+
+void flushTx()
+{
+    std::string& tx = hostp::usbtestTx();
+    if (!tx.empty())
+    {
+        if (tx.find("@ready\n") != std::string::npos) g_sawReady = true;
+        fwrite(tx.data(), 1, tx.size(), stdout);
+        fflush(stdout);
+        tx.clear();
+    }
+}
+
+void serveStep()
+{
+    hostp::usbtestStep();
+    flushTx();
+}
+
+// steps until the console has nothing left to do (a command that waits for the host, the put payload, counts as done)
+void stepUntilQuiet()
+{
+    int quiet = 0;
+    for (int i = 0; i < 24000 && quiet < 3; i++)
+    {
+        serveStep();
+        quiet = (hostp::usbtestRxPending() == 0 && !UsbTest_Busy()) ? quiet + 1 : 0;
+        if (hostp::g_resetRequested) return;
+    }
+}
+
+int serve(const std::string& sd, bool develop, long txRate)
+{
+    mkdir(sd.c_str(), 0755);
+    g_sdRootForStat = sd;
+    hostp::setSdRoot(sd);
+    Platform* p = hostp::platform();
+    Tracker* t = Tracker::getInstance();
+    if (develop)
+    {
+        FILE* f = fopen((sd + "/.develop").c_str(), "wb");
+        if (f) fclose(f);
+    }
+    else
+    {
+        remove((sd + "/.develop").c_str());
+    }
+    t->getStartDisplayFunc()(p);
+    t->init(p);
+    for (int i = 0; i < 20000 && !mtInterface.isPatternScreenActive(); i++) hostp::usbtestStep();
+    if (!mtInterface.isPatternScreenActive()) { fprintf(stderr, "ui_shot: the pattern screen never came up\n"); return 1; }
+    samplePlayback.editorInstrument = &mtProject.instrument[0];
+    for (int i = 0; i < 1200; i++) hostp::usbtestStep();   // past the plugin host's boot key window
+    hostp::usbtestTx().clear();
+    if (txRate > 0) hostp::usbtestSetTxRate(size_t(txRate));
+    printf("ui_shot: serve ready\n");
+    fflush(stdout);
+
+    std::string pending;
+    long rawRemaining = 0;   // bytes of a put payload still to come
+    for (;;)
+    {
+        char buf[4096];
+        const ssize_t n = read(0, buf, sizeof(buf));
+        if (n <= 0) break;
+        pending.append(buf, size_t(n));
+        for (;;)
+        {
+            if (rawRemaining > 0)
+            {
+                const size_t take = std::min<size_t>(pending.size(), size_t(rawRemaining));
+                if (take == 0) break;
+                hostp::usbtestFeed(pending.data(), take);
+                pending.erase(0, take);
+                rawRemaining -= long(take);
+                stepUntilQuiet();
+                continue;
+            }
+            const size_t nl = pending.find('\n');
+            if (nl == std::string::npos) break;
+            const std::string line = pending.substr(0, nl + 1);
+            pending.erase(0, nl + 1);
+            if (line[0] == '_')
+            {
+                long v = 0;
+                if (sscanf(line.c_str(), "_advance %ld", &v) == 1)
+                {
+                    for (long ms = 0; ms < v; ms += 5) serveStep();
+                    printf("@advanced %ld\n", v);
+                }
+                else if (sscanf(line.c_str(), "_link %ld", &v) == 1)
+                {
+                    hostp::usbtestSetLink(v != 0);
+                    for (int i = 0; i < 4; i++) serveStep();
+                    printf("@linked %ld\n", v);
+                }
+                else if (sscanf(line.c_str(), "_rate %ld", &v) == 1)
+                {
+                    hostp::usbtestSetTxRate(size_t(v));
+                    printf("@rated %ld\n", v);
+                }
+                fflush(stdout);
+                continue;
+            }
+            hostp::usbtestFeed(line.data(), line.size());
+            stepUntilQuiet();
+            // a put the console accepted (@ready): its payload follows as raw bytes
+            if (g_sawReady && line.compare(0, 4, "put ") == 0)
+            {
+                const size_t b = line.find_last_of(' ', line.size() - 3);   // before the crc
+                const size_t a = line.find_last_of(' ', b - 1);              // before the size
+                if (a != std::string::npos && b != std::string::npos) rawRemaining = atol(line.substr(a + 1, b - a - 1).c_str());
+            }
+            g_sawReady = false;
+            if (hostp::g_resetRequested)
+            {
+                fflush(stdout);
+                return 77;
+            }
+        }
+    }
+    return 0;
+}
+}   // namespace
+
 static void onCrash(int sig)
 {
     void* bt[40];
@@ -146,7 +282,18 @@ int main(int argc, char** argv)
     signal(SIGSEGV, onCrash);
     signal(SIGBUS, onCrash);
     signal(SIGABRT, onCrash);
-    if (argc < 3) { fprintf(stderr, "usage: ui_shot SD_DIR \"script\"\n"); return 2; }
+    if (argc >= 3 && std::string(argv[1]) == "--serve")
+    {
+        bool develop = true;
+        long rate = 0;
+        for (int i = 3; i < argc; i++)
+        {
+            if (std::string(argv[i]) == "--no-develop") develop = false;
+            else if (std::string(argv[i]) == "--tx-rate" && i + 1 < argc) rate = atol(argv[++i]);
+        }
+        return serve(argv[2], develop, rate);
+    }
+    if (argc < 3) { fprintf(stderr, "usage: ui_shot SD_DIR \"script\"   or   ui_shot --serve SD_DIR\n"); return 2; }
     const std::string sd = argv[1];
     mkdir(sd.c_str(), 0755);
     g_sdRootForStat = sd;

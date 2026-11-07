@@ -4,6 +4,8 @@
 #include "plug_host.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -37,7 +39,14 @@ Profiler* Profiler::instance = nullptr;
 void Profiler::init() {}
 size_t Profiler::freeRamBytes() { return 40000; }
 size_t Profiler::maxStackBytes() { return 3000; }
-void Profiler::getAudioProcessingUsageUs(AudioProcessorUsage& u, bool) { u = AudioProcessorUsage{}; }
+// The host has no audio interrupt. The USB test console's cpu command gets fixed numbers, UISHOT_FAKE_CPU=avg,max (us) changes them
+// (that is how the runner's threshold check is exercised without a device)
+void Profiler::getAudioProcessingUsageUs(AudioProcessorUsage& u, bool)
+{
+    int avg = 300, max = 900;
+    if (const char* e = getenv("UISHOT_FAKE_CPU")) sscanf(e, "%d,%d", &avg, &max);
+    u = AudioProcessorUsage{avg / 3, max, max * 2 / 3, avg, avg - 40};
+}
 void Profiler::getAudioProcessingUsagePercent(AudioProcessorUsage& u, bool) { u = AudioProcessorUsage{}; }
 void Profiler::startMeasuringAudio() {}
 void Profiler::stopMeasuringAudio() {}

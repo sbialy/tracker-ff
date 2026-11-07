@@ -35,7 +35,8 @@ uint32_t crc32(uint32_t crc, const void* data, size_t length);
 // ---- row codec "rle1": PackBits on 32 bit words of (pixel XOR the pixel above). Control byte c:
 //      c < 0x80  : c + 1 literal words follow (1..128)
 //      c >= 0x80 : the one word that follows repeats (c & 0x7F) + 2 times (2..129)
-// Pixels are the FT812 ARGB8 words, bytes B G R A in memory, little endian.
+// Pixels are the FT812 ARGB8 words, bytes B G R A in memory, little endian. The console sends a row equal to the one above
+// as a zero length body (@row y 0), the first row is coded against a black row.
 size_t rleSize(const uint32_t* cur, const uint32_t* prev, int count);
 size_t rleEncode(uint8_t* out, const uint32_t* cur, const uint32_t* prev, int count);
 // False if the stream is malformed or does not fill exactly `count` words.
@@ -185,6 +186,8 @@ class Console
 
     // for tests and for the host front end
     bool busy() const { return task_ != kTaskNone; }
+    // a task runs (a put that waits for bytes does not count), input is scheduled or output waits for the transport
+    bool pending() const;
     const Ring& ring() const { return ring_; }
 
   private:

@@ -517,6 +517,8 @@ static std::vector<uint32_t> makeImage()
     return img;
 }
 
+static int zeroRows;
+
 // parses what a `shot` sends: rows with RLE, then the closing line
 static bool decodeShot(const std::vector<uint8_t>& tx, std::vector<uint32_t>& out, std::string& end)
 {
@@ -524,6 +526,7 @@ static bool decodeShot(const std::vector<uint8_t>& tx, std::vector<uint32_t>& ou
     size_t i = 0;
     int rows = 0;
     bool header = false;
+    zeroRows = 0;
     while (i < tx.size())
     {
         size_t e = i;
@@ -536,7 +539,13 @@ static bool decodeShot(const std::vector<uint8_t>& tx, std::vector<uint32_t>& ou
             int y = 0; unsigned n = 0;
             if (sscanf(line.c_str(), "@row %d %u", &y, &n) != 2 || y != rows || i + n + 1 > tx.size()) return false;
             const uint32_t* prev = y > 0 ? &out[size_t(y - 1) * kShotW] : nullptr;
-            if (!rleDecode(&tx[i], n, &out[size_t(y) * kShotW], prev, kShotW)) return false;
+            if (n == 0)
+            {
+                if (prev != nullptr) memcpy(&out[size_t(y) * kShotW], prev, kRowBytes);
+                else memset(&out[size_t(y) * kShotW], 0, kRowBytes);   // the row above the first is black
+                zeroRows++;
+            }
+            else if (!rleDecode(&tx[i], n, &out[size_t(y) * kShotW], prev, kShotW)) return false;
             if (tx[i + n] != '\n') return false;
             i += n + 1;
             rows++;
@@ -571,6 +580,7 @@ static void testShot()
     snprintf(want, sizeof(want), "@ok shot crc=%08x ", zcrc(bgr.data(), bgr.size()));
     CHECK(starts(end, want));
     CHECK(h.tx.size() < 100000);   // the point of the codec: the raw image is 1,536,000 bytes
+    CHECK(zeroRows > 300);         // repeated rows cost a header only
 
     // a slow link: 64 bytes per pass, the ring fills, the console waits, nothing is lost
     reset(h, c);

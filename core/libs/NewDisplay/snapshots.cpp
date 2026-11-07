@@ -178,6 +178,14 @@ void cDisplay::devShotEnd()
 
     for (uint8_t i = 0; i < controlsCount; i++)
     {
+#ifdef UI_SHOT_HOST
+        // The Mac build: a hidden list can hold a data pointer to freed memory, which the chip reads harmlessly (it is the
+        // same loop as doScreenShot's) and the Mac does not. Hidden controls are refreshed when they are shown.
+        if (controlsTable[i] != nullptr && (controlsTable[i]->style & controlStyleShow) == 0)
+        {
+            continue;
+        }
+#endif
         refreshControl(i);
     }
     devShotFrozen = false;

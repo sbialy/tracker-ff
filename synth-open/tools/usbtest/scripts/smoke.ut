@@ -1,0 +1,41 @@
+# Smoke test of the console and the input path. Runs on the device and on the Mac build (ui_shot --serve).
+ping
+status
+expect page pattern
+expect text P1.
+# the top row buttons switch pages, the same Master page the 22 page ui_shot set renders
+tap Master
+idle
+# idle means the queue is empty and the display has nothing to redraw, the list animations of the page run a bit longer
+wait 800
+idle
+expect page master
+expect text Master
+expect text Saturation
+shotcrc master_a
+# a capture rebuilds every control (like Shift + power does on the device), the lists restart their animation: settle again
+wait 800
+idle
+shot master.png
+wait 800
+idle
+shotcrc master_b
+# the screen of a second look is the screen of the first
+shotcrc-save master_a master_crc.json
+shotcrc-expect master_b master_crc.json 0
+# Shift is a held key: a combination only works if the press is held while the other key is tapped
+press Shift
+tap Master
+release Shift
+idle
+tap Pattern
+idle
+expect page pattern
+enc 1
+idle
+cpu-reset
+wait 1500
+cpu-check smoke
+peek lastUsedInstrument
+hash-project
+markers

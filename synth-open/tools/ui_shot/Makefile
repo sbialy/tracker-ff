@@ -37,17 +37,19 @@ OBJS := $(patsubst %.cpp,$(OBJ)/core/%.o,$(filter-out $(EXCLUDE),$(CORE_CPP))) \
         $(patsubst %.cpp,$(OBJ)/so/%.o,$(filter-out $(EXCLUDE),$(SO_CPP))) \
         $(patsubst %,$(OBJ)/gen/%.o,$(OVERLAY_SRCS)) \
         $(patsubst %,$(OBJ)/plugfx/%.o,$(PLUG_FX_C)) \
-        $(patsubst $(HERE)/%.cpp,$(OBJ)/host/%.o,$(HOST_CPP))
+        $(patsubst $(HERE)/%.cpp,$(OBJ)/host/%.o,$(HOST_CPP)) \
+        $(OBJ)/plat/Keys.o
 
 INC := -I$(HERE) -I$(GEN)/inc -I$(GEN)/src -I$(GEN)/libs/Audio -I$(GEN)/libs/Audio/utility -I$(GEN)/libs/Audio/Polyverb -I$(GEN)/libs -I$(CORE)/include -I$(CORE)/config -I$(CORE)/source -I$(CORE)/synth -I$(CORE)/libs \
   -I$(CORE)/libs/ElapsedMillis -I$(CORE)/libs/SerialFlash -I$(CORE)/libs/SPI  -I$(CORE)/libs/FT812 \
   -I$(CORE)/libs/fonts -I$(CORE)/libs/NewDisplay -I$(CORE)/interface -I$(CORE)/effector -I$(CORE)/FileManager -I$(CORE)/Exporter \
   -I$(CORE)/AudioEngine -I$(CORE)/AudioEngine/ConstantValues -I$(CORE)/AudioEngine/MasterEnhancer \
-  -I$(ROOT)/util/include -I$(ROOT)/util/3rdparty -I$(ROOT)/synth/include -I$(SO) -I$(SO)/ot -I$(SO)/plug
+  -I$(ROOT)/util/include -I$(ROOT)/util/3rdparty -I$(ROOT)/synth/include -I$(SO) -I$(SO)/ot -I$(SO)/plug \
+  -I$(ROOT)/platforms/mk66/3rdparty/Buttons
 DEFS := -DFW_TRIM -DAUDIO_PERFORMANCE_INFO_ENABLED -DMEMORY_USAGE_INFO_ENABLED -D__NEWLIB__ -DKINETISK -D__MK66FX1M0__ -DF_CPU=180000000 \
   -DUSB_MIDI -DTEENSYDUINO=142 -DARDUINO=10805 -DLAYOUT_US_ENGLISH -DCPU_MK66FX1M0VMD18 $(FW_VERSION_DEFINES) \
   -DFEATURE_SYNTH -DFEATURE_SYNTH_OPEN $(SYNTH_ENGINE_DEFINES) -DFW_REVERB_SRAM=1 -DFEATURE_SAT_SOFTKNEE -DFEATURE_PLUG_HOST \
-  -DUI_SHOT_HOST -DTINY_OPTIONAL_x64 -DAUDIO_CORE_RAM= -DAUDIO_CORE_FLASH= \
+  -DENABLE_DEV_CONSOLE -DUI_SHOT_HOST -DTINY_OPTIONAL_x64 -DAUDIO_CORE_RAM= -DAUDIO_CORE_FLASH= \
   "-D_GLIBCXX_THROW_OR_ABORT(x)=__builtin_abort()" "-Dstatic_assert(...)="
 WARN := -w
 OPT ?= -O1
@@ -85,6 +87,10 @@ $(OBJ)/gen/%.o: $(GEN)/src/% $(GEN)/.stamp
 $(OBJ)/plugfx/%.o: $(SO)/plug/fx/%.c $(GEN)/.stamp
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Dplug_entry=plug_entry_$* -MMD -MP -c $< -o $@
+# the firmware's own key queue (USB test console), with host stand-ins for the Teensy core headers
+$(OBJ)/plat/Keys.o: $(ROOT)/platforms/mk66/3rdparty/Buttons/Keys.cpp $(GEN)/.stamp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -I$(HERE)/host_stubs -I$(ROOT)/platforms/mk66/3rdparty/I2C -MMD -MP -c $< -o $@
 $(OBJ)/host/%.o: $(HERE)/%.cpp $(GEN)/.stamp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@

@@ -382,6 +382,23 @@ void Console::init(Host* host)
     ring_.clear();
 }
 
+bool Console::pending() const
+{
+    // a put waits for the host's bytes, stepping does not move it on
+    if ((task_ != kTaskNone && task_ != kTaskPut) || ring_.used() != 0)
+    {
+        return true;
+    }
+    for (const Scheduled& item : queue_)
+    {
+        if (item.used != 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Console::pushLocked(const uint8_t* data, size_t length)
 {
     return ring_.push(data, length);
@@ -1508,12 +1525,16 @@ void Console::stepShot(uint32_t now)
         }
         else
         {
-            const size_t need = rleSize(cur, prev, kWidth);
+            // a row equal to the one above is a header with length 0 and no body
+            const size_t need = memcmp(cur, prev, kRowBytes) == 0 ? 0 : rleSize(cur, prev, kWidth);
             if (!needSpace(uint32_t(need + 48)))
             {
                 break;
             }
-            rleEncode(encoded, cur, prev, kWidth);
+            if (need != 0)
+            {
+                rleEncode(encoded, cur, prev, kWidth);
+            }
             char header[32];
             snprintf(header, sizeof(header), "@row %d %u", y, unsigned(need));
             pushBlock(header, encoded, need);

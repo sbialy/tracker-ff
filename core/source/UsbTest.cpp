@@ -361,6 +361,11 @@ void UsbTest_Update()
     }
 }
 
+bool UsbTest_Busy()
+{
+    return g_ready && g_console.pending();
+}
+
 void UsbTest_Log(const char* text)
 {
     g_console.log(text);

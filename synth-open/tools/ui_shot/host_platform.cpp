@@ -13,6 +13,7 @@
 namespace hostp
 {
 uint32_t g_nowMs = 1000;
+bool g_resetRequested;
 static std::string s_root = ".";
 static bool g_held[64];
 void advance(uint32_t ms) { g_nowMs += ms; }
@@ -60,8 +61,10 @@ class HLeds : public Leds
 class HSwitch : public SwitchGroup
 {
   public:
+    explicit HSwitch(bool pad = false) : pad_(pad) {}
     void setHoldTime(int) override {}
-    bool isButtonPressed(int i) override { return i >= 0 && i < 64 && g_held[i]; }
+    bool isButtonPressed(int i) override { return (!pad_ && i >= 0 && i < 64 && g_held[i]) || keyPressed(pad_, i); }
+    bool pad_;
     void setActionCallback(ActionType, void (*)(uint8_t)) override {}
 };
 
@@ -332,16 +335,46 @@ class HFileSystem : public FileSystem
         }
     }
     int readNbFiles(const char*) override { return 0; }
-    bool nesDir_open(const char*) override { return false; }
-    bool nesDir_readItem(char*, uint8_t*, uint8_t*, uint32_t*) override { return false; }
-    void nesDir_close() override {}
+    // one directory walk at a time, like the firmware's
+    bool nesDir_open(const char* path) override
+    {
+        nesDir_close();
+        nesBase_ = abs(path);
+        nesDir_ = opendir(nesBase_.c_str());
+        return nesDir_ != nullptr;
+    }
+    bool nesDir_readItem(char* name, uint8_t* isDir, uint8_t* isHid, uint32_t* size) override
+    {
+        while (nesDir_ != nullptr)
+        {
+            dirent* e = readdir(nesDir_);
+            if (e == nullptr) return false;
+            struct stat st;
+            if (stat((nesBase_ + "/" + e->d_name).c_str(), &st) != 0) continue;
+            strcpy(name, e->d_name);
+            *isDir = S_ISDIR(st.st_mode) ? 1 : 0;
+            *isHid = 0;
+            if (size) *size = uint32_t(st.st_size);
+            return true;
+        }
+        return false;
+    }
+    void nesDir_close() override
+    {
+        if (nesDir_ != nullptr) closedir(nesDir_);
+        nesDir_ = nullptr;
+    }
+
+  private:
+    DIR* nesDir_ = nullptr;
+    std::string nesBase_;
 };
 
 class HPlatform : public Platform
 {
   public:
     void setPowerMode(bool) override {}
-    void resetMCU() override {}
+    void resetMCU() override { g_resetRequested = true; }
     void runBootloader(char*) override {}
     void setPowerButtonCallback(PowerButtonCallback) override {}
     bool getPowerButtonState() override { return true; }
@@ -368,7 +401,7 @@ class HPlatform : public Platform
     HEncoder encoder;
     HBattery battery;
     HLeds leds;
-    HSwitch buttons, pads;
+    HSwitch buttons{false}, pads{true};
     HRadio radio;
     HCodec codec;
     HUsbAudio usbAudio;
@@ -379,7 +412,7 @@ class HPlatform : public Platform
     HConfig config;
     HFileSystem fs;
     EveModel eve;
-    SystemInfo info = {"ui_shot host"};
+    SystemInfo info = {"uishot"};
 };
 
 HPlatform* g_platform;

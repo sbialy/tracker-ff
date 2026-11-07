@@ -15,4 +15,14 @@ void setHeld(int idx, bool on);   // what SwitchGroup::isButtonPressed reports (
 Platform* platform();
 EveModel& eve();
 void setSdRoot(const std::string& dir);
+
+// USB test console (host_usbtest.cpp)
+bool keyPressed(bool pad, int idx);   // the firmware's Keys class holds the state of the buttons and pads
+void usbtestStep();                   // 5 ms of the virtual clock and one main loop pass
+void usbtestFeed(const void* data, size_t n);
+size_t usbtestRxPending();
+std::string& usbtestTx();
+void usbtestSetLink(bool up);
+void usbtestSetTxRate(size_t perStep);
+extern bool g_resetRequested;
 }   // namespace hostp

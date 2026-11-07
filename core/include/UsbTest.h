@@ -20,6 +20,7 @@ class Platform;
 // main loop only
 void UsbTest_Init(Platform* platform, bool develop);
 void UsbTest_Update();
+bool UsbTest_Busy(); // a command is running, input is scheduled or output waits (the Mac front end steps until it is false)
 
 // any context, including the audio interrupt: the text is queued in a ring, nothing waits
 void UsbTest_Log(const char* text);
@@ -48,6 +49,10 @@ static inline void UsbTest_Init(Platform*, bool)
 }
 static inline void UsbTest_Update()
 {
+}
+static inline bool UsbTest_Busy()
+{
+    return false;
 }
 static inline void UsbTest_Log(const char*)
 {
