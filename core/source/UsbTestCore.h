@@ -10,6 +10,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "UsbTestFlash.h"
+
 #if defined(ENABLE_DEV_CONSOLE) && !defined(PLATFORM_IMX)
 
 namespace usbtest
@@ -169,6 +171,13 @@ class Host
     virtual int fileWrite(void* file, const void* data, size_t length) = 0;
     virtual void fileClose(void* file) = 0;
     virtual bool fileRemove(const char* path) = 0;
+
+    // firmware update (UsbTestFlash.cpp). The defaults make a host without them refuse: no rename, space unknown.
+    virtual bool fileRename(const char* from, const char* to) { (void)from; (void)to; return false; }
+    virtual long freeBytes() { return -1; }   // free bytes on the card, -1 if unknown
+    virtual bool rendering() { return false; } // an offline render is running
+    // Hands the file /Firmware/<name> to the bootloader (PlatformImpl::runBootloader). Does not return when it works.
+    virtual void runBootloader(const char* name) { (void)name; }
 };
 
 // Name table for the front panel buttons (the ids Interface::buttonChange takes). -1 if unknown.
@@ -209,6 +218,7 @@ class Console
         kTaskOpen,
         kTaskIdle,
         kTaskReboot,
+        kTaskFw,
     };
 
     struct Scheduled
@@ -249,6 +259,7 @@ class Console
     void cmdPut(int argc, char** argv);
     void cmdRm(int argc, char** argv);
     void cmdOpen(int argc, char** argv);
+    void cmdFw(int argc, char** argv); // fwcheck, fwpromote, flash (UsbTestFlash.cpp)
     bool schedule(uint8_t kind, uint8_t id, bool down, uint32_t due);
 
     // tasks
@@ -259,6 +270,8 @@ class Console
     void stepPut(uint32_t now);
     void stepOpen(uint32_t now);
     void stepIdle(uint32_t now);
+    void stepFw(uint32_t now);
+    void fwDone(const char* cmd);
     void putByte(uint8_t b);
     void putFinish();
 
@@ -313,6 +326,11 @@ class Console
     uint16_t putFill_;
     char path_[80];
     char name_[48];
+
+    // fwcheck, fwpromote, flash
+    PtfValidator ptf_;
+    uint8_t fwMode_;
+    uint8_t fwPhase_; // 0 reading the file, 1 hand-off armed
 };
 } // namespace usbtest
 

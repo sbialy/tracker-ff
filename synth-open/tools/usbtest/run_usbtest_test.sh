@@ -8,7 +8,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 OUT=${TMPDIR:-/tmp}/usbtest_test_$$
 clang++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wall -Wextra \
   -DENABLE_DEV_CONSOLE -I "$ROOT/core/source" \
-  "$ROOT/synth-open/tools/usbtest/usbtest_test.cpp" "$ROOT/core/source/UsbTestCore.cpp" -lz -o "$OUT"
+  "$ROOT/synth-open/tools/usbtest/usbtest_test.cpp" "$ROOT/core/source/UsbTestCore.cpp" "$ROOT/core/source/UsbTestFlash.cpp" -lz -o "$OUT"
 "$OUT"
 rm -f "$OUT"
 clang++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wall -Wextra \

@@ -80,10 +80,14 @@ While a command runs, only `ping help cpu mem status markers abort` are answered
 | `get <path>` | `@get <size>`, blocks `@blk <n>` + n bytes + `\n` (512 at most), then `@end <size> <crc32>` |
 | `put <path> <size> <crc32>` | `@ready`, then exactly `<size>` raw bytes, then `@ok put <size>` or `@err put crc <crc32>` (the file is removed). Refused while playing or loading. A stall of 3 s aborts and removes the file |
 | `rm <path>` | `@ok rm`. Refused while playing |
+| `fwcheck` | `@ok fwinfo free=<bytes or unknown> limit=0xff000 namemax=31 filemax=<bytes>` |
+| `fwcheck <name>` | read only: re-reads `/Firmware/<name>`, runs the .ptf validator. `@ok fwcheck size= crc= top= sp= reset= listed=<0/1>` or `@err fwcheck ptf <reason> record=<n>` |
+| `fwpromote <tmp> <name> 0x<crc32>` | re-reads `/Firmware/<tmp>`, validates it, compares its CRC32 with the token, then renames it to `/Firmware/<name>` (an old file of that name goes first). `@ok fwpromote <name> size= crc=` |
+| `flash <name> 0x<crc32>` | the hand-off to the bootloader, see "Firmware update". `@ok flash handoff <name> size= crc=` and about 250 ms later the unit resets |
 | `abort` | cancels the running command |
 
 CRC32 is the zlib one (poly 0xEDB88320). Paths may not contain `..`, `\`, `:` or control characters. Errors are `@err <reason>`.
-`flash` (the upstream command that hands a .ptf to the bootloader) is not implemented, see "Not done".
+`flash` takes the same path as Config > Firmware, see "Firmware update". The help line lists `fwcheck fwpromote flash` as well.
 
 ### Screenshot codec `rle1`
 
@@ -91,6 +95,62 @@ A pixel is the FT812 ARGB8 word (bytes B G R A). Row y is coded as 32 bit little
 black). PackBits: a control byte below 0x80 is followed by control+1 literal words (1 to 128), a control byte of 0x80 or more by one word
 that repeats (control & 0x7F) + 2 times (2 to 129). A row equal to the one above is `@row y 0` with no bytes. The decoder in
 `usbtest.py` (`rle_decode`) and `rleDecode` in `UsbTestCore.cpp` are the references.
+
+## Firmware update
+
+`usbtest.py update FILE.ptf` replaces the firmware over the console, no card swap. It exists for repeated test cycles (flash an image, run the
+scripts, flash the next). It is the one thing the console does that can leave the unit in the bootloader, so every step has a check and the
+hand-off needs an explicit confirm token.
+
+    python3 -I usbtest.py --port auto update PolyendTracker_AUTOT_1.1.0.ptf
+    options (before the word update): --expect-build ID  --no-build-check  --ptf-name NAME  --update-timeout S  --stage-only
+
+| Step | Where | What is checked |
+| :--- | :--- | :--- |
+| 1 | Mac, `ptfcheck.py` | The file is an Intel HEX image the MK66 can take (rules below), the name is legal, the expected build id is known |
+| 2 | device | `ping`, `status` (not playing, not loading), `fwcheck` (free space at least the file plus 1 MiB, or unknown) |
+| 3 | device | `put /Firmware/_usbtest.tmp` with size and CRC32. The name is not a .ptf, so Config > Firmware never lists it. A copy that stalls for 3 s or ends with a wrong CRC is deleted by the device |
+| 4 | device | `fwpromote`: reads the temp file back from the card, validates it, compares the CRC32 with the token, renames it into `/Firmware/<name>` |
+| 5 | device | `flash <name> 0x<crc32>`: reads the final file again, validates it, compares the token. Only then `@ok flash handoff`, 250 ms later `runBootloader(name)` (`PlatformImpl.cpp:97`, what Config > Firmware calls: writes `/Firmware/_fwinfo`, triggers the bootloader). The bootloader is not touched in any other way |
+| 6 | Mac | Waits for the link to drop (no drop in 30 s is a failure), then for the CDC node and a `ping` answer (240 s by default) |
+| 7 | Mac | `build` of the new `ping` must equal the build id inside the .ptf and the uptime must have restarted. Prints PASS or FAIL and the time taken |
+
+What the device refuses (each case leaves the bootloader alone, `usbtest_test.cpp` and `flash_e2e.py` run all of them):
+
+- no token, a token that is not `0x` plus eight hex digits, a token that differs from the CRC32 of the file now on the card (a copy that changed after it was checked)
+- while playing, rendering (`Sequencer::isRenderMode`) or while the file manager is busy, also if playback starts in the 250 ms before the hand-off (the hand-off is cancelled), also on `abort` or when the USB link drops in that window
+- a name that is longer than 31 characters (the bootloader reads it into `char[32]`), shorter than 15, does not start with `PolyendTrac`, does not end in `.ptf` or has a character outside `A-Za-z0-9._-` (the same filter as Config > Firmware, `SD.cpp:590`)
+- a file under 4 KiB or over 6 MiB, or one the validator rejects
+
+The validator (`core/source/UsbTestFlash.cpp`, mirrored for the Mac in `ptfcheck.py`, `usbtest_flash_test.sh` makes both judge the same corpus and the real images) is the
+build time `check_ptf.py` as a streaming parser: Intel HEX record structure and checksums, only record types 00, 01 and 02 (stock images use nothing else, type 04 means the image crossed
+1 MiB), an end of file record and nothing after it, every data byte below 0xFF000, the image starts at address 0, the flash configuration field at 0x400 equals the stock one (`FF` x 12, `DE F9 FF FF`:
+a wrong value can lock the MCU), the initial stack pointer is in the MK66 SRAM (0x1FFF0000 to 0x20030000), the reset vector is a Thumb address inside the image. A Tracker+ or Mini image fails here
+(the stack pointer, the start address or the flash configuration are not the MK66 ones).
+
+Limits: the console cannot know what the bootloader itself accepts (closed source), the checks are those of the build tools. The free space query is FatFs `f_getfree`, on a card whose FSINFO is stale it scans the FAT once
+(seconds, main loop), and a result of 0 is reported as `unknown`. The build id is found in the .ptf as the single NUL delimited seven digit hex string (`BUILD_TAG` of a normal build). A pinned tag such as `stk` or
+`ut00001` cannot be found, give `--expect-build ID` (or `--no-build-check`, the restart is still checked).
+
+`--stage-only` stops after step 4 and prints the confirm command, so the file can be inspected and flashed by hand (`usbtest.py cmd flash NAME 0xCRC`).
+
+On the Mac the same flow runs against `ui_shot --serve` with a simulated bootloader: `runBootloader` is replaced by a stub that writes `/Firmware/_fwinfo` like the real one, appends the call to
+`$UISHOT_BOOTLOADER_LOG` and ends the process with exit code 77 (a reset). The next start installs the named image and reports its build id. `UISHOT_BOOTLOADER_STUCK=1` never comes back,
+`UISHOT_BOOTLOADER_FAIL=1` lets the hand-off return, `UISHOT_FREE_BYTES=N` sets the free space. `flash_e2e.py` drives all of it.
+
+### Recovery
+
+A hand-off that does not end in a running console (the build id is wrong, the node never returns, the bootloader loops from 0 to 100 %, the new image hangs) is recovered through the card. The bootloader is a separate
+chip that no console command writes to (`docs/upstream-README.md`, "Emergency Recovery"), a failed update does not damage it:
+
+1. Power the unit off (hold the power button) and take out the SD card, or use a card reader.
+2. In `/Firmware` keep exactly one `.ptf`: a known good image for the unit (a release image or the one that ran before). Move everything else out, the staged image and any other `.ptf` too, the emergency pick
+   takes one of the files it finds. `_usbtest.tmp` and `_fwinfo` can stay.
+3. Put the card in, power the unit on. If it shows the UI use Config > Firmware > select the file (the same hand-off the console makes).
+4. If it does not boot far enough for that: press the recessed Reset / Emergency Bootloader pinhole button on the bottom of the unit with a paperclip, the bootloader flashes the `.ptf` from `/Firmware`.
+5. Remove `/.develop` and flash a release image to get rid of the console.
+
+Do not run an update on a nearly empty battery and do not unplug USB between step 5 of the flow and the console coming back (flashing a full image takes a minute or more).
 
 ## Mac side
 
@@ -106,12 +166,11 @@ the display code and the snapshot calls. What is a stand-in: the serial port, th
 `CMD_SNAPSHOT2`), `Profiler` (the `cpu` numbers are fixed, `UISHOT_FAKE_CPU=avg,max`), the encoder tick.
 
     synth-open/tools/usbtest/run_usbtest_test.sh     host unit tests
-    synth-open/tools/usbtest/run_usbtest_e2e.sh      unit tests + runner against the Mac build + extra checks
+    synth-open/tools/usbtest/run_usbtest_e2e.sh      unit tests + runner against the Mac build + extra checks + firmware update cases
+    synth-open/tools/usbtest/usbtest_flash_test.sh   the console's .ptf validator against ptfcheck.py on a generated corpus and real images
+    synth-open/tools/usbtest/flash_e2e.py            usbtest.py update against the Mac build with a simulated bootloader, success and failure cases
 
 ## Not done
 
-- `flash <name>`: it remounts the card, writes `/Firmware/_fwinfo` and resets into the bootloader. It cannot be exercised without a device,
-  a wrong name or an interrupted copy leaves the unit in the bootloader and it is the one command that can make a test run strand the
-  hardware. Use `put` and flash from Config > Firmware.
 - `render` and `wavstat` (phase 5), the watchdog build, a Config menu switch for the console, SysEx transport.
 - `texts` lists controls that carry a text. List contents (file browsers, instrument lists) and the grid editors are not in it.

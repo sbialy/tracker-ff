@@ -19,6 +19,7 @@ static bool g_held[64];
 void advance(uint32_t ms) { g_nowMs += ms; }
 void setHeld(int idx, bool on) { if (idx >= 0 && idx < 64) g_held[idx] = on; }
 void setSdRoot(const std::string& d) { s_root = d; }
+const std::string& sdRoot() { return s_root; }
 
 namespace
 {
@@ -375,7 +376,7 @@ class HPlatform : public Platform
   public:
     void setPowerMode(bool) override {}
     void resetMCU() override { g_resetRequested = true; }
-    void runBootloader(char*) override {}
+    void runBootloader(char* name) override { hostp::simBootloaderHandoff(name); }
     void setPowerButtonCallback(PowerButtonCallback) override {}
     bool getPowerButtonState() override { return true; }
     bool readForceStartUp() override { return true; }
@@ -412,7 +413,7 @@ class HPlatform : public Platform
     HConfig config;
     HFileSystem fs;
     EveModel eve;
-    SystemInfo info = {"uishot"};
+    SystemInfo info = {hostp::simBuildId()};
 };
 
 HPlatform* g_platform;

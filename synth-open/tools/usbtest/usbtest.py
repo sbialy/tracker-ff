@@ -9,6 +9,7 @@ Talks the line protocol of docs/usb-test-console.md over
   python3 -I usbtest.py --sim build/ui-shot/ui_shot --sd /tmp/sd scripts/smoke.ut
   usbtest.py --port auto scripts/smoke.ut --cpu-thresholds cpu_thresholds.json
   usbtest.py --port auto cmd ping            # one raw command, prints the reply
+  usbtest.py --port auto update FW.ptf       # firmware update: put, verify, hand off to the bootloader, wait, confirm the build id
 
 Script format (one command per line, '#' starts a comment, words are split like a shell, quote names with spaces):
 
@@ -37,6 +38,10 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'ui_shot'))
 sys.path.insert(0, HERE)   # a copy of png_cmp.py next to the runner works as well
+try:
+    import ptfcheck  # host copy of the device's .ptf checks, needed by the update flow
+except Exception:  # noqa: BLE001
+    ptfcheck = None
 try:
     import png_cmp  # layout tool next to ui_shot, only its PNG reader is used
 except Exception:  # noqa: BLE001
@@ -197,7 +202,7 @@ class Transport:
         del self.buf[:n]
         return data
 
-    def wait_ms(self, ms):
+    def wait_ms(self, ms, keep=False):
         time.sleep(ms / 1000.0)
 
     def close(self):
@@ -205,6 +210,9 @@ class Transport:
 
     def reconnect(self, timeout=40.0):
         raise UsbTestError('reconnect not supported')
+
+    def node_present(self):
+        return True
 
     def drain(self, quiet=0.1):
         """Throw away whatever is queued (log text from before the command)."""
@@ -255,19 +263,25 @@ class SimTransport(Transport):
         except BrokenPipeError:
             raise Disconnected('ui_shot is gone')
 
-    def wait_ms(self, ms):
+    def wait_ms(self, ms, keep=False):
+        """keep=True hands the lines that the device sent while time advanced to the next read (an interrupted put answers in there)."""
         self.write(('_advance %d\n' % ms).encode())
         deadline = time.monotonic() + 120
+        kept = []
         while True:
             line = self.read_line(max(1.0, deadline - time.monotonic()))
             if line.startswith('@advanced'):
+                if kept:
+                    self.buf[0:0] = ''.join(l + '\n' for l in kept).encode('latin-1')
                 return
+            if keep and line.startswith('@'):
+                kept.append(line)
 
     def side(self, line):
         """Host only line (_link 0|1, _rate N), returns when acknowledged."""
         self.write((line + '\n').encode())
         while True:
-            if self.read_line(30).startswith(('@linked', '@rated')):
+            if self.read_line(30).startswith(('@linked', '@rated', '@rawlimited')):
                 return
 
     def close(self):
@@ -282,8 +296,17 @@ class SimTransport(Transport):
                 self.proc.kill()
 
     def reconnect(self, timeout=40.0):
+        """Restart the Mac build. A simulated bootloader that does not return (UISHOT_BOOTLOADER_STUCK) exits at once, keep trying until `timeout`."""
         self.close()
-        self.start()
+        end = time.monotonic() + timeout
+        while True:
+            try:
+                self.start()
+                return
+            except Disconnected:
+                if time.monotonic() > end:
+                    raise UsbTestError('the device did not come back within %d s' % timeout)
+                time.sleep(0.2)
 
 
 class SerialTransport(Transport):
@@ -346,6 +369,9 @@ class SerialTransport(Transport):
             return data
         except OSError as e:
             raise Disconnected('serial port error: %s' % e)
+
+    def node_present(self):
+        return os.path.exists(self.port)
 
     def write(self, data):
         try:
@@ -545,11 +571,20 @@ class Tracker:
                 f.write(data)
         return data
 
-    def put(self, data, path):
+    def put(self, data, path, stop_after=None):
+        """stop_after=N is a test aid: send only N bytes, wait for the device to give up (3 s) and return its reply instead of raising."""
+        if stop_after is not None and hasattr(self.t, 'side'):
+            self.t.side('_rawlimit %d' % stop_after)   # the Mac build stops reading the payload there, the device just gets nothing more
         self.send('put %s %d 0x%08x' % (shlex.quote(path), len(data), crc32(data)))
         line = self._ready_or_err()
         if len(data) == 0:
             return
+        if stop_after is not None:
+            for i in range(0, stop_after, 1024):
+                self.t.write(data[i:min(i + 1024, stop_after)])
+            self.t.wait_ms(4000, keep=True)
+            term, _, _ = self._read_reply(10)
+            return term
         for i in range(0, len(data), 1024):
             self.t.write(data[i:i + 1024])
         term, _, _ = self._read_reply(120)
@@ -590,6 +625,41 @@ class Tracker:
         term, _, _ = self.command('hash project')
         return term.split()[2]
 
+    # ---- firmware update commands (core/source/UsbTestFlash.cpp)
+    def fw_info(self):
+        term, _, _ = self.command('fwcheck')
+        return dict(kv.split('=', 1) for kv in term.split() if '=' in kv)
+
+    def fw_check(self, name):
+        term, _, _ = self.command('fwcheck %s' % shlex.quote(name), 120)
+        return dict(kv.split('=', 1) for kv in term.split() if '=' in kv)
+
+    def fw_promote(self, tmp, name, crc):
+        term, _, _ = self.command('fwpromote %s %s 0x%08x' % (shlex.quote(tmp), shlex.quote(name), crc), 120)
+        return dict(kv.split('=', 1) for kv in term.split() if '=' in kv)
+
+    def fw_flash(self, name, crc):
+        """The confirmed hand-off. Returns the ok line, the device resets about 250 ms later."""
+        term, _, _ = self.command('flash %s 0x%08x' % (shlex.quote(name), crc), 120)
+        return term
+
+    def wait_reset(self, timeout):
+        """After a confirmed hand-off: True once the link dropped (the unit reset), False if it never did. An @err line from the
+        device (the hand-off failed after the ok line) raises UsbTestError."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            try:
+                line = self.t.read_line(0.3)
+            except Timeout:
+                line = ''
+            except Disconnected:
+                return True
+            if line.startswith('@err'):
+                raise UsbTestError(line)
+            if not self.t.node_present():
+                return True
+        return False
+
     def reboot(self, timeout=40.0):
         self.command('reboot')
         try:   # the reset drops the link, the node may change
@@ -625,6 +695,145 @@ class Tracker:
                     self.ping(2.0)
                 except UsbTestError as e:
                     raise UsbTestError('no heartbeat while waiting (hang or fault?): %s' % e)
+
+
+# ------------------------------------------------------------------------------------------------ firmware update
+UPDATE_TMP = '_usbtest.tmp'     # in /Firmware: not a .ptf, so Config > Firmware never lists it
+RECOVERY = ('Recovery: power off, take the SD card out, leave exactly one known good .ptf in /Firmware (move the staged image and any other .ptf away), '
+            'put the card back and use Config > Firmware, or press the recessed Reset / Emergency Bootloader pinhole on the bottom of the unit. '
+            'The bootloader is never written by the console, a failed update does not damage it (docs/usb-test-console.md, Recovery).')
+
+
+class UpdateFailed(Exception):
+    def __init__(self, stage, msg, hand_off=False):
+        super().__init__('%s: %s' % (stage, msg))
+        self.stage, self.msg, self.hand_off = stage, msg, hand_off
+
+
+def update_firmware(tr, path, name=None, expect_build=None, check_build=True, timeout=240.0, stage_only=False,
+                    interrupt_put=None, say=print):
+    """Firmware update over the console. Stages: check the file here, check the device, put to a temp name, the device re-reads it and
+    validates it (fwpromote renames it into /Firmware), the confirmed hand-off (flash NAME 0xCRC), wait for the unit to leave and come
+    back, compare the build id with the one in the .ptf. Returns a dict, raises UpdateFailed. The bootloader is only reached by the
+    last device command, after everything before it passed."""
+    if ptfcheck is None:
+        raise UpdateFailed('setup', 'ptfcheck.py not found next to usbtest.py')
+    t0 = time.monotonic()
+    with open(path, 'rb') as f:
+        data = f.read()
+    name = name or os.path.basename(path)
+    crc = crc32(data)
+
+    def step(n, text):
+        say('[%d/7] %6.1f s  %s' % (n, time.monotonic() - t0, text))
+
+    # 1. the file and the name, here
+    verdict = ptfcheck.validate(data)
+    if not verdict.ok:
+        raise UpdateFailed('file', '%s is not a flashable MK66 image: %s (record %d)' % (path, verdict.error, verdict.record))
+    if not (ptfcheck.MIN_FILE_BYTES <= len(data) <= ptfcheck.MAX_FILE_BYTES):
+        raise UpdateFailed('file', 'size %d outside %d..%d' % (len(data), ptfcheck.MIN_FILE_BYTES, ptfcheck.MAX_FILE_BYTES))
+    err = ptfcheck.name_error(name)
+    if err != 'ok':
+        raise UpdateFailed('name', '%s: %s (31 characters at most, PolyendTrac... .ptf, letters digits . _ -)' % (name, err))
+    expected = expect_build or (ptfcheck.find_build_id(data) if check_build else None)
+    if check_build and not expected:
+        raise UpdateFailed('build-id', 'the image has no unique 7 digit build id string (a pinned BUILD_TAG), pass --expect-build ID '
+                                       'or --no-build-check')
+    step(1, '%s: %d B, crc %08x, image top 0x%X, name %s ok, expected build %s' % (os.path.basename(path), len(data), crc, verdict.top, name,
+                                                                                    expected or 'not compared'))
+
+    # 2. the device
+    try:
+        before = tr.ping(3.0)
+        st = tr.status()
+    except UsbTestError as e:
+        raise UpdateFailed('device', 'no console answer: %s' % e)
+    if before['proto'] != 1:
+        raise UpdateFailed('device', 'console protocol %s, this runner speaks 1' % before['proto'])
+    if st.get('play') != '0' or st.get('fm') != '0':
+        raise UpdateFailed('device', 'the unit is playing or busy (play=%s fm=%s), stop it first' % (st.get('play'), st.get('fm')))
+    up_before, seen_before = int(st.get('up', '0')), time.monotonic()
+    info = tr.fw_info()
+    free = info.get('free', 'unknown')
+    if free != 'unknown' and int(free) < len(data) + ptfcheck.SPARE_BYTES:
+        raise UpdateFailed('space', 'the card has %s B free, %d B needed (file plus %d B spare)' % (free, len(data) + ptfcheck.SPARE_BYTES,
+                                                                                                   ptfcheck.SPARE_BYTES))
+    step(2, 'device %s build %s up %d s, free space %s' % (before['product'], before['build'], up_before, free))
+
+    # 3. put to the temp name
+    tmp_path = '/Firmware/' + UPDATE_TMP
+    try:
+        reply = tr.put(data, tmp_path, stop_after=interrupt_put)
+    except UsbTestError as e:
+        raise UpdateFailed('put', str(e))
+    if interrupt_put is not None:
+        raise UpdateFailed('put', 'interrupted after %d bytes on purpose, the device said: %s' % (interrupt_put, reply))
+    step(3, 'put %s, %d B' % (UPDATE_TMP, len(data)))
+
+    # 4. the device re-reads the temp file, validates it and renames it into /Firmware
+    try:
+        promoted = tr.fw_promote(UPDATE_TMP, name, crc)
+    except UsbTestError as e:
+        try:
+            tr.command('rm %s' % tmp_path, expect_err=True)
+        except UsbTestError:
+            pass
+        raise UpdateFailed('verify', str(e))
+    if promoted.get('size') != str(len(data)) or promoted.get('crc') != '%08x' % crc:
+        raise UpdateFailed('verify', 'the device read back %s, the file is %d B crc %08x' % (promoted, len(data), crc))
+    step(4, 'device re-read /Firmware/%s: crc %s size %s, validated and renamed' % (name, promoted['crc'], promoted['size']))
+    if stage_only:
+        say('staged only: nothing was handed to the bootloader. To flash it: flash %s 0x%08x' % (name, crc))
+        return {'staged': True, 'name': name, 'crc': crc, 'seconds': time.monotonic() - t0}
+
+    # 5. the hand-off
+    try:
+        ok = tr.fw_flash(name, crc)
+    except UsbTestError as e:
+        raise UpdateFailed('hand-off', str(e))
+    t_handoff = time.monotonic()
+    step(5, 'hand-off accepted (%s)' % ok)
+
+    # 6. the unit leaves, the bootloader flashes it, the console comes back
+    try:
+        gone = tr.wait_reset(30.0)
+    except UsbTestError as e:
+        raise UpdateFailed('hand-off', 'the device took the confirmation and then reported: %s (nothing was handed over)' % e)
+    if not gone:
+        raise UpdateFailed('reset', 'the unit never dropped off the bus within 30 s of the hand-off', hand_off=True)
+    step(6, 'link dropped %.1f s after the hand-off, waiting for the console (up to %d s)' % (time.monotonic() - t_handoff, timeout))
+    try:
+        tr.t.reconnect(timeout)
+    except UsbTestError as e:
+        raise UpdateFailed('re-enumerate', str(e), hand_off=True)
+    after, end = None, t_handoff + timeout
+    while after is None:
+        try:
+            tr.t.drain(0.2)
+            after = tr.ping(2.0)
+        except UsbTestError as e:
+            if time.monotonic() > end:
+                raise UpdateFailed('re-enumerate', 'no console answer after the reset: %s' % e, hand_off=True)
+            time.sleep(0.5)
+    back = time.monotonic()
+
+    # 7. is it the new build, and did it really restart
+    try:
+        up_after = int(tr.status().get('up', '0'))
+    except UsbTestError as e:
+        raise UpdateFailed('status', str(e), hand_off=True)
+    # The uptime counter started over. Only meaningful on the real unit, in the Mac build the clock is virtual (there the exit of the process,
+    # which wait_reset saw, is the proof of the restart).
+    restarted = up_after + 1 < up_before + (back - seen_before) or not isinstance(tr.t, SerialTransport)
+    if not restarted:
+        raise UpdateFailed('restart', 'the uptime did not restart (%d s before, %d s after)' % (up_before, up_after), hand_off=True)
+    if check_build and after['build'] != expected:
+        raise UpdateFailed('build-id', 'the unit reports build %s, the image has %s' % (after['build'], expected), hand_off=True)
+    total = time.monotonic() - t0
+    step(7, 'console back %.1f s after the hand-off, build %s, uptime %d s' % (back - t_handoff, after['build'], up_after))
+    return {'staged': False, 'name': name, 'crc': crc, 'before': before['build'], 'after': after['build'], 'expected': expected,
+            'seconds': total, 'bootloader_seconds': back - t_handoff, 'same_build': before['build'] == after['build']}
 
 
 # ------------------------------------------------------------------------------------------------ scripts
@@ -815,7 +1024,13 @@ def main(argv=None):
     ap.add_argument('--cpu-thresholds', help='JSON: {"name": {"max_us": N, "avg_us": N}}')
     ap.add_argument('--report', help='write the results as JSON')
     ap.add_argument('--no-heartbeat', action='store_true')
-    ap.add_argument('items', nargs='+', help='script files, or: cmd LINE...')
+    ap.add_argument('--ptf-name', help='update: name in /Firmware (default: the file name, 31 characters at most)')
+    ap.add_argument('--expect-build', help='update: build id the unit must report afterwards (default: the 7 digit id inside the .ptf)')
+    ap.add_argument('--no-build-check', action='store_true', help='update: do not compare the build id (the restart is still checked)')
+    ap.add_argument('--update-timeout', type=float, default=240.0, help='update: seconds to wait for the console after the hand-off')
+    ap.add_argument('--stage-only', action='store_true', help='update: put, verify and rename, but do not hand off to the bootloader')
+    ap.add_argument('--test-interrupt-put', type=int, help='update: test aid, stop sending the file after N bytes')
+    ap.add_argument('items', nargs='+', help='script files, or: cmd LINE..., or: update FILE.ptf')
     args = ap.parse_args(argv)
 
     os.makedirs(args.out, exist_ok=True)
@@ -834,7 +1049,25 @@ def main(argv=None):
     ok = True
     try:
         transport.drain(0.2)
-        if args.items[0] == 'cmd':
+        if args.items[0] == 'update':
+            if len(args.items) != 2:
+                raise UsbTestError('usage: usbtest.py ... update FILE.ptf')
+            try:
+                res = update_firmware(tracker, args.items[1], name=args.ptf_name, expect_build=args.expect_build,
+                                      check_build=not args.no_build_check, timeout=args.update_timeout, stage_only=args.stage_only,
+                                      interrupt_put=args.test_interrupt_put)
+                if not res['staged']:
+                    note = ' (the same build as before: a no-op upgrade, the restart is what proves the flash)' if res['same_build'] else ''
+                    print('update PASS in %.1f s (bootloader and re-enumeration %.1f s): build %s -> %s%s' % (
+                        res['seconds'], res['bootloader_seconds'], res['before'], res['after'], note))
+            except UpdateFailed as e:
+                ok = False
+                print('update FAIL at %s: %s' % (e.stage, e.msg), file=sys.stderr)
+                if e.hand_off:
+                    print('The bootloader was started. ' + RECOVERY, file=sys.stderr)
+                else:
+                    print('Nothing was handed to the bootloader, the unit runs as before.', file=sys.stderr)
+        elif args.items[0] == 'cmd':
             term, inter, _ = tracker.command(' '.join(args.items[1:]), 60, expect_err=True)
             for l in inter:
                 print(l)

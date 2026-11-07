@@ -179,6 +179,7 @@ int serve(const std::string& sd, bool develop, long txRate)
     mkdir(sd.c_str(), 0755);
     g_sdRootForStat = sd;
     hostp::setSdRoot(sd);
+    hostp::simBootloaderOnStart();   // a pending firmware hand-off (/Firmware/_fwinfo) is the bootloader's to carry out
     Platform* p = hostp::platform();
     Tracker* t = Tracker::getInstance();
     if (develop)
@@ -203,6 +204,7 @@ int serve(const std::string& sd, bool develop, long txRate)
 
     std::string pending;
     long rawRemaining = 0;   // bytes of a put payload still to come
+    long rawCap = -1;        // _rawlimit N: the next put payload stops after N bytes (a cable pulled in the middle of a copy)
     for (;;)
     {
         char buf[4096];
@@ -239,6 +241,11 @@ int serve(const std::string& sd, bool develop, long txRate)
                     for (int i = 0; i < 4; i++) serveStep();
                     printf("@linked %ld\n", v);
                 }
+                else if (sscanf(line.c_str(), "_rawlimit %ld", &v) == 1)
+                {
+                    rawCap = v;
+                    printf("@rawlimited %ld\n", v);
+                }
                 else if (sscanf(line.c_str(), "_rate %ld", &v) == 1)
                 {
                     hostp::usbtestSetTxRate(size_t(v));
@@ -255,6 +262,8 @@ int serve(const std::string& sd, bool develop, long txRate)
                 const size_t b = line.find_last_of(' ', line.size() - 3);   // before the crc
                 const size_t a = line.find_last_of(' ', b - 1);              // before the size
                 if (a != std::string::npos && b != std::string::npos) rawRemaining = atol(line.substr(a + 1, b - a - 1).c_str());
+                if (rawCap >= 0 && rawCap < rawRemaining) rawRemaining = rawCap;
+                rawCap = -1;
             }
             g_sawReady = false;
             if (hostp::g_resetRequested)

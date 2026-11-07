@@ -343,6 +343,18 @@ class TrackerHost : public Host
     int fileWrite(void* f, const void* data, size_t n) override { return fs()->writeFile(data, n, f); }
     void fileClose(void* f) override { fs()->closeFile(f); }
     bool fileRemove(const char* path) override { return fs()->remove(path); }
+
+    // firmware update: the same hand-off as Config > Firmware (fConfigEdit.cpp), the name is the bare file name in /Firmware
+    bool fileRename(const char* from, const char* to) override { return fs()->rename(from, to); }
+    long freeBytes() override { return UsbTestPlatform_FreeBytes(); }
+    bool rendering() override { return sequencer.isRenderMode() != 0; }
+    void runBootloader(const char* name) override
+    {
+        char copy[40];
+        strncpy(copy, name, sizeof(copy) - 1);
+        copy[sizeof(copy) - 1] = 0;
+        platform->runBootloader(copy);
+    }
 };
 
 TrackerHost g_host;
