@@ -106,6 +106,31 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Source (Reverb)**: Polyverb, `core/libs/Audio/Polyverb/` of this repository (`reverb.h`, `fx_engine.h`, `cosine_oscillator.h`, `util.h`), itself Emilie Gillet's reverb from Mutable Instruments Clouds. **License**: MIT, Copyright 2014 Emilie Gillet, adapted for Polyverb by Wojciech Jakóbczyk (the adaptation falls under the repository licence, see LICENSE). The full MIT text of the Gillet header is kept in `ot_reverb.c`. The port is rewritten in C and marked as modified in its header.
 * **Note**: the plugins have only been run in a host harness (`make ptfx-check`) and not on a device.
 
+## 19. Add to Empty Slot (Sample Loader, community contribution)
+* **Location**: `core/interface/sampleImporter/fSampleImport.cpp`, `gSampleImport.cpp` and `sampleImporter.h`.
+* **Source**: https://github.com/JordanDuncan/tracker-ce (branch `add-to-empty-slot`, commit 3627767, upstream pull request 58 of polyend/tracker-ce). Cherry-picked with the original author kept (commit ea870ab). The only change is an explicit `<optional>` include in `sampleImporter.h`.
+* **Author**: Jordan Duncan.
+* **License**: MIT. Contributed to the Polyend Tracker Community Edition under the contribution terms of `CONTRIBUTING.md`, so the repository `LICENSE` applies (MIT with the Wholesale Commercial Clone Restriction for the complete application).
+
+## 20. Per-track MIDI-in (Config > MIDI Track 1 to 8 in channel, community contribution)
+* **Location**: `core/interface/configEditor/configMenu.cpp`, `configMenuDefs.h`, `core/source/mtConfig.cpp`, `mtMidi.cpp`, `mtSequencer.cpp`, `mtSequencer.h` and `mtStructs.h`.
+* **Source**: https://github.com/scott-lepore/tracker-ce (branch `pr/per-track-midi-in`, commit 00d1b68, upstream pull request 51 of polyend/tracker-ce). Cherry-picked with the original author kept (commit 758505f), no changes to the code.
+* **Author**: Scott Lepore.
+* **License**: MIT. Contributed under the contribution terms of `CONTRIBUTING.md`, so the repository `LICENSE` applies (MIT with the Wholesale Commercial Clone Restriction for the complete application).
+
+## 21. Plate Reverb (sample editor plugin, `editor-fx-sdk/effects/plate_reverb.c`, optional)
+* **Location**: `editor-fx-sdk/effects/plate_reverb.c`. It builds to a `.ptfx` file that is loaded from the SD card, nothing here is linked into the firmware.
+* **Source**: https://github.com/mranthropology/tracker-ce (branch `plate-ptfx`, commits 6145892 and 26abefd). Copied with the original author kept (commit bd5dd08). The file header says it is ported from the live master plate in mranthropology/Tracker-Firmware-Mod (`fxbank/fx_bank.c`). The algorithm is the plate reverb of Jon Dattorro, "Effect Design Part 1", Journal of the Audio Engineering Society, 1997.
+* **Author**: MrAnthropology.
+* **License**: MIT. The fork carries the same Polyend Tracker Community Edition license as this tree and adds no notice of its own. The `editor-fx-sdk/` folder is MIT under Part 1 of `LICENSE`.
+* **Note**: the author reports a test on an original Tracker (MK66) with CE 1.0.0. In this project it has only been run in a host harness (`editor-fx-sdk/ptfx_emu_check.py`).
+
+## 22. Transient Shaper (sample editor plugin, `editor-fx-sdk/effects/transient_shaper.c`, optional)
+* **Location**: `editor-fx-sdk/effects/transient_shaper.c`. It builds to a `.ptfx` file that is loaded from the SD card, nothing here is linked into the firmware.
+* **Source**: https://github.com/emanlapponi/tracker-ce (branch `feature/transient-shaper`, commits b170f11 to 95fbe30, upstream pull request 48 of polyend/tracker-ce). Squashed to the final file with the original author kept (commit 51bd65f).
+* **Author**: Emanuele Lapponi.
+* **License**: MIT. Contributed under the contribution terms of `CONTRIBUTING.md`. The `editor-fx-sdk/` folder is MIT under Part 1 of `LICENSE`.
+
 ## Release packages
 
 The `.ptf` images of the `SYNTH_OPEN=1` builds are distributed together with `LICENSE`, this file and a `licenses/` folder holding the full text of every bundled third-party license (made by `synth-open/tools/package_release.sh`). Texts that live in the repository: `licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`, `licenses/LICENSE-BSD-3-Clause-NXP.txt`, `licenses/LICENSE-LiberationFonts-OFL-1.1.txt`, `util/3rdparty/*/LICENSE*`. Texts that exist only as source headers (FastCRC, Polyverb, FatFs, PJRC Teensy core and audio library) are copied out of those headers by the packaging script, verbatim. The image links neither `libPolySynth.a` nor `libPolyDSP.a`, so `synth/lib/LICENSE-PROPRIETARY.txt` is not shipped. Factory patches and `.ptfx` plugins are not part of the package.
