@@ -352,6 +352,27 @@ class AudioPlayMemory : public AudioStream
         }
     }
 
+    // One wrap at a loop point leaves the playhead outside the loop when the loop is shorter than
+    // the distance covered in one sample (a high note on a tiny loop or grain) or when the loop
+    // points moved under a sounding note. The remainder would then grow with every sample until
+    // the playhead has left the sample, so it is folded back here.
+    static inline int32_t keepInLoop(int32_t position, int32_t loopStart, int32_t loopEnd)
+    {
+        if (position >= loopStart && position <= loopEnd)
+        {
+            return position;
+        }
+
+        int32_t loopLength = loopEnd - loopStart;
+        if (loopLength <= 0)
+        {
+            return loopEnd;
+        }
+
+        int32_t offset = (position - loopStart) % loopLength;
+        return (offset < 0) ? loopEnd + offset : loopStart + offset;
+    }
+
     struct strStackedSlide
     {
         bool isSlideOnPlay;

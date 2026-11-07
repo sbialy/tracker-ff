@@ -1180,6 +1180,14 @@ void cMasterParams::switchScreen()
 {
     selectedPlace = 0;
 
+#ifdef FEATURE_PLUG_HOST
+    if (plugUiActive())
+    {   // the Inserts page is the last stop of the cycle, the next press wraps to the first Master page
+        switchToMaster();
+        return;
+    }
+#endif
+
     if (displayType == displayMode::masterValues)
     {
         switchToMixer();
@@ -1195,7 +1203,17 @@ void cMasterParams::switchScreen()
         else if (isEqualizerScreen)
             switchToEqualizerScreen();
         else
+        {
+#ifdef FEATURE_PLUG_HOST
+            if (plugUiInCycle())
+            {   // last stop: the Inserts page, built on top of the Master values screen
+                switchToMaster();
+                plugUiOpen();
+                return;
+            }
+#endif
             switchToMaster();
+        }
     }
     else if (displayType == cMasterParams::displayMode::mixer)
     {

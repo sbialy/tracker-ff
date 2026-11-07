@@ -293,7 +293,11 @@ void cMasterParams::showMasterScreen()
     }
 
     titleBar->show();
+#ifdef FEATURE_PLUG_HOST
+    titleBar->setTitle(plugUiCycleTitle(0));
+#else
     titleBar->setTitle("Master 1/3");
+#endif
 
     display.setControlText(label[0], "Volume");
     display.setControlText(label[1], "Reverb");
@@ -1392,7 +1396,9 @@ void cMasterParams::showMixerScreen()
     display.setControlHide(saturationList);
 
     titleBar->show();
-#ifdef FEATURE_SYNTH
+#ifdef FEATURE_PLUG_HOST
+    titleBar->setTitle(plugUiCycleTitle(1));
+#elif defined(FEATURE_SYNTH)
     titleBar->setTitle("Sample Track Mixer 2/3");
 #else
     titleBar->setTitle("Track Mixer 2/3");
@@ -1461,7 +1467,11 @@ void cMasterParams::showMixerDelayReverbScreen()
     display.setControlHide(saturationList);
 
     titleBar->show();
+#ifdef FEATURE_PLUG_HOST
+    titleBar->setTitle(plugUiCycleTitle(2));
+#else
     titleBar->setTitle("Global Mixer 3/3");
+#endif
 
     char* mixerLabelFormat = (char*)"%s";
 

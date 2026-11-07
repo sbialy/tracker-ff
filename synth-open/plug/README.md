@@ -196,7 +196,11 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
   is loaded in 9 characters: `Inserts` (both empty), `Ins: Tape`, `Ins:Lo-Fi`, `Tape+Dirt`, `Lo-F+Tape`. A built-in
   entry bypasses both inserts and keeps them (loaded, values kept, saved in the sidecar), so Inserts again brings both
   back. Plugins are picked on the Inserts page only.
-- Shift + Saturation opens the Master Inserts page: column 1 `Mixer` is the stage of the tracks and sends mixers before
+- The Master Inserts page is the last stop of the Master button's repeat-press cycle (Master, Track Mixer, Global Mixer, Inserts, then
+  Master again) as soon as a plugin is in `/Plugins/Master/` or an insert slot is assigned, with none the cycle is the stock three
+  pages. The titles then read `n/4` instead of `n/3`. Holding Master still only peeks at the master volume, leaving the page by any
+  top-row button works as on any Master page. Shift + Saturation on the Master values screen still opens the page directly
+  (it also works with no plugin, to reach an empty page). The Inserts page: column 1 `Mixer` is the stage of the tracks and sends mixers before
   the inserts (Hard Clip, Soft Clip or Soft Knee, Delete: Hard Clip), columns 2 and 3 pick the plugin of insert 1 and
   insert 2 (encoder or Up and Down, Delete empties), columns 4 to 7 are the parameters of the focused insert (`*` marks
   it), four at a time, each further press on the insert's button shows the next four. The last column goes back. The
