@@ -1,5 +1,5 @@
 // USB test console, Mac side. NOT firmware. The console core and its binding to the UI (core/source/UsbTest*.cpp) are the
-// firmware's own; what is here is the platform: the serial port is stdin and stdout, the key and pad queue is the firmware's
+// firmware's own. What is here is the platform: the serial port is stdin and stdout, the key and pad queue is the firmware's
 // real Keys class (platforms/mk66/3rdparty/Buttons/Keys.cpp, hold repeat and Shift state included), time is the virtual clock.
 // ui_shot --serve drives it, see ui_shot_main.cpp.
 #include "host_platform.h"
