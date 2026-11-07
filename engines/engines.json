@@ -1,5 +1,5 @@
 {
- "_comment": "The engine .plg set: one row per engine. Sources are relative to synth-open/. opt: engines = the flavour's OpenTracker module flags, o3 = the flavour's FM4 / B-Type flags, anything else = literal flags. extra = more flags of the DSP source only. name = the descriptor name and the SYNTH_ENGINES name in synth-open/engines.mk (-DSYNTH_ENGINE_<name>). stored, patch, type = the numbers of the engine (plug_abi.h PLUG_SYNTH_MANIFEST). version = the .plg header version, bump it when that engine's bytes change on purpose. visibility: public = the source is in this repository and the .plg / .wasm are built here, private = our own module whose source is in a private repository (repo) that publishes the same artifacts, the row stays here as the public identity (numbers, names, logo) and the sources are kept in this tree only until the deletion commit (ref/private-engines-effects-design.md). licence, licence_files, notice: what ships next to the .wasm (notices = the texts). inserts: the master insert plugins, built by synth-open/plug/build_plugs.sh (plg_opt and plg_src_opt there equal this table, checked by wasm/build_modules.py --verify-plg), sources relative to synth-open/, notice_section = the section of synth-open/plug/fx/NOTICE.md. A private row keeps only the public identity (numbers, names, logo, licence): its sources, flags and build live in the repository named in repo, whose artifacts engines/crosscheck.sh and engines/wasm check against these numbers.",
+ "_comment": "The engine .plg set: one row per engine. Sources are relative to synth-open/. opt: engines = the flavour's OpenTracker module flags, o3 = the flavour's FM4 / B-Type flags, anything else = literal flags. extra = more flags of the DSP source only. name = the descriptor name and the SYNTH_ENGINES name in synth-open/engines.mk (-DSYNTH_ENGINE_<name>). stored, patch, type = the numbers of the engine (plug_abi.h PLUG_SYNTH_MANIFEST). version = the .plg header version, bump it when that engine's bytes change on purpose. visibility: public = the source is in this repository and the .plg / .wasm are built here, private = our own module whose source is in a private repository (repo) that publishes the same artifacts, the row stays here as the public identity (numbers, names, logo) and the sources are kept in this tree only until the deletion commit (ref/private-engines-effects-design.md). licence, licence_files, notice: what ships next to the .wasm (notices = the texts). inserts: the master insert plugins, built by synth-open/plug/build_plugs.sh (plg_opt and plg_src_opt there equal this table, checked by wasm/build_modules.py --verify-plg), sources relative to synth-open/, notice_section = the section of synth-open/plug/fx/NOTICE.md. A private row keeps only the public identity (numbers, names, logo, licence): its sources, flags and build live in the repository named in repo, whose artifacts engines/crosscheck.sh and engines/wasm check against these numbers. The licence of a private row is proprietary freeware (LICENSE.md in that repository), its licence_files name files of that repository.",
  "set_version": "1.0.0",
  "default_flavour": "autof",
  "flavours": {
@@ -90,10 +90,11 @@
    "logo": "PHZ",
    "visibility": "private",
    "repo": "poly-engines",
-   "licence": "MIT and Apache-2.0",
+   "licence": "Proprietary freeware, Apache-2.0 and MIT parts",
    "licence_files": [
-    "synth-open/plug/LICENSE",
-    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+    "LICENSE.md",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt",
+    "licenses/LICENSE-tracker-ff-MIT.txt"
    ]
   },
   {
@@ -253,9 +254,11 @@
    "logo": "PLUCK",
    "visibility": "private",
    "repo": "poly-engines",
-   "licence": "MIT",
+   "licence": "Proprietary freeware, Apache-2.0 and MIT parts",
    "licence_files": [
-    "synth-open/plug/LICENSE"
+    "LICENSE.md",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt",
+    "licenses/LICENSE-tracker-ff-MIT.txt"
    ]
   }
  ],
@@ -363,8 +366,11 @@
    "version": "1.0.0",
    "visibility": "private",
    "repo": "poly-effects",
-   "licence": "MIT",
-   "licence_files": []
+   "licence": "Proprietary freeware, MIT parts",
+   "licence_files": [
+    "LICENSE.md",
+    "licenses/LICENSE-tracker-ff-MIT.txt"
+   ]
   },
   {
    "id": "tube",
@@ -372,8 +378,11 @@
    "version": "1.0.0",
    "visibility": "private",
    "repo": "poly-effects",
-   "licence": "MIT",
-   "licence_files": []
+   "licence": "Proprietary freeware, MIT parts",
+   "licence_files": [
+    "LICENSE.md",
+    "licenses/LICENSE-tracker-ff-MIT.txt"
+   ]
   }
  ]
 }

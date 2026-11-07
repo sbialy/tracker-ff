@@ -123,7 +123,7 @@ into the firmware. Nothing in the engine build reads any other firmware file.
    `SYNTH_ENGINES_EXT`), which also ends the in-image test build of a custom engine and the render compare reference. Keep the
    compare as a job that builds the engine repo's objects. `crosscheck.sh` and `validate_synth.py` then take the firmware as a
    checkout path (`FIRMWARE_TREE`, already an argument).
-4. Licences: `synth-open/plug/LICENSE` (MIT), `licenses/` for the OpenTracker sources travel with the files. PHZ travels with its own notice in `poly-engines`.
+4. Licences: `synth-open/plug/LICENSE` (MIT), `licenses/` for the OpenTracker sources travel with the files. PHZ and PLK are proprietary freeware, their source and `LICENSE.md` are in the private repository `poly-engines`, and PHZ keeps the OpenTracker Apache-2.0 notice.
 
 ## Releasing a set
 
