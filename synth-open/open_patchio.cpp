@@ -549,9 +549,11 @@ bool decodePatch(const uint8_t* data, size_t len, PatchData& out)
 #endif
             {
                 Reader whole{ start, r.p };
-                Reader body;
-                whole.tag(f, wt);
-                whole.len(body);
+                Reader body{}; // set by len(), or the parse is refused below, never read uninitialised
+                if (!whole.tag(f, wt) || !whole.len(body))
+                {
+                    return false; // cannot happen (whole is the span just parsed), but do not decode a half set Reader
+                }
                 const int got = decodeMod(body, out.mod);
                 if (got == 0)
                 {

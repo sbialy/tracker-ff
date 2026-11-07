@@ -100,6 +100,11 @@ SYNTH_OPT_FM4 ?= -O3
 SYNTH_OPT_BTYPE ?= -O3
 $(OBJ_DIR)/synth-open/ot-synths/fm4/fm4.o: EXTRA_OPT := $(SYNTH_OPT_FM4)
 $(OBJ_DIR)/synth-open/ot-synths/btype/btype.o: EXTRA_OPT := $(SYNTH_OPT_BTYPE)
+# Our code under synth-open/ builds warning free with -Wall -Wextra, so the warning classes that found the real bugs in the stock
+# code (wrapped unsigned clamps, a missing return, an uninitialised read) are errors there and only there (not core/, not the platform).
+# make does not track flags: after changing this delete the core build dir of the SYNTH_TAG and platforms/mk66/build-trim.
+SYNTH_OPEN_WERROR := -Werror=return-type -Werror=uninitialized -Werror=maybe-uninitialized -Werror=implicit-fallthrough -Werror=sign-compare -Werror=type-limits -Werror=unused-variable
+$(SYNTH_OPEN_OBJS): COMPILER_OPTIONS += $(SYNTH_OPEN_WERROR)
 
 # TRIM=1: no-feature-loss flash trims for the SYNTH_OPEN image (synth-open/README.md, Flash trim).
 #   -DFW_TRIM gates the source level trims: std::map registry, float math, PERC icons only with PERC.

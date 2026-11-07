@@ -176,11 +176,15 @@ void cFileManager::importItFile_ProcessSong()
 
     mtProject.values.globalTempo = clamp<float>(IT, 10.0f, 400.0f);
 
-    uint8_t byteBuffer[OrdNum];
+    // OrdNum comes from the file header (0..65535), the playlist holds SONG_MAX entries.
+    // Read at most SONG_MAX orders into a fixed buffer. OrdNum itself stays unclamped
+    // because it is also the offset of the instrument, sample and pattern tables.
+    uint8_t byteBuffer[SONG_MAX];
+    const uint32_t ordersToRead = (OrdNum < SONG_MAX) ? OrdNum : SONG_MAX;
 
     uint8_t loadStatus = fileTransfer.loadFileToMemory(impFileData.path,
                                                        (uint8_t*)byteBuffer,
-                                                       sizeof(byteBuffer),
+                                                       ordersToRead,
                                                        0x00C0,         // offset
                                                        fileWholeOnce); // fileDivIntoParts
 
