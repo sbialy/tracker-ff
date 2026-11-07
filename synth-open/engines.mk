@@ -13,6 +13,13 @@
 
 SYNTH_ENGINES_ALL     := ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE PLK
 SYNTH_ENGINES_DEFAULT := ACD FAT VAP WTFM
+# The two halves of SYNTH_ENGINES_ALL. STOCK is what the firmware image carries (the stock six, SYNTH_ENGINES=stock). EXT are the twelve
+# engines that ship as runtime .plg plugins, built by the standalone project in engines/ (make -C engines). Their sources stay here
+# so the firmware can still link one in for a test (render compare reference, flash cost report), but no image needs them:
+# EXT_ENGINES=none makes the build refuse any of them. engines/closure.py checks that engines/engines.json lists exactly EXT.
+SYNTH_ENGINES_STOCK   := ACD FAT VAP WTFM PERC CHIP
+SYNTH_ENGINES_EXT     := JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE PLK
+EXT_ENGINES           ?= allow
 
 # Sources are relative to synth-open/. Engine sources that live in core/ (Polyend's open Chiptune voice) are listed
 # separately (relative to core/): core/makefile compiles them only when their engine is picked.
@@ -47,9 +54,18 @@ SYNTH_ENGINES ?= $(SYNTH_ENGINES_DEFAULT)
 _se_space :=
 _se_space +=
 _se_req := $(strip $(shell printf '%s' '$(SYNTH_ENGINES)' | tr 'a-z,' 'A-Z '))
+# SYNTH_ENGINES=stock (alone or among names) stands for the six stock engines
+_se_req := $(strip $(foreach w,$(_se_req),$(if $(filter STOCK,$(w)),$(SYNTH_ENGINES_STOCK),$(w))))
 _se_unknown := $(filter-out $(SYNTH_ENGINES_ALL),$(_se_req))
 ifneq ($(_se_unknown),)
 $(error Unknown engine name(s) in SYNTH_ENGINES: $(_se_unknown). Valid names: $(SYNTH_ENGINES_ALL))
+endif
+
+ifeq ($(EXT_ENGINES),none)
+_se_ext := $(filter $(SYNTH_ENGINES_EXT),$(_se_req))
+ifneq ($(_se_ext),)
+$(error EXT_ENGINES=none but SYNTH_ENGINES has the external engine(s) $(_se_ext). They are runtime plugins: build them with make -C engines)
+endif
 endif
 
 # Selected engines, in canonical order, without duplicates
