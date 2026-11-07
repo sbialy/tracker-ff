@@ -148,7 +148,7 @@ It prints the sizes, for example `image 664 B (text 664, rw 0), bss 8 B, 16 reba
 
 New plugins use `-O2 -ffp-contract=off`. `-O2` matters: at `-Os` GCC 10.3 kept small per-sample helpers as calls with their state in memory, and moving the shipped engines from `-Os` to `-O2` saved up to about 28 points of CPU at four voices (CS-Type 74.9 to 46.3 percent worst case, see [section 10](#10-memory-and-cpu-budgets)). `-ffp-contract=off` stops GCC from fusing a multiply and an add into a `vfma`, which costs 3 cycles on the M4F against 2 for a multiply followed by an add.
 
-The shipped synth plugins are compiled with the **firmware's own flags per engine**: `-O2` with the compiler's default fusing for the OpenTracker modules, `-O3` for FM4 and B-Type, `-O2 -ffp-contract=off` for PHZ and PLK. They are the same sources the firmware compiled when those engines were built in, and they render bit identical to the built-in engine. A new plugin has nothing to match, so it uses the defaults.
+The shipped synth plugins are compiled with the **firmware's own flags per engine**: `-O2 -ffp-contract=off` for the OpenTracker modules, PHZ and PLK, `-O3 -ffp-contract=off` for FM4 and B-Type (the 1.2.0 release recipe, synth-open/README.md, "Release 1.2.0 lines"). They are the same sources the firmware compiled when those engines were built in, and they render bit identical to the built-in engine. A new plugin has nothing to match, so it uses the defaults.
 
 ### Ports of firmware code
 

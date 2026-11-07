@@ -485,7 +485,7 @@ From `ref/cpu-optimisation-plan.md` (items 1 and 3 to 6 and 10), all output bit 
 - `saturateSoftClip` (`SynthVoiceSDK.h`, twice per sounding part per block) multiplies by `1 / 6.72` instead of dividing, 3,328 cycles per part and block. 1.3 % of the results move 1 ulp (at most -144.5 dBFS). Stock keeps the divide.
 - The plugin runtime's `memset` and `memcpy` store words when aligned (see the CPU table).
 
-`-ffp-contract=off` on the engines (plan item 2) would take another 0.7 to 10.4 points (PLUGF test image: `SYNTH_TAG=-fpc SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT=... SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE=...`, plugins with `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3`), but it changes the output (worst -69 dBFS, Hand-Type) and its cost model is not device calibrated, so it waits for a device A/B.
+`-ffp-contract=off` on the engines (plan item 2) takes another 0.7 to 10.4 points (PLUGF test image: `SYNTH_TAG=-fpc SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT=... SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE=...`, plugins with `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3`). It changes the output and its cost model is not device calibrated. The 1.2.0 release ships it on every engine and plugin (see "Release 1.2.0 lines" below).
 
 ### Summary
 
@@ -522,28 +522,30 @@ make package-release SYNTH_OPEN=1 TRIM=1
 
 ### Release 1.2.0 lines (Arm GNU 12.3.rel1)
 
-The 1.2.0 release compiler is Arm GNU Toolchain 12.3.rel1 (`TOOLCHAIN=/path/to/agt/12.3.rel1/bin/arm-none-eabi-`). `SYNTH_OPEN_VER` in `version.mk` is 1.2.0, so the images are `PolyendTracker_<TAG>_1.2.0.ptf` (AUTO 29 chars, AUTOF 30, the bootloader reads at most 31). BUILD_TAG has no dirty marker, so commit first. `make` does not track compiler flags: delete `core/build-*` and `platforms/mk66/build-trim` between variants.
+The 1.2.0 release compiler is Arm GNU Toolchain 12.3.rel1 (`TOOLCHAIN=/path/to/agt/12.3.rel1/bin/arm-none-eabi-`). `SYNTH_OPEN_VER` in `version.mk` is 1.2.0, so the images are `PolyendTracker_<TAG>_1.2.0.ptf` (AUTOF 30 chars, AUTO 29, the bootloader reads at most 31). BUILD_TAG has no dirty marker, so commit first. `make` does not track compiler flags: delete `core/build-*` and `platforms/mk66/build-trim` between variants.
+
+The release image is **AUTOF**: six built in engines (ACD FAT VAP WTFM PERC CHIP), the plugin host, the other twelve engines as card plugins, engine DSP at `-O2` (FM4 and B-Type `-O3`) with `-ffp-contract=off` on every engine and every plugin, WTFM included. The flag stops GCC from fusing a multiply and an add into a `vfma` (3 cycles on the M4F against 2 for a multiply followed by an add). It goes on the OpenTracker modules, FAT, CHIP, FM4 and B-Type (PHZ, PLK and Dirt already have it), the plugins take it from `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3`, and the render compare passes the same values to the firmware's `make -n`:
 
 ```
 E=-EACD_FAT_VAP_WTFM_PERC_CHIP
-# AUTO: six built in engines, the plugin host, the other twelve engines as card plugins, engine DSP at -O2 (FM4 and B-Type -O3)
-make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTO SYNTH_TAG=-pa SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
-  BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
-# plugins of the same variant (needs python3 with unicorn in PY), FW_OBJ is the obj/synth-open dir of the image build above
-TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT core/build-MK66-ORIGINAL-SYNTHOPEN-pa$E-trim/obj/synth-open
-```
-
-How to build the `-ffp-contract=off` test image (AUTOF, the PLUGF mechanism of the CPU round). The flag goes on the OpenTracker modules, FAT, CHIP, FM4 and B-Type (PHZ, PLK and Dirt already have it), the plugins take it from `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3`, and the render compare passes the same values to the firmware's `make -n`:
-
-```
+# the release image, build/PolyendTracker_AUTOF_1.2.0.ptf
 make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTOF SYNTH_TAG=-fpc SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
   SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
   SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off" BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
-SYNTH_PLUG_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_PLUG_OPT_O3="-O3 -ffp-contract=off" TOOLCHAIN=... PY=... \
+# the plugin set of the release (needs python3 with unicorn in PY), FW_OBJ is the obj/synth-open dir of the image build above
+SYNTH_PLUG_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_PLUG_OPT_O3="-O3 -ffp-contract=off" TOOLCHAIN=... PY=/tmp/phzvenv/bin/python \
   synth-open/plug/build_plugs.sh OUT core/build-MK66-ORIGINAL-SYNTHOPEN-fpc$E-trim/obj/synth-open
 ```
 
-It changes the output: against the AUTO build the default patch differs by at most -103 dBFS on every engine except A-Type (-80 dBFS), and the all-parameters-max scenarios of Arc-Type, WTFM and Hand-Type differ far more (Arc-Type -7 dBFS, WTFM -44, Hand-Type -69), measured on the 12.3.rel1 bench dumps. Its cost model is not device calibrated either, so it stays a test image until a device A/B.
+Against the plain AUTO build the default patch differs by at most -103 dBFS on every engine except A-Type (-80 dBFS), and the all-parameters-max scenarios of Arc-Type, WTFM and Hand-Type differ far more (Arc-Type -7 dBFS, WTFM -44, Hand-Type -69), measured on the 12.3.rel1 bench dumps. The user listened to both and chose AUTOF for all engines. Its CPU saving is an emulated figure, not device calibrated.
+
+The plain **AUTO** build stays buildable as an unpublished fallback: the same two lines without the `-ffp-contract=off` flags (engine DSP `-O2`, FM4 and B-Type `-O3`, the OpenTracker modules fused as the compiler defaults). It is not part of the release package.
+
+```
+make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTO SYNTH_TAG=-pa SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
+  BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT core/build-MK66-ORIGINAL-SYNTHOPEN-pa$E-trim/obj/synth-open
+```
 
 - `package-release` only packages. The default engine set is the 4 engine one, so build with the explicit 16 engine list first. `synth-open/tools/package_release.sh build/<image>.ptf` does the same packaging for an existing image.
 - A `-D` define change (for example in `version.mk`) does not rebuild the objects that depend on it. After changing a version or tag, delete the objects that depend on `mtStructs.h` and grep the `.ptf` for the old strings.
