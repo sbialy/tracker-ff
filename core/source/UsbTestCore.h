@@ -118,6 +118,9 @@ class Host
     virtual uint32_t nowMs() = 0;
     virtual const char* buildId() = 0;
     virtual void resetMcu() = 0;
+    // Test aid of a REBOOT_ON_FAULT image: execute an undefined instruction so the fault handler's record can be checked
+    virtual bool crashEnabled() { return false; }
+    virtual void crash() {}
     virtual bool validPointer(const void* p) = 0;
     virtual uint32_t* scratch() = 0; // kScratchWords words, main loop only
 
@@ -277,6 +280,7 @@ class Console
     uint32_t taskStartMs_;
     uint32_t taskLastMs_;
     uint32_t cpuResetMs_;
+    bool crashing_;
     uint32_t now_;
     uint64_t heldButtons_;
     uint64_t heldPads_;

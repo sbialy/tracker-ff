@@ -85,6 +85,10 @@ class FakeHost : public Host
     uint32_t nowMs() override { return now; }
     const char* buildId() override { return "fake123"; }
     void resetMcu() override { resets++; }
+    bool crashOk = false;
+    int crashes = 0;
+    bool crashEnabled() override { return crashOk; }
+    void crash() override { crashes++; }
     bool validPointer(const void*) override { return true; }
     uint32_t* scratch() override { return scratchBuf; }
 
@@ -551,6 +555,16 @@ static void testIdleReboot()
     CHECK(lines(h.tx).size() == 1 && lines(h.tx)[0] == "@ok reboot pending" && h.resets == 0);
     pump(h, 30);
     CHECK(h.resets == 1);
+    // crash: refused on an image without fault capture, with it the fault comes after the reply
+    h.tx.clear();
+    CHECK(starts(cmd(h, "crash"), "@err crash: needs an image built with REBOOT_ON_FAULT") && h.crashes == 0);
+    h.crashOk = true;
+    h.tx.clear();
+    h.send("crash\n");
+    pump(h, 5);
+    CHECK(lines(h.tx).size() == 1 && lines(h.tx)[0] == "@ok crash pending" && h.crashes == 0);
+    pump(h, 30);
+    CHECK(h.crashes == 1);
 }
 
 static std::vector<uint32_t> makeImage()

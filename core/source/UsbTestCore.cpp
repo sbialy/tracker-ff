@@ -679,8 +679,12 @@ void Console::txPump()
 {
     for (int i = 0; i < 16; i++)
     {
+        if (ring_.used() == 0)
+        {
+            return; // asking the CDC driver for room takes a packet from the shared pool, only do it with something to send
+        }
         size_t room = host_->txFree();
-        if (room == 0 || ring_.used() == 0)
+        if (room == 0)
         {
             return;
         }
@@ -928,7 +932,7 @@ void Console::execLine(char* line)
     if (strcmp(cmd, "help") == 0)
     {
         reply("ok ping help cpu mem idle reboot key pad enc status shotcrc shot texts open play stop peek hash "
-              "markers ls get put rm abort");
+              "markers ls get put rm abort crash");
         return;
     }
     if (strcmp(cmd, "cpu") == 0)
@@ -985,7 +989,22 @@ void Console::execLine(char* line)
     {
         task_ = kTaskReboot;
         taskStartMs_ = now_;
+        crashing_ = false;
         reply("ok reboot pending");
+    }
+    else if (strcmp(cmd, "crash") == 0)
+    {
+        if (!host_->crashEnabled())
+        {
+            reply("err crash: needs an image built with REBOOT_ON_FAULT");
+        }
+        else
+        {
+            task_ = kTaskReboot;
+            taskStartMs_ = now_;
+            crashing_ = true;
+            reply("ok crash pending");
+        }
     }
     else if (strcmp(cmd, "shot") == 0)
     {
@@ -1424,8 +1443,12 @@ void Console::runTask(uint32_t now)
             if (now - taskStartMs_ >= kRebootDelayMs)
             {
                 txPump();
-                host_->resetMcu();
                 task_ = kTaskNone;
+                if (crashing_)
+                {
+                    host_->crash();
+                }
+                host_->resetMcu();
             }
             break;
     }

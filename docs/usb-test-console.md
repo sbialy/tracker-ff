@@ -54,6 +54,7 @@ While a command runs, only `ping help cpu mem status markers abort` are answered
 | `enc <delta>` | `@ok enc <delta>`. Delta (-200..200) goes to `mtInterface.potChange` with the next encoder reading |
 | `idle` | `@idle` once the injected input is handled, the file manager is idle and the display queue is empty (or 600 ms passed without input). `@err idle timeout` after 15 s |
 | `reboot` | `@ok reboot pending`, the MCU resets 250 ms later and USB re-enumerates |
+| `crash` | only in an image with `-DREBOOT_ON_FAULT`: `@ok crash pending`, 250 ms later an undefined instruction. The fault handler stores PC, LR, PSR and CFSR and resets, `markers` shows them after the reboot |
 | `shotcrc` | six lines `@shotcrc <row> <8 hex crc32>` (tiles of 100x80 px, B G R bytes) then `@ok shotcrc` |
 | `shot` | `@shot 800 480 rle1`, 480 times `@row <y> <n>` + n bytes + `\n`, then `@ok shot crc=<crc32 of all B G R bytes> bytes=<n> rows=480`. `shot force` and `shotcrc force` work while playing |
 | `texts` | `@t <control> <x> <y> <w> <h> <text>` for every shown control with a text, then `@ok texts <n>` |

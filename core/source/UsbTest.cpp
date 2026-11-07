@@ -89,6 +89,14 @@ class TrackerHost : public Host
     uint32_t nowMs() override { return platform->getTimer()->millis(); }
     const char* buildId() override { return platform->getSystemInfo()->buildId; }
     void resetMcu() override { platform->resetMCU(); }
+#ifdef REBOOT_ON_FAULT
+    bool crashEnabled() override { return true; }
+    void crash() override
+    {
+        // 0xDE00 is UDF #0: UsageFault, not enabled, so it escalates to the HardFault that fault_isr (mk20dx128.c) records
+        __asm volatile(".short 0xde00");
+    }
+#endif
     bool validPointer(const void* p) override { return UsbTestPlatform_ValidPointer(p); }
     uint32_t* scratch() override { return g_scratch; }
 
