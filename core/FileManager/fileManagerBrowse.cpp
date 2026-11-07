@@ -191,7 +191,7 @@ void cFileManager::browseCurrentLocation()
 
 void cFileManager::listOnlyFolderNames()
 {
-    uint8_t allFoldersNum;
+    int allFoldersNum; // int: createFilesList returns kListError (-1), a uint8_t turns it into 255
     uint8_t parentFolder = explorerDirLevel == 0 ? 0 : 1;
     FileSystem::enListFileFilter folderSizeFilter = FileSystem::enListFileFilter_all;
 
@@ -212,6 +212,19 @@ void cFileManager::listOnlyFolderNames()
                                                 0,
                                                 list_length_max - 1,
                                                 folderSizeFilter);
+
+    if (allFoldersNum == FileSystem::kListError) // the folder cannot be opened: show it empty, as listOnlyWavFromActualPath does
+    {
+        for (int i = 0; i < list_length_max; i++)
+        {
+            if (explorerList[i] != nullptr)
+            {
+                delete explorerList[i];
+                explorerList[i] = nullptr;
+            }
+        }
+        allFoldersNum = parentFolder;
+    }
 
     explorerFolderCount = allFoldersNum - parentFolder;
 
