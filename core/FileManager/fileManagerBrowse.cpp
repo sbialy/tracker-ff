@@ -247,7 +247,7 @@ void cFileManager::listOnlyWavFromActualPath()
 
     if (listWavStage == 0) // stage 0
     {
-        uint8_t filesFound =
+        int filesFound =
           fileSystem->createFilesList(explorerCurrentPath,
                                       0,
                                       explorerList + explorerListLength,
@@ -403,7 +403,7 @@ void cFileManager::goUpInActualPath()
 void cFileManager::browseFirmwaresLocation()
 {
 
-    uint8_t locationFileCount = fileSystem->createFilesList(
+    int locationFileCount = fileSystem->createFilesList(
       "Firmware", 0, firmwaresList, list_length_max, 6000, fileSystem->enListFileFilter_firmware);
 
     if (locationFileCount == fileSystem->kListError)
@@ -448,7 +448,7 @@ void cFileManager::browseGamesLocation()
         fileSystem->mkdir(0, cGamesPath);
     }
 
-    uint8_t gamesfoundCount = fileSystem->createFilesList(
+    int gamesfoundCount = fileSystem->createFilesList(
       cGamesPath, 0, projectsList, list_length_max, 3000, FileSystem::enListFileFilter_game);
 
     if (gamesfoundCount == FileSystem::kListError)
