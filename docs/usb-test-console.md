@@ -23,9 +23,22 @@ Example (AUTO test image, 12.3 toolchain):
       SYNTH_TAG=-ut SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=-EACD_FAT_VAP_WTFM_PERC_CHIP \
       CUSTOM_DEFINES="-DENABLE_DEV_CONSOLE -DREBOOT_ON_FAULT"
 
+## Log levels
+
+`core/source/log.h` has two levels. `LOGE()` / `LOGEF()` are the essential sites: errors, file manager errors, plugin load and failure, safe mode and its
+reason, project open and loaded, SD card and USB storage mode, stream rebind and export open failures. They are live with `ENABLE_DEV_CONSOLE`.
+`LOG()` / `LOGF()` are the verbose sites (dumps, tables, per step traces) and stay off unless `-DLOG_ALL` (or `ENABLE_LOG`, `DEBUG`) is given:
+
+    CUSTOM_DEFINES="-DENABLE_DEV_CONSOLE -DREBOOT_ON_FAULT -DLOG_ALL"
+
+Add a new site as `LOGE` only if a test run needs it, every site costs flash in the test image. Messages are short tags with numbers
+(`plg1 Dirt ok`, `syn3 att 0`, `FM err op 7 step 2 e 5`, `open Projects/Song`, `loaded /Workspace 1`, `rebind 3 failed <path>`).
+Measured on AUTO (12.3): the console is +13.9 KB (code 11.7 KB, mostly the commands and their reply strings), all verbose `LOG()` sites together only 0.9 KB,
+`LOG_ALL` adds 0.5 KB over the essential level. `LOGEF` needs at least one argument, use `LOGE` for a plain text.
+
 ## Design rules
 
-- Nothing is added to the audio interrupt. The console runs from `TrackerImpl::update` (main loop). `LOG()` is switched on by the flag and goes
+- Nothing is added to the audio interrupt. The console runs from `TrackerImpl::update` (main loop). `LOGE()` (essential log level) is switched on by the flag and goes
   into a 4 KB ring that the main loop sends, so `usb_serial_write` (which can wait 70 ms for a host that does not read) is never called from an interrupt.
   Text from an interrupt is formatted by a small routine (no newlib printf, no stack), a line that finds the format buffer taken is dropped.
 - Input is injected inside `Keys::update` (buttons and pads) and `EncoderImpl::update` (encoder), with the lines a real key event runs. Shift

@@ -16,6 +16,7 @@
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
+#include "log.h"
 #include "plug_bank.h"
 #include "plug_logo.h"
 
@@ -465,6 +466,7 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
     if (s_safe)
     {
         s_lib[k].err = 7;
+        LOGEF("syn%d safe", k);
         return false;
     }
     if (bankOf(k) < 0)
@@ -510,12 +512,14 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
         if (st.err)
         {
             s_lib[k].err = int8_t(10 + st.err);
+            LOGEF("syn%d inst %d", k, int(st.err));
             status();
             return false;
         }
     }
     const int r = attachMarked(k);
     s_lib[k].err = int8_t(r);
+    LOGEF("syn%d att %d", k, r);
     status();
     return r == 0;
 }

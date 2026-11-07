@@ -410,9 +410,8 @@ void cFileManager::moveToPrevOperationStep()
 
 void cFileManager::stopOperationWithError(uint8_t error)
 {
+    LOGEF("FM err op %d step %d e %d", currentOperation, currentOperationStep, error);
 #ifdef FILEMANAGER_DEBUGLOG
-    LOGF("File manager error (%d)(%d)(%d)", currentOperation, currentOperationStep, error);
-
     debugLog.setMaxLineCount(3);
     snprintf(errorText,
              100,

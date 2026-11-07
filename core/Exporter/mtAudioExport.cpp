@@ -245,10 +245,7 @@ void mtAudioExport::start(const char* path, uint8_t mode)
 
         if (!isOpen)
         {
-            if (EXPORT_DEBUG)
-            {
-                LOGF("%s", "rawStemsFile failed to open\n");
-            }
+            LOGE("rawStems open failed");
 
             handleError(1);
             return;

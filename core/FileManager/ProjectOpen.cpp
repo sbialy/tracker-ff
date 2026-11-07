@@ -440,6 +440,8 @@ bool ProjectOpen::openProject(char* path, char* name)
         return false;
     }
 
+    LOGEF("open %s/%s", path, name);
+
     newFileManager.addCurrentProjectToRecentList();
 
     // load project name here

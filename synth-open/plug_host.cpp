@@ -2,6 +2,7 @@
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
+#include "log.h"
 #include "plug_sidecar_io.h"
 
 #include "FileSystemAdapter.h"
@@ -298,11 +299,13 @@ void apply(int k)
     if (ix < 0)
     {
         s.state = SlotState::kMissing;
+        LOGEF("plg%d %s missing", k + 1, ref.name);
         return;
     }
     if (s_safe && !s.manual)
     {
         s.state = SlotState::kSafe;
+        LOGEF("plg%d %s safe", k + 1, ref.name);
         return;
     }
     const IndexEntry& e = s_index[ix];
@@ -346,6 +349,7 @@ void apply(int k)
         unload(k);
         s.err = err;
         s.state = SlotState::kFailed;
+        LOGEF("plg%d %s err %d", k + 1, ref.name, int(err));
         writeStatus();
         return;
     }
@@ -361,6 +365,7 @@ void apply(int k)
         if (v != pp.def && l.desc->set_param) l.desc->set_param(s.inst, i, v);
     }
     s.state = SlotState::kRunning;
+    LOGEF("plg%d %s ok", k + 1, ref.name);
     if (s_on && plugInsert()) plugInsert()->attach(k, s.desc, s.inst, kBudget);   // bypassed: loaded, off the node
     writeStatus();
 }
@@ -383,6 +388,7 @@ void enterSafe(const char* why)
 {
     s_safe = true;
     snprintf(s_reason, sizeof(s_reason), "%s", why);
+    LOGE(s_reason);
     for (int k = 0; k < kSlots; k++)
         if (s_slots[k].state == SlotState::kRunning || s_slots[k].pending)
         {
@@ -705,6 +711,7 @@ bool s_openStale;   // the last project open could not copy the project's sideca
 void projectLoaded(const char* dir, bool newProject)
 {
     if (!s_fs) return;
+    LOGEF("loaded %s %d", dir, int(newProject));
     if (newProject) s_openStale = false;
     char p[64];
     path(p, sizeof(p), dir, kSidecarName);
