@@ -1,5 +1,5 @@
 {
- "_comment": "The engine .plg set: one row per engine. Sources are relative to synth-open/. opt: engines = the flavour's OpenTracker module flags, o3 = the flavour's FM4 / B-Type flags, anything else = literal flags. extra = more flags of the DSP source only. name = the descriptor name and the SYNTH_ENGINES name in synth-open/engines.mk (-DSYNTH_ENGINE_<name>). stored, patch, type = the numbers of the engine (plug_abi.h PLUG_SYNTH_MANIFEST). version = the .plg header version, bump it when that engine's bytes change on purpose.",
+ "_comment": "The engine .plg set: one row per engine. Sources are relative to synth-open/. opt: engines = the flavour's OpenTracker module flags, o3 = the flavour's FM4 / B-Type flags, anything else = literal flags. extra = more flags of the DSP source only. name = the descriptor name and the SYNTH_ENGINES name in synth-open/engines.mk (-DSYNTH_ENGINE_<name>). stored, patch, type = the numbers of the engine (plug_abi.h PLUG_SYNTH_MANIFEST). version = the .plg header version, bump it when that engine's bytes change on purpose. visibility: public = the source is in this repository and the .plg / .wasm are built here, private = our own module whose source is in a private repository (repo) that publishes the same artifacts, the row stays here as the public identity (numbers, names, logo) and the sources are kept in this tree only until the deletion commit (ref/private-engines-effects-design.md). licence, licence_files, notice: what ships next to the .wasm (notices = the texts). inserts: the master insert plugins, built by synth-open/plug/build_plugs.sh (plg_opt and plg_src_opt there equal this table, checked by wasm/build_modules.py --verify-plg), sources relative to synth-open/, notice_section = the section of synth-open/plug/fx/NOTICE.md.",
  "set_version": "1.0.0",
  "default_flavour": "autof",
  "flavours": {
@@ -29,7 +29,14 @@
    "patch": 129,
    "type": 129,
    "version": "1.0.0",
-   "logo": "JU6"
+   "logo": "JU6",
+   "visibility": "public",
+   "licence": "MIT",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-synths-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ],
+   "notice": "ot-synths"
   },
   {
    "id": "fm4",
@@ -43,7 +50,14 @@
    "patch": 128,
    "type": 128,
    "version": "1.0.0",
-   "logo": "FM4"
+   "logo": "FM4",
+   "visibility": "public",
+   "licence": "MIT",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-synths-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ],
+   "notice": "ot-synths"
   },
   {
    "id": "btype",
@@ -57,7 +71,14 @@
    "patch": 136,
    "type": 136,
    "version": "1.0.0",
-   "logo": "B-TYPE"
+   "logo": "B-TYPE",
+   "visibility": "public",
+   "licence": "MIT",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-synths-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ],
+   "notice": "ot-synths"
   },
   {
    "id": "phz",
@@ -71,7 +92,11 @@
    "patch": 130,
    "type": 130,
    "version": "1.0.0",
-   "logo": "PHZ"
+   "logo": "PHZ",
+   "visibility": "private",
+   "repo": "poly-engines",
+   "licence": "MIT",
+   "licence_files": []
   },
   {
    "id": "dtype",
@@ -85,7 +110,14 @@
    "patch": 162,
    "type": 162,
    "version": "1.0.0",
-   "logo": "D-TYPE"
+   "logo": "D-TYPE",
+   "visibility": "public",
+   "licence": "MIT",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-synths-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ],
+   "notice": "ot-synths"
   },
   {
    "id": "cstype",
@@ -99,7 +131,14 @@
    "patch": 131,
    "type": 131,
    "version": "1.0.0",
-   "logo": "CS-TYPE"
+   "logo": "CS-TYPE",
+   "visibility": "public",
+   "licence": "MIT",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-synths-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ],
+   "notice": "ot-synths"
   },
   {
    "id": "atype",
@@ -113,7 +152,14 @@
    "patch": 132,
    "type": 132,
    "version": "1.0.0",
-   "logo": "A-TYPE"
+   "logo": "A-TYPE",
+   "visibility": "public",
+   "licence": "MIT",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-synths-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ],
+   "notice": "ot-synths"
   },
   {
    "id": "ttype",
@@ -127,7 +173,14 @@
    "patch": 133,
    "type": 133,
    "version": "1.0.0",
-   "logo": "T-TYPE"
+   "logo": "T-TYPE",
+   "visibility": "public",
+   "licence": "MIT",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-synths-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ],
+   "notice": "ot-synths"
   },
   {
    "id": "eight",
@@ -141,7 +194,14 @@
    "patch": 134,
    "type": 134,
    "version": "1.0.0",
-   "logo": "8-TYPE"
+   "logo": "8-TYPE",
+   "visibility": "public",
+   "licence": "MIT",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-synths-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ],
+   "notice": "ot-synths"
   },
   {
    "id": "hand",
@@ -155,7 +215,14 @@
    "patch": 135,
    "type": 135,
    "version": "1.0.0",
-   "logo": "HAND-TYPE"
+   "logo": "HAND-TYPE",
+   "visibility": "public",
+   "licence": "MIT",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-synths-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ],
+   "notice": "ot-synths"
   },
   {
    "id": "arc",
@@ -169,7 +236,14 @@
    "patch": 137,
    "type": 137,
    "version": "1.0.0",
-   "logo": "ARC-TYPE"
+   "logo": "ARC-TYPE",
+   "visibility": "public",
+   "licence": "MIT",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-synths-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ],
+   "notice": "ot-synths"
   },
   {
    "id": "pluck",
@@ -183,7 +257,138 @@
    "patch": 138,
    "type": 138,
    "version": "1.0.0",
-   "logo": "PLUCK"
+   "logo": "PLUCK",
+   "visibility": "private",
+   "repo": "poly-engines",
+   "licence": "MIT",
+   "licence_files": []
+  }
+ ],
+ "private_repos": {
+  "poly-engines": "our own synth engines (PHZ, PLK)",
+  "poly-effects": "our own master inserts (console, tube)"
+ },
+ "notices": {
+  "ot-synths": "Copied from opentracker-synths (https://github.com/opentracker-fw/opentracker-synths, modules/{module}, commit eb150a5f741b). Copyright (c) 2026 Marcin Spoczynski. MIT licence, text in LICENSE-OpenTracker-synths-MIT.txt. Not modified except a two line notice. Compiled against the OpenTracker 3.x headers (Apache License 2.0, text in LICENSE-OpenTracker-Apache-2.0.txt). The parameter metadata (engine_{module}.cpp) and the default macros are this project's own."
+ },
+ "inserts": [
+  {
+   "id": "dirt",
+   "plug_id": "ff.dirt",
+   "version": "1.0.0",
+   "visibility": "public",
+   "plg_opt": "-O2 -ffp-contract=off -fno-builtin",
+   "plg_src_opt": {
+    "ff_dirt_ctl.cpp": "-Os -fno-builtin"
+   },
+   "includes": [
+    "."
+   ],
+   "sources": [
+    "plug/fx_dirt_plug.cpp",
+    "ff_dirt.cpp",
+    "ff_dirt_ctl.cpp"
+   ],
+   "licence": "MIT",
+   "notice_section": "dirt.plg",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-fx-MIT.txt"
+   ]
+  },
+  {
+   "id": "tape",
+   "plug_id": "org.opentracker.fx.tape",
+   "version": "1.0.0",
+   "visibility": "public",
+   "plg_opt": "-O2 -ffp-contract=off",
+   "includes": [],
+   "sources": [
+    "plug/fx/ot_tape_plug.c"
+   ],
+   "licence": "MIT",
+   "notice_section": "tape.plg",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-fx-MIT.txt"
+   ]
+  },
+  {
+   "id": "lofi",
+   "plug_id": "org.opentracker.fx.lofi",
+   "version": "1.0.0",
+   "visibility": "public",
+   "plg_opt": "-O2 -ffp-contract=off",
+   "includes": [],
+   "sources": [
+    "plug/fx/ot_lofi_plug.c"
+   ],
+   "licence": "MIT and Apache-2.0",
+   "notice_section": "lofi.plg",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-fx-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ]
+  },
+  {
+   "id": "bbd",
+   "plug_id": "org.opentracker.fx.bbd",
+   "version": "1.0.0",
+   "visibility": "public",
+   "plg_opt": "-O2 -ffp-contract=off",
+   "includes": [],
+   "sources": [
+    "plug/fx/ot_bbd_plug.c"
+   ],
+   "licence": "MIT and Apache-2.0",
+   "notice_section": "bbd.plg",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-fx-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ]
+  },
+  {
+   "id": "phaser",
+   "plug_id": "org.opentracker.fx.phaser",
+   "version": "1.0.0",
+   "visibility": "public",
+   "plg_opt": "-O2 -ffp-contract=off",
+   "includes": [],
+   "sources": [
+    "plug/fx/ot_phaser_plug.c"
+   ],
+   "licence": "MIT and Apache-2.0",
+   "notice_section": "phaser.plg",
+   "licence_files": [
+    "licenses/LICENSE-OpenTracker-fx-MIT.txt",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ]
+  },
+  {
+   "id": "console",
+   "plug_id": "ff.console",
+   "version": "1.0.0",
+   "visibility": "private",
+   "repo": "poly-effects",
+   "plg_opt": "-O2 -ffp-contract=off",
+   "includes": [],
+   "sources": [
+    "plug/fx/ff_console_plug.c"
+   ],
+   "licence": "MIT",
+   "licence_files": []
+  },
+  {
+   "id": "tube",
+   "plug_id": "ff.tube",
+   "version": "1.0.0",
+   "visibility": "private",
+   "repo": "poly-effects",
+   "plg_opt": "-O2 -ffp-contract=off",
+   "includes": [],
+   "sources": [
+    "plug/fx/ff_tube_plug.c"
+   ],
+   "licence": "MIT",
+   "licence_files": []
   }
  ]
 }

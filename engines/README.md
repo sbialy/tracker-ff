@@ -31,11 +31,33 @@ header are not listed, so copy the whole folder).
 
 No date, host name or path goes into any file: the same inputs give the same bytes, so a rebuild is a diff.
 
+## The browser modules (.wasm) of the public engines and inserts
+
+```bash
+make -C engines wasm                                  # build/modules: <id>.wasm + <id>.json for every PUBLIC engine and insert
+make -C engines wasm WHICH=all WASM_OUT=/tmp/m        # also the private ones (their sources are still in this tree, a cross check)
+make -C engines verify-inserts INS=build/plugs TOOLCHAIN=...   # engines.json "inserts" give the bytes of synth-open/plug/build_plugs.sh
+```
+
+`engines/wasm/build_modules.py` builds the `.wasm` twin of a plugin for the browser editor (format: `synth-open/plug/plug_wasm.h`,
+runtime `plug_rt_wasm.c`), checks it (only the five module imports, `plug_entry` and `plug_wasm_abi` exported, no name section or
+DWARF) and writes the manifest. Needs emsdk 6.0.13 (`$EMSDK`, `agt/emsdk` or `~/prj/poly/agt/emsdk`, the version is pinned in
+`wasm/wasm.json` and in every manifest) and an arm64 `clang` (the descriptor is read from the plugin's own sources natively, never an
+x86_64 binary). The output is `MODULES.json` (the set), `SHA256SUMS`, `NOTICE.md` and the licence texts the modules name, and is byte
+reproducible. `engine_cxxflags` in `wasm/wasm.json` must equal the editor's `scripts/build-wasm.ts` `common`, or an engine module is
+not bit identical to the engine linked into the editor.
+
+`engines.json` marks every engine and insert `"visibility": "public"` (source in this repository, artifacts built and published
+from here) or `"private"` (our own module, source in the private repository named in `repo`, which builds and publishes the same
+files). The default `make wasm` builds the public ones only and lists the private ones in `MODULES.json` under `external_private`.
+Proof that both sides agree: `WHICH=private` here gives `.wasm` files byte equal to the private repositories' own builds.
+
 ## Layout
 
 | Path | What |
 |---|---|
-| `engines.json` | the table: per engine id, name, sources, flag class, extra flags, numbers (stored, patch, type), version, logo text. Plus the flavours and the set version |
+| `engines.json` | the table: per engine id, name, sources, flag class, extra flags, numbers (stored, patch, type), version, logo text, visibility, licence. Plus `inserts` (the master insert plugins), the flavours and the set version |
+| `wasm/` | `build_modules.py` (the `.wasm` twins and manifests of engines and inserts), `wasm_common.py`, `wasm.json` (emcc pin and flags), `dump_desc.cpp`, `native_compat.h` |
 | `build_set.py` | `build`, `verify`, `logo-test` and `shell` (the table as shell functions for the old scripts) |
 | `closure.py` | computes the include closure of every engine with the compiler and checks `sdk/*.txt`, the ABI in `sdk/VERSION` and the engine list against `synth-open/engines.mk` |
 | `crosscheck.sh` | the checks that need the firmware tree |
