@@ -71,6 +71,44 @@ inline void slotLabel(Shown st, const char* name, char* out)
     out[n] = 0;
 }
 
+// The Master button repeat-press cycle (cMasterParams::switchScreen). Stock walks Master values -> Track Mixer -> Global
+// Mixer -> Master values. With the plugin host Inserts is the last stop, shown only when there is something to show.
+// The values stop includes the Reverb, Delay, Limiter and EQ sub-screens (a press leaves them for the mixer), the Inserts
+// page counts as a Master values screen too (it is entered from there).
+enum class Stop
+{
+    kValues,
+    kMixer,
+    kGlobalMixer,
+    kInserts,
+};
+
+// Inserts is a stop when a plugin file is in the master index or an insert slot is assigned (a missing plugin still
+// has to be removable). Both come from the host's in-memory state, never from the card.
+constexpr bool insertsInCycle(int indexCount, bool slotAssigned)
+{
+    return indexCount > 0 || slotAssigned;
+}
+
+// The stop a tap on Master goes to from cur
+constexpr Stop nextStop(Stop cur, bool inserts)
+{
+    switch (cur)
+    {
+        case Stop::kValues: return Stop::kMixer;
+        case Stop::kMixer: return Stop::kGlobalMixer;
+        case Stop::kGlobalMixer: return inserts ? Stop::kInserts : Stop::kValues;
+        case Stop::kInserts: return Stop::kValues;
+    }
+    return Stop::kValues;
+}
+
+// Pages in the cycle, for the "n/N" in the Master screen titles
+constexpr int cyclePages(bool inserts)
+{
+    return inserts ? 4 : 3;
+}
+
 enum Arrow
 {
     kLeft = 0,
