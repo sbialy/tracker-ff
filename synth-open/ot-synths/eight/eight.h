@@ -54,6 +54,13 @@ float resonanceK(int step);
 
 ISynthEngine* engine();
 
+// EIGHT_WORK_POOL (the card plugin, plug/synth/eight_plug.cpp): the two Links of the voice pass are not on the stack but host memory
+// given once through setWork (PLUG_EXT_SYNTH work_bytes, SDRAM on the device) before any audio call. The DSP is the same code.
+#ifdef EIGHT_WORK_POOL
+uint32_t workBytes();
+void setWork(void* work, uint32_t bytes);
+#endif
+
 }  // namespace eight
 }  // namespace audio
 }  // namespace ot

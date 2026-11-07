@@ -98,6 +98,13 @@ int slotStateBytes();
 int ringing(const SynthSlotScratch& slot);
 bool ringingDrum(const SynthSlotScratch& slot, Drum d);
 
+// TTYPE_WORK_POOL (the card plugin, plug/synth/ttype_plug.cpp): the square bank block of render is not on the stack but host memory
+// given once through setWork (PLUG_EXT_SYNTH work_bytes, SDRAM on the device) before any audio call. The DSP is the same code.
+#ifdef TTYPE_WORK_POOL
+uint32_t workBytes();
+void setWork(void* work, uint32_t bytes);
+#endif
+
 }  // namespace ttype
 }  // namespace audio
 }  // namespace ot

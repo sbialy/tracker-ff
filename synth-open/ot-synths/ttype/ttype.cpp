@@ -1,5 +1,5 @@
 // Copied from opentracker-synths (https://github.com/opentracker-fw/opentracker-synths, modules/ttype/src/ttype.cpp, commit eb150a5f741b),
-// Copyright (c) 2026 Marcin Spoczynski, MIT licence, see licenses/LICENSE-OpenTracker-synths-MIT.txt. Not modified, except this notice.
+// Copyright (c) 2026 Marcin Spoczynski, MIT licence, see licenses/LICENSE-OpenTracker-synths-MIT.txt. Not modified, except this notice and the square bank scratch (TTYPE_WORK_POOL, see render; tracker-ff stack-fix).
 // T-Type drum synth engine [OT] -- see ttype.h for the design notes.
 //
 // One block (render):
@@ -294,6 +294,14 @@ TT_BLOCK void mixFull(const float* t, float* L, float* R, const Mix& m, float w0
 }
 
 // ---- the six-square bank (hats, cymbal) ------------------------------------------------
+
+// Engine::render's bank block (kBlock floats, 512 B) is scratch, written by bankBlock and read by the hat and the cymbal in the same
+// call. On the stack it was part of the 2,856 B frame that made T-Type the second deepest synth in the audio interrupt (ref/
+// stack-margin-1.2.0.md). With TTYPE_WORK_POOL (the card plugin, plug/synth/ttype_plug.cpp) it is host work memory given once through
+// setWork before any audio call (SDRAM on the device, zeroed): only a ringing hat or cymbal touches it. The output does not change.
+#ifdef TTYPE_WORK_POOL
+float* gBankAt;
+#endif
 
 const float kMetalRatio[6] = {1.0f, 1.4827f, 1.8003f, 2.5460f, 2.6303f, 3.8967f};
 
@@ -1033,7 +1041,11 @@ public:
         const float dr0 = P0(p, kDrive), dr1 = P(p, kDrive);
         const bool drive = dr0 > 0.0f || dr1 > 0.0f;
         alignas(16) float acc[2][kBlock];
+#ifdef TTYPE_WORK_POOL
+        float* const bank = gBankAt;   // host memory (setWork), see gBankAt
+#else
         alignas(16) float bank[kBlock];
+#endif
         alignas(16) float t[kBlock];
         alignas(16) float hm[kHalf], hs[kHalf];
         zeroWords(acc, sizeof(acc));
@@ -1183,6 +1195,13 @@ bool ringingDrum(const SynthSlotScratch& slot, Drum d) {
 }
 
 ISynthEngine* engine() { return &gEngine; }
+
+#ifdef TTYPE_WORK_POOL
+uint32_t workBytes() { return kBlock * sizeof(float); }
+void setWork(void* work, uint32_t bytes) {
+    if (bytes >= kBlock * sizeof(float)) gBankAt = static_cast<float*>(work);
+}
+#endif
 
 }  // namespace ttype
 }  // namespace audio

@@ -236,7 +236,10 @@ D-Type 10 / 0xA2, CS-Type 11 / 0x83, A-Type 12 / 0x84, T-Type 13 / 0x85, 8-Type 
 Arc-Type 17 / 0x89, PLK 18 / 0x8A), so old projects and patches find it. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
 lines (`synth/ju6_plug.cpp`), `PLUG_SYNTH_PLUGIN_WORK` adds work memory (`synth/pluck_plug.cpp`). Large working RAM comes
 from the host (`work_bytes`, `set_work`), not from bss: the host hands it out of a 16 KB SDRAM arena, so keep only state there
-that is touched a few times per sample (a delay line), never hot per-sample state.
+that is touched a few times per sample (a delay line), never hot per-sample state. Work memory is also how a plugin keeps big
+scratch off the audio interrupt's stack, which is one stack with the main loop and has no guard (ref/stack-margin-1.2.0.md): 8-Type
+keeps the two Links of its voice pass there (1,544 B, `-DEIGHT_WORK_POOL`) and T-Type its 512 B square bank block (`-DTTYPE_WORK_POOL`),
+cold data that a pass reads only when it syncs, rings or plays a hat or a cymbal. A hot buffer (an oscillator bus) stays on the stack.
 
 Files go to `/Plugins/Synth/`. Build the engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma
 default at `-O2`, `-O3` for FM4 and B-Type, `--synth` with the engine's numbers, `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3` in

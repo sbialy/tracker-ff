@@ -3,7 +3,8 @@
 # The DSP source gets the firmware's own flags (make -n of core/makefile at TRIM=1): -O2 for the OpenTracker modules
 # (SYNTH_OPT_ENGINES, fp-contract left at its fused default), -O3 for FM4 and B-Type (SYNTH_OPT_FM4, SYNTH_OPT_BTYPE),
 # -O2 -ffp-contract=off for PHZ and PLK (SYNTH_OPT_PHZ and SYNTH_OPT_PLK). PLK's plugin adds -DPLUCK_WORK_POOL (the delay
-# lines in host work memory, pluck_plug.cpp).
+# lines in host work memory, pluck_plug.cpp), 8-Type -DEIGHT_WORK_POOL (the voice pass Links) and T-Type -DTTYPE_WORK_POOL (the square
+# bank block): scratch off the audio interrupt's stack, the output is the same (ref/stack-margin-1.2.0.md).
 # SYNTH_PLUG_OPT_ENGINES (default -O2) and SYNTH_PLUG_OPT_O3 (default -O3, FM4 and B-Type) override the OpenTracker module
 # flags for a test set, for example SYNTH_PLUG_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_PLUG_OPT_O3="-O3 -ffp-contract=off".
 # synth_render_compare.sh passes the same values to the firmware's make -n, so both sides always build with the same flags.
@@ -19,8 +20,8 @@ synth_plug_info() {
         dtype)  echo "DTYPE engine_dtype.cpp ot-synths/dtype/dtype.cpp $SYNTH_PLUG_OPT_ENGINES" ;;
         cstype) echo "CSTYPE engine_cstype.cpp ot-synths/cstype/cstype.cpp $SYNTH_PLUG_OPT_ENGINES" ;;
         atype)  echo "ATYPE engine_atype.cpp ot-synths/atype/atype.cpp $SYNTH_PLUG_OPT_ENGINES" ;;
-        ttype)  echo "TTYPE engine_ttype.cpp ot-synths/ttype/ttype.cpp $SYNTH_PLUG_OPT_ENGINES" ;;
-        eight)  echo "8TYPE engine_eight.cpp ot-synths/eight/eight.cpp $SYNTH_PLUG_OPT_ENGINES" ;;
+        ttype)  echo "TTYPE engine_ttype.cpp ot-synths/ttype/ttype.cpp $SYNTH_PLUG_OPT_ENGINES -DTTYPE_WORK_POOL" ;;
+        eight)  echo "8TYPE engine_eight.cpp ot-synths/eight/eight.cpp $SYNTH_PLUG_OPT_ENGINES -DEIGHT_WORK_POOL" ;;
         hand)   echo "HANDTYPE engine_hand.cpp ot-synths/hand/hand.cpp $SYNTH_PLUG_OPT_ENGINES" ;;
         arc)    echo "ARCTYPE engine_arc.cpp ot-synths/arc/arc.cpp $SYNTH_PLUG_OPT_ENGINES" ;;
         pluck)  echo "PLK engine_pluck.cpp pluck/pluck.cpp -O2 -ffp-contract=off -DPLUCK_WORK_POOL" ;;

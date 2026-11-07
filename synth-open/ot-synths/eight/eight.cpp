@@ -1,5 +1,5 @@
 // Copied from opentracker-synths (https://github.com/opentracker-fw/opentracker-synths, modules/eight/src/eight.cpp, commit eb150a5f741b),
-// Copyright (c) 2026 Marcin Spoczynski, MIT licence, see licenses/LICENSE-OpenTracker-synths-MIT.txt. Not modified, except this notice.
+// Copyright (c) 2026 Marcin Spoczynski, MIT licence, see licenses/LICENSE-OpenTracker-synths-MIT.txt. Not modified, except this notice and the voicePass scratch (EIGHT_WORK_POOL, see Link; tracker-ff stack-fix).
 // 8-Type engine (see eight.h).
 //
 // The oscillators run as passes over a chunk (<= 128 frames), each into its
@@ -146,7 +146,7 @@ EIGHT_PER_BLOCK void refresh(SlotState& S, const SynthParams& p) {
     S.valid = 1;
 }
 
-constexpr uint32_t kChunk = 128;   // frames per pass at most (the stack buffers: ~3.6 KB)
+constexpr uint32_t kChunk = 128;   // frames per pass at most (the scratch: 3 buses 1.5 KB, 2 Links 1.5 KB)
 
 // The ramps of one chunk.
 struct Ramp {
@@ -164,6 +164,17 @@ struct Link {
     float wX[kChunk];
 };
 constexpr uint8_t kNever = 255;
+
+// voicePass needs two Links (772 B each) and up to three buses (512 B each) of scratch. On the stack they made voicePass the deepest
+// frame of the audio interrupt of any engine (3,728 B, the ISR chain 5,848 B against 8,424 B of stack room, ref/stack-margin-1.2.0.md).
+// The buses are packed into three slots (an oscillator has one bus, three oscillators) instead of four, the Links move to host
+// work memory when built as a plugin (EIGHT_WORK_POOL, plug/synth/eight_plug.cpp: setWork before any audio call, SDRAM on the
+// device, zeroed, 8 aligned). Only a pass that follows or feeds a sync or ring reads a Link (a byte a frame), so SDRAM costs those passes only.
+// The scratch is used by one voicePass at a time (the audio interrupt, or the offline export in the main loop while the interrupt
+// returns at once), no pass depends on what an earlier call left in it, so the output does not change.
+#ifdef EIGHT_WORK_POOL
+Link* gLinkAt;   // host memory, 2 Links, zeroed (setWork)
+#endif
 
 // One chunk of one oscillator added into its bus (x its ramped level).
 // Linked: it reads its master's events (in: sync at its wraps when sync,
@@ -350,8 +361,13 @@ __attribute__((noinline)) void filterPass(float* L, float* R, uint32_t at, uint3
 void voicePass(float* L, float* R, uint32_t at, uint32_t n, VoiceState& V, const SlotState& S, const Ramp& r) {
     const float fa = float(at);
     auto from = [fa](const Lin& l) { return Lin{l.v + l.d * fa, l.d}; };
-    float buf[4][kChunk];
+    float buf[3][kChunk];   // the buses in the order they are first used (bus[route] points at its slot)
+    int nbuf = 0;
+#ifdef EIGHT_WORK_POOL
+    Link* const link = gLinkAt;
+#else
     Link link[2];
+#endif
     link[0].wAt[0] = link[0].fAt[0] = link[1].wAt[0] = link[1].fAt[0] = kNever;
     link[0].sq0 = link[1].sq0 = 1;
     float* bus[4] = {nullptr, nullptr, nullptr, nullptr};
@@ -376,7 +392,7 @@ void voicePass(float* L, float* R, uint32_t at, uint32_t n, VoiceState& V, const
         }
         float* b = bus[c.route];
         if (!b) {
-            b = bus[c.route] = buf[c.route];
+            b = bus[c.route] = buf[nbuf++];
             std::memset(b, 0, sizeof(float) * n);
         }
         // The Link of the one before (j - 1) is link[(j + 1) & 1]; this one writes link[j & 1]
@@ -398,7 +414,7 @@ void voicePass(float* L, float* R, uint32_t at, uint32_t n, VoiceState& V, const
     if (!x) x = bus[kFiltClean];
     else if (bus[kFiltClean]) addPass(x, bus[kFiltClean], n);
     if (!x) {
-        x = buf[kFiltGrit];
+        x = buf[nbuf];   // (no filter bus, so at most the two dry buses are in use: a slot is free)
         std::memset(x, 0, sizeof(float) * n);   // nothing into the filter: its tail rings out
     }
     float* dry = bus[kDirGrit];
@@ -621,6 +637,13 @@ float curveHz(float cutoff, int curve) {
 float resonanceK(int step) { return 2.0f - float(step < 0 ? 0 : (step > 15 ? 15 : step)) * (1.9f / 15.0f); }
 
 ISynthEngine* engine() { return &gEight; }
+
+#ifdef EIGHT_WORK_POOL
+uint32_t workBytes() { return 2 * sizeof(Link); }
+void setWork(void* work, uint32_t bytes) {
+    if (bytes >= 2 * sizeof(Link)) gLinkAt = static_cast<Link*>(work);
+}
+#endif
 
 }  // namespace eight
 }  // namespace audio
