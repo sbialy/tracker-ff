@@ -112,7 +112,7 @@ void run(const plug_ext_synth* x, float* out, uint32_t blocks, uint32_t scenario
         if (fx)
         {
             x->slot_post(0, &g_sc, &g_p, g_busL, g_busR);
-            for (int i = 0; i < kBlock; i++)
+            for (uint32_t i = 0; i < kBlock; i++)
             {
                 L[i] += g_busL[i];
                 R[i] += g_busR[i];

@@ -93,9 +93,11 @@ inline void fill(const char* name, const EngineDef& d, int32_t stored, int32_t p
 }   // namespace plugsynth
 
 // The engines' virtual destructors put a deleting destructor in the vtable. Nothing deletes an engine (a static object): the
-// operator it names is never called, it only has to link. WORK_BYTES and SET_WORK: the engine's working RAM from the host
-// (PLUG_EXT_SYNTH work_bytes, set_work), 0 and nullptr for none.
+// operator it names is never called, it only has to link (the plain one is defined too, -Wsized-deallocation asks for the
+// pair). WORK_BYTES and SET_WORK: the engine's working RAM from the host (PLUG_EXT_SYNTH work_bytes, set_work), 0 and
+// nullptr for none.
 #define PLUG_SYNTH_PLUGIN_WORK(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK)                                          \
+    void operator delete(void*) noexcept {}                                                                                    \
     void operator delete(void*, unsigned int) noexcept {}                                                                      \
     namespace                                                                                                                  \
     {                                                                                                                          \
