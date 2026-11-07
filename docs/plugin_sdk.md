@@ -24,6 +24,7 @@ Nothing here needs the firmware to be rebuilt. A plugin is compiled and linked o
 14. [Testing on the Mac](#14-testing-on-the-mac)
 15. [Pitfalls from Real Bugs](#15-pitfalls-from-real-bugs)
 16. [Licence Notes for Plugin Authors](#16-licence-notes-for-plugin-authors)
+17. [The Browser Twin (`.wasm`)](#17-the-browser-twin-wasm)
 
 ---
 
@@ -1093,3 +1094,18 @@ These are facts from the files in this repository, not legal advice.
 - **Third party code your plugin may include.** A synth plugin includes `ot/audio/synth_engine.h` and `ot/model/synth_patch.h`, which are **OpenTracker, Apache-2.0** (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `NOTICE.md` item 10, each file has a provenance line). The shipped OpenTracker engines in `ot-synths/` and the ports in `plug/fx/` are **MIT** from opentracker-synths and opentracker-fx (`licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`), with Console and Tube original. `synth-open/plug/fx/NOTICE.md` lists the notices that ship with each shipped insert `.plg`. Check the headers you include and the notices that come with them before you distribute a binary.
 - **Origin of the examples.** `tilt.c` and `saw_synth.cpp` are original code written for this guide. The filter is the textbook Chamberlin state variable filter and the band limiting is the textbook polynomial step. No third party source was copied.
 - The firmware is unofficial, noncommercial community work for the Original Tracker. It is not affiliated with or supported by Polyend.
+
+---
+
+## 17. The Browser Twin (`.wasm`)
+
+A plugin can ship a second file for the browser editor: `<id>.wasm`, built from the same sources as the `.plg`, plus a manifest `<id>.json`. The editor loads it at run time, so it can play an engine or an insert without having its source. The format is in [`synth-open/plug/plug_wasm.h`](../synth-open/plug/plug_wasm.h) (module ABI 1.0).
+
+- **Same plugin ABI.** The module exports `plug_entry()` and returns the same `plug_desc` (and for a synth engine the same `plug_ext_synth`) as the `.plg`. wasm32 has 32 bit pointers like the Cortex-M4, so every struct keeps its layout. It also exports `plug_wasm_abi()`.
+- **No imports but the five.** The module is position independent (a `dylink.0` section, `emcc -sSIDE_MODULE=2`) and imports only `env.memory`, `env.__indirect_function_table`, `env.__memory_base`, `env.__table_base` and `env.__stack_pointer`. libm and the memory functions come through the host table, as on the device: link [`plug_rt_wasm.c`](../synth-open/plug/plug_rt_wasm.c) instead of `plug_rt.c`.
+- **Refused** when the manifest or `plug_wasm_abi()` names another module ABI major, when the plugin ABI major differs, when `min_host` is above the host level, when the size or sha256 differ from the manifest or when the module has any other import.
+- **Sound.** Built with the editor's compiler and flags, a module renders bit identical to the same source linked into the editor. It is not bit identical to the device: the device runs the ARM build with its own libm and GCC fuses some multiply-adds on the Cortex-M4 that wasm cannot fuse (a one LSB difference in Dirt).
+- **Protection.** A `.wasm` file can be decompiled like a `.plg`. Ship it stripped (no name section, no DWARF, no source map), but do not treat it as secret.
+
+Build it with `emcc` (the editor pins the version) and check it with the editor's loader. The manifest fields are listed in the header of `plug_wasm.h`.
+

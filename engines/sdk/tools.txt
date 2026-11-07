@@ -7,3 +7,5 @@ synth-open/plug/emu_synth.py
 synth-open/plug/synth/synth_harness.cpp
 synth-open/tools/make_plgi.py
 synth-open/tools/plgi_sheet.py
+synth-open/plug/plug_wasm.h
+synth-open/plug/plug_rt_wasm.c
