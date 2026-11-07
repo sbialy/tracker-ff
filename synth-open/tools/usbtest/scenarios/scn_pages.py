@@ -38,13 +38,12 @@ def pages_walk(ctx):
     ctx.settle(300)
     ctx.tap_until('Params', 'Instrument Parameters 1/2')    # leave the Params and Performance pages on their first sub page
     ctx.tap_until('Performance', 'Track 1')
-    # the sample loader (SampleLoad) lists the card's samples: ui_shot's file lister crashes on it, so only a device walks it
-    if not ctx.device_only('SampleLoad page (ui_shot SIGSEGV in the host file lister)'):
-        ctx.tap('SampleLoad')
-        ctx.settle(1200)
-        ctx.expect_page('importer')
-        ctx.checkpoint('page.sample-load', must=[])
-    ctx.fresh_boot('the Performance page leaves the pattern editor without cell text')
+    ctx.tap('SampleLoad')    # the sample loader lists the card's folders and samples
+    ctx.settle(1200)
+    ctx.expect_page('importer')
+    # the card list on the left (3 tiles) shows the folders the earlier scenarios created, so a run of this scenario alone differs there
+    ctx.checkpoint('page.sample-load', must=['Sample Loader'], tol=3)
+    ctx.fresh_boot('start the next scenario from the power up screens, not from the sample loader')
 
 
 @scenario('pages.roundtrip', tags=['pages'], summary='leave a page and come back: the first look equals the second')

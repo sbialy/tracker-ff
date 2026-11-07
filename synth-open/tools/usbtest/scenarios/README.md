@@ -78,14 +78,13 @@ A first set of budgets is simply 15 percent over the first device baseline.
 - **Inserts page.** A press on the button of the column that is already selected is not a selection: on a plugin column it shows the next four parameters, on Mixer it steps the list. The helpers select the neutral column F4 first.
   `/Plugins/host.txt` is written on a load, on a rescan (entering the page does one) and on a project save, not on an unload or a mixer change: the scenarios leave the page and enter it again before reading. Slot states: 0 empty, 1 pending, 2 running, 3 missing, 4 failed, 5 safe, 6 tripped, 7 bypassed.
   In safe mode the page title reads `Safe mode: NAME crashed` instead of `Inserts` (it is still the last stop of the Master cycle).
-- **History.** A Master page remembers its selected column and its sub page, Params and Performance remember their sub page, and after the Performance page the pattern editor comes back without its cell text (in the plain ui_shot front end too, not checked on a device).
+- **History.** A Master page remembers its selected column and its sub page, Params and Performance remember their sub page. (Until the FT812 model saved the bitmap handle table with SAVE_CONTEXT, the pattern editor also came back from the Performance page without its cell text on the Mac. That was an emulator bug, ref/ui-shot-crash-investigation.md.)
   Scenarios whose screens depend on this start with `ctx.fresh_boot()` (a reset, skipped with `--no-reboot`) and `tap_until` never presses a page button when the page is already shown.
 - **The lesson.** A screenshot (`shotcrc`, `shot`) rebuilds every control and restarts list animations. `ctx.capture()` settles (idle, a fixed wait, idle) before and after it, and idle alone is not enough on pages that keep redrawing.
 
 ## Mac front end limits
 
 - `ui_shot --serve` has no audio: `cpu` returns fixed numbers (`UISHOT_FAKE_CPU=avg,max`), so the CPU metrics of the Mac baseline are the same for every engine. The flow is exercised, the numbers only mean something on the unit.
-- The SampleLoad page crashes the host (SIGSEGV in `HFileSystem::createFilesList`, a null list entry), the page walk skips it on the Mac. Followup in `ui_shot`, no firmware involved as far as seen.
 - Shift held while the unit boots (safe mode by key) cannot be simulated: the serve front end starts its clock after the 4 s key window. The stale-marker route (`plugins.safe_marker`) is the same host path and runs on both.
 - Wall clock timings (`open_s.*`) are not compared on the Mac.
 

@@ -373,8 +373,8 @@ class Ctx:
         return out
 
     def fresh_boot(self, why):
-        """A reset for scenarios whose screens depend on history: after the Performance page the pattern editor comes back
-        without its cell text (also in the plain ui_shot front end), a Master page remembers its selected column. --no-reboot skips it."""
+        """A reset for scenarios whose screens depend on history: a Master page remembers its selected column
+        and its sub page, Params and Performance their sub page. --no-reboot skips it."""
         if self.opts.get('no_reboot'):
             self.note('no reboot (%s)' % why)
             self.reset_ui()
