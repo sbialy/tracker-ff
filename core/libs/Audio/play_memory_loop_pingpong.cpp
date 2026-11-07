@@ -129,6 +129,7 @@ AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateLoopPingPongNormal()
                     iPitchCounter =
                       constrainsInSamples.loopPoint1 ? constrainsInSamples.loopPoint1 + 1 : 1;
                     iPitchCounter += exceedConstrainValue;
+                    iPitchCounter = keepInLoop(iPitchCounter, loopStartPoint, loopEndPoint);
                     loopBackwardFlag = 0;
                     interpOffset = 1;
                     currentFractionPitchCounter = -currentFractionPitchCounter;
@@ -137,6 +138,7 @@ AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateLoopPingPongNormal()
                 {
                     iPitchCounter =
                       constrainsInSamples.loopPoint2 - 1 - (iPitchCounter - loopEndPoint);
+                    iPitchCounter = keepInLoop(iPitchCounter, loopStartPoint, loopEndPoint);
                     loopBackwardFlag = 1;
                     interpOffset = -1;
                     currentFractionPitchCounter = -currentFractionPitchCounter;
@@ -278,6 +280,8 @@ AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateLoopPingPongReverse()
                     iPitchCounter =
                       constrainsInSamples.loopPoint1 ? constrainsInSamples.loopPoint1 + 1 : 1;
                     iPitchCounter += exceedConstrainValue;
+                    // Position 0 would end the note at the guard above.
+                    iPitchCounter = keepInLoop(iPitchCounter, loopStartPoint + 1, loopEndPoint);
                     loopBackwardFlag = 1;
                     interpOffset = 1;
                     currentFractionPitchCounter = -currentFractionPitchCounter;
