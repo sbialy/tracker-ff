@@ -2486,8 +2486,7 @@ void playerEngine::clearFxPositionGranular()
     }
     else
     {
-        uint32_t localGranPos =
-          mtProject.instrument[currentInstrument_idx].granular.currentPosition;
+        int32_t localGranPos = mtProject.instrument[currentInstrument_idx].granular.currentPosition;
 
         int32_t localGranMod = currentEnvelopeModification[envGranPos] * MAX_16BIT;
 
@@ -2568,15 +2567,13 @@ void playerEngine::clearFxPositionWavetable()
     }
     else
     {
-        uint32_t localWtPos = mtProject.instrument[currentInstrument_idx].wavetableCurrentWindow;
-        int32_t localWtMod =
-          currentEnvelopeModification[envWtPos] *
+        int32_t localWtPos = mtProject.instrument[currentInstrument_idx].wavetableCurrentWindow;
+        int32_t localWtCount =
           mtProject.instrument[currentInstrument_idx].sample.wavetableWindowNumber;
+        int32_t localWtMod = currentEnvelopeModification[envWtPos] * localWtCount;
 
-        if (localWtPos + localWtMod >
-            mtProject.instrument[currentInstrument_idx].sample.wavetableWindowNumber - 1)
-            localWtPos =
-              mtProject.instrument[currentInstrument_idx].sample.wavetableWindowNumber - 1;
+        if (localWtPos + localWtMod > localWtCount - 1)
+            localWtPos = localWtCount - 1;
         else if (localWtPos + localWtMod < 0)
             localWtPos = 0;
         else

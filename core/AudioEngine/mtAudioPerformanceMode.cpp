@@ -409,7 +409,7 @@ void playerEngine::changeWavetableWindowPerformanceMode(int16_t value)
                                   // sie wczesniej z funkcji
     }
 
-    uint32_t wavetableWindow;
+    int32_t wavetableWindow;
 
     if (trackControlParameter[(int)controlType::sequencerMode]
                              [(int)parameterList::wavetablePosition] ||
@@ -426,14 +426,17 @@ void playerEngine::changeWavetableWindowPerformanceMode(int16_t value)
                       -mtProject.instrument[currentInstrument_idx].sample.wavetableWindowNumber,
                       mtProject.instrument[currentInstrument_idx].sample.wavetableWindowNumber);
 
-    if (wavetableWindow + valueMap >=
-        mtProject.instrument[currentInstrument_idx].sample.wavetableWindowNumber)
-        currentPerformanceValues.wavetablePosition =
-          mtProject.instrument[currentInstrument_idx].sample.wavetableWindowNumber - 1;
-    else if (wavetableWindow + valueMap < 0)
+    // signed on purpose: wavetableWindowNumber is unsigned, so compare as int32_t or a
+    // negative sum wraps to a huge value and lands on the last window instead of 0
+    int32_t windowCount = mtProject.instrument[currentInstrument_idx].sample.wavetableWindowNumber;
+    int32_t newWindow = wavetableWindow + valueMap;
+
+    if (newWindow >= windowCount)
+        currentPerformanceValues.wavetablePosition = windowCount - 1;
+    else if (newWindow < 0)
         currentPerformanceValues.wavetablePosition = 0;
     else
-        currentPerformanceValues.wavetablePosition = wavetableWindow + valueMap;
+        currentPerformanceValues.wavetablePosition = newWindow;
 
     trackControlParameter[(int)controlType::performanceMode]
                          [(int)parameterList::wavetablePosition] = 1;
@@ -462,7 +465,7 @@ void playerEngine::changeGranularPositionPerformanceMode(int16_t value)
                                   // sie wczesniej z funkcji
     }
 
-    uint32_t granularPosition;
+    int32_t granularPosition;
 
     if (trackControlParameter[(int)controlType::sequencerMode]
                              [(int)parameterList::granularPosition] ||
