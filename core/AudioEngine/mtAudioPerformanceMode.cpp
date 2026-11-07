@@ -188,7 +188,7 @@ void playerEngine::changePointsPerformanceMode(int32_t spValue, int32_t epValue)
         loopPoint2 = mtProject.instrument[currentInstrument_idx].loopPoint2;
 
     if (trackControlParameter[(int)controlType::sequencerMode][(int)parameterList::endPoint] ||
-        trackControlParameter[(int)controlType::sequencerMode][(int)parameterList::endPoint])
+        trackControlParameter[(int)controlType::sequencerMode2][(int)parameterList::endPoint])
         endPoint = currentSeqModValues.endPoint;
     else
         endPoint = mtProject.instrument[currentInstrument_idx].endPoint;
