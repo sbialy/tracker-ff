@@ -543,7 +543,7 @@ SYNTH_PLUG_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_PLUG_OPT_O3="-O3 -ffp-contr
   synth-open/plug/build_plugs.sh OUT core/build-MK66-ORIGINAL-SYNTHOPEN-fpc$E-trim/obj/synth-open
 ```
 
-It changes the output (see the A/B table in `ref/cpu-optimisation-plan.md` 14.1: the default patch stays under -103 dBFS on every engine, the all-parameters-max scenarios of some engines differ much more) and its cost model is not device calibrated.
+It changes the output: against the AUTO build the default patch differs by at most -103 dBFS on every engine except A-Type (-80 dBFS), and the all-parameters-max scenarios of Arc-Type, WTFM and Hand-Type differ far more (Arc-Type -7 dBFS, WTFM -44, Hand-Type -69), measured on the 12.3.rel1 bench dumps. Its cost model is not device calibrated either, so it stays a test image until a device A/B.
 
 - `package-release` only packages. The default engine set is the 4 engine one, so build with the explicit 16 engine list first. `synth-open/tools/package_release.sh build/<image>.ptf` does the same packaging for an existing image.
 - A `-D` define change (for example in `version.mk`) does not rebuild the objects that depend on it. After changing a version or tag, delete the objects that depend on `mtStructs.h` and grep the `.ptf` for the old strings.
