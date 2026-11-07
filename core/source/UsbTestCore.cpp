@@ -888,6 +888,7 @@ void Console::abortTask()
         case kTaskShot: host_->shotEnd(); break;
         case kTaskLs: host_->dirClose(); break;
         case kTaskGet:
+        case kTaskFw:
             if (file_ != nullptr)
             {
                 host_->fileClose(file_);
@@ -932,7 +933,7 @@ void Console::execLine(char* line)
     if (strcmp(cmd, "help") == 0)
     {
         reply("ok ping help cpu mem idle reboot key pad enc status shotcrc shot texts open play stop peek hash "
-              "markers ls get put rm abort crash");
+              "markers ls get put rm abort crash fwcheck fwpromote flash");
         return;
     }
     if (strcmp(cmd, "cpu") == 0)
@@ -1052,6 +1053,10 @@ void Console::execLine(char* line)
     else if (strcmp(cmd, "rm") == 0)
     {
         cmdRm(argc, argv);
+    }
+    else if (strcmp(cmd, "fwcheck") == 0 || strcmp(cmd, "fwpromote") == 0 || strcmp(cmd, "flash") == 0)
+    {
+        cmdFw(argc, argv);
     }
     else
     {
@@ -1437,6 +1442,7 @@ void Console::runTask(uint32_t now)
         case kTaskLs: stepLs(); break;
         case kTaskGet: stepGet(); break;
         case kTaskPut: stepPut(now); break;
+        case kTaskFw: stepFw(now); break;
         case kTaskOpen: stepOpen(now); break;
         case kTaskIdle: stepIdle(now); break;
         case kTaskReboot:

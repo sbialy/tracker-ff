@@ -41,6 +41,8 @@ bool UsbTestPlatform_InputPending();
 uint32_t UsbTestPlatform_ResetStatus();
 // True if the fault handler of a REBOOT_ON_FAULT image saved a record before the last reset (the record is then cleared)
 bool UsbTestPlatform_FaultRecord(uint32_t* pc, uint32_t* lr, uint32_t* psr, uint32_t* cfsr);
+// Free bytes on the SD card for the firmware update check, -1 if unknown (clamped to 2 GB)
+long UsbTestPlatform_FreeBytes();
 
 #else
 

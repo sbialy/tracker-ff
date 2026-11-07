@@ -25,4 +25,13 @@ std::string& usbtestTx();
 void usbtestSetLink(bool up);
 void usbtestSetTxRate(size_t perStep);
 extern bool g_resetRequested;
+
+// Simulated bootloader for the firmware update (host_usbtest.cpp). The hand-off writes /Firmware/_fwinfo like
+// PlatformImpl::runBootloader, appends the name to $UISHOT_BOOTLOADER_LOG and ends the process with exit code 77 (a reset).
+// The next start "installs" the named .ptf: the reported build id becomes the one found in it. UISHOT_BOOTLOADER_STUCK=1 never comes back.
+const std::string& sdRoot();
+const char* simBuildId();
+void simBootloaderOnStart();
+void simBootloaderHandoff(const char* name);   // returns only with UISHOT_BOOTLOADER_FAIL=1 (the _fwinfo file could not be written)
+long simFreeBytes();             // $UISHOT_FREE_BYTES or the free space of the folder
 }   // namespace hostp

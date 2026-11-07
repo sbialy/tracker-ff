@@ -2,6 +2,7 @@
 // command state machines (input schedule, shot, shotcrc, texts, ls, get, put, hash, open, idle, reboot) against a fake
 // Host. Built by run_usbtest_test.sh with -DENABLE_DEV_CONSOLE. Links zlib only to cross-check crc32.
 #include "UsbTestCore.h"
+#include "UsbTestFlash.h"
 
 #include <zlib.h>
 
@@ -199,6 +200,21 @@ class FakeHost : public Host
     }
     void fileClose(void* h) override { delete static_cast<FakeFile*>(h); }
     bool fileRemove(const char* p) override { return files.erase(p) > 0; }
+    bool renameOk = true;
+    bool fileRename(const char* a, const char* b) override
+    {
+        auto it = files.find(a);
+        if (!renameOk || it == files.end() || files.count(b) > 0) return false;
+        files[b] = it->second;
+        files.erase(a);
+        return true;
+    }
+    long freeValue = 50L << 20;
+    long freeBytes() override { return freeValue; }
+    bool renderingFlag = false;
+    bool rendering() override { return renderingFlag; }
+    std::vector<std::string> bootloaderCalls;
+    void runBootloader(const char* name) override { bootloaderCalls.push_back(name); }
 
     // test helpers
     void send(const std::string& s) { rx.insert(rx.end(), s.begin(), s.end()); }
@@ -878,6 +894,308 @@ static void testOpen()
     CHECK(lines(h.tx).size() == 1 && lines(h.tx)[0] == "@err open timeout");
 }
 
+// ------------------------------------------------------------------------------------------------ firmware update
+// An Intel HEX image like the stock ones: 16 byte records, a segment record every 64 KB, CRLF, vector table, stock flash configuration.
+static std::string hexRecord(int type, int addr, const std::vector<uint8_t>& data)
+{
+    std::vector<uint8_t> body = { uint8_t(data.size()), uint8_t(addr >> 8), uint8_t(addr), uint8_t(type) };
+    body.insert(body.end(), data.begin(), data.end());
+    unsigned sum = 0;
+    for (uint8_t b : body) sum += b;
+    body.push_back(uint8_t(-int(sum)));
+    std::string out = ":";
+    char t[4];
+    for (uint8_t b : body) { snprintf(t, sizeof(t), "%02X", b); out += t; }
+    return out;
+}
+
+static std::vector<uint8_t> makePtf(size_t size = 0x6000, uint32_t sp = 0x20030000, uint32_t reset = 0x1D1,
+                                    const char* eol = "\r\n", bool eof = true)
+{
+    std::vector<uint8_t> mem(size);
+    for (size_t i = 0; i < size; i++) mem[i] = uint8_t(i * 7 + 3);
+    memcpy(&mem[0], &sp, 4);
+    memcpy(&mem[4], &reset, 4);
+    const uint8_t cfg[16] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xDE, 0xF9, 0xFF, 0xFF };
+    memcpy(&mem[0x400], cfg, 16);
+    std::string text;
+    int seg = 0;
+    for (size_t a = 0; a < size; a += 16)
+    {
+        if ((a >> 16) != size_t(seg)) { seg = int(a >> 16); text += hexRecord(2, 0, { uint8_t((seg << 12) >> 8), uint8_t(seg << 12) }) + eol; }
+        text += hexRecord(0, int(a & 0xFFFF), std::vector<uint8_t>(mem.begin() + long(a), mem.begin() + long(std::min(a + 16, size)))) + eol;
+    }
+    if (eof) text += hexRecord(1, 0, {}) + std::string(eol);
+    return std::vector<uint8_t>(text.begin(), text.end());
+}
+
+static PtfError verdict(const std::vector<uint8_t>& data, size_t chunk = 512)
+{
+    PtfValidator v;
+    v.begin();
+    for (size_t i = 0; i < data.size(); i += chunk) v.feed(data.data() + i, std::min(chunk, data.size() - i));
+    return v.finish();
+}
+
+static void testPtfValidator()
+{
+    CHECK(verdict(makePtf()) == kPtfOk);
+    CHECK(verdict(makePtf(0x6000, 0x20030000, 0x1D1, "\n")) == kPtfOk);
+    // any chunking gives the same verdict, down to one byte
+    for (size_t chunk : { size_t(1), size_t(3), size_t(7), size_t(509), size_t(100000) }) CHECK(verdict(makePtf(0x1000), chunk) == kPtfOk);
+    CHECK(verdict(makePtf(0x1000, 0x20030000, 0x1D1, "\r\n", false), 1) == kPtfNoEof);
+    PtfValidator v;
+    v.begin();
+    const auto good = makePtf();
+    v.feed(good.data(), good.size());
+    CHECK(v.finish() == kPtfOk && v.top() == 0x6000 && v.stackPointer() == 0x20030000 && v.resetVector() == 0x1D1);
+    CHECK(verdict(makePtf(0x6000, 0x20280000)) == kPtfBadSp);          // another chip's SRAM
+    CHECK(verdict(makePtf(0x6000, 0x1FFF0000)) == kPtfBadSp);          // bound is exclusive below
+    CHECK(verdict(makePtf(0x6000, 0x20030001)) == kPtfBadSp);          // and inclusive above, 0x20030000 only
+    CHECK(verdict(makePtf(0x6000, 0x20030000, 0x1D0)) == kPtfBadReset);  // not Thumb
+    CHECK(verdict(makePtf(0x6000, 0x20030000, 0x6001)) == kPtfBadReset); // at top
+    CHECK(verdict(makePtf(0x6000, 0x20030000, 0x21)) == kPtfBadReset);   // inside the vector table
+    CHECK(verdict(makePtf(0x6000, 0x20030000, 0x5FFF)) == kPtfOk);
+    CHECK(verdict(makePtf(0xFF000)) == kPtfOk);                        // the last byte below the limit
+    CHECK(verdict(makePtf(0xFF001)) == kPtfBeyondLimit);
+    auto bad = makePtf();
+    bad[20] = bad[20] == '0' ? '1' : '0';                              // a nibble in the first record
+    CHECK(verdict(bad) == kPtfBadChecksum);
+    bad = makePtf();
+    bad[30] = 'Z';
+    CHECK(verdict(bad) == kPtfBadChar);
+    CHECK(verdict({}) == kPtfEmpty);
+    CHECK(verdict({ ' ', '\r', '\n' }) == kPtfEmpty);
+    CHECK(verdict(std::vector<uint8_t>(4000, 0x80)) == kPtfNotHex);    // a binary image
+    auto cut = makePtf();
+    cut.resize(cut.size() / 2 + 3);
+    CHECK(verdict(cut) == kPtfTruncated || verdict(cut) == kPtfNoEof);
+    auto after = makePtf();
+    after.push_back('x');
+    CHECK(verdict(after) == kPtfAfterEof);
+    auto type4 = makePtf();
+    const std::string r4 = hexRecord(4, 0, { 0, 1 }) + "\r\n";
+    type4.insert(type4.begin() + 100, r4.begin(), r4.end());
+    CHECK(verdict(type4) == kPtfRecordType || verdict(type4) == kPtfBadChar || verdict(type4) == kPtfBadLength);
+    // a record inserted at a record start
+    auto type4b = makePtf();
+    type4b.insert(type4b.begin(), r4.begin(), r4.end());
+    CHECK(verdict(type4b) == kPtfRecordType);
+
+    // names
+    CHECK(firmwareNameError("PolyendTracker_AUTOT_1.1.0.ptf", true) == kNameOk);
+    CHECK(firmwareNameError("PolyendTracker_CE_1.0.0.ptf", true) == kNameOk);
+    CHECK(firmwareNameError("PolyendTracker_0123456789_1.0.0.ptf", true) == kNameTooLong);   // 35
+    CHECK(firmwareNameError("PolyendTracker_123456789_1.0.ptf", true) == kNameTooLong);      // 32, one over
+    CHECK(firmwareNameError("PolyendTracker_12345678_1.0.ptf", true) == kNameOk);            // 31, the limit
+    CHECK(strlen("PolyendTracker_12345678_1.0.ptf") == 31 && strlen("PolyendTracker_123456789_1.0.ptf") == 32);
+    CHECK(firmwareNameError("PolyendTrac.ptf", true) == kNameOk);                              // 15
+    CHECK(firmwareNameError("PolyendTr.ptf", true) == kNameTooShort);
+    CHECK(firmwareNameError("polyendTracker_CE_1.0.0.ptf", true) == kNameNoPrefix);
+    CHECK(firmwareNameError("TrackerPlus_CE_1.0.0.ptf", true) == kNameNoPrefix);
+    CHECK(firmwareNameError("PolyendTracker_CE_1.0.0.PTF", true) == kNameNotPtf);
+    CHECK(firmwareNameError("PolyendTracker_CE_1.0.0.hex", true) == kNameNotPtf);
+    CHECK(firmwareNameError("PolyendTracker_CE 1.0.0.ptf", true) == kNameBadChar);
+    CHECK(firmwareNameError("PolyendTracker/CE_1.0.0.ptf", true) == kNameBadChar);
+    CHECK(firmwareNameError("", true) == kNameTooShort);
+    CHECK(firmwareNameError("_usbtest.tmp", false) == kNameOk);
+    CHECK(firmwareNameError("a b", false) == kNameBadChar);
+}
+
+static const char* kName = "PolyendTracker_TEST_1.0.0.ptf";
+static const char* kPath = "/Firmware/PolyendTracker_TEST_1.0.0.ptf";
+
+static std::string flashLine(const char* name, const std::vector<uint8_t>& data)
+{
+    char l[160];
+    snprintf(l, sizeof(l), "flash %s 0x%08x", name, zcrc(data.data(), data.size()));
+    return l;
+}
+
+static void testFlash()
+{
+    FakeHost h; Console c; reset(h, c);
+    const auto image = makePtf();
+    h.files[kPath] = image;
+
+    // fwcheck without a name: the numbers the runner plans with
+    CHECK(starts(cmd(h, "fwcheck"), "@ok fwinfo free=52428800 limit=0xff000 namemax=31 filemax=6291456"));
+    h.freeValue = -1;
+    CHECK(starts(cmd(h, "fwcheck"), "@ok fwinfo free=unknown"));
+    h.freeValue = 50L << 20;
+
+    // fwcheck of the good file, read only
+    char want[160];
+    snprintf(want, sizeof(want), "@ok fwcheck size=%zu crc=%08x top=0x6000 sp=0x20030000 reset=0x000001d1 listed=1", image.size(), zcrc(image.data(), image.size()));
+    CHECK(cmd(h, std::string("fwcheck ") + kName, 100) == want);
+    CHECK(h.bootloaderCalls.empty() && h.files.size() == 1);
+
+    // --- flash: every way of being refused leaves the bootloader alone
+    CHECK(starts(cmd(h, std::string("flash ") + kName), "@err flash: needs the confirm token"));
+    CHECK(starts(cmd(h, "flash"), "@err flash: needs the confirm token"));
+    CHECK(starts(cmd(h, std::string("flash ") + kName + " 1234abcd"), "@err flash: needs the confirm token"));    // no 0x
+    CHECK(starts(cmd(h, std::string("flash ") + kName + " 0x1234"), "@err flash: needs the confirm token"));      // short
+    CHECK(starts(cmd(h, std::string("flash ") + kName + " 0x123456789"), "@err flash: needs the confirm token"));  // long
+    CHECK(starts(cmd(h, std::string("flash ") + kName + " 0xzzzzzzzz"), "@err flash: needs the confirm token"));
+    CHECK(starts(cmd(h, std::string("flash ") + kName + " 0x00000000 extra"), "@err flash: needs the confirm token"));
+    CHECK(starts(cmd(h, std::string("flash ") + kName + " 0xdeadbeef", 100), "@err flash crc "));                  // wrong token
+    CHECK(h.bootloaderCalls.empty());
+    pump(h, 100);
+    CHECK(h.bootloaderCalls.empty() && !c.busy());
+
+    // name rules, all before the file is looked at
+    CHECK(starts(cmd(h, "flash PolyendTracker_1234567890_1.0.ptf 0x00000000"), "@err flash name-too-long"));
+    CHECK(starts(cmd(h, "flash TrackerPlus_CE_1.0.0.ptf 0x00000000"), "@err flash name-no-prefix"));
+    CHECK(starts(cmd(h, "flash PolyendTracker_CE_1.0.0.bin 0x00000000"), "@err flash name-not-ptf"));
+    CHECK(starts(cmd(h, "flash ../PolyendTracker_CE_1.0.0.ptf 0x00000000"), "@err flash name-bad-char"));
+    CHECK(starts(cmd(h, "flash PolyendTracker_CE_1.0.0.ptf 0x00000000"), "@err flash no such file"));
+    CHECK(h.bootloaderCalls.empty());
+
+    // refused while playing, rendering or loading
+    const std::string good = flashLine(kName, image);
+    h.playingFlag = true;
+    CHECK(starts(cmd(h, good), "@err flash refused while playing, rendering or loading"));
+    h.playingFlag = false;
+    h.renderingFlag = true;
+    CHECK(starts(cmd(h, good), "@err flash refused while playing, rendering or loading"));
+    h.renderingFlag = false;
+    h.fmStatus = 3;
+    CHECK(starts(cmd(h, good), "@err flash refused while playing, rendering or loading"));
+    CHECK(starts(cmd(h, std::string("fwcheck ") + kName), "@err fwcheck refused"));
+    h.fmStatus = 0;
+    CHECK(h.bootloaderCalls.empty());
+
+    // a file that fails the validator is refused with the token right
+    {
+        auto badImage = makePtf(0x6000, 0x20280000);   // the stack of another chip
+        h.files["/Firmware/PolyendTracker_BADSP_1.0.ptf"] = badImage;
+        CHECK(starts(cmd(h, flashLine("PolyendTracker_BADSP_1.0.ptf", badImage), 100), "@err flash ptf bad-sp"));
+        auto flipped = makePtf();
+        flipped[200] = flipped[200] == '0' ? '1' : '0';
+        h.files["/Firmware/PolyendTracker_FLIP_1.0.ptf"] = flipped;
+        CHECK(starts(cmd(h, flashLine("PolyendTracker_FLIP_1.0.ptf", flipped), 100), "@err flash ptf bad-checksum"));
+        h.files["/Firmware/PolyendTracker_SMALL_1.0.ptf"] = std::vector<uint8_t>(100, 'x');
+        CHECK(starts(cmd(h, flashLine("PolyendTracker_SMALL_1.0.ptf", h.files["/Firmware/PolyendTracker_SMALL_1.0.ptf"])), "@err flash size 100"));
+        h.files.erase("/Firmware/PolyendTracker_BADSP_1.0.ptf");
+        h.files.erase("/Firmware/PolyendTracker_FLIP_1.0.ptf");
+        h.files.erase("/Firmware/PolyendTracker_SMALL_1.0.ptf");
+        CHECK(h.bootloaderCalls.empty());
+    }
+
+    // the real thing: ok line first, the bootloader about 250 ms later, nothing in between
+    h.tx.clear();
+    h.send(good + "\n");
+    pump(h, 80, 10);   // reads the file (about 25 steps), the 250 ms are not over yet at the first ok
+    std::string all(h.tx.begin(), h.tx.end());
+    char handoff[160];
+    snprintf(handoff, sizeof(handoff), "@ok flash handoff %s size=%zu crc=%08x\n", kName, image.size(), zcrc(image.data(), image.size()));
+    // the fake bootloader returns (the real one never does), so the failure line follows the ok line
+    CHECK(all == std::string(handoff) + "@err flash: the bootloader hand-off failed (/Firmware/_fwinfo not written)\n");
+    CHECK(h.bootloaderCalls.size() == 1 && h.bootloaderCalls[0] == kName);
+    CHECK(h.files.count(kPath) == 1);   // the image stays on the card
+    CHECK(!c.busy());
+
+    // the bootloader call comes after the delay, not at once
+    {
+        FakeHost h2; Console c2; reset(h2, c2);
+        h2.files[kPath] = image;
+        h2.send(good + "\n");
+        int steps = 0;
+        while (h2.bootloaderCalls.empty() && steps < 500) { pump(h2, 1, 10); steps++; }
+        CHECK(!h2.bootloaderCalls.empty());
+        // 5 to 8 steps for the file at 16 chunks per pass, then 250 ms
+        CHECK(steps >= 25 && steps <= 45);
+        // while the hand-off is armed other commands are refused, ping still answers
+        FakeHost h3; Console c3; reset(h3, c3);
+        h3.files[kPath] = image;
+        h3.send(good + "\n");
+        pump(h3, 30, 10);
+        CHECK(h3.bootloaderCalls.empty() && c3.busy());
+        CHECK(starts(cmd(h3, "key F1 tap", 1), "@err busy"));
+        CHECK(starts(cmd(h3, "ping", 1), "@tracker-dev"));
+        // abort inside the window cancels the hand-off
+        CHECK(starts(cmd(h3, "abort", 1), "@ok abort"));
+        pump(h3, 100);
+        CHECK(h3.bootloaderCalls.empty() && !c3.busy());
+    }
+    // playback that starts during the window cancels it
+    {
+        FakeHost h2; Console c2; reset(h2, c2);
+        h2.files[kPath] = image;
+        h2.send(good + "\n");
+        pump(h2, 30, 10);
+        CHECK(h2.bootloaderCalls.empty());
+        h2.playingFlag = true;
+        h2.tx.clear();
+        pump(h2, 100);
+        CHECK(h2.bootloaderCalls.empty());
+        std::string out(h2.tx.begin(), h2.tx.end());
+        CHECK(out.find("@err flash cancelled") != std::string::npos);
+    }
+    // the USB link going away inside the window cancels it
+    {
+        FakeHost h2; Console c2; reset(h2, c2);
+        h2.files[kPath] = image;
+        h2.send(good + "\n");
+        pump(h2, 30, 10);
+        h2.link = false;
+        pump(h2, 100);
+        CHECK(h2.bootloaderCalls.empty() && !c2.busy());
+    }
+    // a hand-off that returns (the _fwinfo file could not be written) is reported
+    {
+        FakeHost h2; Console c2; reset(h2, c2);
+        h2.files[kPath] = image;
+        h2.tx.clear();
+        h2.send(good + "\n");
+        pump(h2, 100);
+        std::string out(h2.tx.begin(), h2.tx.end());
+        CHECK(out.find("@err flash: the bootloader hand-off failed") != std::string::npos);
+        CHECK(h2.bootloaderCalls.size() == 1 && !c2.busy());
+    }
+
+    // --- fwpromote: temp file to final name, the old file of that name goes
+    {
+        FakeHost h2; Console c2; reset(h2, c2);
+        const char* tmp = "/Firmware/_usbtest.tmp";
+        h2.files[tmp] = image;
+        char line[200];
+        snprintf(line, sizeof(line), "fwpromote _usbtest.tmp %s 0x%08x", kName, zcrc(image.data(), image.size()));
+        // wrong token: nothing moves
+        CHECK(starts(cmd(h2, "fwpromote _usbtest.tmp PolyendTracker_TEST_1.0.0.ptf 0x00000001", 100), "@err fwpromote crc "));
+        CHECK(h2.files.count(tmp) == 1 && h2.files.count(kPath) == 0);
+        // wrong platform: nothing moves
+        auto other = makePtf(0x6000, 0x20280000);
+        h2.files["/Firmware/_other.tmp"] = other;
+        char bl[200];
+        snprintf(bl, sizeof(bl), "fwpromote _other.tmp %s 0x%08x", kName, zcrc(other.data(), other.size()));
+        CHECK(starts(cmd(h2, bl, 100), "@err fwpromote ptf bad-sp"));
+        CHECK(h2.files.count(kPath) == 0);
+        // name too long / not listed / same as source
+        CHECK(starts(cmd(h2, "fwpromote _usbtest.tmp PolyendTracker_1234567890_1.0.ptf 0x00000001"), "@err fwpromote name-too-long"));
+        CHECK(starts(cmd(h2, "fwpromote _usbtest.tmp other.ptf 0x00000001"), "@err fwpromote name-too-short"));
+        CHECK(starts(cmd(h2, "fwpromote _usbtest.tmp _usbtest.tmp 0x00000001"), "@err fwpromote name-too-short"));
+        CHECK(starts(cmd(h2, "fwpromote PolyendTracker_TEST_1.0.0.ptf PolyendTracker_TEST_1.0.0.ptf 0x00000001"), "@err fwpromote name-bad-char"));
+        CHECK(starts(cmd(h2, "fwpromote _usbtest.tmp PolyendTracker_TEST_1.0.0.ptf"), "@err usage"));
+        char ok[200];
+        snprintf(ok, sizeof(ok), "@ok fwpromote %s size=%zu crc=%08x", kName, image.size(), zcrc(image.data(), image.size()));
+        CHECK(cmd(h2, line, 100) == ok);
+        CHECK(h2.files.count(tmp) == 0 && h2.files[kPath] == image);
+        // again with an old file of that name on the card: replaced
+        h2.files[tmp] = image;
+        h2.files[kPath] = std::vector<uint8_t>(10, 1);
+        CHECK(cmd(h2, line, 100) == ok);
+        CHECK(h2.files[kPath] == image && h2.files.count(tmp) == 0);
+        // rename fails: the checked copy stays where it is
+        h2.files[tmp] = image;
+        h2.renameOk = false;
+        CHECK(starts(cmd(h2, line, 100), "@err fwpromote rename failed"));
+        CHECK(h2.files.count(tmp) == 1);
+        CHECK(h2.bootloaderCalls.empty());
+        // never calls the bootloader, whatever happens
+    }
+}
+
 int main()
 {
     testCrc();
@@ -893,6 +1211,8 @@ int main()
     testTexts();
     testFiles();
     testOpen();
+    testPtfValidator();
+    testFlash();
     printf("usbtest_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

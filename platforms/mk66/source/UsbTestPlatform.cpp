@@ -8,6 +8,7 @@
 #include "EncoderImpl.h"
 #include "PadsImpl.h"
 #include "PlatformImpl.h"
+#include "SD.h"
 #include "kinetis.h"
 #include "usb_dev.h"
 #include "usb_serial.h"
@@ -148,6 +149,17 @@ bool UsbTestPlatform_FaultRecord(uint32_t* pc, uint32_t* lr, uint32_t* psr, uint
         *cfsr = g_fault[3];
     }
     return g_faultValid;
+}
+
+// FatFs f_getfree: the free cluster count of the FSINFO sector, a card with a stale one makes it scan the FAT (seconds, main loop)
+long UsbTestPlatform_FreeBytes()
+{
+    const uint64_t bytes = uint64_t(SD.freeClusterCount()) * SD.sectorsPerCluster() * 512u;
+    if (bytes == 0)
+    {
+        return -1; // freeClusterCount() also returns 0 when f_getfree failed, so zero counts as unknown
+    }
+    return bytes > 0x7FFFFFFFull ? 0x7FFFFFFF : long(bytes);
 }
 
 #endif /* ENABLE_DEV_CONSOLE */
