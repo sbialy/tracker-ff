@@ -39,7 +39,12 @@ PLUG_MAGIC, SYN1, KIND_SYNTH, CPU_CM4F = 0x31474C50, 0x314E5953, 4, 1
 
 
 def table():
-    return json.load(open(os.path.join(HERE, "engines.json")))
+    """engines.json. "engines" is the PUBLIC rows only (the ones whose source is in this repository and that this project builds),
+    "all_engines" every row including the private ones (identity only: numbers, names, logo, repo)."""
+    t = json.load(open(os.path.join(HERE, "engines.json")))
+    t["all_engines"] = t["engines"]
+    t["engines"] = [e for e in t["engines"] if e.get("visibility", "public") == "public"]
+    return t
 
 
 def read_list(path):
@@ -367,6 +372,72 @@ def verify(a):
     return 0
 
 
+def verify_external(a):
+    """The artifacts of the private repositories against the public identity in engines.json: every private engine .plg is there, is a
+    valid synth plugin of this host's ABI (header, CRC, kind) and carries exactly the numbers, name and version of its row; every private
+    insert .plg is a master insert of this ABI. When the directory has the module manifests (<id>.json) and .wasm files they are checked
+    too: kind, visibility, source repository, numbers, sha256 of the files. The dir may be the poly-engines and poly-effects release
+    assets merged. Exit 1 on any difference."""
+    t = table()
+    host = abi_of(a.host_abi)
+    errs = []
+    for e in [x for x in t["all_engines"] if x.get("visibility") == "private"]:
+        f = os.path.join(a.dir, e["id"] + ".plg")
+        if not os.path.exists(f):
+            errs.append("%s: %s.plg is missing (published by %s)" % (e["id"], e["id"], e["repo"]))
+            continue
+        h, m = parse_plg(f)
+        if not h["crc_ok"] or h["magic"] != PLUG_MAGIC or h["kind"] != KIND_SYNTH or h["cpu"] != CPU_CM4F:
+            errs.append(e["id"] + ": bad header or CRC")
+        if h["abi_major"] != host[0] or h["min_host"] > host[2]:
+            errs.append(e["id"] + ": the host refuses it (abi major %d vs %d, min_host %d vs level %d)" % (h["abi_major"], host[0], h["min_host"], host[2]))
+        if (m["name"], m["stored"], m["patch_engine"], m["type_id"], m["magic"]) != (e["name"], e["stored"], e["patch"], e["type"], SYN1):
+            errs.append("%s: manifest %s/%d/%d/%d differs from engines.json %s/%d/%d/%d" % (e["id"], m["name"], m["stored"], m["patch_engine"], m["type_id"],
+                                                                                           e["name"], e["stored"], e["patch"], e["type"]))
+        if "%d.%d.%d" % (h["version"] >> 16, (h["version"] >> 8) & 255, h["version"] & 255) != e["version"]:
+            errs.append(e["id"] + ": version differs from engines.json")
+        if not os.path.exists(os.path.join(a.dir, e["id"] + ".plgi")):
+            errs.append(e["id"] + ": no .plgi card logo")
+        errs += _module_manifest(a.dir, e["id"], "synth", e)
+    for e in [x for x in t["inserts"] if x.get("visibility") == "private"]:
+        f = os.path.join(a.dir, e["id"] + ".plg")
+        if not os.path.exists(f):
+            errs.append("%s: %s.plg is missing (published by %s)" % (e["id"], e["id"], e["repo"]))
+            continue
+        data = open(f, "rb").read()
+        h = dict(zip(HDR_FIELDS, struct.unpack_from(HDR, data, 0)))
+        body = data[64:h["header_size"] + h["image_size"] + 4 * h["rebase_count"]]
+        if h["magic"] != PLUG_MAGIC or h["kind"] != 1 or (zlib.crc32(body) & 0xFFFFFFFF) != h["crc32"]:
+            errs.append(e["id"] + ": not a master insert plugin with a valid CRC")
+        if h["abi_major"] != host[0] or h["min_host"] > host[2]:
+            errs.append(e["id"] + ": the host refuses it")
+        errs += _module_manifest(a.dir, e["id"], "master", e)
+    if errs:
+        print("verify-external FAILED: " + a.dir)
+        for x in errs:
+            print("  " + x)
+        return 1
+    print("verify-external ok: %s (%s)" % (a.dir, ", ".join(x["id"] for x in t["all_engines"] + t["inserts"] if x.get("visibility") == "private")))
+    return 0
+
+
+def _module_manifest(d, ident, kind, row):
+    mf = os.path.join(d, ident + ".json")
+    if not os.path.exists(mf):
+        return []
+    man = json.load(open(mf))
+    errs = []
+    if man.get("format") != "ffmod" or man.get("kind") != kind or man.get("visibility") != "private" or man.get("source_repo") != row["repo"]:
+        errs.append("%s.json: not a private %s module of %s" % (ident, kind, row["repo"]))
+    if kind == "synth" and (man["synth"]["stored"], man["synth"]["patch_engine"], man["synth"]["type_id"]) != (row["stored"], row["patch"], row["type"]):
+        errs.append(ident + ".json: numbers differ from engines.json")
+    for k in ("wasm", "plg"):
+        fl = man["files"].get(k)
+        if fl and sha256(os.path.join(d, fl["name"])) != fl["sha256"]:
+            errs.append("%s.json: %s sha256 differs" % (ident, fl["name"]))
+    return errs
+
+
 def shell(_a):
     """The table as the shell functions synth_engines.sh always had (synth_render_compare.sh and the old build_plugs.sh read them)."""
     t = table()
@@ -402,6 +473,9 @@ def main():
     v.add_argument("dir")
     v.add_argument("--host-abi", help="the firmware's plug_abi.h: refuse a set its host would refuse")
     sp.add_parser("shell")
+    ve = sp.add_parser("verify-external")
+    ve.add_argument("dir")
+    ve.add_argument("--host-abi", required=True)
     pk = sp.add_parser("package")
     pk.add_argument("dir")
     pk.add_argument("--host-abi")
@@ -410,7 +484,7 @@ def main():
     lt.add_argument("--out", required=True)
     lt.add_argument("--root", default=os.path.dirname(HERE))
     a = ap.parse_args()
-    return {"build": build, "verify": verify, "shell": shell, "logo-test": logo_test, "package": package}[a.cmd](a)
+    return {"build": build, "verify": verify, "shell": shell, "verify-external": verify_external, "logo-test": logo_test, "package": package}[a.cmd](a)
 
 
 if __name__ == "__main__":

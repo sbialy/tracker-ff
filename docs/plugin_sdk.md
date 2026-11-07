@@ -173,14 +173,14 @@ The examples build into `build/plugins/examples/`, apart from the shipped set. T
 
 ### Building the shipped engines: `engines/`
 
-The twelve shipped synth engines have their own standalone build in [`engines/`](../engines/README.md). It needs no firmware build and writes nothing into the source tree:
+The ten public synth engines have their own standalone build in [`engines/`](../engines/README.md) (PHZ and PLK are built from the private repository `poly-engines`). It needs no firmware build and writes nothing into the source tree:
 
 ```bash
 make -C engines TOOLCHAIN=$PWD/agt/10.3/bin/arm-none-eabi- PY=/tmp/phzvenv/bin/python OUT=$PWD/build/engines
 make -C engines verify OUT=$PWD/build/engines
 ```
 
-`OUT` then holds the twelve `.plg` and `.plgi` files, `SET.json` (set version, compiler, flags, SDK version and ABI, one record per engine) and `SHA256SUMS`: copy the folder to `/Plugins/Synth/`. `FLAVOUR=fused` builds the set without `-ffp-contract=off`. Each build starts from a scratch copy of the files listed in `engines/sdk/` (the header set the engines compile against), so an engine cannot depend on a header outside it. The checks that need a firmware tree (the attach check and the render compare against the firmware's own objects) run as `engines/crosscheck.sh OUT`.
+`OUT` then holds the ten `.plg` and `.plgi` files, `SET.json` (set version, compiler, flags, SDK version and ABI, one record per engine) and `SHA256SUMS`: copy the folder to `/Plugins/Synth/`. `FLAVOUR=fused` builds the set without `-ffp-contract=off`. Each build starts from a scratch copy of the files listed in `engines/sdk/` (the header set the engines compile against), so an engine cannot depend on a header outside it. The checks that need a firmware tree (the attach check and the render compare against the firmware's own objects) run as `engines/crosscheck.sh OUT`.
 
 ---
 
@@ -522,7 +522,7 @@ The host points its engine description **straight at your arrays**. Nothing is c
 
 ### Working memory (`work_bytes`, `set_work`)
 
-An engine cannot call `alloc`. Large state (a delay line pool) comes from the host through `PLUG_SYNTH_PLUGIN_WORK`: `work_bytes` and a `set_work(void*, uint32_t)` function. The host hands it out of a 16 KB SDRAM arena, zeroed, 8 byte aligned, once after `init` and before any audio call. It stays while the engine is installed. Keep only state there that is touched a few times per sample (a delay line read once per sample). An uncached SDRAM access costs about 20 to 30 cycles on the MK66, so never put hot per-sample state there. `pluck_plug.cpp` is the example.
+An engine cannot call `alloc`. Large state (a delay line pool) comes from the host through `PLUG_SYNTH_PLUGIN_WORK`: `work_bytes` and a `set_work(void*, uint32_t)` function. The host hands it out of a 16 KB SDRAM arena, zeroed, 8 byte aligned, once after `init` and before any audio call. It stays while the engine is installed. Keep only state there that is touched a few times per sample (a delay line read once per sample). An uncached SDRAM access costs about 20 to 30 cycles on the MK66, so never put hot per-sample state there. The Karplus-Strong plugin PLK (source in the private repository `poly-engines`) uses it.
 
 ### Presets and patches
 

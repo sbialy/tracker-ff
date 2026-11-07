@@ -71,18 +71,13 @@ SYNTH_OPT_SHIM ?=
 SYNTH_OPT_COLD ?=
 SYNTH_OPT_FAT ?= $(SYNTH_OPT_ENGINES)
 SYNTH_GUI_OBJS := $(addprefix $(OBJ_DIR)/,interface/instrumentEditor/SynthEditor.o interface/instrumentEditor/SynthPatchEditor.o interface/instrumentEditor/SynthMacros.o interface/instrumentEditor/SynthAutomation.o synth/Synth.o synth/FileSystemAdapter.o synth/MidiAdapter.o synth/registry.o)
-$(filter $(OBJ_DIR)/synth-open/ot/% $(OBJ_DIR)/synth-open/ot-synths/% $(OBJ_DIR)/synth-open/phz/% $(OBJ_DIR)/synth-open/engine_chip.o,$(SYNTH_OPEN_OBJS)): EXTRA_OPT := $(SYNTH_OPT_ENGINES)
+$(filter $(OBJ_DIR)/synth-open/ot/% $(OBJ_DIR)/synth-open/ot-synths/% $(OBJ_DIR)/synth-open/engine_chip.o,$(SYNTH_OPEN_OBJS)): EXTRA_OPT := $(SYNTH_OPT_ENGINES)
 # CHIP (the voice and its glue) has its own knob, default the engines' flag. -O2 makes a voice about 12 % cheaper (12.7 % of a
 # block instead of 14.4 %, default patch, synth-open/tools/phz_cycles/run_bench.sh -O2 CHIP) for +3.6 KB in the image
 SYNTH_OPT_CHIP ?= $(SYNTH_OPT_ENGINES)
 $(OBJ_DIR)/synth/engines/ChiptuneSynthVoice.o $(OBJ_DIR)/synth-open/engine_chip.o: EXTRA_OPT := $(SYNTH_OPT_CHIP)
 # PHZ: -O2 and no fused multiply add. On the Cortex-M4F a VFMA / VMLA takes 3 cycles, a VMUL + VADD pair 2, and that is
 # worth 20 % of the voice (synth-open/tools/phz_cycles). Measured: worst case 5.8 % of a block at these flags, 7.3 % at -Os
-SYNTH_OPT_PHZ ?= -O2 -ffp-contract=off
-$(OBJ_DIR)/synth-open/phz/phz.o: EXTRA_OPT := $(SYNTH_OPT_PHZ)
-# PLK (Pluck): the same -O2 and no fused multiply add as PHZ (synth-open/pluck/README.md, CPU)
-SYNTH_OPT_PLK ?= -O2 -ffp-contract=off
-$(OBJ_DIR)/synth-open/pluck/pluck.o: EXTRA_OPT := $(SYNTH_OPT_PLK)
 $(SYNTH_GUI_OBJS): EXTRA_OPT := $(SYNTH_OPT_GUI)
 $(OBJ_DIR)/synth-open/open_synth.o: EXTRA_OPT := $(SYNTH_OPT_SHIM)
 # Dirt: FMA fusing costs 3 cycles on the M4F against 2 for a separate multiply and add, so no contraction

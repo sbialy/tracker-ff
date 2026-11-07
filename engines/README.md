@@ -1,7 +1,9 @@
 # engines/ - the synth engine .plg set, built on its own
 
-The twelve custom synth engines (JU6 PHZ FM4 D-Type CS-Type A-Type T-Type 8-Type Hand-Type B-Type Arc-Type PLK) ship as runtime
-`.plg` plugins. This folder builds, checks, versions and releases that set **without building or touching the firmware**. The
+Ten custom synth engines (JU6 FM4 D-Type CS-Type A-Type T-Type 8-Type Hand-Type B-Type Arc-Type) are built here as runtime
+`.plg` plugins. Two more, PHZ and PLK, are our own code and are built from the private repository `poly-engines`, their release
+files are checked against the numbers kept here (`build_set.py verify-external`). This folder builds, checks, versions and releases
+the public ten **without building or touching the firmware**. The
 firmware image build in turn needs none of the engines (the image carries the stock six: ACD FAT VAP WTFM PERC CHIP).
 
 ```bash
@@ -63,7 +65,7 @@ Proof that both sides agree: `WHICH=private` here gives `.wasm` files byte equal
 | `crosscheck.sh` | the checks that need the firmware tree |
 | `sdk/VERSION` | SDK version and the plugin ABI (`abi 1.1`, `host_level 1`) the set is built against |
 | `sdk/headers.txt` | **the plugin SDK header set**: the 14 headers the engines compile against and the firmware shares (`plug_abi.h`, `synth_plug.h`, `open_engine.h`, `engine_list.h`, `ot/audio/*.h`, `ot/model/synth_patch.h`, `ot/fastrun.h`, `PolySynth/config.h`) |
-| `sdk/sources.txt` | the engine owned files: wrappers `plug/synth/*_plug.cpp`, definitions `engine_*.cpp`, DSP in `ot-synths/`, `phz/`, `pluck/` |
+| `sdk/sources.txt` | the engine owned files: wrappers `plug/synth/*_plug.cpp`, definitions `engine_*.cpp`, DSP in `ot-synths/` |
 | `sdk/tools.txt` | the plugin toolchain (`build_plug.py`, `plug_rt.c`, `plug.ld`), the emulators and the logo tools. Written by hand |
 
 A build copies exactly the files of the three lists into a scratch tree and compiles there with the working directory
@@ -73,12 +75,12 @@ a header that is not listed (or a listed file is no longer used), and when `engi
 
 ## Flavours and flags
 
-| Flavour | OpenTracker modules | FM4 and B-Type | PHZ and PLK |
-|---|---|---|---|
-| `autof` (default, the 1.2.0 release) | `-O2 -ffp-contract=off` | `-O3 -ffp-contract=off` | `-O2 -ffp-contract=off` |
-| `fused` | `-O2` | `-O3` | `-O2 -ffp-contract=off` |
+| Flavour | OpenTracker modules | FM4 and B-Type |
+|---|---|---|
+| `autof` (default, the 1.2.0 release) | `-O2 -ffp-contract=off` | `-O3 -ffp-contract=off` |
+| `fused` | `-O2` | `-O3` |
 
-Every source also gets the firmware's own flags (`fwflags` in `engines.json`), the wrapper is `-Os`, and 8-Type, T-Type and PLK add
+Every source also gets the firmware's own flags (`fwflags` in `engines.json`), the wrapper is `-Os`, and 8-Type and T-Type add
 their `*_WORK_POOL` define. `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3` in the environment replace the first two columns for a
 test set. The sets are byte identical to what the in-tree `build_plugs.sh` produced before this folder existed (checked for both).
 
@@ -104,7 +106,7 @@ test set. The sets are byte identical to what the in-tree `build_plugs.sh` produ
 | Firmware side | Needs the engines? |
 |---|---|
 | Image build (`make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 SYNTH_ENGINES=stock`) | **No.** It compiles the stock six (`ot/audio/engines/*.cpp`, `engine_acd/fat/vap/wtfm/perc/chip.cpp`, `ChiptuneSynthVoice.cpp`) and the plugin host (`plug_*.cpp`, `plug_abi.h`, `open_engine.h`, `engine_list.h`) |
-| `EXT_ENGINES=none` | `make` stops if `SYNTH_ENGINES` names one of the twelve (`SYNTH_ENGINES_EXT` in `synth-open/engines.mk`). The default is `allow`: a test image can still link an engine in |
+| `EXT_ENGINES=none` | `make` stops if `SYNTH_ENGINES` names one of the ten (`SYNTH_ENGINES_EXT` in `synth-open/engines.mk`). The default is `allow`: a test image can still link an engine in |
 | Flash report (`make synth-engines`), render compare (`crosscheck.sh`), `engine_budget` tools | Yes, they compile the engines into an image or into objects on purpose |
 
 So the engine sources stay in `synth-open/` for now, because the same files are the reference the render compare builds
@@ -117,11 +119,11 @@ into the firmware. Nothing in the engine build reads any other firmware file.
 2. Vendor the files of `sdk/headers.txt` the same way and record the firmware commit they came from in `sdk/VERSION`. The firmware
    repo stays the owner of `plug_abi.h`, `synth_plug.h`, `open_engine.h` and `ot/`, so a firmware change to them is a new SDK
    version and a re-sync, `closure.py --check` tells when the lists drift.
-3. In the firmware repo: delete the engine sources (and the twelve `SYNTH_ENGINE_SRCS_*` lines, `engine_list.h` entries and
+3. In the firmware repo: delete the engine sources (and the ten `SYNTH_ENGINE_SRCS_*` lines, `engine_list.h` entries and
    `SYNTH_ENGINES_EXT`), which also ends the in-image test build of a custom engine and the render compare reference. Keep the
    compare as a job that builds the engine repo's objects. `crosscheck.sh` and `validate_synth.py` then take the firmware as a
    checkout path (`FIRMWARE_TREE`, already an argument).
-4. Licences: `synth-open/plug/LICENSE` (MIT), `licenses/` for the OpenTracker and PHZ sources travel with the files.
+4. Licences: `synth-open/plug/LICENSE` (MIT), `licenses/` for the OpenTracker sources travel with the files. PHZ travels with its own notice in `poly-engines`.
 
 ## Releasing a set
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds the shipped master insert plugins (dirt, tape, lofi, console, tube, bbd, phaser: .plg) and the two worked examples of
+# Builds the shipped PUBLIC master insert plugins (dirt, tape, lofi, bbd, phaser: .plg, the OpenTracker ports; console and tube are built by poly-effects) and the two worked examples of
 # docs/plugin_sdk.md, and checks each one on the Mac. The synth engine plugins are NOT built here: they have their own standalone
 # build in engines/ (make -C engines, engines/README.md), and their firmware side checks are engines/crosscheck.sh.
 #   - no R_ARM_GOT* relocation in the linked ELF, the rebase table holds every R_ARM_ABS32 word (count equal, > 0)
@@ -36,10 +36,6 @@ python3 plug/build_plug.py --id org.opentracker.fx.tape --kind master --version 
     --keep "$OUT/tape.elf" --out "$OUT/tape.plg" plug/fx/ot_tape_plug.c
 python3 plug/build_plug.py --id org.opentracker.fx.lofi --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
     --keep "$OUT/lofi.elf" --out "$OUT/lofi.plg" plug/fx/ot_lofi_plug.c
-python3 plug/build_plug.py --id ff.console --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
-    --keep "$OUT/console.elf" --out "$OUT/console.plg" plug/fx/ff_console_plug.c
-python3 plug/build_plug.py --id ff.tube --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
-    --keep "$OUT/tube.elf" --out "$OUT/tube.plg" plug/fx/ff_tube_plug.c
 python3 plug/build_plug.py --id org.opentracker.fx.bbd --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
     --keep "$OUT/bbd.elf" --out "$OUT/bbd.plg" plug/fx/ot_bbd_plug.c
 python3 plug/build_plug.py --id org.opentracker.fx.phaser --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
@@ -59,14 +55,12 @@ nd() {
         dirt) echo "--param 0=2 --param 1=60 --param 2=8 --param 3=4 --param 4=70 --param 5=80 --param-at 5:1=20" ;;
         tape) echo "--param 0=80 --param 1=60 --param 2=40 --param 3=70 --param-at 5:0=10" ;;
         lofi) echo "--param 0=8 --param 1=2 --param 2=40 --param 3=1 --param 4=70 --param-at 5:0=6" ;;
-        console) echo "--param 0=70 --param 1=80 --param 2=-3 --param 3=60 --param-at 5:0=20" ;;
-        tube) echo "--param 0=70 --param 1=80 --param 2=40 --param 3=60 --param-at 5:0=20" ;;
         bbd) echo "--param 0=1 --param 1=60 --param 2=40 --param 3=90 --param-at 5:1=100" ;;
         phaser) echo "--param 0=1 --param 1=70 --param 2=50 --param 3=60 --param 4=100 --param 5=70 --param-at 5:0=0" ;;
         examples/tilt) echo "--param 0=6 --param 1=4 --param 2=1200 --param-at 5:1=-5" ;;
     esac
 }
-for p in dirt tape lofi console tube bbd phaser examples/tilt; do
+for p in dirt tape lofi bbd phaser examples/tilt; do
     got=$("${TOOLCHAIN}objdump" -r "$OUT/$p.elf" | grep -c 'R_ARM_GOT' || true)
     abs=$("${TOOLCHAIN}objdump" -r "$OUT/$p.elf" | grep -c 'R_ARM_ABS32' || true)
     reb=$(python3 -c "import struct,sys; print(struct.unpack_from('<I', open(sys.argv[1],'rb').read(), 32)[0])" "$OUT/$p.plg")

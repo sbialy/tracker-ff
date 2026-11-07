@@ -40,10 +40,10 @@ FIELDS = ("max_voices", "volume_param", "work_bytes", "slot_fx", "params", "sect
 
 def check_table(t):
     """engines.json sanity: unique ids, a visibility on every row, a repo on exactly the private ones, the named repo exists."""
-    ids = [r["id"] for r in t["engines"] + t["inserts"]]
+    ids = [r["id"] for r in t["all_engines"] + t["inserts"]]
     if len(ids) != len(set(ids)):
         sys.exit("engines.json: duplicate module ids")
-    for r in t["engines"] + t["inserts"]:
+    for r in t["all_engines"] + t["inserts"]:
         if r.get("visibility") not in ("public", "private"):
             sys.exit("engines.json: %s has no visibility public|private" % r["id"])
         if (r["visibility"] == "private") != ("repo" in r) or ("repo" in r and r["repo"] not in t["private_repos"]):
@@ -182,7 +182,7 @@ def verify_plg(t, d):
     env = dict(os.environ, TOOLCHAIN=tc)
     fail = 0
     with tempfile.TemporaryDirectory(prefix="insplg") as tmp:
-        for e in t["inserts"]:
+        for e in [x for x in t["inserts"] if x["visibility"] == "public"]:
             ref = os.path.join(d, e["id"] + ".plg")
             if not os.path.exists(ref):
                 print("%-8s skipped (no %s)" % (e["id"], ref))
@@ -233,6 +233,8 @@ def main():
     want = lambda r: (a.which == "all" or r["visibility"] == a.which) and (not a.only or r["id"] in a.only.split(","))
     engines = [e for e in t["engines"] if want(e)]
     inserts = [e for e in t["inserts"] if want(e)]
+    if a.which != "public":
+        sys.exit("the sources of the private modules are not in this repository: poly-engines and poly-effects build and publish them")
     recs, notices, licences = [], [], set()
     with tempfile.TemporaryDirectory(prefix="modwasm") as tmp:
         sd = os.path.join(tmp, "stage")
@@ -259,7 +261,7 @@ def main():
         f.write("# Notices for the browser modules in this directory\n\nShip every module with this file and the licence texts it names.\n\n")
         for i, n in notices:
             f.write("## %s\n\n%s\n\n" % (i, n or "Own code of this project, MIT licence (synth-open/plug/LICENSE)."))
-    ext = [{"id": r["id"], "kind": "synth" if "stored" in r else "master", "name": r.get("name", r["id"]), "repo": r["repo"]} for r in t["engines"] + t["inserts"]
+    ext = [{"id": r["id"], "kind": "synth" if "stored" in r else "master", "name": r.get("name", r["id"]), "repo": r["repo"]} for r in t["all_engines"] + t["inserts"]
            if r["visibility"] == "private" and a.which == "public"]
     with open(os.path.join(out, "MODULES.json"), "w") as f:
         json.dump({"set": "tracker-ff-modules", "set_version": t["set_version"], "abi": "%d.%d" % (maj, mi), "wasm_abi": "%d.%d" % wabi, "emcc": emver,

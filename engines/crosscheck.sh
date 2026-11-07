@@ -5,7 +5,7 @@
 #     compile lines of make -n at TRIM=1 with every engine, flags follow the set's flavour)
 #   - card logos: tools/plug_logo_test.cpp on the .plgi sidecars, a .plg with a logo trailer (sidecar wins), a truncated and a bad magic file
 #
-#   TOOLCHAIN=.../arm-none-eabi- PY=/tmp/phzvenv/bin/python engines/crosscheck.sh SET_DIR [FIRMWARE_TREE]
+#   TOOLCHAIN=.../arm-none-eabi- PY=/tmp/phzvenv/bin/python [EXTERNAL_DIR=DIR] engines/crosscheck.sh SET_DIR [FIRMWARE_TREE]
 #
 # FIRMWARE_TREE defaults to this repository. It is only read (the render compare runs make -n and compiles the engine sources into a
 # scratch dir). Needs a Python with unicorn in PY.
@@ -22,12 +22,19 @@ eval "$(python3 -c "
 import json,sys
 t=json.load(open(sys.argv[1])); f=t['flavours'][sys.argv[2]]
 print('SYNTH_PLUG_OPT_ENGINES=\"%s\"; SYNTH_PLUG_OPT_O3=\"%s\"' % (f['engines'], f['o3']))" "$HERE/engines.json" "$flavour")"
-ids=$(python3 -c "import json,sys; print(' '.join(e['id'] for e in json.load(open(sys.argv[1]))['engines']))" "$HERE/engines.json")
+ids=$(python3 -c "import json,sys; print(' '.join(e['id'] for e in json.load(open(sys.argv[1]))['engines'] if e.get('visibility','public')=='public'))" "$HERE/engines.json")
 fail=0
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 echo "crosscheck: set $SET (flavour $flavour), firmware tree $FW"
 (cd "$FW" && "$PY" -I synth-open/tools/validate_synth.py $(for e in $ids; do echo "$SET/$e.plg"; done)) || fail=1
 PY="$PY" "$SO/plug/synth_render_compare.sh" "$SET" || fail=1
+# the private modules (PHZ, PLK, console, tube) are built and published by poly-engines and poly-effects: with EXTERNAL_DIR set to their
+# release assets merged into one directory, check them against the public identity in engines.json and against the firmware's own checkSynth
+if [ -n "${EXTERNAL_DIR:-}" ]; then
+    python3 "$HERE/build_set.py" verify-external "$EXTERNAL_DIR" --host-abi "$SO/plug/plug_abi.h" || fail=1
+    ext=$(python3 -c "import json,sys; print(' '.join(e['id'] for e in json.load(open(sys.argv[1]))['engines'] if e.get('visibility')=='private'))" "$HERE/engines.json")
+    (cd "$FW" && "$PY" -I synth-open/tools/validate_synth.py $(for e in $ext; do echo "$EXTERNAL_DIR/$e.plg"; done)) || fail=1
+fi
 python3 "$HERE/build_set.py" logo-test --set "$SET" --out "$TMP/logo-test" --root "$FW"
 lt="$TMP/logo-test"
 # the trailer plugin is the shipped ju6.plg plus the trailer: same image bytes

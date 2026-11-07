@@ -8,8 +8,6 @@ synth-open/engine_eight.cpp
 synth-open/engine_fm4.cpp
 synth-open/engine_hand.cpp
 synth-open/engine_ju6.cpp
-synth-open/engine_phz.cpp
-synth-open/engine_pluck.cpp
 synth-open/engine_ttype.cpp
 synth-open/ot-synths/arc/arc.cpp
 synth-open/ot-synths/arc/arc.h
@@ -31,10 +29,6 @@ synth-open/ot-synths/ju6/ju6.cpp
 synth-open/ot-synths/ju6/ju6.h
 synth-open/ot-synths/ttype/ttype.cpp
 synth-open/ot-synths/ttype/ttype.h
-synth-open/phz/phz.cpp
-synth-open/phz/phz.h
-synth-open/pluck/pluck.cpp
-synth-open/pluck/pluck.h
 synth-open/plug/synth/arc_plug.cpp
 synth-open/plug/synth/atype_plug.cpp
 synth-open/plug/synth/btype_plug.cpp
@@ -44,6 +38,4 @@ synth-open/plug/synth/eight_plug.cpp
 synth-open/plug/synth/fm4_plug.cpp
 synth-open/plug/synth/hand_plug.cpp
 synth-open/plug/synth/ju6_plug.cpp
-synth-open/plug/synth/phz_plug.cpp
-synth-open/plug/synth/pluck_plug.cpp
 synth-open/plug/synth/ttype_plug.cpp

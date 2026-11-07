@@ -29,7 +29,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def table():
-    return json.load(open(os.path.join(HERE, "engines.json")))
+    t = json.load(open(os.path.join(HERE, "engines.json")))
+    t["engines"] = [e for e in t["engines"] if e.get("visibility", "public") == "public"]   # the private rows have no source here
+    return t
 
 
 def read_list(path):

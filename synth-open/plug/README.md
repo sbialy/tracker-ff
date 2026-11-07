@@ -9,7 +9,7 @@ phases.
 Licence: the SDK files in this folder (`plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`,
 `build_plugs.sh`, this README) are MIT (`LICENSE` here). A plugin may use any licence that allows shipping it as a separate
 file. The firmware licence is unchanged. The plugins in `fx/` and `fx_dirt_plug.cpp` are ports of MIT and Apache-2.0
-OpenTracker code, except Console and Tube, which are original. See `fx/NOTICE.md`.
+OpenTracker code. Console and Tube are original, their source is in the private repository `poly-effects`. See `fx/NOTICE.md`.
 
 ## Files
 
@@ -20,7 +20,7 @@ OpenTracker code, except Console and Tube, which are original. See `fx/NOTICE.md
 | `plug.ld` | Link at address 0: entry first, then code, the descriptor (`__plug_desc`), constants, then the writable segment |
 | `build_plug.py` | Compile, link, check relocations, write header + manifest + image + rebase table |
 | `emu_plug.py` | The host loader re-done in Python, the plugin's ARM code in Unicorn: checks, instructions per block, output checksum, wav |
-| `build_plugs.sh` | Builds and checks the shipped inserts (dirt, tape, lofi, console, tube, bbd, phaser) and the examples. The synth engines have their own standalone build in `engines/` (`make -C engines`, `engines/README.md`) |
+| `build_plugs.sh` | Builds and checks the public inserts (dirt, tape, lofi, bbd, phaser) and the examples. The synth engines have their own standalone build in `engines/` (`make -C engines`, `engines/README.md`) |
 | `synth_engines.sh` | The engine table as shell functions for `synth_render_compare.sh`, generated from `engines/engines.json` |
 | `fx_dirt_plug.cpp`, `fx/` | The shipped plugins |
 | `examples/` | `tilt.c` (a master insert) and `saw_synth.cpp` (a synth engine), the worked examples of the developer guide `docs/plugin_sdk.md`. `build_plugs.sh` builds and checks them into `OUT/examples` |
@@ -44,11 +44,11 @@ never clicks.
 | Phaser | `phaser.plg` | Mode (Classic 80s, Classic), Rate 0-100 (40), Depth 0-100 % (80), Feedback 0-100 % (30), Spread 0-100 % (25), Mix 0-100 % (50) | 4,792 B, 148 B | 7.8 k Classic, 11.9 k 80s, 14.0 k while a ramp runs |
 
 - **Dirt**: the OpenTracker DIRT port, the same kernel as before. The Bits quantiser is mid-tread (half a step added with saturation, then the low bits cleared), so zero in is exactly zero out at every Bits setting and an input smaller than half a step (a line-in noise floor, a reverb tail) is silent. Checked by `dirt_zero_check.py`.
-- **Console**: glue saturation. A rational tanh curve (small signal gain exactly 1 at every Drive, curve gain 0.05 to 3.5), with
+- **Console** (source in the private repository `poly-effects`): glue saturation. A rational tanh curve (small signal gain exactly 1 at every Drive, curve gain 0.05 to 3.5), with
   the lows pushed harder: Weight lifts everything below about 120 Hz by up to +12 dB before the curve and takes the same
   shelf out after it, so a signal too small to bend the curve passes unchanged. Drive 0 is transparent, Mix 0 is the dry
   signal exactly. Output trims the result (the curve lowers loud peaks, so a hot Drive wants a few dB back).
-- **Tube**: a triode style stage. The signal rides on a bias point of the curve (Warmth), so one half-wave compresses sooner
+- **Tube** (source in the private repository `poly-effects`): a triode style stage. The signal rides on a bias point of the curve (Warmth), so one half-wave compresses sooner
   than the other and the added harmonics are mostly even (2nd and 4th, warm). The small signal gain is 1 and DC is blocked
   (6 Hz). Tone is a one pole high cut from 2 kHz (0) to 20 kHz (99), 100 is off. Measured at 1 kHz and -9 dBFS with the
   defaults: 2nd harmonic -29 dB, 3rd -46 dB.
@@ -174,7 +174,7 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
   changes (design section 11, phase 1b).
 - `build_plug.py` refuses static constructors, GOT access, MOVW/MOVT absolute pairs and PC-relative references between the
   text and the rw segment, and prints image, rw, bss and rebase counts.
-- `build_plugs.sh OUT [FW_OBJ]` builds `dirt.plg`, `tape.plg`, `lofi.plg`, `console.plg`, `tube.plg`, `bbd.plg` and `phaser.plg` and
+- `build_plugs.sh OUT [FW_OBJ]` builds `dirt.plg`, `tape.plg`, `lofi.plg`, `bbd.plg` and `phaser.plg` and
   checks them: no `R_ARM_GOT*`, the rebase table equals the `R_ARM_ABS32` count, the same output checksum at the SRAM_L,
   FlexNVM plus heap and SDRAM homes, with the default settings and again with every parameter moved and one more change in
   block 5 (the checksum must differ from the default one), Dirt
@@ -235,7 +235,7 @@ folder), parameter, section and macro tables in the shim's `ParamDef` / `Section
 `ISynthEngine` calls as C functions. An engine that used to be built in keeps its numbers (JU6 7 / 0x81, PHZ 8 / 0x82, FM4 9 / 0x80,
 D-Type 10 / 0xA2, CS-Type 11 / 0x83, A-Type 12 / 0x84, T-Type 13 / 0x85, 8-Type 14 / 0x86, Hand-Type 15 / 0x87, B-Type 16 / 0x88,
 Arc-Type 17 / 0x89, PLK 18 / 0x8A), so old projects and patches find it. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
-lines (`synth/ju6_plug.cpp`), `PLUG_SYNTH_PLUGIN_WORK` adds work memory (`synth/pluck_plug.cpp`). Large working RAM comes
+lines (`synth/ju6_plug.cpp`), `PLUG_SYNTH_PLUGIN_WORK` adds work memory (PLK, source in the private repository `poly-engines`). Large working RAM comes
 from the host (`work_bytes`, `set_work`), not from bss: the host hands it out of a 16 KB SDRAM arena, so keep only state there
 that is touched a few times per sample (a delay line), never hot per-sample state. Work memory is also how a plugin keeps big
 scratch off the audio interrupt's stack, which is one stack with the main loop and has no guard (ref/stack-margin-1.2.0.md): 8-Type

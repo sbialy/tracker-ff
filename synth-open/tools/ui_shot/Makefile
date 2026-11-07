@@ -29,7 +29,7 @@ CORE_CPP  := $(filter-out $(foreach e,$(filter-out $(SYNTH_ENGINES_SEL),$(SYNTH_
 CORE_C    := $(shell cd $(CORE) && find libs -name '*.c')
 SO_CPP    := $(filter-out $(SO_OVERLAY),$(filter-out engine_%.cpp,$(notdir $(wildcard $(SO)/*.cpp)))) $(addprefix ot/audio/,$(notdir $(wildcard $(SO)/ot/audio/*.cpp))) $(SYNTH_ENGINE_SRCS)
 HOST_CPP  := $(wildcard $(HERE)/*.cpp)
-PLUG_FX_C := ot_tape_plug ot_lofi_plug ff_console_plug ff_tube_plug ot_bbd_plug ot_phaser_plug
+PLUG_FX_C := ot_tape_plug ot_lofi_plug ot_bbd_plug ot_phaser_plug
 EXCLUDE   := $(shell cat $(HERE)/exclude.txt 2>/dev/null | grep -v '^\#')
 
 OBJS := $(patsubst %.cpp,$(OBJ)/core/%.o,$(filter-out $(EXCLUDE),$(CORE_CPP))) \

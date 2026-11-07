@@ -3,13 +3,12 @@
 #
 #   TOOLCHAIN=.../agt/10.3/bin/arm-none-eabi- PY=/tmp/phzvenv/bin/python synth-open/plug/synth_render_compare.sh OUT
 #
-# OUT holds the 12 engine plugins of synth_engines.sh (build_plugs.sh). The harness (synth/synth_harness.cpp) is built here, it never ships. The reference is what the firmware itself compiled when
-# the engine was built in: make -n of the full engine set (TRIM=1, every engine of engines.mk in, PLK too) gives the exact
-# compile lines of the definition and DSP sources (engine_<e>.cpp, ot-synths/<m>/<m>.cpp, phz/phz.cpp, pluck/pluck.cpp), they
+# OUT holds the 10 public engine plugins of synth_engines.sh (build_plugs.sh). The harness (synth/synth_harness.cpp) is built here, it never ships. The reference is what the firmware itself compiled when
+# the engine was built in: make -n of the full engine set (TRIM=1, every engine of engines.mk in) gives the exact
+# compile lines of the definition and DSP sources (engine_<e>.cpp, ot-synths/<m>/<m>.cpp), they
 # are run as they are, and those objects behind the same plugin wrapper make
 # <e>-fwobj.plg. Both render the harness script (scenario 0 at the defaults, 1 with every parameter moved and ramped) in
-# emu_synth.py at the engine's FlexNVM home and in SRAM: every checksum must be equal. PLK's firmware objects keep the delay
-# line pool in .bss, its plugin takes it from the host's work memory (PLUCK_WORK_POOL): the same checksum proves the same DSP.
+# emu_synth.py at the engine's FlexNVM home and in SRAM: every checksum must be equal.
 # The worst block (instructions, 1 cycle each) of the plugin and of the firmware objects is printed for the CPU budget.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -21,7 +20,7 @@ PY="${PY:-python3}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 . "$HERE/synth_engines.sh"
-SET="ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE PLK"
+SET="ACD FAT VAP WTFM PERC CHIP JU6 FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE"
 (cd "$ROOT" && make original TOOLCHAIN="$TOOLCHAIN" SYNTH_OPEN=1 TRIM=1 BUILD_TAG=x SYNTH_TAG=-rc SYNTH_ENGINES="$SET" \
     SYNTH_OPT_ENGINES="$SYNTH_PLUG_OPT_ENGINES" SYNTH_OPT_FM4="$SYNTH_PLUG_OPT_O3" SYNTH_OPT_BTYPE="$SYNTH_PLUG_OPT_O3" -n 2>/dev/null) \
     > "$TMP/make-n.txt"

@@ -1,5 +1,5 @@
 {
- "_comment": "The engine .plg set: one row per engine. Sources are relative to synth-open/. opt: engines = the flavour's OpenTracker module flags, o3 = the flavour's FM4 / B-Type flags, anything else = literal flags. extra = more flags of the DSP source only. name = the descriptor name and the SYNTH_ENGINES name in synth-open/engines.mk (-DSYNTH_ENGINE_<name>). stored, patch, type = the numbers of the engine (plug_abi.h PLUG_SYNTH_MANIFEST). version = the .plg header version, bump it when that engine's bytes change on purpose. visibility: public = the source is in this repository and the .plg / .wasm are built here, private = our own module whose source is in a private repository (repo) that publishes the same artifacts, the row stays here as the public identity (numbers, names, logo) and the sources are kept in this tree only until the deletion commit (ref/private-engines-effects-design.md). licence, licence_files, notice: what ships next to the .wasm (notices = the texts). inserts: the master insert plugins, built by synth-open/plug/build_plugs.sh (plg_opt and plg_src_opt there equal this table, checked by wasm/build_modules.py --verify-plg), sources relative to synth-open/, notice_section = the section of synth-open/plug/fx/NOTICE.md.",
+ "_comment": "The engine .plg set: one row per engine. Sources are relative to synth-open/. opt: engines = the flavour's OpenTracker module flags, o3 = the flavour's FM4 / B-Type flags, anything else = literal flags. extra = more flags of the DSP source only. name = the descriptor name and the SYNTH_ENGINES name in synth-open/engines.mk (-DSYNTH_ENGINE_<name>). stored, patch, type = the numbers of the engine (plug_abi.h PLUG_SYNTH_MANIFEST). version = the .plg header version, bump it when that engine's bytes change on purpose. visibility: public = the source is in this repository and the .plg / .wasm are built here, private = our own module whose source is in a private repository (repo) that publishes the same artifacts, the row stays here as the public identity (numbers, names, logo) and the sources are kept in this tree only until the deletion commit (ref/private-engines-effects-design.md). licence, licence_files, notice: what ships next to the .wasm (notices = the texts). inserts: the master insert plugins, built by synth-open/plug/build_plugs.sh (plg_opt and plg_src_opt there equal this table, checked by wasm/build_modules.py --verify-plg), sources relative to synth-open/, notice_section = the section of synth-open/plug/fx/NOTICE.md. A private row keeps only the public identity (numbers, names, logo, licence): its sources, flags and build live in the repository named in repo, whose artifacts engines/crosscheck.sh and engines/wasm check against these numbers.",
  "set_version": "1.0.0",
  "default_flavour": "autof",
  "flavours": {
@@ -83,11 +83,6 @@
   {
    "id": "phz",
    "name": "PHZ",
-   "wrapper": "plug/synth/phz_plug.cpp",
-   "def": "engine_phz.cpp",
-   "dsp": "phz/phz.cpp",
-   "opt": "-O2 -ffp-contract=off",
-   "extra": "",
    "stored": 8,
    "patch": 130,
    "type": 130,
@@ -251,11 +246,6 @@
   {
    "id": "pluck",
    "name": "PLK",
-   "wrapper": "plug/synth/pluck_plug.cpp",
-   "def": "engine_pluck.cpp",
-   "dsp": "pluck/pluck.cpp",
-   "opt": "-O2 -ffp-contract=off",
-   "extra": "-DPLUCK_WORK_POOL",
    "stored": 18,
    "patch": 138,
    "type": 138,
@@ -373,11 +363,6 @@
    "version": "1.0.0",
    "visibility": "private",
    "repo": "poly-effects",
-   "plg_opt": "-O2 -ffp-contract=off",
-   "includes": [],
-   "sources": [
-    "plug/fx/ff_console_plug.c"
-   ],
    "licence": "MIT",
    "licence_files": []
   },
@@ -387,11 +372,6 @@
    "version": "1.0.0",
    "visibility": "private",
    "repo": "poly-effects",
-   "plg_opt": "-O2 -ffp-contract=off",
-   "includes": [],
-   "sources": [
-    "plug/fx/ff_tube_plug.c"
-   ],
    "licence": "MIT",
    "licence_files": []
   }

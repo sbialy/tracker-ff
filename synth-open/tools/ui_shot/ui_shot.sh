@@ -84,7 +84,7 @@ stage_sd() {   # stage_sd DIR
     rm -rf "$sd"; mkdir -p "$sd/Plugins/Master" "$sd/Plugins/Synth"
     if [ -z "$plg" ]; then for d in "$HOME/prj/poly/build/cpu-adopt" "$HOME/prj/poly/build/plugin-synth"; do [ -f "$d/dirt.plg" ] && { plg="$d"; break; }; done; fi
     [ -f "$plg/dirt.plg" ] || { echo "ui_shot.sh: no plugins found (set PLG_DIR to a folder with dirt.plg ...)" >&2; exit 1; }
-    for f in dirt bbd tape lofi console tube phaser; do cp "$plg/$f.plg" "$sd/Plugins/Master/"; done
+    for f in dirt bbd tape lofi phaser; do cp "$plg/$f.plg" "$sd/Plugins/Master/"; done
     for f in "$plg"/*.plg "$plg"/*.plgi; do
         case "$(basename "$f")" in dirt.plg|bbd.plg|tape.plg|lofi.plg|console.plg|tube.plg|phaser.plg) ;; *) cp "$f" "$sd/Plugins/Synth/" ;; esac
     done
