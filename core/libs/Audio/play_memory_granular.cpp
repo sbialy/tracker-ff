@@ -265,6 +265,8 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopForwardNormal
                 }
 
                 iPitchCounter = constrainsInSamples.loopPoint1 + exceedConstrainValue;
+                iPitchCounter =
+                  keepInLoop(iPitchCounter, (int32_t)constrainsInSamples.loopPoint1, loopEndPoint);
             }
             //***************************************************************************************
             // warunki pętli
@@ -405,6 +407,8 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopForwardRevers
                     in_interpolation = in - 1;
                 }
                 iPitchCounter = constrainsInSamples.loopPoint2 - exceedConstrainValue;
+                iPitchCounter = keepInLoop(
+                  iPitchCounter, loopStartPoint, (int32_t)constrainsInSamples.loopPoint2);
             }
             //***************************************************************************************
             // warunki pętli
@@ -566,6 +570,7 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopBackwardNorma
                     in_interpolation = loopBackwardFlag ? in - 1 : in + 1;
                 }
                 iPitchCounter = constrainsInSamples.loopPoint2 - exceedConstrainValue;
+                iPitchCounter = keepInLoop(iPitchCounter, loopStartPoint, loopEndPoint);
             }
             else if (iPitchCounter >= loopEndPoint)
             {
@@ -590,6 +595,7 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopBackwardNorma
                     in_interpolation = loopBackwardFlag ? in - 1 : in + 1;
                 }
                 iPitchCounter = constrainsInSamples.loopPoint2 - 1 - exceedConstrainValue;
+                iPitchCounter = keepInLoop(iPitchCounter, loopStartPoint, loopEndPoint);
                 loopBackwardFlag = 1;
                 in_interpolation = in + 1;
                 currentFractionPitchCounter = -currentFractionPitchCounter;
@@ -752,6 +758,7 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopBackwardRever
                 }
                 iPitchCounter = constrainsInSamples.loopPoint1 ? constrainsInSamples.loopPoint1 : 1;
                 iPitchCounter += exceedConstrainValue;
+                iPitchCounter = keepInLoop(iPitchCounter, loopStartPoint, loopEndPoint);
             }
             else if (iPitchCounter <= loopStartPoint)
             {
@@ -778,6 +785,7 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopBackwardRever
                 iPitchCounter =
                   constrainsInSamples.loopPoint1 ? constrainsInSamples.loopPoint1 + 1 : 1;
                 iPitchCounter += exceedConstrainValue;
+                iPitchCounter = keepInLoop(iPitchCounter, loopStartPoint, loopEndPoint);
                 loopBackwardFlag = 1;
                 in_interpolation = in + 1;
                 currentFractionPitchCounter = -currentFractionPitchCounter;
@@ -939,6 +947,7 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopPingPongNorma
                 iPitchCounter =
                   constrainsInSamples.loopPoint1 ? constrainsInSamples.loopPoint1 + 1 : 1;
                 iPitchCounter += exceedConstrainValue;
+                iPitchCounter = keepInLoop(iPitchCounter, loopStartPoint, loopEndPoint);
                 loopBackwardFlag = 0;
                 in_interpolation = in + 1;
                 currentFractionPitchCounter = -currentFractionPitchCounter;
@@ -966,6 +975,7 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopPingPongNorma
                     in_interpolation = loopBackwardFlag ? in - 1 : in + 1;
                 }
                 iPitchCounter = constrainsInSamples.loopPoint2 - 1 - exceedConstrainValue;
+                iPitchCounter = keepInLoop(iPitchCounter, loopStartPoint, loopEndPoint);
                 loopBackwardFlag = 1;
                 in_interpolation = in - 1;
                 currentFractionPitchCounter = -currentFractionPitchCounter;
@@ -1157,6 +1167,7 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopPingPongRever
                 iPitchCounter =
                   constrainsInSamples.loopPoint1 ? constrainsInSamples.loopPoint1 + 1 : 1;
                 iPitchCounter += exceedConstrainValue;
+                iPitchCounter = keepInLoop(iPitchCounter, loopStartPoint, loopEndPoint);
                 loopBackwardFlag = 1;
                 in_interpolation = in + 1;
                 currentFractionPitchCounter = -currentFractionPitchCounter;

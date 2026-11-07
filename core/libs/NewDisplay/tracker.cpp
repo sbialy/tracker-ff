@@ -199,6 +199,8 @@ cTracker::cTracker(strControlProperties* properties)
 {
     colorsCount = 21;
     colors = display.getTheme().patternTrackerColors;
+    dimFx1Color = ((colors[8] & 0xFEFEFE) >> 1) + ((colors[1] & 0xFEFEFE) >> 1);
+    dimFx2Color = ((colors[9] & 0xFEFEFE) >> 1) + ((colors[1] & 0xFEFEFE) >> 1);
 
     if (properties == nullptr)
     {
@@ -212,7 +214,7 @@ cTracker::cTracker(strControlProperties* properties)
         return;
     }
 
-    colors = (properties->colors == nullptr) ? colors : properties->colors;
+    setColors((properties->colors == nullptr) ? colors : properties->colors);
 
     tracks = (strTrackerPattern*)properties->data;
     posX = properties->x;
@@ -252,6 +254,8 @@ void cTracker::setValue(int value)
 void cTracker::setColors(const uint32_t* colors)
 {
     this->colors = colors;
+    dimFx1Color = ((colors[8] & 0xFEFEFE) >> 1) + ((colors[1] & 0xFEFEFE) >> 1);
+    dimFx2Color = ((colors[9] & 0xFEFEFE) >> 1) + ((colors[1] & 0xFEFEFE) >> 1);
 }
 
 void cTracker::setData(void* data)
@@ -1161,6 +1165,8 @@ void cTracker::fxes1()
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[8];
+                else if (text[1] == '-' && text[2] == '-')
+                    actualColor = dimFx1Color;
                 else
                     actualColor = colors[4];
             }
@@ -1213,6 +1219,8 @@ void cTracker::fxes2()
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[9];
+                else if (text[1] == '-' && text[2] == '-')
+                    actualColor = dimFx2Color;
                 else
                     actualColor = colors[5];
             }
@@ -1295,7 +1303,7 @@ void cTracker::String2Bitmaps(int16_t x,
         }
 
         // if(font == &fonts[0])
-        if (string[0] == '-' && string[1] == '-')
+        if ((string[0] == '-' && string[1] == '-') || (string[1] == '-' && string[2] == '-'))
         {
             x += 11; // font->data['8'];
         }

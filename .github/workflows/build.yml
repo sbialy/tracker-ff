@@ -55,7 +55,7 @@ jobs:
         run: |
           set -o pipefail
           POSTFIX_ARGS=""
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
             SHORT_SHA=$(git rev-parse --short=7 HEAD)
             POSTFIX_ARGS="ORIGINAL_POSTFIX=CE_${SHORT_SHA} PLUS_POSTFIX=CE_${SHORT_SHA} MINI_POSTFIX=CE_${SHORT_SHA}"
           fi
