@@ -37,7 +37,7 @@ No date, host name or path goes into any file: the same inputs give the same byt
 
 ```bash
 make -C engines wasm                                  # build/modules: <id>.wasm + <id>.json for every PUBLIC engine and insert
-make -C engines wasm WHICH=all WASM_OUT=/tmp/m        # also the private ones (their sources are still in this tree, a cross check)
+make -C engines wasm WASM_OUT=/tmp/m                  # the same into another directory (the private modules are built by their own repositories)
 make -C engines verify-inserts INS=build/plugs TOOLCHAIN=...   # engines.json "inserts" give the bytes of synth-open/plug/build_plugs.sh
 ```
 
@@ -51,8 +51,16 @@ not bit identical to the engine linked into the editor.
 
 `engines.json` marks every engine and insert `"visibility": "public"` (source in this repository, artifacts built and published
 from here) or `"private"` (our own module, source in the private repository named in `repo`, which builds and publishes the same
-files). The default `make wasm` builds the public ones only and lists the private ones in `MODULES.json` under `external_private`.
-Proof that both sides agree: `WHICH=private` here gives `.wasm` files byte equal to the private repositories' own builds.
+files). `make wasm` builds the public ones and lists the private ones in `MODULES.json` under `external_private`.
+
+### Checking the private modules (`EXTERNAL_DIR`)
+
+`EXTERNAL_DIR=DIR engines/crosscheck.sh SET_DIR` and `EXTERNAL_DIR=DIR engines/ci_external.sh` check the published files of PHZ, PLK, Console
+and Tube in `DIR` (one flat directory) against the pins of `external.lock.json` and against the numbers, names and versions kept in
+`engines.json` (`build_set.py verify-external`). CI fetches them with `external.py fetch` when the repository has a secret
+`PRIVATE_RELEASES_TOKEN` that can read the two private repositories, and skips the check cleanly when `EXTERNAL_DIR` is not set.
+The tags are local until the private releases are published, until then `external.py fetch --from-local` takes the files from the local
+build directories of the checkouts.
 
 ## Layout
 
@@ -63,6 +71,7 @@ Proof that both sides agree: `WHICH=private` here gives `.wasm` files byte equal
 | `build_set.py` | `build`, `verify`, `logo-test` and `shell` (the table as shell functions for the old scripts) |
 | `closure.py` | computes the include closure of every engine with the compiler and checks `sdk/*.txt`, the ABI in `sdk/VERSION` and the engine list against `synth-open/engines.mk` |
 | `crosscheck.sh` | the checks that need the firmware tree |
+| `external.lock.json`, `external.py`, `ci_external.sh` | the private modules as this repository pins them: release tag, commit and sha256 of the published files of `poly-engines` and `poly-effects`. `external.py fetch DIR` collects them (release assets with `gh`, or `--from-local`), `check DIR` verifies them, `source` reads a source file at the pinned tag of a local checkout (the `ui_shot` Console and Tube twins). `ci_external.sh` is the CI step, see below |
 | `sdk/VERSION` | SDK version and the plugin ABI (`abi 1.1`, `host_level 1`) the set is built against |
 | `sdk/headers.txt` | **the plugin SDK header set**: the 14 headers the engines compile against and the firmware shares (`plug_abi.h`, `synth_plug.h`, `open_engine.h`, `engine_list.h`, `ot/audio/*.h`, `ot/model/synth_patch.h`, `ot/fastrun.h`, `PolySynth/config.h`) |
 | `sdk/sources.txt` | the engine owned files: wrappers `plug/synth/*_plug.cpp`, definitions `engine_*.cpp`, DSP in `ot-synths/` |

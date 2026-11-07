@@ -51,6 +51,24 @@ jobs:
       - name: Check version configuration
         run: make version
 
+      # The private modules (PHZ, PLK, Console, Tube) live in the private repositories poly-engines and poly-effects. With a secret
+      # PRIVATE_RELEASES_TOKEN (a token that can read their releases) their published files are fetched at the tags pinned in
+      # engines/external.lock.json and checked against the public identity here. Without it (forks, pull requests from forks) both
+      # steps skip and the build goes on.
+      - name: Fetch the pinned private modules
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_RELEASES_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "PRIVATE_RELEASES_TOKEN is not set, the private modules are not checked"
+          else
+            python3 -I engines/external.py fetch "$RUNNER_TEMP/external"
+            echo "EXTERNAL_DIR=$RUNNER_TEMP/external" >> "$GITHUB_ENV"
+          fi
+
+      - name: Check the private modules against the public identity (verify-external)
+        run: engines/ci_external.sh
+
       - name: Build Original Tracker, Tracker+, and Tracker Mini firmware
         run: |
           set -o pipefail
