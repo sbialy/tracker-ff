@@ -12,6 +12,10 @@ class ButtonsBaseImpl : public SwitchGroup
     virtual void setActionCallback(ActionType action, void (*callback)(uint8_t)) override;
     void disableInterrupts();
     bool update();
+#ifdef ENABLE_DEV_CONSOLE
+    bool inject(uint8_t button, bool down) { return buttonsDriver.inject(button, down); }
+    bool injectPending() const { return buttonsDriver.injectPending(); }
+#endif
 
   protected:
     Keys buttonsDriver;

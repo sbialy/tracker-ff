@@ -290,7 +290,22 @@ void EveModel::exec(uint32_t id)
         case CMD_BGCOLOR: case CMD_FGCOLOR: case CMD_GRADCOLOR: case CMD_SNAPSHOT: case CMD_INFLATE: case CMD_INTERRUPT: case CMD_GETPTR:
         case CMD_SETROTATE: case CMD_SETSCRATCH: A(); break;
         case CMD_LOADIMAGE: case CMD_MEMWRITE: case CMD_REGREAD: case CMD_SPINNER: case CMD_MEDIAFIFO: case CMD_ROMFONT: A(); A(); break;
-        case CMD_SNAPSHOT2: case CMD_SLIDER: A(); A(); A(); A(); break;
+        case CMD_SNAPSHOT2:
+        {
+            // ARGB8 snapshot of the last CMD_SWAP into RAM_G. The firmware (cDisplay::doScreenShot) asks for x = 0, y = 0 or 240, a
+            // width of 1600 and 240 rows and then reads 3200 bytes per row, so rows are 800 pixels at 4 bytes here, whatever w says.
+            const uint32_t fmt = A(), ptr = A(), xy = A(), wh = A();
+            const int y0 = int(int16_t(xy >> 16)), rows = int(int16_t(wh >> 16));
+            if (fmt != 0x20) { errors_++; log_ += "SNAPSHOT2: only ARGB8 is modelled\n"; break; }
+            for (int r = 0; r < rows; r++)
+            {
+                const int y = y0 + r;
+                if (y < 0 || y >= kH || ptr + uint32_t(r + 1) * kW * 4 > kRamG) continue;
+                memcpy(&ramg_[ptr + uint32_t(r) * kW * 4], &frame_[size_t(y) * kW], size_t(kW) * 4);
+            }
+            break;
+        }
+        case CMD_SLIDER: A(); A(); A(); A(); break;
         case CMD_MEMCRC: A(); A(); A(); break;
         case CMD_STOP: case CMD_COLDSTART: break;
         default: errors_++; break;

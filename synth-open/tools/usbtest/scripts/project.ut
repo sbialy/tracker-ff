@@ -1,0 +1,13 @@
+# Project open, play and stop. Needs a project folder /Projects/Demo on the card (the e2e script copies the workspace there).
+ls /Projects
+open Projects Demo force
+idle
+status
+expect page pattern
+hash-project
+play song
+wait 400
+expect status play=1
+stop
+wait 200
+expect status play=0

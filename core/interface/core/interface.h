@@ -53,6 +53,9 @@ class Interface
     void toggleActiveModule(uint8_t state);
     bool isSongScreenActive();
     bool isPatternScreenActive();
+#ifdef ENABLE_DEV_CONSOLE
+    int devPageIndex(); // index of the page on screen in modules[], -1 if none (USB test console)
+#endif
     bool isPerformanceModeScreenActive();
     bool isMasterScreenActive();
     bool isInstrumentParamsScreenActive();

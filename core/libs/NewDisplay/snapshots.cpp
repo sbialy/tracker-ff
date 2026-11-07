@@ -141,3 +141,75 @@ void cDisplay::scheduleScreenShot(int timeSec)
     screenShotscheduled = true;
     screenShotTimer = timer->millis() + timeSec * 1000;
 }
+
+#ifdef ENABLE_DEV_CONSOLE
+// ---------------------------------------------------------------------------------------------------------------------
+// USB test console (core/source/UsbTest.cpp). Same FT812 calls as doScreenShot, split so the console can run it in
+// steps. The snapshot lands in the controls RAM, so the display update stays frozen from devShotBegin to devShotEnd,
+// which then clears the RAM and refreshes every control like doScreenShot does.
+bool cDisplay::devShotBegin()
+{
+    processDisplayUpdateImmediate();
+    devShotFrozen = true;
+    return true;
+}
+
+void cDisplay::devShotSnapshot(int half)
+{
+    displayDriver->beginCoProList();
+    API_CMD_SNAPSHOT2(0x20, controlsRamStartAddress, 0, half == 0 ? 0 : 240, 1600, 240);
+    displayDriver->endCoProList();
+    displayDriver->awaitCoProEmpty();
+}
+
+// row 0 is the top row of the half that devShotSnapshot took, the rows ascend in memory (doScreenShot walks them from the last)
+void cDisplay::devShotRow(int row, uint8_t* dest)
+{
+    displayDriver->readDataRAMG(dest, 3200, controlsRamStartAddress + 3200u * uint32_t(row));
+}
+
+void cDisplay::devShotEnd()
+{
+    displayDriver->beginCoProList();
+    API_CMD_MEMZERO(controlsRamStartAddress, 600000);
+    displayDriver->endCoProList();
+
+    resetControlQueue();
+
+    for (uint8_t i = 0; i < controlsCount; i++)
+    {
+#ifdef UI_SHOT_HOST
+        // The Mac build: a hidden list can hold a data pointer to freed memory, which the chip reads harmlessly (it is the
+        // same loop as doScreenShot's) and the Mac does not. Hidden controls are refreshed when they are shown.
+        if (controlsTable[i] != nullptr && (controlsTable[i]->style & controlStyleShow) == 0)
+        {
+            continue;
+        }
+#endif
+        refreshControl(i);
+    }
+    devShotFrozen = false;
+}
+
+// Shown controls that carry a text, in table order. *cursor is the next table index.
+bool cDisplay::devNextText(int* cursor, int* id, int* x, int* y, int* w, int* h, const char** text)
+{
+    while (*cursor < controlsCount)
+    {
+        const int i = (*cursor)++;
+        const cDisplayControl* c = controlsTable[i];
+        if (c == nullptr || c->text == nullptr || (c->style & controlStyleShow) == 0)
+        {
+            continue;
+        }
+        *id = i;
+        *x = c->posX;
+        *y = c->posY;
+        *w = c->width;
+        *h = c->height;
+        *text = c->text;
+        return true;
+    }
+    return false;
+}
+#endif

@@ -475,10 +475,10 @@ void VoiceStreamManager::rebindAllInstrumentStreamFiles()
         }
 
         [[maybe_unused]] bool rebound = rebuildInstrumentClmt(instrIdx);
-        LOGF("stream rebind %d %s: %s",
-             instrIdx,
-             rebound ? "ok" : "failed",
-             s_instrumentStreamPaths[instrIdx]);
+        if (!rebound)
+        {
+            LOGEF("rebind %d failed %s", instrIdx, s_instrumentStreamPaths[instrIdx]);
+        }
     }
 }
 

@@ -14,4 +14,14 @@ extern void _debuglogf(const char* format, ...);
 #define LOGF(format, ...)
 #endif
 
+// Essential level (errors, crash and safe mode, plugin and project load, file errors). core/ uses it, the Tracker+ and Mini
+// consoles log through LOG, so here it follows LOG.
+#if defined(DEBUG) || defined(ENABLE_LOG)
+#define LOGE(msg)          (_debuglog(msg))
+#define LOGEF(format, ...) _debuglogf(format, ##__VA_ARGS__)
+#else
+#define LOGE(msg)
+#define LOGEF(format, ...)
+#endif
+
 #endif /* SOURCE_LOG_H_ */

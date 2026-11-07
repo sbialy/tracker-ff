@@ -69,7 +69,7 @@ void FileSystemImpl::update(bool forcedUpdate)
         {
             if (forcedUpdate || cardInsertTime + kCardInitDelayMs < timer->millis())
             {
-                LOG("SD card init.");
+                LOGE("SD card init.");
                 cardInitializedSuccessfully = SD.init();
 
                 if (cardInitializedSuccessfully)
@@ -84,7 +84,7 @@ void FileSystemImpl::update(bool forcedUpdate)
     }
     else if (cardInsertState)
     {
-        LOG("\nSD card inserted.");
+        LOGE("\nSD card inserted.");
 
         cardInsertTime = timer->millis();
         lastCardInsertState = true;
@@ -92,7 +92,7 @@ void FileSystemImpl::update(bool forcedUpdate)
     }
     else
     {
-        LOG("\nSD card ejected.");
+        LOGE("\nSD card ejected.");
 
         SD.stop();
 

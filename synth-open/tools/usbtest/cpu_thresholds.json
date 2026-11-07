@@ -1,0 +1,4 @@
+{
+  "smoke": {"max_us": 2800, "avg_us": 1600},
+  "_note": "microseconds of one 128 sample audio block (2902 us is the whole budget). Record a baseline per firmware tag and SD card state, then set these 10 to 15 percent above it. The numbers here are placeholders for the Mac build, not device measurements."
+}
