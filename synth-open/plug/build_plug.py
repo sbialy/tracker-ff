@@ -50,6 +50,8 @@ def run(cmd):
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if r.returncode != 0:
         sys.exit("FAILED: " + " ".join(cmd) + "\n" + r.stderr.decode())
+    if r.stderr:   # compiler warnings (-Wall -Wextra) of a build that succeeded
+        sys.stderr.write(r.stderr.decode())
     return r.stdout.decode()
 
 
@@ -154,7 +156,7 @@ def main():
                     opt = o
             cmd = [tc + ("g++" if cxx else "gcc")] + CPU_FLAGS + opt.split() + [
                 "-ffunction-sections", "-fdata-sections", "-ffreestanding", "-fno-common", "-fvisibility=hidden",
-                "-I" + HERE] + ["-I" + i for i in a.inc]
+                "-Wall", "-Wextra", "-I" + HERE] + ["-I" + i for i in a.inc]
             if cxx:
                 cmd += ["-std=gnu++20", "-fno-exceptions", "-fno-rtti", "-fno-threadsafe-statics", "-fno-use-cxa-atexit"]
             if src.endswith("plug_rt.c") and a.kind == "synth":
@@ -167,7 +169,10 @@ def main():
         elf = os.path.join(tmp, "plugin.elf")
         libgcc = run([tc + "gcc"] + CPU_FLAGS + ["-print-libgcc-file-name"]).strip()
         defsym = [] if a.entry == "plug_entry" else ["--defsym=plug_entry=" + a.entry]
-        run([tc + "ld", "-T", os.path.join(HERE, "plug.ld"), "--gc-sections", "--emit-relocs", "-o", elf] + defsym + objs + [libgcc])
+        # binutils 2.39+ warns about the RWX segment (the plugin is one RWX blob by design, plug.ld). Older ld (10.3) has no such flag
+        ld_help = subprocess.run([tc + "ld", "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
+        quiet = ["--no-warn-rwx-segments"] if "--no-warn-rwx-segments" in ld_help else []
+        run([tc + "ld", "-T", os.path.join(HERE, "plug.ld"), "--gc-sections", "--emit-relocs"] + quiet + ["-o", elf] + defsym + objs + [libgcc])
         syms = {}
         for line in run([tc + "nm", elf]).splitlines():
             p = line.split()
