@@ -275,7 +275,7 @@ Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sect
   5 sectors) is then about 0.1 to 0.2 s of flash commands plus the card read and two index writes. `synth.txt` logs every install
   (`ms`, `in flash commands`, commands, erases, evicted).
 
-Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the twelve need 43 whole sectors of 30 (156,304 B packed), 7 to 8 stay
+Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the twelve need 44 whole sectors of 30 (157,136 B packed), 7 to 8 stay
 resident at once. The 3 biggest on the parts plus the one being picked need 18 sectors. Their rw needs 2,976 B of the 3,072 B pool, so the pool
 never decides what is evicted. The worst 3 at once need 1,928 B (2,048 B with the one being picked): a pool of that size would
 save 1,024 B of SRAM but then hold JU6 and three others only, and the 5th engine picked would rewrite the flash.

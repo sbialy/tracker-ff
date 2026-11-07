@@ -28,7 +28,7 @@ All twelve are in the model list from boot, installed or not. The FlexNVM bank (
 an engine is installed when a part needs it (model list after a 500 ms rest, project load) and the least recently used engines
 that no part plays make room (`plug/README.md`, Library and cache). A Tracker has 3 synth parts (`kSynthInstrumentsCount` in
 `mtStructs.h`), each with one engine, and Patch FX slots keep the part's engine, so at most 3 engines play at once, 4 while one
-part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set): the twelve need 43 whole sectors, 7 to 8 stay resident, the 3
+part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set, 12.3.rel1): the twelve need 44 whole sectors, 7 to 8 stay resident, the 3
 biggest plus the one being picked need 18 (73,728 of 122,880 B). Engine rw and bss: 2,976 B of the 3,072 B SRAM pool for all twelve (the worst 3 at once
 need 1,928 B, the pool stays at all twelve so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
 work arena (`plug_synth.cpp`), no engine takes internal heap.
@@ -519,6 +519,31 @@ make original SYNTH_OPEN=1 TRIM=1 \
 # folder and zip with the .ptf, LICENSE, NOTICE.md and every third party license text, in build/release/
 make package-release SYNTH_OPEN=1 TRIM=1
 ```
+
+### Release 1.2.0 lines (Arm GNU 12.3.rel1)
+
+The 1.2.0 release compiler is Arm GNU Toolchain 12.3.rel1 (`TOOLCHAIN=/path/to/agt/12.3.rel1/bin/arm-none-eabi-`). `SYNTH_OPEN_VER` in `version.mk` is 1.2.0, so the images are `PolyendTracker_<TAG>_1.2.0.ptf` (AUTO 29 chars, AUTOF 30, the bootloader reads at most 31). BUILD_TAG has no dirty marker, so commit first. `make` does not track compiler flags: delete `core/build-*` and `platforms/mk66/build-trim` between variants.
+
+```
+E=-EACD_FAT_VAP_WTFM_PERC_CHIP
+# AUTO: six built in engines, the plugin host, the other twelve engines as card plugins, engine DSP at -O2 (FM4 and B-Type -O3)
+make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTO SYNTH_TAG=-pa SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
+  BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
+# plugins of the same variant (needs python3 with unicorn in PY), FW_OBJ is the obj/synth-open dir of the image build above
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT core/build-MK66-ORIGINAL-SYNTHOPEN-pa$E-trim/obj/synth-open
+```
+
+How to build the `-ffp-contract=off` test image (AUTOF, the PLUGF mechanism of the CPU round). The flag goes on the OpenTracker modules, FAT, CHIP, FM4 and B-Type (PHZ, PLK and Dirt already have it), the plugins take it from `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3`, and the render compare passes the same values to the firmware's `make -n`:
+
+```
+make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTOF SYNTH_TAG=-fpc SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
+  SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
+  SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off" BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
+SYNTH_PLUG_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_PLUG_OPT_O3="-O3 -ffp-contract=off" TOOLCHAIN=... PY=... \
+  synth-open/plug/build_plugs.sh OUT core/build-MK66-ORIGINAL-SYNTHOPEN-fpc$E-trim/obj/synth-open
+```
+
+It changes the output (see the A/B table in `ref/cpu-optimisation-plan.md` 14.1: the default patch stays under -103 dBFS on every engine, the all-parameters-max scenarios of some engines differ much more) and its cost model is not device calibrated.
 
 - `package-release` only packages. The default engine set is the 4 engine one, so build with the explicit 16 engine list first. `synth-open/tools/package_release.sh build/<image>.ptf` does the same packaging for an existing image.
 - A `-D` define change (for example in `version.mk`) does not rebuild the objects that depend on it. After changing a version or tag, delete the objects that depend on `mtStructs.h` and grep the `.ptf` for the old strings.

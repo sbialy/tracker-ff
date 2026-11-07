@@ -261,19 +261,19 @@ Plg plg(const char* file, uint32_t uid, uint32_t len, uint32_t text, uint32_t rw
     return Plg{uid, 0x10000, crc ? crc : uid * 7u + len, (len + 3u) & ~3u, text, rwLen, file};
 }
 
-// The 12 shipped synth plugins at their build_plugs.sh sizes (image, text, rw + bss), engine DSP at -O2 (FM4 and B-Type -O3)
+// The 12 shipped synth plugins at their build_plugs.sh sizes (image, text, rw + bss), engine DSP at -O2 (FM4 and B-Type -O3), 12.3.rel1 build of release 1.2.0
 struct P
 {
     const char* f;
     uint32_t uid, len, text, rw;
 };
 const P kAll[12] = {
-    {"ju6.plg", 0x73ac7ee0, 7124, 7120, 1648},    {"fm4.plg", 0xea3d5a7a, 10604, 10600, 112},
-    {"btype.plg", 0x5e9b11f7, 13440, 13432, 120}, {"phz.plg", 0x6670b917, 14664, 14656, 120},
-    {"dtype.plg", 0x6754cf41, 11404, 11400, 112}, {"cstype.plg", 0xf73018f5, 12252, 12248, 112},
-    {"atype.plg", 0x24084bf2, 12532, 12528, 112}, {"ttype.plg", 0x318f12b1, 15932, 15928, 160},
-    {"hand.plg", 0xf00e588e, 12392, 12384, 120},  {"arc.plg", 0xc66464e9, 19136, 19128, 120},
-    {"pluck.plg", 0xb4a152b0, 6476, 6472, 120},   {"eight.plg", 0x9d7c57e2, 20320, 20312, 120},
+    {"ju6.plg", 0x73ac7ee0, 7092, 7088, 1648},    {"fm4.plg", 0xea3d5a7a, 10556, 10552, 112},
+    {"btype.plg", 0x5e9b11f7, 13704, 13696, 120}, {"phz.plg", 0x6670b917, 14728, 14720, 120},
+    {"dtype.plg", 0x6754cf41, 11436, 11432, 112}, {"cstype.plg", 0xf73018f5, 12308, 12304, 112},
+    {"atype.plg", 0x24084bf2, 12748, 12744, 112}, {"ttype.plg", 0x318f12b1, 16108, 16104, 160},
+    {"hand.plg", 0xf00e588e, 12360, 12352, 120},  {"arc.plg", 0xc66464e9, 19448, 19440, 120},
+    {"pluck.plg", 0xb4a152b0, 6196, 6192, 120},   {"eight.plg", 0x9d7c57e2, 20424, 20416, 120},
 };
 
 Io allTwelve()
