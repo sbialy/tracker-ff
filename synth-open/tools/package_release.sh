@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 # Package a tracker-ff (synth-open) firmware image with the license texts that must travel with it.
-#   synth-open/tools/package_release.sh <image.ptf> [out_dir] [--zip]
+#   synth-open/tools/package_release.sh <image.ptf> [out_dir] [--zip] [--card CARD_DIR]
 # Makes <out_dir>/<image name without .ptf>/ (default out_dir: build/release) with
 #   the .ptf, LICENSE, NOTICE.md, README-RELEASE.txt, SHA256SUMS and licenses/ (one text per bundled third-party component).
 # Texts that exist only as source file headers (FastCRC, Polyverb, FatFs, PJRC Teensy core and audio library) are copied out
-# of those headers verbatim (the leading comment block of the file). Never includes factory patches or .ptfx plugins.
+# of those headers verbatim (the leading comment block of the file). Never includes factory patches.
+# --card CARD_DIR copies the card files of a PLUG_HOST release, laid out as on the SD card (Plugins/Synth/*.plg *.plgi,
+# Plugins/Master/*.plg, optional Effects/*.ptfx), into the package next to the .ptf (the 1.2.0 release layout).
 # With --zip the folder is also zipped next to itself (<name>.zip, needs zip).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ptf=""; out="$root/build/release"; zip=0
-for a in "$@"; do
-  case "$a" in
+ptf=""; out="$root/build/release"; zip=0; card=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --zip) zip=1 ;;
-    *) if [ -z "$ptf" ]; then ptf="$a"; else out="$a"; fi ;;
+    --card) shift; card="${1:?--card needs a directory}"; [ -d "$card" ] || { echo "no such card dir: $card" >&2; exit 2; } ;;
+    *) if [ -z "$ptf" ]; then ptf="$1"; else out="$1"; fi ;;
   esac
+  shift
 done
 [ -n "$ptf" ] && [ -f "$ptf" ] || { echo "usage: $0 <image.ptf> [out_dir] [--zip]" >&2; exit 2; }
 case "$(basename "$ptf")" in *.ptf) ;; *) echo "not a .ptf: $ptf" >&2; exit 2 ;; esac
@@ -25,6 +29,13 @@ rm -rf "$dest"
 mkdir -p "$dest/licenses"
 
 cp "$ptf" "$dest/"
+if [ -n "$card" ]; then
+  for d in Plugins/Synth Plugins/Master; do
+    ls "$card/$d"/*.plg > /dev/null 2>&1 || { echo "no .plg in $card/$d" >&2; exit 1; }
+  done
+  cp -R "$card/Plugins" "$dest/Plugins"
+  [ ! -d "$card/Effects" ] || cp -R "$card/Effects" "$dest/Effects"
+fi
 cp "$root/LICENSE" "$root/NOTICE.md" "$dest/"
 
 # Full license texts that are files in the repository
@@ -67,6 +78,23 @@ header platforms/mk66/3rdparty/Audio/input_i2s.h            LICENSE-PJRC-AudioLi
 
 # Where to find the source of this build
 rev="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if [ -n "$card" ]; then
+cat > "$dest/README-RELEASE.txt" <<EOF
+tracker-ff  ($name)
+Unofficial community firmware for the original Polyend Tracker (MK66), a fork of Polyend's Tracker Community Edition with 18 open synth engines (6 built in, 12 plugins).
+Not affiliated with, endorsed by or supported by Polyend. Free, non-commercial.
+Built from commit $rev of https://github.com/sbialy/tracker-ff (fork of https://github.com/polyend/tracker-ce).
+
+LICENSE       the repository license (MIT with the Wholesale Commercial Clone Restriction): free to share, not to sell
+NOTICE.md     third-party notices and attributions
+licenses/     the full license text of every bundled third-party component (OpenTracker Apache-2.0, opentracker-synths MIT, opentracker-fx MIT, ...)
+
+This image links neither libPolySynth.a nor libPolyDSP.a. Factory patches are not part of this package.
+Copy the .ptf to /Firmware on the SD card (Config > Firmware, the file name must stay as it is) and keep only one .ptf there.
+Plugins/Synth/ goes to /Plugins/Synth/ and Plugins/Master/ goes to /Plugins/Master/ on the card. Without the synth plugins the projects that use the twelve plugin engines show Missing on those parts.
+Effects/ (optional) goes to /Effects/ on the card.
+EOF
+else
 cat > "$dest/README-RELEASE.txt" <<EOF
 tracker-ff  ($name)
 Unofficial community firmware for the original Polyend Tracker (MK66), a fork of Polyend's Tracker Community Edition with 16 open synth engines.
@@ -80,6 +108,7 @@ licenses/     the full license text of every bundled third-party component (Open
 This image links neither libPolySynth.a nor libPolyDSP.a. Factory patches and .ptfx plugins are not part of this package.
 Copy only the .ptf to the SD card (Config > Firmware). The file name must stay as it is.
 EOF
+fi
 
 ( cd "$dest" && find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||' | while read -r f; do shasum -a 256 "$f"; done > SHA256SUMS )
 

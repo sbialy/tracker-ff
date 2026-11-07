@@ -539,6 +539,8 @@ SYNTH_PLUG_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_PLUG_OPT_O3="-O3 -ffp-contr
 
 Against the plain AUTO build the default patch differs by at most -103 dBFS on every engine except A-Type (-80 dBFS), and the all-parameters-max scenarios of Arc-Type, WTFM and Hand-Type differ far more (Arc-Type -7 dBFS, WTFM -44, Hand-Type -69), measured on the 12.3.rel1 bench dumps. The user listened to both and chose AUTOF for all engines. Its CPU saving is an emulated figure, not device calibrated.
 
+The release package (zip) is made from the image and a card layout (`Plugins/Synth/` with the twelve `.plg` and `.plgi`, `Plugins/Master/` with the seven inserts, `Effects/` with the `.ptfx` files): `synth-open/tools/package_release.sh build/PolyendTracker_AUTOF_1.2.0.ptf OUT --zip --card CARD_DIR`.
+
 The plain **AUTO** build stays buildable as an unpublished fallback: the same two lines without the `-ffp-contract=off` flags (engine DSP `-O2`, FM4 and B-Type `-O3`, the OpenTracker modules fused as the compiler defaults). It is not part of the release package.
 
 ```
