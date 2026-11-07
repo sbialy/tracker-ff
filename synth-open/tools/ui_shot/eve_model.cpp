@@ -68,7 +68,9 @@ void EveModel::WriteData32(uint32_t w) { in_.push_back(w); }
 
 uint8_t EveModel::sendString(const char* s, uint32_t length)
 {
-    if (!length) length = uint32_t(strlen(s));
+    // like the firmware's API_SendString: a length past the end of the string is clamped to it
+    const uint32_t have = uint32_t(strlen(s));
+    if (!length || length > have) length = have;
     const uint32_t padded = (length + 1 + 3) & ~3u;
     std::vector<uint8_t> b(padded, 0);
     memcpy(b.data(), s, length);
@@ -369,7 +371,7 @@ void EveModel::render()
 {
     swaps_++;
     // the frame starts with the default graphics context. The bitmap handle table survives (the firmware sets the font
-    // handles once, in the display list of loadFont)
+    // handles once, in the display list of loadFont); SAVE_CONTEXT and RESTORE_CONTEXT save and restore it with the context
     g_ = Gfx();
     sp_ = 0;
     verts_.clear();
@@ -594,8 +596,8 @@ void EveModel::doDlWord(uint32_t w)
         case 28: g_.scW = int((w >> 12) & 4095); g_.scH = int(w & 4095); break;
         case 31: flushPrim(); g_.prim = int(w & 15); break;
         case 33: flushPrim(); g_.prim = 0; break;
-        case 34: if (sp_ < 4) stack_[sp_++] = g_; break;
-        case 35: if (sp_ > 0) { const int h = g_.handle; (void)h; g_ = stack_[--sp_]; } break;
+        case 34: if (sp_ < 4) { memcpy(bstack_[sp_], bmp_, sizeof bmp_); stack_[sp_++] = g_; } break;
+        case 35: if (sp_ > 0) { g_ = stack_[--sp_]; memcpy(bmp_, bstack_[sp_], sizeof bmp_); } break;
         case 38:
             if (w & 4)
             {

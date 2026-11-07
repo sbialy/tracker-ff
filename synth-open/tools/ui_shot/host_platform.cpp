@@ -311,20 +311,34 @@ class HFileSystem : public FileSystem
     }
     int createInstrumentsList(const char*, char**, uint8_t, uint32_t* sizeOut) override { if (sizeOut) *sizeOut = 0; return 0; }
     int countContainedFiles(const char* path) override { return int(names(abs(path), false).size()); }
-    // Like SdDir::createFilesList: frees the entries the list still holds, then allocates one string per entry from start_line on
-    // (folders get a leading "/"), so a caller may pass a list of null pointers. Returns the index after the last entry.
-    int createFilesList(const char* path, uint8_t start_line, char** list, uint8_t length, uint16_t, enListFileFilter filter, uint16_t skip, uint16_t, enListFileFilter) override
+    // the firmware's SdDir::createFilesList: frees what the list held, fills it from slot start_line on with new char[] entries
+    // (folders as "/name", files by name), skips skip_count matches and returns the slot after the last entry, kListError when the
+    // folder cannot be opened. Callers own the entries and delete them. A folder bigger than max_files_in_subdir is not split
+    // into "(1-100)" parts here.
+    static bool hasExt(const std::string& s, const char* e)
+    {
+        const size_t n = strlen(e);
+        return s.size() > n && strcasecmp(s.c_str() + s.size() - n, e) == 0;
+    }
+    int createFilesList(const char* path, uint8_t startLine, char** list, uint8_t length, uint16_t, enListFileFilter filter, uint16_t skip, uint16_t, enListFileFilter) override
     {
         for (uint8_t i = 0; i < length; i++)
-            if (list[i] != nullptr) { delete list[i]; list[i] = nullptr; }   // the firmware allocates with new char[] and frees with delete
+            if (list[i] != nullptr) { delete[] list[i]; list[i] = nullptr; }
+        DIR* d = opendir(abs(path).c_str());
+        if (d == nullptr) return kListError;
+        closedir(d);
         const bool folders = filter == enListFileFilter_folder;
         auto v = names(abs(path), folders);
-        int n = start_line;
-        for (size_t i = skip; i < v.size() && n < length; i++, n++)
+        int n = startLine;
+        for (size_t i = 0; i < v.size() && n < length; i++)
         {
-            const std::string s = (folders ? "/" : "") + v[i];
-            list[n] = new char[s.size() + 1];
-            strcpy(list[n], s.c_str());
+            if (!folders && filter == enListFileFilter_wave && !hasExt(v[i], ".wav")) continue;
+            if (!folders && filter == enListFileFilter_wave_inst && !hasExt(v[i], ".wav") && !hasExt(v[i], ".pti")) continue;
+            if (skip > 0) { skip--; continue; }
+            const std::string e = folders ? "/" + v[i] : v[i];
+            list[n] = new char[e.size() + 1];
+            memcpy(list[n], e.c_str(), e.size() + 1);
+            n++;
         }
         return n;
     }

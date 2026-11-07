@@ -123,6 +123,7 @@ class EveModel : public DisplayDriver
     Bitmap bmp_[32];
     FontInfo font_[32];
     Gfx g_, stack_[4];
+    Bitmap bstack_[4][32];   // the handle table as SAVE_CONTEXT found it (the chip's graphics context holds BITMAP_SIZE and the transform)
     int sp_ = 0;
     int base_ = 10;
     // coprocessor matrix (16.16), used by LOADIDENTITY, TRANSLATE, ROTATE, SCALE, SETMATRIX
