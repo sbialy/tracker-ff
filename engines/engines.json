@@ -95,8 +95,11 @@
    "logo": "PHZ",
    "visibility": "private",
    "repo": "poly-engines",
-   "licence": "MIT",
-   "licence_files": []
+   "licence": "MIT and Apache-2.0",
+   "licence_files": [
+    "synth-open/plug/LICENSE",
+    "licenses/LICENSE-OpenTracker-Apache-2.0.txt"
+   ]
   },
   {
    "id": "dtype",
@@ -261,7 +264,9 @@
    "visibility": "private",
    "repo": "poly-engines",
    "licence": "MIT",
-   "licence_files": []
+   "licence_files": [
+    "synth-open/plug/LICENSE"
+   ]
   }
  ],
  "private_repos": {
