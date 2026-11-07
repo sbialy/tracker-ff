@@ -8,7 +8,8 @@
 // ("Ins: Tape", "Tape+Dirt"). A built-in entry bypasses the inserts and keeps them (loaded, in the sidecar): Inserts again
 // brings both back. Plugins are picked on the Inserts page only.
 //
-// Inserts page (Shift + the Saturation button on the master screen): column 1 is the mixer stage before the inserts (Hard
+// Inserts page (Shift + the Saturation button on the master screen, or the last stop of the Master button repeat-press
+// cycle while a plugin is installed, plugUiInCycle): column 1 is the mixer stage before the inserts (Hard
 // Clip, Soft Clip, Soft Knee, Delete: Hard Clip), columns 2 and 3 pick the plugin of insert 1 and 2 (the encoder, Delete
 // empties), columns 4 to 7 are the parameters of the focused insert, four at a time (press the insert's button again for
 // the next four), the last column goes back (plug_ui_nav.h has the column numbers, 0 based). The plugin columns, the mixer column and every enum parameter are the stock list
@@ -454,6 +455,27 @@ void plugUiSynthLoading(const char* name)
 bool plugUiShiftHeld()
 {
     return ModuleBase::buttons && ModuleBase::buttons->isButtonPressed(interfaceButtonShift);
+}
+
+bool plugUiInCycle()
+{
+    return plugnav::insertsInCycle(plug::indexCount(), plug::slotName(0)[0] || plug::slotName(1)[0]);
+}
+
+const char* plugUiCycleTitle(int stop)
+{   // N follows the cycle: the Inserts stop counts as page 4 when it is reachable
+    static char title[3][32];
+    const int n = plugnav::cyclePages(plugUiInCycle());
+    const char* const base[3] = {"Master",
+#ifdef FEATURE_SYNTH
+                                 "Sample Track Mixer",
+#else
+                                 "Track Mixer",
+#endif
+                                 "Global Mixer"};
+    if (stop < 0 || stop > 2) stop = 0;
+    snprintf(title[stop], sizeof(title[stop]), "%s %d/%d", base[stop], stop + 1, n);
+    return title[stop];
 }
 
 // ------------------------------------------------------------------------------------------------ Saturation list

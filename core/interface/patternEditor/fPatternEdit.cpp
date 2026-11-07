@@ -780,7 +780,7 @@ void cPatternEditor::refreshPattern()
                 }
                 else
                 {
-                    row.fx[0][0] = '-';
+                    row.fx[0][0] = 'm';
                     row.fx[0][1] = '-';
                     row.fx[0][2] = '-';
                     row.fx[0][3] = '-';
@@ -798,7 +798,7 @@ void cPatternEditor::refreshPattern()
                 }
                 else
                 {
-                    row.fx[1][0] = '-';
+                    row.fx[1][0] = 'V';
                     row.fx[1][1] = '-';
                     row.fx[1][2] = '-';
                     row.fx[1][3] = '-';
