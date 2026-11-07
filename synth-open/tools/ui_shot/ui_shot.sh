@@ -8,12 +8,19 @@
 # Plugins on the staged SD card: $PLG_DIR (default: the newest of ~/prj/poly/build/cpu-adopt, plugin-synth) with *.plg and *.plgi.
 # Master insert plugins run from native twins of their sources (host_twins.cpp), synth engine plugins are listed and show their card
 # logo but cannot install (the host has no FlexNVM bank): their part says "Missing: <name>".
+# The private modules (PHZ and PLK engines, Console and Tube inserts) come from the pins in engines/external.lock.json: their .plg and
+# .plgi files from $EXTERNAL_DIR (a directory with the published files, checked against the pins) or else fetched from the local build
+# directories of the private repositories, the sources of the Console and Tube twins from the pinned tag of a local checkout of
+# poly-effects ($EXTERNAL_SRC_EFFECTS, default ~/prj/poly-effects). Without them the pages still render and show those modules as missing.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 BUILD="$ROOT/build/ui-shot"
 OUT_DIR="${OUT_DIR:-$HOME/prj/poly/build/ui-shot}"
 BIN="$BUILD/ui_shot"
+EXTERNAL="$ROOT/engines/external.py"
+EXT_SRC="$BUILD/external"      # Console and Tube source at the pinned tag (or stubs), compiled by the Makefile
+EXT_PLG="${EXTERNAL_DIR:-}"    # the published .plg and .plgi of PHZ, PLK, Console and Tube
 
 # page[:state]  ->  "setup commands"   (a ';' list for ui_shot, see ui_shot_main.cpp). Every entry ends with the screen shot.
 # the Saturation list on the Master screen runs on into Inserts (F6 selects the column, five more presses from Soft Clip), then Shift + F6 opens the page
@@ -77,6 +84,22 @@ script_for() {   # page[:state] -> commands, empty when the page does not exist 
 }
 ALL_PAGES="pattern master master:inserts song config performance sample-play sample-load instrument inserts:empty inserts:running inserts:bbd inserts:dirt2 inserts:safe inserts:safe-mixed engines engines:library synth-params synth-edit synth-edit:filter synth-macros automation automation:lfo"
 
+# the private modules: the twin sources of Console and Tube at the pinned tag, the published files of all four. Anything missing is skipped
+# with a note, the pages then show those modules as missing
+fetch_private() {
+    mkdir -p "$EXT_SRC"
+    if ! python3 -I "$EXTERNAL" source effects "$EXT_SRC" ff_console_plug.c ff_tube_plug.c; then
+        echo "ui_shot.sh: no private source for the Console and Tube twins, they will fail to load on the pages" >&2
+        rm -f "$EXT_SRC/ff_console_plug.c" "$EXT_SRC/ff_tube_plug.c"   # the Makefile writes stubs
+    fi
+    if [ -n "$EXT_PLG" ]; then
+        python3 -I "$EXTERNAL" check "$EXT_PLG" || { echo "ui_shot.sh: EXTERNAL_DIR does not match engines/external.lock.json" >&2; exit 1; }
+    else
+        EXT_PLG="$BUILD/external-plg"; rm -rf "$EXT_PLG"
+        python3 -I "$EXTERNAL" fetch "$EXT_PLG" --from-local || { echo "ui_shot.sh: no private .plg files (set EXTERNAL_DIR), PHZ, PLK, Console and Tube will be missing" >&2; rm -rf "$EXT_PLG"; EXT_PLG=""; }
+    fi
+}
+
 build() { make -s -C "$HERE" -j"$(sysctl -n hw.ncpu)" >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 1; }; }
 
 stage_sd() {   # stage_sd DIR
@@ -86,8 +109,12 @@ stage_sd() {   # stage_sd DIR
     [ -f "$plg/dirt.plg" ] || { echo "ui_shot.sh: no plugins found (set PLG_DIR to a folder with dirt.plg ...)" >&2; exit 1; }
     for f in dirt bbd tape lofi phaser; do cp "$plg/$f.plg" "$sd/Plugins/Master/"; done
     for f in "$plg"/*.plg "$plg"/*.plgi; do
-        case "$(basename "$f")" in dirt.plg|bbd.plg|tape.plg|lofi.plg|console.plg|tube.plg|phaser.plg) ;; *) cp "$f" "$sd/Plugins/Synth/" ;; esac
+        case "$(basename "$f")" in dirt.plg|bbd.plg|tape.plg|lofi.plg|console.plg|tube.plg|phaser.plg|phz.*|pluck.*) ;; *) cp "$f" "$sd/Plugins/Synth/" ;; esac
     done
+    if [ -n "$EXT_PLG" ]; then   # the pinned private files, whatever $PLG_DIR holds of the same names is not used
+        for f in console tube; do cp "$EXT_PLG/$f.plg" "$sd/Plugins/Master/"; done
+        for f in phz pluck; do cp "$EXT_PLG/$f.plg" "$EXT_PLG/$f.plgi" "$sd/Plugins/Synth/"; done
+    fi
 }
 
 needs_sidecar() { case "$1" in master:inserts|inserts|inserts:running|inserts:bbd|inserts:dirt2|inserts:safe|inserts:safe-mixed) return 0 ;; *) return 1 ;; esac; }
@@ -116,6 +143,7 @@ case "$cmd" in
     list) printf '%s\n' $ALL_PAGES; exit 0 ;;
 esac
 mkdir -p "$BUILD"
+fetch_private
 build
 if [ "$cmd" = all ]; then
     fails=0
