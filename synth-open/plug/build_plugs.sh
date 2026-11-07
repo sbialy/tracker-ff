@@ -11,6 +11,8 @@
 #   - the same three runs again with one non-default setting (every parameter moved, one --param-at change in block 5 to test
 #     the ramps), the checksum again equal at the three homes
 #   - every synth plugin passes the firmware's own attach check (tools/validate_synth.py runs the real checkSynth)
+#   - the two worked examples of docs/plugin_sdk.md (examples/tilt.c, examples/saw_synth.cpp) are built into OUT/examples and get the
+#     same checks: tilt like the inserts above, sawf through validate_synth.py and the emulator at two homes
 #   - Dirt: the checksum is 3b1f3dc5, the device rule of section 11 (runs 2 and 3: the in-image Dirt gives 3b1f3dc5), and the
 #     firmware's own ff_dirt.o and ff_dirt_ctl.o (FW_OBJ, from the PLUG_HOST image build) linked as a plugin give it too
 #
@@ -58,6 +60,13 @@ build_synth() {   # build_synth <plugin> <out.plg> [extra build_plug.py args]
 for e in $SYNTH_PLUGS; do
     build_synth "$e" "$OUT/$e.plg" --keep "$OUT/$e.elf"
 done
+# Worked examples of docs/plugin_sdk.md, in OUT/examples (kept apart from the shipped set: do not copy them to a card by accident)
+mkdir -p "$OUT/examples"
+python3 plug/build_plug.py --id org.example.fx.tilt --kind master --version 1.0.0 --opt "-O2 -ffp-contract=off" \
+    --keep "$OUT/examples/tilt.elf" --out "$OUT/examples/tilt.plg" plug/examples/tilt.c
+python3 plug/build_plug.py --id org.example.synth.sawf --kind synth --version 1.0.0 --opt "-O2 -ffp-contract=off" \
+    --synth 0x64880b9c,0x64880b9c,0x64880b9c --keep "$OUT/examples/sawf.elf" --out "$OUT/examples/sawf.plg" \
+    -I . -I ot -I ../synth/include plug/examples/saw_synth.cpp
 fail=0
 emu() { "$PY" -I plug/emu_plug.py "$@" 2>&1 | sed -n 's/^output checksum \([0-9a-f]*\).*/\1/p'; }
 # one non-default setting per plugin: every parameter moved, then one more change in block 5 (ramps and crossfades)
@@ -70,9 +79,10 @@ nd() {
         tube) echo "--param 0=70 --param 1=80 --param 2=40 --param 3=60 --param-at 5:0=20" ;;
         bbd) echo "--param 0=1 --param 1=60 --param 2=40 --param 3=90 --param-at 5:1=100" ;;
         phaser) echo "--param 0=1 --param 1=70 --param 2=50 --param 3=60 --param 4=100 --param 5=70 --param-at 5:0=0" ;;
+        examples/tilt) echo "--param 0=6 --param 1=4 --param 2=1200 --param-at 5:1=-5" ;;
     esac
 }
-for p in dirt tape lofi console tube bbd phaser; do
+for p in dirt tape lofi console tube bbd phaser examples/tilt; do
     got=$("${TOOLCHAIN}objdump" -r "$OUT/$p.elf" | grep -c 'R_ARM_GOT' || true)
     abs=$("${TOOLCHAIN}objdump" -r "$OUT/$p.elf" | grep -c 'R_ARM_ABS32' || true)
     reb=$(python3 -c "import struct,sys; print(struct.unpack_from('<I', open(sys.argv[1],'rb').read(), 32)[0])" "$OUT/$p.plg")
@@ -114,6 +124,23 @@ done
 PY="$PY" "$HERE/synth_render_compare.sh" "$OUT" || fail=1
 # the firmware's own checkSynth (plug_synth.cpp, cross-compiled) on every synth plugin: a reject would be Missing on the device
 "$PY" -I tools/validate_synth.py $(for e in $SYNTH_PLUGS; do echo "$OUT/$e.plg"; done) || fail=1
+# the worked synth example: the same attach check, no GOT, a full rebase table, and the same render at two homes
+"$PY" -I tools/validate_synth.py "$OUT/examples/sawf.plg" || fail=1
+python3 plug/build_plug.py --id ff.test.synthharness --kind offline --opt "-O2 -fno-builtin" --out "$OUT/examples/h.plg" \
+    -I . -I ot -I ../synth/include plug/synth/synth_harness.cpp > /dev/null
+got=$("${TOOLCHAIN}objdump" -r "$OUT/examples/sawf.elf" | grep -c 'R_ARM_GOT' || true)
+abs=$("${TOOLCHAIN}objdump" -r "$OUT/examples/sawf.elf" | grep -c 'R_ARM_ABS32' || true)
+reb=$(python3 -c "import struct,sys; print(struct.unpack_from('<I', open(sys.argv[1],'rb').read(), 32)[0])" "$OUT/examples/sawf.plg")
+ex_ok=ok
+[ "$got" = 0 ] && [ "$reb" = "$abs" ] && [ "$reb" -gt 0 ] || ex_ok=FAIL
+for s in 0 1; do
+    a=$("$PY" -I plug/emu_synth.py "$OUT/examples/sawf.plg" "$OUT/examples/h.plg" --scenario $s --base 0x10000000 --rw-base 0x20027000 2>&1 | sed -n 's/^output checksum //p')
+    b=$("$PY" -I plug/emu_synth.py "$OUT/examples/sawf.plg" "$OUT/examples/h.plg" --scenario $s --base 0x1FFF6000 2>&1 | sed -n 's/^output checksum //p')
+    [ -n "$a" ] && [ "$a" = "$b" ] || ex_ok=FAIL
+    echo "sawf  $ex_ok  scenario $s checksum FlexNVM $a SRAM $b, GOT relocs $got, rebase words $reb = ABS32 $abs"
+done
+[ "$ex_ok" = ok ] || fail=1
+rm -f "$OUT/examples/h.plg"
 # Card logos (synth-open/plug_logo.h): a .plgi sidecar per synth engine, and the device test set in logo-test/: ju6.plg with a
 # "JU6-T" logo trailer (the sidecar must win over it), a truncated fm4.plgi and a btype.plgi with a bad magic (both: text name)
 mkdir -p "$OUT/previews"
@@ -155,5 +182,5 @@ for bad in fm4 btype; do
     else echo "logo ok  logo-test/$bad.plgi is refused (text name)"; fi
 done
 rm -f "$OUT/plug_logo_test"
-rm -f "$OUT"/*.elf
+rm -f "$OUT"/*.elf "$OUT"/examples/*.elf
 [ "$fail" = 0 ] && echo "PASSED" || { echo "FAILED"; exit 1; }

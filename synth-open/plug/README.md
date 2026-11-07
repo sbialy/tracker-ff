@@ -22,6 +22,7 @@ OpenTracker code, except Console and Tube, which are original. See `fx/NOTICE.md
 | `emu_plug.py` | The host loader re-done in Python, the plugin's ARM code in Unicorn: checks, instructions per block, output checksum, wav |
 | `build_plugs.sh` | Builds and checks the shipped plugins (dirt, tape, lofi, console, tube, bbd, phaser) |
 | `fx_dirt_plug.cpp`, `fx/` | The shipped plugins |
+| `examples/` | `tilt.c` (a master insert) and `saw_synth.cpp` (a synth engine), the worked examples of the developer guide `docs/plugin_sdk.md`. `build_plugs.sh` builds and checks them into `OUT/examples` |
 
 ## Shipped plugins
 
