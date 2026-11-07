@@ -29,6 +29,10 @@ constexpr size_t kChunk = 512;                       // file transfer block
 // scratch: current row, previous row, encoded row (the file chunk reuses the first). 4 byte aligned.
 constexpr size_t kScratchWords = (3 * kRowBytes + 64) / 4;
 
+// printf subset, see UsbTestCore.cpp (no floats, no newlib). Returns the length the full text would have.
+size_t vformat(char* out, size_t capacity, const char* format, va_list args);
+size_t format(char* out, size_t capacity, const char* format, ...) __attribute__((format(printf, 3, 4)));
+
 // zlib compatible: crc32(crc32(0, a), b) == crc32(0, a + b)
 uint32_t crc32(uint32_t crc, const void* data, size_t length);
 
@@ -261,6 +265,8 @@ class Console
     bool enabled_;
     bool linkWasUp_;
     volatile uint8_t blockOpen_;
+    volatile uint8_t formatBusy_;
+    char formatBuffer_[160];
     Ring ring_;
 
     char line_[kLineMax];

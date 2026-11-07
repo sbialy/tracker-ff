@@ -2,7 +2,6 @@
 
 #if defined(ENABLE_DEV_CONSOLE) && !defined(PLATFORM_IMX)
 
-#include <stdio.h>
 #include <string.h>
 
 namespace usbtest
@@ -247,6 +246,173 @@ void copyText(char* dest, size_t size, const char* src)
 } // namespace
 
 // ---------------------------------------------------------------------------------------------------------------------
+// A small formatter instead of newlib's: %d %i %u %x %X %c %s %%, 'l', a 0 flag, a width and a precision for %s. No floats
+// (a %f prints ?). It needs a few dozen bytes of stack where vsnprintf with float support needs hundreds, and the console's
+// LOG path runs in the audio interrupt, which has no stack to spare.
+size_t vformat(char* out, size_t capacity, const char* format, va_list args)
+{
+    size_t n = 0;
+    auto put = [&](char c) {
+        if (n + 1 < capacity)
+        {
+            out[n] = c;
+        }
+        n++;
+    };
+    for (const char* f = format; *f != 0; f++)
+    {
+        if (*f != '%')
+        {
+            put(*f);
+            continue;
+        }
+        f++;
+        bool zero = false;
+        int width = 0;
+        int precision = -1;
+        if (*f == '0')
+        {
+            zero = true;
+            f++;
+        }
+        while (*f >= '0' && *f <= '9')
+        {
+            width = width * 10 + (*f++ - '0');
+        }
+        if (*f == '.')
+        {
+            f++;
+            precision = 0;
+            while (*f >= '0' && *f <= '9')
+            {
+                precision = precision * 10 + (*f++ - '0');
+            }
+        }
+        bool isLong = false;
+        while (*f == 'l' || *f == 'z')
+        {
+            isLong = true;
+            f++;
+        }
+        const char kind = *f;
+        if (kind == 0)
+        {
+            break;
+        }
+        char digits[24];
+        int count = 0;
+        bool negative = false;
+        const char* text = nullptr;
+        switch (kind)
+        {
+            case '%': put('%'); continue;
+            case 'c': put(char(va_arg(args, int))); continue;
+            case 's':
+            {
+                text = va_arg(args, const char*);
+                if (text == nullptr)
+                {
+                    text = "(null)";
+                }
+                int length = 0;
+                while (text[length] != 0 && (precision < 0 || length < precision))
+                {
+                    length++;
+                }
+                for (int i = length; i < width; i++)
+                {
+                    put(' ');
+                }
+                for (int i = 0; i < length; i++)
+                {
+                    put(text[i]);
+                }
+                continue;
+            }
+            case 'd':
+            case 'i':
+            {
+                const long v = isLong ? va_arg(args, long) : long(va_arg(args, int));
+                negative = v < 0;
+                unsigned long u = negative ? 0ul - static_cast<unsigned long>(v) : static_cast<unsigned long>(v);
+                do
+                {
+                    digits[count++] = char('0' + u % 10);
+                    u /= 10;
+                } while (u != 0);
+                break;
+            }
+            case 'u':
+            {
+                unsigned long u = isLong ? va_arg(args, unsigned long) : static_cast<unsigned long>(va_arg(args, unsigned));
+                do
+                {
+                    digits[count++] = char('0' + u % 10);
+                    u /= 10;
+                } while (u != 0);
+                break;
+            }
+            case 'x':
+            case 'X':
+            {
+                unsigned long u = isLong ? va_arg(args, unsigned long) : static_cast<unsigned long>(va_arg(args, unsigned));
+                do
+                {
+                    const unsigned d = unsigned(u & 15);
+                    digits[count++] = char(d < 10 ? '0' + d : (kind == 'x' ? 'a' : 'A') + d - 10);
+                    u >>= 4;
+                } while (u != 0);
+                break;
+            }
+            default:
+                if (kind == 'f' || kind == 'g' || kind == 'e')
+                {
+                    (void)va_arg(args, double);
+                }
+                put('?');
+                continue;
+        }
+        const int length = count + (negative ? 1 : 0);
+        if (!zero)
+        {
+            for (int i = length; i < width; i++)
+            {
+                put(' ');
+            }
+        }
+        if (negative)
+        {
+            put('-');
+        }
+        if (zero)
+        {
+            for (int i = length; i < width; i++)
+            {
+                put('0');
+            }
+        }
+        while (count > 0)
+        {
+            put(digits[--count]);
+        }
+    }
+    if (capacity > 0)
+    {
+        out[n < capacity ? n : capacity - 1] = 0;
+    }
+    return n;
+}
+
+size_t format(char* out, size_t capacity, const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    const size_t n = vformat(out, capacity, format, args);
+    va_end(args);
+    return n;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 uint32_t crc32(uint32_t crc, const void* data, size_t length)
 {
     const uint8_t* p = static_cast<const uint8_t*>(data);
@@ -437,16 +603,27 @@ void Console::logf(const char* format, va_list args)
     {
         return;
     }
-    char buffer[160];
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    log(buffer);
+    // one shared buffer, not the caller's stack: logf runs in the audio interrupt. Whoever finds it taken (an interrupt that
+    // arrived while the main loop was formatting) drops its line.
+    uint32_t state = host_->irqLock();
+    if (formatBusy_ != 0)
+    {
+        ring_.dropped++;
+        host_->irqUnlock(state);
+        return;
+    }
+    formatBusy_ = 1;
+    host_->irqUnlock(state);
+    vformat(formatBuffer_, sizeof(formatBuffer_), format, args);
+    log(formatBuffer_);
+    formatBusy_ = 0;
 }
 
 void Console::replyV(const char* format, va_list args)
 {
-    char buffer[256];
+    char buffer[200];
     buffer[0] = '@';
-    vsnprintf(buffer + 1, sizeof(buffer) - 1, format, args);
+    vformat(buffer + 1, sizeof(buffer) - 1, format, args);
     log(buffer);
 }
 
@@ -1254,6 +1431,8 @@ void Console::runTask(uint32_t now)
     }
 }
 
+// Idle: the injected input has been handled (queues empty, 100 ms since the last event), the file manager is not working and
+// the display has nothing queued. A page that never stops redrawing (song, playing) is idle after 600 ms without input.
 void Console::stepIdle(uint32_t now)
 {
     bool pending = host_->inputPending();
@@ -1261,7 +1440,10 @@ void Console::stepIdle(uint32_t now)
     {
         pending = pending || s.used != 0;
     }
-    if (!pending && host_->uiIdle())
+    const uint32_t sinceInput = now - lastInputMs_;
+    const bool settled = !pending && host_->fileManagerStatus() == 0 && sinceInput >= 100 &&
+                         (host_->uiIdle() || sinceInput >= 600);
+    if (settled)
     {
         if (idleSinceMs_ == 0)
         {
@@ -1396,7 +1578,7 @@ void Console::stepGet()
         if (!hashOnly_)
         {
             char header[24];
-            snprintf(header, sizeof(header), "@blk %d", n);
+            format(header, sizeof(header), "@blk %d", n);
             pushBlock(header, chunk, size_t(n));
         }
     }
@@ -1536,7 +1718,7 @@ void Console::stepShot(uint32_t now)
                 rleEncode(encoded, cur, prev, kWidth);
             }
             char header[32];
-            snprintf(header, sizeof(header), "@row %d %u", y, unsigned(need));
+            format(header, sizeof(header), "@row %d %u", y, unsigned(need));
             pushBlock(header, encoded, need);
             uint8_t packed[kTileW * 3];
             for (int x = 0; x < kWidth; x += kTileW)

@@ -120,10 +120,7 @@ class TrackerHost : public Host
     {
         return newFileManager.isProjectChanged() || (mtProject.values.projectNotSavedFlag & 1) != 0;
     }
-    bool uiIdle() override
-    {
-        return newFileManager.getStatus() == fmIdle && (sequencer.isPlay() || display.isIdle());
-    }
+    bool uiIdle() override { return display.isIdle() != 0; }
 
     void markers(Markers& m) override
     {

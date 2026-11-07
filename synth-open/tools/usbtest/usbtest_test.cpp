@@ -306,6 +306,50 @@ static void testRle()
     CHECK(!rleDecode(trailing, sizeof(trailing), row.data(), nullptr, 1));
 }
 
+static void viaLogf(Console& c, const char* fmt, ...)
+{
+    va_list a;
+    va_start(a, fmt);
+    c.logf(fmt, a);
+    va_end(a);
+}
+
+static void testFormat()
+{
+    char a[128], b[128];
+#define SAME(fmt, ...)                                                           \
+    do                                                                           \
+    {                                                                            \
+        usbtest::format(a, sizeof(a), fmt, __VA_ARGS__);                         \
+        snprintf(b, sizeof(b), fmt, __VA_ARGS__);                                \
+        CHECK(strcmp(a, b) == 0);                                                \
+    } while (0)
+    SAME("%d %d %d", 0, -1, 2147483647);
+    SAME("%i|%u|%u", -7, 0u, 4294967295u);
+    SAME("%x %X %08x %02x", 255u, 255u, 0xBEEFu, 5u);
+    SAME("%ld %lu %08lx", -123456L, 4000000000UL, 0xCAFEBABEUL);
+    SAME("%s|%5s|%.3s|%.40s|%s", "abc", "ab", "abcdef", "short", "");
+    SAME("%c%c %% %d", 'o', 'k', 12);
+    SAME("%3d|%03d", 7, 7);
+#undef SAME
+    // output is cut at the capacity and always terminated
+    char small[8];
+    size_t n = usbtest::format(small, sizeof(small), "%s", "0123456789");
+    CHECK(n == 10 && strcmp(small, "0123456") == 0);
+    CHECK(usbtest::format(small, 0, "%d", 5) == 1);
+    // no floats: ?, and the argument is consumed so the rest still lines up
+    usbtest::format(a, sizeof(a), "%f %d", 1.5, 42);
+    CHECK(strcmp(a, "? 42") == 0);
+    usbtest::format(a, sizeof(a), "%s", static_cast<const char*>(nullptr));
+    CHECK(strcmp(a, "(null)") == 0);
+    // logf takes the same formats and a line from an interrupt that finds the buffer taken is dropped
+    FakeHost h; Console c; reset(h, c);
+    h.tx.clear();
+    viaLogf(c, "sequencer play from step %d (%s mode)", 12, "song");
+    pump(h, 3);
+    CHECK(lines(h.tx).size() == 1 && lines(h.tx)[0] == "sequencer play from step 12 (song mode)");
+}
+
 static void testRing()
 {
     static Ring r;
@@ -467,27 +511,33 @@ static void testIdleReboot()
     FakeHost h; Console c; reset(h, c);
     h.uiIdleFlag = false;
     h.tx.clear();
-    h.send("idle\n");
-    pump(h, 20);
-    CHECK(lines(h.tx).empty());
+    h.send("enc 1\nidle\n");
+    pump(h, 40);   // 400 ms after the input, the display keeps redrawing: not idle yet
+    CHECK(lines(h.tx).size() == 1);   // the enc reply only
+    pump(h, 50);   // past 600 ms without input the redraw no longer counts
+    CHECK(lines(h.tx).size() == 2 && lines(h.tx)[1] == "@idle");
+    // a quiet display: idle after 100 ms without input and the settle time
     h.uiIdleFlag = true;
-    pump(h, 6);   // 60 ms: not settled
+    h.tx.clear();
+    h.send("idle\n");
+    pump(h, 8);
     CHECK(lines(h.tx).empty());
-    pump(h, 10);
+    pump(h, 14);
     CHECK(lines(h.tx).size() == 1 && lines(h.tx)[0] == "@idle");
     // a running idle waits for scheduled input as well
     h.tx.clear();
     h.send("key Play tap\nidle\n");
     pump(h, 3);
     CHECK(lines(h.tx).size() == 1);   // the key reply only
-    pump(h, 40);
+    pump(h, 60);
     CHECK(lines(h.tx).size() == 2 && lines(h.tx)[1] == "@idle");
-    // timeout
-    h.uiIdleFlag = false;
+    // a file manager that stays busy: timeout
+    h.fmStatus = 8;
     h.tx.clear();
     h.send("idle\n");
     pump(h, 1600);
     CHECK(lines(h.tx).size() == 1 && lines(h.tx)[0] == "@err idle timeout");
+    h.fmStatus = 0;
     // other commands are refused while a task runs, ping and abort are not
     h.tx.clear();
     h.send("idle\nkey Play tap\nping\nabort\nping\n");
@@ -819,6 +869,7 @@ int main()
     testCrc();
     testRle();
     testRing();
+    testFormat();
     testParser();
     testGate();
     testInput();
