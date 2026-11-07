@@ -75,6 +75,7 @@ All reference plugins in [`editor-fx-sdk/effects/`](../editor-fx-sdk/effects) ca
 | [`plate_reverb.c`](../editor-fx-sdk/effects/plate_reverb.c) | `Plate Reverb` | `EFFECT \| STEREO` | `222,208 B` | `Size`, `Damp`, `Diffuse` (`0–100 %`), `PreDly` (`0–150 ms`), `Mix` (`0–100 %`), `Tail` (List: `Ring Out\|Cut Off`). Dattorro plate with a modulated tank; Ring Out appends the decay (up to 6 s, faded). |
 | [`stereo_delay.c`](../editor-fx-sdk/effects/stereo_delay.c) | `Stereo Delay` | `EFFECT \| STEREO` | `176,404 B` | `Time` (`10–1000 ms`), `Fdbk` (`0–95 %`), `Mix` (`0–100 %`), `Tail` (List: `Ring Out\|Cut Off`). Stereo delay line with optional tail ring-out. |
 | [`stereo_to_mono.c`](../editor-fx-sdk/effects/stereo_to_mono.c) | `Stereo to Mono` | `STEREO \| CONVERT_TO_MONO` | `0 B` | `Source` (List: `Merge L+R\|Left Only\|Right Only\|Side L-R`), `Gain` (`-12.0 to +6.0 dB`). Converts a stereo sample on Tracker+ / Mini into a true mono sample, reclaiming 50% sample RAM. |
+| [`transient_shaper.c`](../editor-fx-sdk/effects/transient_shaper.c) | `Transient Shaper` | `EFFECT \| STEREO` | `0 B` | `Attack` (`-12..+12 dB`), `Sustain` (`-12..+12 dB`). Dual-envelope transient detector, boosts or cuts the attack and the sustain separately. |
 
 ---
 
