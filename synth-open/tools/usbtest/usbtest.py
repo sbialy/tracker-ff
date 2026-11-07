@@ -36,6 +36,7 @@ import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'ui_shot'))
+sys.path.insert(0, HERE)   # a copy of png_cmp.py next to the runner works as well
 try:
     import png_cmp  # layout tool next to ui_shot, only its PNG reader is used
 except Exception:  # noqa: BLE001
