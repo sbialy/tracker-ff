@@ -1,0 +1,9 @@
+# Plugin toolchain and host side checks the engine build runs from its scratch tree. Written by hand, root relative.
+synth-open/plug/build_plug.py
+synth-open/plug/plug_rt.c
+synth-open/plug/plug.ld
+synth-open/plug/emu_plug.py
+synth-open/plug/emu_synth.py
+synth-open/plug/synth/synth_harness.cpp
+synth-open/tools/make_plgi.py
+synth-open/tools/plgi_sheet.py
