@@ -104,6 +104,8 @@ SD Card Root/
   ```
 - `make` and a C++ compiler for the host tests in [section 14](#14-testing-on-the-mac).
 
+**Which toolchain the figures in this guide came from.** The pinned release toolchain is **GNU Arm 10.3-2021.10**, and it is the one to build release plugins with. The sizes, checksums and instruction counts printed in sections 8, 9 and 10 for the two examples and the shipped inserts were taken with **Arm GNU Toolchain 12.3.Rel1** (GCC 12.3.1, native arm64 host), because the 10.3 binaries are x86_64 only. The examples came out the same on both compilers: `tilt.plg` and `sawf.plg` have the same image sizes and rebase counts and the same render checksums. The worst block of `sawf.plg` is 23,243 instructions on 12.3 and was 23,258 on 10.3 (29,410 and 29,426 in scenario 1), so expect small differences in instruction counts between compilers. Checksums of the shipped inserts and engines can differ between compilers (Dirt's `3b1f3dc5` is the one that held on both), so compare them only between builds of the same compiler.
+
 ### The build tool: `build_plug.py`
 
 [`synth-open/plug/build_plug.py`](../synth-open/plug/build_plug.py) compiles your sources, links them, checks the result and writes the `.plg`. It always rebuilds everything into a temporary folder, so it never reuses stale objects.
@@ -790,7 +792,7 @@ python3 plug/build_plug.py --id org.example.synth.sawf --kind synth --version 1.
 /tmp/phzvenv/bin/python -I tools/validate_synth.py sawf.plg
 ```
 
-The build prints `SAWF, 0 params, image 2124 B (text 2120, rw 4), bss 108 B, 77 rebase words` (the descriptor of a synth plugin lists no parameters, the extension carries them). The validator prints `sawf.plg PASS  SAWF params=6 sections=4 macros=3 voices=4 fmts=[0, 2, 3, 5, 8]` and `1 of 1 synth plugins PASS`. Then render it through the harness, a fixed four voice chord. The worst block is 23,258 instructions (4.45 percent of a block) with the defaults (scenario 0) and 29,426 (5.63 percent) with every parameter moved and ramped (scenario 1):
+The build prints `SAWF, 0 params, image 2124 B (text 2120, rw 4), bss 108 B, 77 rebase words` (the descriptor of a synth plugin lists no parameters, the extension carries them). The validator prints `sawf.plg PASS  SAWF params=6 sections=4 macros=3 voices=4 fmts=[0, 2, 3, 5, 8]` and `1 of 1 synth plugins PASS`. Then render it through the harness, a fixed four voice chord. The worst block is 23,243 instructions (4.45 percent of a block) with the defaults (scenario 0) and 29,410 (5.63 percent) with every parameter moved and ramped (scenario 1):
 
 ```bash
 python3 plug/build_plug.py --id ff.test.synthharness --kind offline --opt "-O2 -fno-builtin" \
@@ -872,7 +874,20 @@ Emulated with the cost table bench, 4 voices playing the chord 57 61 64 68, in p
 
 Three parts each asking for 4 voices is 12 voices on paper. Only the pool (default 4) keeps the total from exceeding the figures above.
 
-Shipped inserts, emulated instructions per stereo block (`plug/README.md`): Dirt 13.8 k, Tape 16.3 k, Lo-Fi 18.4 k, Console 8.8 k, Tube 9.7 k, BBD 11.8 k and Phaser 7.8 k to 14.0 k, which is 1.5 to 3.5 percent of a block. These counts were taken before the locals changes to Lo-Fi and Tape, and the device measured about 1.5 times the emulated count for Dirt.
+Shipped inserts, emulated with `emu_plug.py` at default settings, instructions per stereo block (average, built with GCC 12.3.1, see [section 3](#3-toolchain-and-building)):
+
+| Insert | Instructions | Percent of a block |
+| :--- | ---: | ---: |
+| Dirt | 14,721 | 2.82 |
+| Tape | 15,992 | 3.07 |
+| Lo-Fi | 16,452 | 3.15 |
+| Console | 8,794 | 1.68 |
+| Tube | 9,681 | 1.85 |
+| BBD | 11,762 | 2.25 |
+| Phaser | 7,855 (up to 9,181) | 1.76 |
+| `tilt.plg` (example) | 2,855 | 0.55 |
+
+Lo-Fi and Tape keep their coefficients and filter state in locals for the block, and the older `plug/README.md` table (Lo-Fi 18.4 k, Tape 16.3 k) predates that change. Phaser's count depends on its mode and on whether a ramp is running. These are instruction counts, so add the margin of [How to measure CPU](#how-to-measure-cpu).
 
 ---
 
