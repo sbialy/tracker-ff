@@ -410,7 +410,7 @@ PLUG_SYNTH_PLUGIN("JU6", polysynth::open::kJu6Def, 7, 0x81)   // name, definitio
 
 All three must be unique among built-in engines and among the engines on the card. If a number is taken, the engine is not listed (`synth.txt` shows `err 6`). The ABI note says a new engine uses its uid for all three, and the example does that: `0x64880b9c` is the FNV-1a hash of `org.example.synth.sawf`. The same three numbers go to `build_plug.py --synth STORED,PATCH,TYPE` so the manifest carries them. They must equal the numbers in the plugin line and the definition's `typeId`, or attach fails with error 8.
 
-The twelve shipped engines keep the numbers they had when they were built in, so old projects and patches find them: JU6 7 / `0x81`, PHZ 8 / `0x82`, FM4 9 / `0x80`, D-Type 10 / `0xA2`, CS-Type 11 / `0x83`, A-Type 12 / `0x84`, T-Type 13 / `0x85`, 8-Type 14 / `0x86`, Hand-Type 15 / `0x87`, B-Type 16 / `0x88`, Arc-Type 17 / `0x89`, PLK 18 / `0x8A`.
+The twelve shipped engines keep the numbers they had when they were built in, so old projects and patches find them: JU6 7 / `0x81`, PHZ 8 / `0x82`, FM4 9 / `0x80`, D-Type 10 / `0xA2`, CS-Type 11 / `0x83`, A-Type 12 / `0x84`, T-Type 13 / `0x85`, 8-Type 14 / `0x86`, Hand-Type 15 / `0x87`, B-Type 16 / `0x88`, Arc-Type 17 / `0x89`, PLK 18 / `0x8A`. PHZ and PLK are private modules (source in the private repository `poly-engines`), this repository keeps their numbers.
 
 The engine `name` is 1 to 8 printable characters with no `/`. It is the on-screen name and the `Patches/<name>/` folder.
 
@@ -877,10 +877,10 @@ Emulated with the cost table bench, 4 voices playing the chord 57 61 64 68, in p
 | Engine | Default | Worst | Engine | Default | Worst |
 | :--- | ---: | ---: | :--- | ---: | ---: |
 | JU6 | 18.6 | 21.4 | 8-Type | 14.8 | 42.5 |
-| PHZ | 17.4 | 23.5 | Hand-Type | 9.3 | 9.3 |
+| PHZ (private) | 17.4 | 23.5 | Hand-Type | 9.3 | 9.3 |
 | FM4 | 16.6 | 16.8 | B-Type | 8.8 | 16.2 |
 | D-Type | 25.9 | 34.9 | Arc-Type | 21.0 | 27.7 |
-| CS-Type | 30.5 | 46.3 | PLK | 5.6 | 6.3 |
+| CS-Type | 30.5 | 46.3 | PLK (private) | 5.6 | 6.3 |
 | A-Type | 22.5 | 27.3 | T-Type | 9.2 | 9.2 |
 
 Three parts each asking for 4 voices is 12 voices on paper. Only the pool (default 4) keeps the total from exceeding the figures above.
@@ -892,8 +892,8 @@ Shipped inserts, emulated with `emu_plug.py` at default settings, instructions p
 | Dirt | 14,721 | 2.82 |
 | Tape | 15,992 | 3.07 |
 | Lo-Fi | 16,452 | 3.15 |
-| Console | 8,794 | 1.68 |
-| Tube | 9,681 | 1.85 |
+| Console (private) | 8,794 | 1.68 |
+| Tube (private) | 9,681 | 1.85 |
 | BBD | 11,762 | 2.25 |
 | Phaser | 7,855 (up to 9,181) | 1.76 |
 | `tilt.plg` (example) | 2,855 | 0.55 |
@@ -1091,7 +1091,7 @@ These are facts from the files in this repository, not legal advice.
 - **The SDK files** in [`synth-open/plug/`](../synth-open/plug/) are **MIT** (`synth-open/plug/LICENSE`, Copyright (c) 2026 sbialy (tracker-ff)). That file names `plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`, `build_plugs.sh` and `README.md` as its scope. The files `synth_plug.h`, `emu_synth.py`, `synth_engines.sh` and the `examples/` folder are not named in that scope text. The two examples carry their own MIT header.
 - **Your plugin** may use any licence that allows shipping it as a separate file (`synth-open/plug/README.md`). The firmware licence is unchanged. A `.plg` is a separate file loaded by the firmware, and the plugin's own `licence` field in the manifest records the SPDX id you choose.
 - **The repository `LICENSE`** is MIT with a Wholesale Commercial Clone Restriction. Its Part 2 names `.ptfx` Sample Editor plugins as expressly permitted to sell. It does not mention `.plg` plugins. Part 2 prohibits selling the complete firmware, a substantially unmodified derivative of it or `.ptf` firmware images. It grants no right to the Polyend trademarks.
-- **Third party code your plugin may include.** A synth plugin includes `ot/audio/synth_engine.h` and `ot/model/synth_patch.h`, which are **OpenTracker, Apache-2.0** (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `NOTICE.md` item 10, each file has a provenance line). The shipped OpenTracker engines in `ot-synths/` and the ports in `plug/fx/` are **MIT** from opentracker-synths and opentracker-fx (`licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`), with Console and Tube original. `synth-open/plug/fx/NOTICE.md` lists the notices that ship with each shipped insert `.plg`. Check the headers you include and the notices that come with them before you distribute a binary.
+- **Third party code your plugin may include.** A synth plugin includes `ot/audio/synth_engine.h` and `ot/model/synth_patch.h`, which are **OpenTracker, Apache-2.0** (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `NOTICE.md` item 10, each file has a provenance line). The shipped OpenTracker engines in `ot-synths/` and the ports in `plug/fx/` are **MIT** from opentracker-synths and opentracker-fx (`licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`), with Console and Tube original (private modules, source in the private repository `poly-effects`, proprietary freeware like PHZ and PLK, see `NOTICE.md` items 13 to 13b). `synth-open/plug/fx/NOTICE.md` lists the notices that ship with each shipped insert `.plg`. Check the headers you include and the notices that come with them before you distribute a binary.
 - **Origin of the examples.** `tilt.c` and `saw_synth.cpp` are original code written for this guide. The filter is the textbook Chamberlin state variable filter and the band limiting is the textbook polynomial step. No third party source was copied.
 - The firmware is unofficial, noncommercial community work for the Original Tracker. It is not affiliated with or supported by Polyend.
 
