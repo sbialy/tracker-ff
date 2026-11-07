@@ -90,7 +90,10 @@ fetch_private() {
     mkdir -p "$EXT_SRC"
     if ! python3 -I "$EXTERNAL" source effects "$EXT_SRC" ff_console_plug.c ff_tube_plug.c; then
         echo "ui_shot.sh: no private source for the Console and Tube twins, they will fail to load on the pages" >&2
-        rm -f "$EXT_SRC/ff_console_plug.c" "$EXT_SRC/ff_tube_plug.c"   # the Makefile writes stubs
+        for f in ff_console_plug ff_tube_plug; do   # a stub with the same entry point, rewritten only when it changes (make tracks the timestamp)
+            printf '/* stub: the private source of %s was not available */\nconst void *plug_entry(const void *host, unsigned abi) { (void)host; (void)abi; return 0; }\n' "$f" >"$EXT_SRC/$f.c.new"
+            if cmp -s "$EXT_SRC/$f.c.new" "$EXT_SRC/$f.c"; then rm "$EXT_SRC/$f.c.new"; else mv "$EXT_SRC/$f.c.new" "$EXT_SRC/$f.c"; fi
+        done
     fi
     if [ -n "$EXT_PLG" ]; then
         python3 -I "$EXTERNAL" check "$EXT_PLG" || { echo "ui_shot.sh: EXTERNAL_DIR does not match engines/external.lock.json" >&2; exit 1; }

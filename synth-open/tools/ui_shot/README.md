@@ -16,6 +16,9 @@ inserts:running inserts:bbd inserts:dirt2 inserts:safe inserts:safe-mixed engine
 synth-edit:filter synth-macros automation automation:lfo`. A page is a script for `ui_shot` (see `script_for` in ui_shot.sh and the
 command list in ui_shot_main.cpp): button taps, encoder turns, waits, `shot`. Needs clang++, make, python3 and the plugin set in
 `$PLG_DIR` (default the newest of `~/prj/poly/build/cpu-adopt`, `plugin-synth`) for the plugin pages.
+The files of the private modules (`phz`, `pluck`, `console`, `tube`: `.plg`, `.plgi`) come from `$EXTERNAL_DIR`, a directory with the
+published files that must match the sha256 pins of `engines/external.lock.json`. Without it they are copied from the local build
+directories of the private repositories, and without those the pages render with the four modules missing.
 
 ## What is real and what is not
 
@@ -30,6 +33,9 @@ Not real:
 - **Master insert plugins** are Thumb code. Their own sources are compiled natively (`host_twins.cpp`, `host_dirt.cpp`, the Makefile),
   and the loader asks for the descriptor of the twin where it would jump into the file. They show real names, parameters, ranges and
   values, but no audio runs. The file is still read and CRC checked by the real loader.
+  Console and Tube are our own private modules: their twin source is read from the pinned tag of a local checkout of the private
+  repository `poly-effects` (`engines/external.lock.json`, `engines/external.py source`, `$EXTERNAL_SRC_EFFECTS`), without it a stub
+  stands in and the two inserts fail to load.
 - **Synth engine plugins** are listed with their card logos, but no engine installs (the host has no FlexNVM bank, `synthEnsure` is
   cut short): a part that picks one says `Missing: <name>`. The built-in engines run as built.
 - Audio, USB, MIDI, battery, radio, touch, JPEG decode (CMD_LOADIMAGE data is dropped), the ROM fonts.

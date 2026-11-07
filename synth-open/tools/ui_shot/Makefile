@@ -31,7 +31,7 @@ SO_CPP    := $(filter-out $(SO_OVERLAY),$(filter-out engine_%.cpp,$(notdir $(wil
 HOST_CPP  := $(wildcard $(HERE)/*.cpp)
 PLUG_FX_C := ot_tape_plug ot_lofi_plug ot_bbd_plug ot_phaser_plug
 # Console and Tube are private (poly-effects). ui_shot.sh puts their source at the pinned tag into $(EXT) (engines/external.py), without it
-# a stub with the same entry point takes its place and the two inserts show as failed to load
+# it writes a stub with the same entry point and the two inserts show as failed to load. Standalone, the rule below writes the stub
 EXT       ?= $(OUT)/external
 PLUG_EXT_C := ff_console_plug ff_tube_plug
 EXCLUDE   := $(shell cat $(HERE)/exclude.txt 2>/dev/null | grep -v '^\#')
