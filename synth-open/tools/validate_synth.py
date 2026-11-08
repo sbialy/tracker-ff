@@ -200,7 +200,7 @@ def main():
         tot = sum(b for b, _ in users)
         w3 = sum(b for b, _ in users[:3])
         w4 = sum(b for b, _ in users[:4])
-        print("work arena: %d B (%s); in use at once, 3 synth parts: worst %d of %d B %s, 4 engines: worst %d B %s; all of them %d B "
+        print("work arena: %d B (%s). In use at once, 3 synth parts: worst %d of %d B %s, 4 engines: worst %d B %s. All of them %d B "
               "(no limit any more: an engine no part plays gives its block back)" % (
                   arena, ", ".join("%s %d" % (f.replace(".plg", ""), b) for b, f in users), w3, arena,
                   "FITS" if w3 <= arena else "OVER by %d B (the third part's engine is refused: attach error 5)" % (w3 - arena),

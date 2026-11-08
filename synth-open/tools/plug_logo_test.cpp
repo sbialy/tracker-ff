@@ -378,7 +378,7 @@ int main(int argc, char** argv)
         snprintf(what, sizeof(what), "%d engines: an engine without a logo is looked for on the card once, never again while the picker scrolls", nEng);
         check(probesOf3 == 1, what);
         if (nEng <= kLogoMiniSlots) check(c.loads == uint32_t(nEng - (nEng + 3) / 7), "up to 32 engines the picker never reads the card after the boot");
-        // the editor: one image on screen, two slots; the shown one is never the one rewritten
+        // the editor: one image on screen, two slots, the shown one is never the one rewritten
         int under = 0;
         int shown = -1;
         for (int e = 0; e < nEng; e++)
