@@ -19,7 +19,7 @@
 //
 // Plain C and C++ (platforms/mk66/3rdparty/teensy_core/mk20dx128.c includes it).
 
-#define DEVHOOKS_API 2
+#define DEVHOOKS_API 3
 
 #define DEVHOOK_STR_(x) #x
 #define DEVHOOK_STR(x) DEVHOOK_STR_(x)
@@ -69,6 +69,11 @@
 #define DEVHOOK_SITE(id, arg)
 #define DEVHOOK_SPIN_BEGIN(n)
 #define DEVHOOK_SPIN_STEP(n, site, onExpire)
+
+// platforms/mk66/3rdparty/teensy_core/usb_dev.c (hook set 3): a console image resets the unit from inside the USB interrupt, for a main
+// loop that no longer answers. LINE_CODING sees every CDC SET_LINE_CODING (baud rate), SOF runs on every start of frame once configured.
+#define DEVHOOK_USB_LINE_CODING(baud)
+#define DEVHOOK_USB_SOF()
 
 #endif
 
