@@ -47,6 +47,8 @@ __NOINIT(EXTERNAL_RAM) IndexEntry s_index[kIndexMax];
 __NOINIT(EXTERNAL_RAM) char s_names[kScanMax * 40];
 __NOINIT(EXTERNAL_RAM) char* s_nameList[kScanMax];
 __NOINIT(EXTERNAL_RAM) ScanStats s_scan;
+ScanCache s_scanCache;   // SRAM .bss, zero at boot: the first rescan() reads every file (plug_index.h)
+bool s_staleRetry;       // one reload after a kStale install (the forced rescan made the index match the folder)
 // insert 2's rw and bss at a fixed SRAM address: its text (rebased against this address) is then the same bytes on every
 // load and a reload issues no flash command. Plugins with more rw + bss than this are refused for insert 2.
 constexpr uint32_t kRw2Bytes = 1024;
@@ -337,8 +339,22 @@ void apply(int k)
     writeText(kMarker, ref.name, int(strlen(ref.name)));
     s_markerSet = true;
     s_markerMs = now();
+    pl.wantUid = e.uid;   // only the file the index listed: a stale list never installs a changed or replaced file
+    pl.wantCrc = e.crc;
     Loaded l;
     if (err == kOk) err = load(s_fs, p, pl, PLUG_KIND_MASTER_INSERT, l);
+    if (err == kStale && !s_staleRetry)
+    {   // the folder changed under the index: read it again and load once more from what it lists now (tick, no debounce)
+        s_fs->remove(kMarker);
+        s_markerSet = false;
+        s_staleRetry = true;
+        s_scanCache.invalidate();
+        rescan();
+        s.pending = true;   // manual stays: a pick in safe mode still loads
+        LOGEF("plg%d %s stale, rescanned", k + 1, ref.name);
+        return;
+    }
+    s_staleRetry = false;
     if (err == kOk)
     {
         s_allocSlot = k;
@@ -458,6 +474,7 @@ Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, L
     if (!isOpen) return kNoFile;
     plug_file_header& h = out.hdr;
     Err e = readAll(fs, f, reinterpret_cast<uint8_t*>(&h), sizeof(h)) ? checkHeader(h, wantKind) : kHeader;
+    if (e == kOk && pl.wantUid && (h.uid != pl.wantUid || h.crc32 != pl.wantCrc)) e = kStale;   // not the file the index listed
     // text = [0, rw_offset) (code, constants: may run from flash), rw = [rw_offset, image_size) + bss (always RAM)
     const uint32_t rwOff = h.rw_offset ? h.rw_offset : h.image_size;
     uint8_t* const rwDst = pl.rwDst ? pl.rwDst : pl.textDst + rwOff;
@@ -564,6 +581,17 @@ struct ScanFs
         s_fs->closeFile(f);
         return n;
     }
+    // dirSignature (plug_index.h): the platform's single directory walker (nesDir_*, no other user in this firmware), entries
+    // with their sizes from the directory itself
+    bool dirOpen(const char* dir) { return s_fs->nesDir_open(dir); }
+    bool dirNext(char* name, uint32_t& size, bool& skip)
+    {
+        uint8_t isDir = 0, isHid = 0;
+        if (!s_fs->nesDir_readItem(name, &isDir, &isHid, &size)) return false;
+        skip = isDir || isHid;
+        return true;
+    }
+    void dirClose() { s_fs->nesDir_close(); }
 };
 }   // namespace
 
@@ -573,12 +601,23 @@ int scanDir(const char* dir, IndexEntry* index, int cap, ScanStats& st, uint32_t
     return scanIndex(fs, dir, index, cap, s_names, s_nameList, st, kind);
 }
 
+// Main loop only (card reads). The signature walk reads the directory entries alone, a scan opens every plugin file: the
+// Inserts page opens without a scan when nothing in /Plugins/Master changed
 void rescan()
 {
-    s_count = 0;
-    if (!s_fs) return;
-    s_count = scanDir(kDir, s_index, kIndexMax, s_scan, PLUG_KIND_MASTER_INSERT);
-    if (s_scan.listed) writeStatus();   // what the scan kept and refused, also when nothing loads
+    if (!s_fs)
+    {
+        s_count = 0;
+        return;
+    }
+    ScanFs fs;   // unchanged folder: the index still lists what it holds, no file is opened
+    if (refreshIndex(fs, s_scanCache, kDir, s_index, kIndexMax, s_names, s_nameList, s_scan, s_count) && s_scan.listed)
+        writeStatus();   // what the scan kept and refused, also when nothing loads
+}
+
+void cardChanged()
+{
+    s_scanCache.invalidate();
 }
 
 // ------------------------------------------------------------------------------------------------ slots API

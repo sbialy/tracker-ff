@@ -28,6 +28,7 @@ enum Err : int32_t
     kDesc,       // descriptor or one of its pointers outside the image, wrong kind, struct too small
     kCommit,     // Place::commit failed (the flash erase, program or verify of a FlexNVM text segment)
     kInit,       // no memory for the instance or init() failed
+    kStale,      // the file is not the one the index listed (Place::wantUid / wantCrc): the folder changed since the scan
 };
 
 inline uint32_t crc32(uint32_t c, const uint8_t* p, uint32_t n)
@@ -174,6 +175,74 @@ int scanIndex(Fs& fs, const char* dir, IndexEntry* index, int cap, char* names, 
             index[dup] = e;
     }
     return count;
+}
+
+// ------------------------------------------------------------------------------------------------ scan cache
+// A cheap signature of a plugin folder: one walk of the directory entries, no file is opened (a scan opens and reads every
+// plugin file). It covers the count, the names and the sizes of the *.plg entries in directory order, so an added, removed,
+// renamed, reordered or resized plugin changes it. A file rewritten in place at the same size does not: the USB storage
+// session and the card change hooks invalidate the cache (every way a computer writes the card), and the install path checks
+// the file it opens against the listed uid and crc (kStale). Fs:
+//   bool dirOpen(const char* dir)
+//   bool dirNext(char* name, uint32_t& size, bool& skip)    name: room for 256 bytes (FatFs FF_LFN_BUF + 1), skip: a folder or
+//                                                            a hidden or system entry. False at the end or on a card error
+//   void dirClose()
+struct DirSig
+{
+    bool ok;          // the folder opened
+    uint32_t count;   // *.plg entries
+    uint32_t hash;    // crc32 over name, NUL, size (little endian) of each, in directory order
+};
+constexpr int kDirNameMax = 256;
+
+template <class Fs>
+DirSig dirSignature(Fs& fs, const char* dir)
+{
+    DirSig s = { fs.dirOpen(dir), 0, 0 };
+    if (!s.ok) return s;
+    char name[kDirNameMax];
+    uint32_t size = 0;
+    bool skip = false;
+    while (fs.dirNext(name, size, skip))
+    {
+        name[kDirNameMax - 1] = 0;
+        if (skip || !isPlugName(name)) continue;
+        const uint8_t sz[4] = { uint8_t(size), uint8_t(size >> 8), uint8_t(size >> 16), uint8_t(size >> 24) };
+        s.hash = crc32(crc32(s.hash, reinterpret_cast<const uint8_t*>(name), uint32_t(strlen(name)) + 1), sz, 4);
+        s.count++;
+    }
+    fs.dirClose();
+    return s;
+}
+
+// Whether a scan is needed: the first one, after invalidate() (a USB storage session, a card change, a stale install), or when the
+// folder's signature differs from the one taken before the last scan. A folder that does not open always rescans (cheap then).
+struct ScanCache
+{
+    bool valid;
+    DirSig sig;
+    void invalidate() { valid = false; }
+    bool fresh(const DirSig& now) const
+    {
+        return valid && now.ok && sig.ok && now.count == sig.count && now.hash == sig.hash;
+    }
+    void store(const DirSig& now)   // the signature taken BEFORE the scan: a change during the scan shows up next time
+    {
+        sig = now;
+        valid = now.ok;
+    }
+};
+
+// rescan() of the host: the index of dir again when the cache says the folder may have changed. True when it scanned (count set)
+template <class Fs>
+bool refreshIndex(Fs& fs, ScanCache& cache, const char* dir, IndexEntry* index, int cap, char* names, char** nameList,
+                  ScanStats& st, int& count, uint32_t kind = PLUG_KIND_MASTER_INSERT)
+{
+    const DirSig sig = dirSignature(fs, dir);
+    if (cache.fresh(sig)) return false;
+    count = scanIndex(fs, dir, index, cap, names, nameList, st, kind);
+    cache.store(sig);
+    return true;
 }
 
 }   // namespace plug

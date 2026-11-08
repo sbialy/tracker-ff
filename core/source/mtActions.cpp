@@ -1,6 +1,9 @@
 #include "core/interface.h"
 #include "mtSleep.h"
 #include <stdint.h>
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 //-----------------------------------------------------------------
 //-------------------------|   POTS   |----------------------------
@@ -68,6 +71,9 @@ void onPadHold(uint8_t n)
 
 void onSDCardSlotChange(bool state)
 {
+#ifdef FEATURE_PLUG_HOST
+    plug::cardChanged(); // out or in: the card may hold other plugins now, the Inserts page reads every file again
+#endif
     mtInterface.handleCardSlotAction(state);
 }
 

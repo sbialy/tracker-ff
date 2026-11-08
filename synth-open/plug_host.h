@@ -55,6 +55,8 @@ struct Place
     uintptr_t rwRun = 0;   // 0: rwDst (or right after the text run address when rwDst is null)
     bool (*commit)(const uint8_t* src, uintptr_t run, uint32_t len) = nullptr;
     bool run = true;       // false: stop after the rebase (the synth bank writes text and rw to the flash itself, no entry call)
+    uint32_t wantUid = 0;  // not 0: the header must carry this uid and crc32 (what the index listed), else kStale before any copy
+    uint32_t wantCrc = 0;
 };
 Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, Loaded& out);
 // Checks a descriptor against an image range (also used for the in-image plugins, range 0 = no range check).
@@ -110,7 +112,8 @@ constexpr const char* kMarker = "/Plugins/.loading";      // crash marker: a plu
 int indexCount();
 const IndexEntry* indexAt(int i);
 int indexFind(uint32_t uid);    // -1: no file with that uid on the card
-void rescan();                  // re-read /Plugins/Master (the Inserts page does it on entry)
+void rescan();                  // re-read /Plugins/Master when it changed (the Inserts page asks on entry, plug_index.h ScanCache)
+void cardChanged();             // a USB storage session or a card change: the next rescan() reads every file again
 
 // ---- the two master insert slots (main thread)
 enum class SlotState : uint8_t

@@ -374,6 +374,8 @@ The Inserts page has a first column, **Mixer**, that does not belong to any plug
 
 Picking waits until the selection rests for 400 ms, then loads. The value line of an insert column is at most 9 characters: the plugin name, `None`, `Loading`, `Bypassed` or a tag and as much of the name as fits (`Safe:BBD`, `Miss:Lo-Fi`, `Fail:Dirt`, `CPU:Phase`). A built-in Saturation entry bypasses both slots and keeps them loaded.
 
+The plugin list comes from the last scan of `/Plugins/Master`. Opening the page reads only the folder's directory entries (the names and sizes of the `.plg` files) and scans the files again when they differ from the last scan, so the page opens without a card read per plugin. Every USB storage session and every card change makes the next open scan all files. A file rewritten in place at the same name and size is not seen until then, and picking it is safe: the loader checks that the file still has the `uid` and CRC the list showed, and when it does not the host scans the folder and loads again from the new list.
+
 ---
 
 ## 7. Synth Engine API
@@ -1039,11 +1041,13 @@ You can test almost everything without a device. The tools need `unicorn` for th
 | `plug/emu_synth.py` | Renders an engine plugin through `synth/synth_harness.cpp` (a fixed chord, a parameter script) and prints a checksum, the libm calls, the worst block and the manifest numbers. `--scenario 0` is the defaults, `1` has every parameter moved and ramped. Same checksum at the FlexNVM and SRAM homes |
 | `tools/validate_synth.py` | The firmware's `checkSynth`, [section 13](#13-validation-safe-mode-and-the-crash-marker) |
 | `tools/plug_index_test.cpp` | The `/Plugins/Master` scan and the header, layout and CRC checks on a folder of real `.plg` files |
+| `tools/plug_scan_cache_test.cpp` | When the Inserts page scans `/Plugins/Master` again: an unchanged folder is not scanned, an added, removed, renamed or resized file is, and so is any folder after a USB storage session or a card change |
 | `tools/plug_bank_test.cpp` | The FlexNVM bank on a simulated flash that loses power after any command. Prints how many engines fit at once at the shipped sizes |
 | `tools/plug_logo_test.cpp` | The PLGI parser and the sidecar/trailer order. Give it `.plgi` or `.plg` files |
 | `tools/plug_sidecar_test.cpp` | The `plugins.txt` codec and file rules on a card that fails or loses power |
 | `tools/plug_ui_nav_test.cpp` | The Inserts page list index logic |
 | `tools/run_smoke.sh` | The host smoke test of the open shim for a set of built-in engines. It never loads a `.plg` |
+| `tools/run_tests.sh` | Every host check above in one run (5 smoke variants, `build_plugs.sh`, the `plug_*` tests against the pinned modules), ends with `RESULT: GREEN` or `RESULT: RED`. `run_host_tests.sh` is the same without `build_plugs.sh`, against `$PLUGDIR` |
 
 A plugin that is correct on the Mac can still fail on the device in ways the emulator cannot show: the emulated libm comes from Python and rounds each result to `float32` once, instruction counts are a lower bound and nothing models flash wait states or the shared stack. Treat the Mac result as necessary and not sufficient.
 

@@ -33,6 +33,9 @@
 #include "log.h"
 #include "mtHardware.h"
 #include "mtSleep.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 InputProcessor ip(mtInterfacePotsDef::interfacePotsCount,
                   mtInterfaceButtonsDef::interfaceButtonsCount,
@@ -414,6 +417,9 @@ void Interface::handleFileTransferMode(uint8_t state)
     else
     {
         LOGE("USB storage mode off");
+#ifdef FEATURE_PLUG_HOST
+        plug::cardChanged(); // the host may have changed /Plugins/Master: the Inserts page reads every file again
+#endif
 
         // The host may have changed the card, so what the filesystem driver
         // and sample streaming remember about it can be wrong. When the mode
