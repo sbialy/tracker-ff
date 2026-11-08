@@ -59,6 +59,9 @@ struct State
     std::vector<std::pair<int, std::string>> records; // new maximum depth: depth and chain, last 12
     std::vector<Profile> profiles;
     long long entries = 0;
+    std::vector<std::string> cover;                     // UISHOT_COVER=sub1,sub2: count the entries of every function whose demangled name contains one
+    std::map<std::string, long long> covered;           // name -> entries
+    std::unordered_map<const void*, int> coverFn;       // function address -> 1 matches / 0 does not
     long long bucket[10] = {};                          // entries by depth: <1k, <2k ... >=9k
 };
 
@@ -144,6 +147,25 @@ void report(FILE* f)
 void dump() NOINST;
 void dump()
 {
+    if (const char* cp = getenv("UISHOT_COVER_REPORT"))
+    {
+        if (FILE* cf = fopen(cp, "w"))
+        {
+            for (auto& kv : S().covered)
+                fprintf(cf, "%lld\t%s\n", kv.second, kv.first.c_str());
+            for (auto& c : S().cover)
+            {
+                bool hit = false;
+                for (auto& kv : S().covered)
+                    hit = hit || kv.first.find(c) != std::string::npos;
+                if (!hit)
+                    fprintf(cf, "0\t(no function matching '%s' ran)\n", c.c_str());
+            }
+            fclose(cf);
+        }
+    }
+    if (!S().on)
+        return;
     const char* path = getenv("UISHOT_STACK_REPORT");
     FILE* f = path ? fopen(path, "w") : stderr;
     if (!f)
@@ -189,6 +211,22 @@ void init()
 {
     State& s = S();
     s.ready = true;
+    if (const char* v = getenv("UISHOT_COVER"))
+    {
+        std::string all = v;
+        size_t p = 0;
+        while (p < all.size())
+        {
+            size_t e = all.find(',', p);
+            if (e == std::string::npos)
+                e = all.size();
+            if (e > p)
+                s.cover.push_back(all.substr(p, e - p));
+            p = e + 1;
+        }
+        atexit(dump);
+        signal(SIGUSR1, onSignal);
+    }
     const char* tf = getenv("UISHOT_STACK_FRAMES");
     if (!tf)
         return;
@@ -240,11 +278,42 @@ void init()
 }
 } // namespace
 
+// A linkonce std::string or map instance the linker took from an instrumented core/ object would call back into this hook while it runs
+// (infinite recursion): the hook ignores calls made from inside itself.
+static bool g_inHook = false;
+struct HookGuard
+{
+    NOINST HookGuard() { g_inHook = true; }
+    NOINST ~HookGuard() { g_inHook = false; }
+};
+
 extern "C" NOINST void __cyg_profile_func_enter(void* fn, void*)
 {
+    if (g_inHook)
+        return;
+    HookGuard guard;
     State& s = S();
     if (!s.ready)
         init();
+    if (!s.cover.empty())
+    {
+        auto c = s.coverFn.find(fn);
+        if (c == s.coverFn.end())
+        {
+            std::string d = demangled(fn);
+            int hit = 0;
+            for (auto& sub : s.cover)
+                hit = hit || d.find(sub) != std::string::npos;
+            c = s.coverFn.emplace(fn, hit).first;
+            if (hit)
+                s.covered[d.substr(0, d.find('('))] += 0;
+        }
+        if (c->second)
+        {
+            std::string d = demangled(fn);
+            s.covered[d.substr(0, d.find('('))]++;
+        }
+    }
     if (!s.on)
         return;
     int bytes;
@@ -291,6 +360,8 @@ extern "C" NOINST void __cyg_profile_func_enter(void* fn, void*)
 
 extern "C" NOINST void __cyg_profile_func_exit(void* fn, void*)
 {
+    if (g_inHook)
+        return;
     State& s = S();
     if (!s.on || s.stack.empty())
         return;

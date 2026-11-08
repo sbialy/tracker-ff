@@ -25,13 +25,15 @@ __attribute__((weak)) bool keyPressed(bool, int) { return false; }
 __attribute__((weak)) const char* simBuildId() { return "uishot"; }
 __attribute__((weak)) void simBootloaderHandoff(const char*) {}
 
+extern "C" void hostPokePoll(); // host_poke.cpp: UISHOT_POKE actions, run from the main loop
+
 namespace
 {
 // ------------------------------------------------------------------------------------------------ simple devices
 class HTimer : public Timer
 {
   public:
-    uint32_t millis() override { return g_nowMs; }
+    uint32_t millis() override { hostPokePoll(); return g_nowMs; }
     uint32_t micros() override { return g_nowMs * 1000u; }
     void delay(int ms) override { g_nowMs += uint32_t(ms); }
     uint32_t clockCycles() override { return g_nowMs * 180000u; }
