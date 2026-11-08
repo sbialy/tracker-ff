@@ -9,7 +9,9 @@ firmware's attach does (emu_synth.load: rebased for its FlexNVM home, rw in SRAM
 the real checkSynth in Unicorn on that extension. An engine it rejects is listed in the picker but shows Missing when picked
 (attach error 4), and no other test sees it: emu_synth.py and the module repositories' render checks never call checkSynth.
 
-It also prints the facts the check is about (sections, formats), and fails when a plugin uses a format the firmware only has
+It also prints the facts the check is about (sections, formats, work memory), the use of the firmware's 16 KB work arena (plug_synth.cpp
+kWorkBytes: a bump allocator, a library entry's block is never given back until the next boot, so the sum of the blocks of every
+engine that is ever attached in one session must fit), and fails when a plugin uses a format the firmware only has
 for a built-in engine (PLUG_FMT_COUNT and up). Exit code 0 only when every synth plugin passes. Needs unicorn (pip).
 """
 import os
@@ -30,6 +32,9 @@ from unicorn.arm_const import (UC_ARM_REG_C1_C0_2, UC_ARM_REG_FPEXC, UC_ARM_REG_
 
 CHK_BASE = 0x1FFF8000          # the validator's text: SRAM, clear of emu_synth's harness and work areas
 BASE, RWBASE = 0x10000000, 0x20027000   # an engine's FlexNVM home and its rw in the SRAM pool, as the firmware
+
+
+WORK = {}   # plugin file -> work memory block the host would give it (work_bytes rounded up to 8)
 
 
 def toolchain():
@@ -147,7 +152,8 @@ def one(path, chk, run_check, layout_fn, nfmt):
     uc.emu_start(run_check | 1, E.TRAP, count=50_000_000)
     ok = bool(uc.reg_read(UC_ARM_REG_R0) & 0xFF)
     fw_layout = call(layout_fn)
-    x = struct.unpack("<IIiiiIIIIIIIiII", bytes(uc.mem_read(ext, 60)))
+    x = struct.unpack("<IIiiiIIIIIIIiIII", bytes(uc.mem_read(ext, 64)))
+    WORK[os.path.basename(path)] = (x[15] + 7) & ~7
     name = bytes(uc.mem_read(x[5], 16)).split(b"\0")[0].decode(errors="replace")
     fmts = sorted({bytes(uc.mem_read(x[6] + 24 * i + 16, 1))[0] for i in range(min(x[7], 128))})
     why = []
@@ -156,8 +162,8 @@ def one(path, chk, run_check, layout_fn, nfmt):
     if fmts and fmts[-1] >= nfmt:
         why.append("format %d is built-in only (PLUG_FMT_COUNT %d)" % (fmts[-1], nfmt))
         ok = False
-    return ok, "%s params=%d sections=%d macros=%d voices=%d fmts=%s%s" % (
-        name, x[7], x[9], x[11], x[13], fmts, ("  (" + ", ".join(why) + ")") if why else "")
+    return ok, "%s params=%d sections=%d macros=%d voices=%d work=%d fmts=%s%s" % (
+        name, x[7], x[9], x[11], x[13], x[15], fmts, ("  (" + ", ".join(why) + ")") if why else "")
 
 
 def main():
@@ -187,6 +193,13 @@ def main():
             n += 1
             bad += not ok
             print("%-12s %s  %s" % (os.path.basename(p), "PASS  " if ok else "REJECT", info))
+    arena = int(re.search(r"constexpr uint32_t kWorkBytes = (\d+);", open(os.path.join(SO, "plug_synth.cpp")).read()).group(1))
+    users = sorted(((b, f) for f, b in WORK.items() if b), reverse=True)
+    if users:
+        tot = sum(b for b, _ in users)
+        print("work arena: %d of %d B if every one is attached in one session (%s); largest pair %d B, %s" % (
+            tot, arena, ", ".join("%s %d" % (f.replace(".plg", ""), b) for b, f in users),
+            sum(b for b, _ in users[:2]), "FITS" if tot <= arena else "OVER by %d B (the last one attached is refused: attach error 5)" % (tot - arena)))
     print("validate_synth: %d of %d synth plugins PASS" % (n - bad, n))
     sys.exit(1 if bad or not n else 0)
 
