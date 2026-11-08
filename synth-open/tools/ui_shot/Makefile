@@ -7,7 +7,11 @@ HERE    := $(ROOT)/synth-open/tools/ui_shot
 CONSOLE ?=
 DEVTOOLS_WANT := $(CONSOLE)
 include $(ROOT)/devtools.mk
-OUT     ?= $(ROOT)/build/ui-shot$(if $(filter 1,$(CONSOLE)),-console)
+# SAN=address,undefined: the same build with sanitizers (own OUT, make does not track flags), see ref/newlist-fault-verdict.md
+SAN     ?=
+# STACKMODEL=1: core/ and synth-open/ code calls the hooks of host_stackmodel.cpp, a virtual ARM stack (UISHOT_STACK_FRAMES=frame table)
+STACKMODEL ?=
+OUT     ?= $(ROOT)/build/ui-shot$(if $(filter 1,$(CONSOLE)),-console)$(if $(SAN),-san)$(if $(STACKMODEL),-stack)
 OBJ     := $(OUT)/obj
 GEN     := $(OUT)/gen
 CORE    := $(ROOT)/core
@@ -65,8 +69,11 @@ DEFS := -DFW_TRIM -DAUDIO_PERFORMANCE_INFO_ENABLED -DMEMORY_USAGE_INFO_ENABLED -
   "-D_GLIBCXX_THROW_OR_ABORT(x)=__builtin_abort()" "-Dstatic_assert(...)="
 WARN := -w
 OPT ?= -O1
-CXXFLAGS := -std=gnu++20 $(OPT) -g -fno-rtti -fno-exceptions -include cstdint -include assert.h -fno-strict-aliasing -ferror-limit=20 $(WARN) $(INC) $(DEFS)
-CFLAGS   := $(OPT) -g -fno-strict-aliasing $(WARN) $(INC) $(DEFS)
+SANFLAGS := $(if $(SAN),-fsanitize=$(SAN) -fno-omit-frame-pointer -fno-sanitize=vptr -fsanitize-recover=address)
+LDFLAGS += $(SANFLAGS)
+INSTR := $(if $(STACKMODEL),-finstrument-functions)
+CXXFLAGS := $(SANFLAGS) -std=gnu++20 $(OPT) -g -fno-rtti -fno-exceptions -include cstdint -include assert.h -fno-strict-aliasing -ferror-limit=20 $(WARN) $(INC) $(DEFS)
+CFLAGS   := $(SANFLAGS) $(OPT) -g -fno-strict-aliasing $(WARN) $(INC) $(DEFS)
 
 all: $(OUT)/ui_shot
 
@@ -85,13 +92,13 @@ $(OBJ)/core/libs/Audio/%.o: $(GEN)/libs/Audio/%.c $(GEN)/.stamp
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 $(OBJ)/core/%.o: $(CORE)/%.cpp $(GEN)/.stamp
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(INSTR) -MMD -MP -c $< -o $@
 $(OBJ)/core/%.o: $(CORE)/%.c $(GEN)/.stamp
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 $(OBJ)/so/%.o: $(SO)/%.cpp $(GEN)/.stamp
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(INSTR) -MMD -MP -c $< -o $@
 $(OBJ)/gen/%.o: $(GEN)/src/% $(GEN)/.stamp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -I$(CORE)/interface/sampleRecorder -MMD -MP -c $< -o $@
