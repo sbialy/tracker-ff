@@ -8,8 +8,10 @@ phases.
 
 Licence: the SDK files in this folder (`plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`,
 `build_plugs.sh`, this README) are MIT (`LICENSE` here). A plugin may use any licence that allows shipping it as a separate
-file. The firmware licence is unchanged. The plugins in `fx/` and `fx_dirt_plug.cpp` are ports of MIT and Apache-2.0
-OpenTracker code. Console and Tube are original, proprietary freeware, their source is in the private repository `poly-effects`. See `fx/NOTICE.md`.
+file. The firmware licence is unchanged. No shipped plugin is built here: the inserts Dirt, Tape, Lo-Fi, BBD and Phaser (ports
+of MIT and Apache-2.0 OpenTracker code) are built in the public repository `poly-effects-os`, Console and Tube (original, proprietary
+freeware) in the private `poly-effects`, the engine plugins in `poly-engines-os` and `poly-engines`. Their notices ship with their
+release files, `engines/README.md` has the map.
 
 ## Files
 
@@ -20,9 +22,7 @@ OpenTracker code. Console and Tube are original, proprietary freeware, their sou
 | `plug.ld` | Link at address 0: entry first, then code, the descriptor (`__plug_desc`), constants, then the writable segment |
 | `build_plug.py` | Compile, link, check relocations, write header + manifest + image + rebase table |
 | `emu_plug.py` | The host loader re-done in Python, the plugin's ARM code in Unicorn: checks, instructions per block, output checksum, wav |
-| `build_plugs.sh` | Builds and checks the public inserts (dirt, tape, lofi, bbd, phaser) and the examples. The synth engines have their own standalone build in `engines/` (`make -C engines`, `engines/README.md`) |
-| `synth_engines.sh` | The engine table as shell functions for `synth_render_compare.sh`, generated from `engines/engines.json` |
-| `fx_dirt_plug.cpp`, `fx/` | The shipped plugins |
+| `build_plugs.sh` | Builds and checks the examples. The shipped plugins are built and checked in their module repositories, this repository pins and checks them (`engines/README.md`) |
 | `examples/` | `tilt.c` (a master insert) and `saw_synth.cpp` (a synth engine), the worked examples of the developer guide `docs/plugin_sdk.md`. `build_plugs.sh` builds and checks them into `OUT/examples` |
 
 ## Shipped plugins
@@ -242,11 +242,10 @@ scratch off the audio interrupt's stack, which is one stack with the main loop a
 keeps the two Links of its voice pass there (1,544 B, `-DEIGHT_WORK_POOL`) and T-Type its 512 B square bank block (`-DTTYPE_WORK_POOL`),
 cold data that a pass reads only when it syncs, rings or plays a hat or a cymbal. A hot buffer (an oscillator bus) stays on the stack.
 
-Files go to `/Plugins/Synth/`. Build the engine sources with the firmware's own flags (`make -C engines`, which owns the flags,
-the `--synth` numbers and the versions in `engines/engines.json`, flavour `autof` = `-ffp-contract=off` on every engine for the
-1.2.0 release, `fused` = the compiler default, `-O3` for FM4 and B-Type, `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3` set other
-flags for a test set and the render compare follows them), and prove bit identity with `synth_render_compare.sh` (the firmware's
-objects behind the same wrapper, rendered by `emu_synth.py`, run by `engines/crosscheck.sh`). Then run the firmware's own attach check on it,
+Files go to `/Plugins/Synth/`. The shipped engine plugins are built in poly-engines-os and poly-engines (`make` there, which owns the
+flags and versions, flavour `autof` = `-ffp-contract=off` on every engine for the 1.2.0 release, `fused` = the compiler default,
+`-O3` for FM4 and B-Type), their numbers must equal the rows of `engines/engines.json` here. The 1.2.0 set was proven bit identical
+to the same engines linked into the firmware before the sources left this repository. Then run the firmware's own attach check on it,
 `tools/validate_synth.py` (the real `checkSynth` in Unicorn, no device needed, also run by `crosscheck.sh`): an engine it rejects is listed but shows
 Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sections, 6 macros, 4 voices, formats
 `PLUG_FMT_PCT` to `PLUG_FMT_UNIT` (0 to 15, the higher shim formats are the built-in PERC's).

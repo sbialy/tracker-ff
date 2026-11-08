@@ -160,27 +160,20 @@ Two builds of one source are bit identical only with the same floating point con
 ```bash
 export TOOLCHAIN=$PWD/agt/10.3/bin/arm-none-eabi-
 export PY=/tmp/phzvenv/bin/python
-synth-open/plug/build_plugs.sh build/plugins        # optional second argument: folder of the firmware's ff_dirt objects
+synth-open/plug/build_plugs.sh build/plugins
 ```
 
-It builds the seven shipped inserts and the two examples of this guide, and checks each one:
+It builds the two examples of this guide and checks each one (the shipped plugins are built and checked the same way in their module repositories, section 18):
 
 - no `R_ARM_GOT*` relocation, and the rebase table holds exactly the `R_ARM_ABS32` words of the ELF
 - the insert renders to the same checksum at the SRAM_L home, the FlexNVM home with rw on the heap and in SDRAM, with default settings and again with every parameter moved and one more change in block 5
 - the synth example passes the firmware's own attach check ([`validate_synth.py`](#13-validation-safe-mode-and-the-crash-marker)) and renders to the same checksum at two homes
 
-The examples build into `build/plugins/examples/`, apart from the shipped set. The script prints `PASSED` or `FAILED` last.
+The examples build into `build/plugins/examples/`. The script prints `PASSED` or `FAILED` last.
 
 ### Building the shipped engines: `engines/`
 
-The ten public synth engines have their own standalone build in [`engines/`](../engines/README.md) (PHZ and PLK are built from the private repository `poly-engines`). It needs no firmware build and writes nothing into the source tree:
-
-```bash
-make -C engines TOOLCHAIN=$PWD/agt/10.3/bin/arm-none-eabi- PY=/tmp/phzvenv/bin/python OUT=$PWD/build/engines
-make -C engines verify OUT=$PWD/build/engines
-```
-
-`OUT` then holds the ten `.plg` and `.plgi` files, `SET.json` (set version, compiler, flags, SDK version and ABI, one record per engine) and `SHA256SUMS`: copy the folder to `/Plugins/Synth/`. `FLAVOUR=fused` builds the set without `-ffp-contract=off`. Each build starts from a scratch copy of the files listed in `engines/sdk/` (the header set the engines compile against), so an engine cannot depend on a header outside it. The checks that need a firmware tree (the attach check and the render compare against the firmware's own objects) run as `engines/crosscheck.sh OUT`.
+The shipped synth engines are built in their module repositories (section 18): the ten public ones in poly-engines-os (`make TOOLCHAIN=... PY=...`, then `make verify`), PHZ and PLK in the private poly-engines. Each build starts from a scratch copy of the files listed in its `sdk/` (the header set the engines compile against), so an engine cannot depend on a header outside it. The set holds the `.plg` and `.plgi` files, `SET.json` (set version, compiler, flags, SDK version and ABI, render checksums, one record per engine) and `SHA256SUMS`: copy the `.plg` and `.plgi` files to `/Plugins/Synth/`. The checks that need the firmware (its own attach check and the card logo reader) run here on a fetched set: `engines/crosscheck.sh DIR`.
 
 ---
 
@@ -1018,7 +1011,7 @@ What `checkSynth` checks:
 
 It also prints the facts (sections, formats used), and fails when a plugin uses a format the firmware has only for a built-in engine.
 
-`build_plugs.sh` runs it on the example, and `engines/crosscheck.sh` on the shipped engines.
+`build_plugs.sh` runs it on the example, and `engines/crosscheck.sh` on the shipped engines of the four module repositories.
 
 ### Crash marker and safe mode
 
@@ -1040,10 +1033,9 @@ You can test almost everything without a device. The tools need `unicorn` for th
 
 | Tool | What it does |
 | :--- | :--- |
-| `plug/build_plugs.sh` | Builds the shipped set and the examples and runs every check below that applies. The one command to run before a commit |
+| `plug/build_plugs.sh` | Builds the examples and runs every check below that applies. The module repositories run the same checks on the shipped plugins |
 | `plug/emu_plug.py` | The firmware's loader in Python and your insert's ARM code in Unicorn. Checks the header, CRC and descriptor, runs `init` and `process` on 128 frame blocks, prints instructions per block and an output checksum, writes a wav (`--wav`), reads a wav (`--inwav`, 16 bit stereo 44.1 kHz). `--base` picks the home (SRAM_L `0x1FFF0BD0`, FlexNVM `0x1001E000` with `--rw-base 0x20026C00`, SDRAM `0x70000000`). The checksum **must not depend on `--base`**. `--param I=V` sets a parameter after `init`, `--param-at BLOCK:I=V` sets one just before that block to test ramps and crossfades |
 | `plug/emu_synth.py` | Renders an engine plugin through `synth/synth_harness.cpp` (a fixed chord, a parameter script) and prints a checksum, the libm calls, the worst block and the manifest numbers. `--scenario 0` is the defaults, `1` has every parameter moved and ramped. Same checksum at the FlexNVM and SRAM homes |
-| `plug/synth_render_compare.sh` | For the shipped engines: renders the plugin and the firmware's own objects behind the same wrapper and requires equal checksums (bit identity with the built-in engine) |
 | `tools/validate_synth.py` | The firmware's `checkSynth`, [section 13](#13-validation-safe-mode-and-the-crash-marker) |
 | `tools/plug_index_test.cpp` | The `/Plugins/Master` scan and the header, layout and CRC checks on a folder of real `.plg` files |
 | `tools/plug_bank_test.cpp` | The FlexNVM bank on a simulated flash that loses power after any command. Prints how many engines fit at once at the shipped sizes |
@@ -1088,10 +1080,10 @@ A plugin that is correct on the Mac can still fail on the device in ways the emu
 
 These are facts from the files in this repository, not legal advice.
 
-- **The SDK files** in [`synth-open/plug/`](../synth-open/plug/) are **MIT** (`synth-open/plug/LICENSE`, Copyright (c) 2026 sbialy (tracker-ff)). That file names `plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`, `build_plugs.sh` and `README.md` as its scope. The files `synth_plug.h`, `emu_synth.py`, `synth_engines.sh` and the `examples/` folder are not named in that scope text. The two examples carry their own MIT header.
+- **The SDK files** in [`synth-open/plug/`](../synth-open/plug/) are **MIT** (`synth-open/plug/LICENSE`, Copyright (c) 2026 sbialy (tracker-ff)). That file names `plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`, `build_plugs.sh` and `README.md` as its scope. The files `synth_plug.h`, `emu_synth.py` and the `examples/` folder are not named in that scope text. The two examples carry their own MIT header.
 - **Your plugin** may use any licence that allows shipping it as a separate file (`synth-open/plug/README.md`). The firmware licence is unchanged. A `.plg` is a separate file loaded by the firmware, and the plugin's own `licence` field in the manifest records the SPDX id you choose.
 - **The repository `LICENSE`** is MIT with a Wholesale Commercial Clone Restriction. Its Part 2 names `.ptfx` Sample Editor plugins as expressly permitted to sell. It does not mention `.plg` plugins. Part 2 prohibits selling the complete firmware, a substantially unmodified derivative of it or `.ptf` firmware images. It grants no right to the Polyend trademarks.
-- **Third party code your plugin may include.** A synth plugin includes `ot/audio/synth_engine.h` and `ot/model/synth_patch.h`, which are **OpenTracker, Apache-2.0** (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `NOTICE.md` item 10, each file has a provenance line). The shipped OpenTracker engines in `ot-synths/` and the ports in `plug/fx/` are **MIT** from opentracker-synths and opentracker-fx (`licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`), with Console and Tube original (private modules, source in the private repository `poly-effects`, proprietary freeware like PHZ and PLK, see `NOTICE.md` items 13 to 13b). `synth-open/plug/fx/NOTICE.md` lists the notices that ship with each shipped insert `.plg`. Check the headers you include and the notices that come with them before you distribute a binary.
+- **Third party code your plugin may include.** A synth plugin includes `ot/audio/synth_engine.h` and `ot/model/synth_patch.h`, which are **OpenTracker, Apache-2.0** (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `NOTICE.md` item 10, each file has a provenance line). The shipped OpenTracker engine plugins (poly-engines-os) and insert ports (poly-effects-os) are **MIT** from opentracker-synths and opentracker-fx (`licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`), with Console and Tube original (private modules, source in the private repository `poly-effects`, proprietary freeware like PHZ and PLK, see `NOTICE.md` items 13 to 13b). Each module repository ships the notices of its plugins with its release files (section 18). Check the headers you include and the notices that come with them before you distribute a binary.
 - **Origin of the examples.** `tilt.c` and `saw_synth.cpp` are original code written for this guide. The filter is the textbook Chamberlin state variable filter and the band limiting is the textbook polynomial step. No third party source was copied.
 - The firmware is unofficial, noncommercial community work for the Original Tracker. It is not affiliated with or supported by Polyend.
 
@@ -1108,4 +1100,23 @@ A plugin can ship a second file for the browser editor: `<id>.wasm`, built from 
 - **Protection.** A `.wasm` file can be decompiled like a `.plg`. Ship it stripped (no name section, no DWARF, no source map), but do not treat it as secret.
 
 Build it with `emcc` (the editor pins the version) and check it with the editor's loader. The manifest fields are listed in the header of `plug_wasm.h`.
+
+---
+
+## 18. Where the Shipped Plugins Are Built
+
+This repository holds the plugin host and this SDK, but no plugin module. tracker-ff 1.2.0 ships plugins from four module repositories:
+
+| Repository | Visibility | Plugins |
+|---|---|---|
+| poly-engines-os | public | the synth engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type |
+| poly-engines | private | the synth engines PHZ and PLK (freeware binaries) |
+| poly-effects-os | public | the master inserts Dirt, Tape, Lo-Fi, BBD, Phaser |
+| poly-effects | private | the master inserts Console and Tube (freeware binaries) |
+
+[`engines/engines.json`](../engines/engines.json) keeps the identity of every shipped module (file id, name, engine numbers, version, repository), [`engines/external.lock.json`](../engines/external.lock.json) pins a release of each repository by tag, commit and the sha256 of every file, and [`engines/README.md`](../engines/README.md) shows how to fetch, check and package them.
+
+**The SDK copy.** A module repository does not point at a tracker-ff checkout. It vendors a pinned copy of the SDK files it compiles against in `sdk/files/`, at their tracker-ff paths (for an engine: the files of [`engines/sdk/headers.txt`](../engines/sdk/headers.txt) and [`engines/sdk/tools.txt`](../engines/sdk/tools.txt) plus `synth-open/plug/LICENSE`, for an insert: the `plug/` files it needs), and names the tracker-ff commit it took them from in `sdk/SOURCE`. Its build reads nothing outside its own checkout, so a clone of the module repository alone builds the published bytes. With a tracker-ff checkout next to it, `make sdk-check FW=../tracker-ff` shows any drift and `make sdk-sync FW=../tracker-ff` takes the new files. The firmware owns these files: an SDK change is made here first, then synced into the module repositories, rebuilt and (when bytes changed) given a new module version. This is chosen over pointing at a firmware checkout because the module build then cannot silently change when someone updates their firmware clone, and a published tag of a module repository rebuilds to the same bytes forever.
+
+**A plugin of your own** can use the same layout: copy `poly-effects-os` (an insert) or `poly-engines-os` (a synth engine), replace the sources and the table, keep `sdk/files/` in sync with the tracker-ff release you target. A synth engine needs numbers no other engine uses (section 15), a new shipped engine of tracker-ff gets its row in `engines/engines.json` and its `engine_list.h` entry first.
 

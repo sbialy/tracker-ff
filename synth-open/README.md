@@ -20,8 +20,8 @@ builds in only the six stock-named engines. Every custom engine is a card plugin
 engine plugins): `ju6 fm4 btype phz dtype cstype atype ttype eight hand arc pluck` (`.plg` plus a `.plgi` logo each). They
 keep their stored numbers and patch ids (JU6 7, PHZ 8, FM4 9, D-Type 10, CS-Type 11, A-Type 12, T-Type 13, 8-Type 14,
 Hand-Type 15, B-Type 16, Arc-Type 17, PLK 18), so old projects, patches and slot files open on the plugin. A part whose
-plugin is not installed shows `Missing: <name>` (`open_cold.cpp`, numbers 7 to 18). Every plugin renders bit identical to
-the built-in engine (`plug/synth_render_compare.sh`, both scenarios). Moving the seven that were still built in (PHZ D-Type
+plugin is not installed shows `Missing: <name>` (`open_cold.cpp`, numbers 7 to 18). Every plugin rendered bit identical to
+the built-in engine (the render compare, both scenarios, run before the engine sources moved to poly-engines-os). Moving the seven that were still built in (PHZ D-Type
 CS-Type A-Type T-Type 8-Type Arc-Type) frees 88,884 B: the image ends at 0xE535C instead of 0xFAEB8 (same tree, flag flipped).
 
 All twelve are in the model list from boot, installed or not. The FlexNVM bank (30 sectors of 4 KB) is a cache of the card:
@@ -56,7 +56,7 @@ chain stays in the stock build), checked over all 131 sections of the 18 engines
 | `engine_<name>.cpp` | One `EngineDef` per engine (parameter table, sections, default macros, value text). `engine_acd.cpp` also holds the enum name tables shared by all engines |
 | `engine_chip.cpp` | CHIP: also the `ISynthEngine` adapter that hosts `core/synth/engines/ChiptuneSynthVoice.cpp` |
 | `ot/` | Copies from OpenTracker (commit 927b1516385e, Apache-2.0): `audio/engines/{acd,fat,vap,wtfm,perc}.{h,cpp}`, `audio/dsp.h`, `audio/synth_engine.h`, `audio/audio_tables.h`, `audio/{governor,cpu_meter}.{h,cpp}`, `model/synth_patch.h`, `fastrun.h`, plus the 3.x headers the module engines need. Unmodified apart from a provenance line at the top (Apache section 4b) |
-| `ot-synths/` | The OpenTracker 3.x module engines from opentracker-synths (MIT), unmodified apart from a provenance line |
+| (module repositories) | The plugin engines and inserts are not in this repository: poly-engines-os and poly-effects-os (public), poly-engines and poly-effects (private). `engines/README.md` |
 | `ff_dirt.h` `ff_dirt.cpp` `ff_dirt_ctl.cpp` | The live Dirt master bus insert (FF_DIRT, see "Dirt master insert"): per block DSP at `-O2 -ffp-contract=off`, the preset table, coefficients and the `AudioEffectDirt` audio object at `-Os` |
 | `stub_fmt.cpp` | `fmt::v9::vformat` replacement so the 37 KB `fmt/format.cc` is not linked |
 | `tools/host_smoke_test.cpp` | Host (Mac) smoke test of the shim, not firmware. It plays notes on every engine and checks finite, non-silent output, patch round trips, the id tables, the voice pool, the governor, the idle skip and the synth automation (codec, math, hook, gates, Patch FX, identity, backup). Build line in the file header |
@@ -138,11 +138,11 @@ Emulated cost per voice per block, `-Os` / `-O2`: default patch 14.4 / 12.7 %, h
 
 PHZ is the Polyend Synth's dual phase distortion engine (Casio CZ style), which exists only in Polyend's closed code. Ours is written from the public manual (SYN2 p.76 to 80) and nothing else. No Polyend binary or library was opened. Its voice skeleton follows OpenTracker's VAP engine (Apache-2.0).
 
-Its source (and the source of PLK, the Karplus-Strong engine) moved to the private repository `poly-engines`. This repository keeps the public identity of both (stored numbers 8 and 18, type ids, names in `engine_list.h` and `engines/engines.json`) and loads the built `phz.plg` and `pluck.plg` from the card like every other engine plugin. They are no longer built here: `SYNTH_ENGINES` does not accept `PHZ` or `PLK`, and `engines/build_set.py verify-external DIR` checks the files of the private repository against the numbers kept here. The CPU figures below stay as measured. The tracker-ff releases up to 1.1.0 contain the PHZ source.
+Its source (and the source of PLK, the Karplus-Strong engine) moved to the private repository `poly-engines`. This repository keeps the public identity of both (stored numbers 8 and 18, type ids, names in `engine_list.h` and `engines/engines.json`) and loads the built `phz.plg` and `pluck.plg` from the card like every other engine plugin. They are no longer built here: `SYNTH_ENGINES` does not accept `PHZ` or `PLK`, and `engines/check_modules.py verify-external DIR` checks the files of the private repository against the numbers kept here. The CPU figures below stay as measured. The tracker-ff releases up to 1.1.0 contain the PHZ source.
 
 ### JU6 and the other OpenTracker 3.x engines
 
-`ot-synths/<module>/<module>.{cpp,h}` are opentracker-synths files (`eb150a5f741b`, MIT) unmodified apart from a provenance line. They need the 3.x `audio/synth_engine.h` (adds `slotPost`, `SynthHeld`, `cutoffOct`), `audio/bbd_chorus.h` and the DSP headers `ot/audio/{chip,fm,va}_dsp.h` from OpenTracker `v3_fixes` (Apache-2.0, provenance lines added). Each engine has one `engine_<module>.cpp` with the `EngineDef` written from the module's descriptor (ranges, defaults, labels, value formats, enum names, sections, six default macros and curves by value format).
+Their source is in the public repository poly-engines-os since 1.2.0 (`src/synth-open/ot-synths/`, `engine_<module>.cpp`, `plug/synth/<module>_plug.cpp`), the text below describes it. `ot-synths/<module>/<module>.{cpp,h}` are opentracker-synths files (`eb150a5f741b`, MIT) unmodified apart from a provenance line. They need the 3.x `audio/synth_engine.h` (adds `slotPost`, `SynthHeld`, `cutoffOct`), `audio/bbd_chorus.h` and the DSP headers `ot/audio/{chip,fm,va}_dsp.h` from OpenTracker `v3_fixes` (Apache-2.0, provenance lines added). Each engine has one `engine_<module>.cpp` with the `EngineDef` written from the module's descriptor (ranges, defaults, labels, value formats, enum names, sections, six default macros and curves by value format).
 
 JU6 has a slot effect (chorus). With an engine that sets `EngineDef::slotFx` the instrument renders its voices into a private bus, runs `slotPost(slot, ...)` on it, adds the result to the mix and keeps rendering while the effect reports a tail. That path is compiled only when JU6 is picked (`OPEN_SLOT_FX`, about 0.4 KB). `SynthHeld` is never filled (only A-Type reads it) and `cutoffOct` stays 0 (the Performance filter offset, JU6 does not read it).
 
@@ -525,26 +525,21 @@ E=-EACD_FAT_VAP_WTFM_PERC_CHIP
 make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTOF SYNTH_TAG=-fpc SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
   SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
   SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off" BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
-# the engine plugin set of the release: its own standalone build, no firmware build needed (engines/README.md, flavour autof is the default,
-# needs python3 with unicorn in PY for the render checks), then the firmware side checks (render compare, checkSynth, logos)
-make -C engines TOOLCHAIN=... PY=/tmp/phzvenv/bin/python OUT=OUT/engines
-TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/crosscheck.sh OUT/engines
-# the seven inserts and the examples, FW_OBJ is the obj/synth-open dir of the image build above
-TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT/inserts core/build-MK66-ORIGINAL-SYNTHOPEN-fpc$E-trim/obj/synth-open
+# every plugin of the release: the four module repositories at the tags pinned in engines/external.lock.json, rebuilt from local
+# checkouts (or python3 -I engines/external.py fetch OUT/modules for the published files), checked against the lock, checkSynth, logos
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/rebuild_pinned.sh OUT autof
 ```
 
 Against the plain AUTO build the default patch differs by at most -103 dBFS on every engine except A-Type (-80 dBFS), and the all-parameters-max scenarios of Arc-Type, WTFM and Hand-Type differ far more (Arc-Type -7 dBFS, WTFM -44, Hand-Type -69), measured on the 12.3.rel1 bench dumps. The user listened to both and chose AUTOF for all engines. Its CPU saving is an emulated figure, not device calibrated.
 
-The release package (zip) is made from the image and a card layout (`Plugins/Synth/` with the twelve `.plg` and `.plgi`, `Plugins/Master/` with the seven inserts, `Effects/` with the `.ptfx` files): `synth-open/tools/package_release.sh build/PolyendTracker_AUTOF_1.2.0.ptf OUT --zip --card CARD_DIR`.
+The release package (zip) is made from the image and the pinned modules (`Plugins/Synth/` with the twelve `.plg` and `.plgi`, `Plugins/Master/` with the seven inserts, `Effects/` with the `.ptfx` files, `licenses/plugins/` with the notices of the module repositories): `synth-open/tools/package_release.sh build/PolyendTracker_AUTOF_1.2.0.ptf OUT --zip --modules OUT/modules --effects PTFX_DIR` (`--card CARD_DIR` takes a ready card layout instead).
 
 The plain **AUTO** build stays buildable as an unpublished fallback: the same two lines without the `-ffp-contract=off` flags (engine DSP `-O2`, FM4 and B-Type `-O3`, the OpenTracker modules fused as the compiler defaults). It is not part of the release package.
 
 ```
 make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTO SYNTH_TAG=-pa SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
   BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
-make -C engines FLAVOUR=fused TOOLCHAIN=... PY=/tmp/phzvenv/bin/python OUT=OUT/engines
-TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/crosscheck.sh OUT/engines
-TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT/inserts core/build-MK66-ORIGINAL-SYNTHOPEN-pa$E-trim/obj/synth-open
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/rebuild_pinned.sh OUT fused
 ```
 
 - `package-release` only packages. The default engine set is the 4 engine one, so build with the explicit 16 engine list first. `synth-open/tools/package_release.sh build/<image>.ptf` does the same packaging for an existing image.
@@ -557,4 +552,4 @@ TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT/inse
 - Unofficial, noncommercial community work. Not affiliated with, endorsed by or supported by Polyend.
 - Original Tracker (MK66) only. The device numbers above marked as measured come from an earlier pre-release build run on one original Tracker.
 - This build links neither `libPolySynth.a` nor `libPolyDSP.a`. Nothing here is derived from them.
-- Licences: the repository `LICENSE` (MIT with the Wholesale Commercial Clone Restriction, since upstream's 9cc7aae) covers the tracker-ce code and this shim. It is free to share with `LICENSE` and `NOTICE.md`, and not to sell. `ot/` is OpenTracker under Apache-2.0 (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`), `ot-synths/` is opentracker-synths under MIT (`licenses/LICENSE-OpenTracker-synths-MIT.txt`) and everything is listed in `NOTICE.md`. "Polyend" and "Polyend Tracker" are Polyend's names, used here only to say which device this runs on and because the original's bootloader wants the file name prefix. The release package from `make package-release` has every license text: the `.ptf`, `LICENSE`, `NOTICE.md` and `licenses/`. No factory patches and no `.ptfx` are shipped.
+- Licences: the repository `LICENSE` (MIT with the Wholesale Commercial Clone Restriction, since upstream's 9cc7aae) covers the tracker-ce code and this shim. It is free to share with `LICENSE` and `NOTICE.md`, and not to sell. `ot/` is OpenTracker under Apache-2.0 (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`), the opentracker-synths engines (MIT, `licenses/LICENSE-OpenTracker-synths-MIT.txt`) are plugins built in poly-engines-os and everything is listed in `NOTICE.md`. "Polyend" and "Polyend Tracker" are Polyend's names, used here only to say which device this runs on and because the original's bootloader wants the file name prefix. The release package from `make package-release` has every license text: the `.ptf`, `LICENSE`, `NOTICE.md` and `licenses/`. No factory patches and no `.ptfx` are shipped.
