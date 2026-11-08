@@ -52,7 +52,7 @@ ifeq ($(SYNTH_OPEN),1)
 ifneq ($(PLATFORM),MK66)
 $(error SYNTH_OPEN=1 is only valid for PLATFORM=MK66)
 endif
-# Shared shim and OpenTracker core files always, engine sources (engine_<name>.cpp, ot/audio/engines, ot-synths) only
+# Shared shim and OpenTracker core files always, engine sources (engine_<name>.cpp, ot/audio/engines) only
 # for the picked engines (synth-open/engines.mk)
 SYNTH_OPEN_SRCS := $(filter-out $(SYNTH_OPEN_DIR)/engine_%.cpp,$(wildcard $(SYNTH_OPEN_DIR)/*.cpp)) $(wildcard $(SYNTH_OPEN_DIR)/ot/audio/*.cpp) $(addprefix $(SYNTH_OPEN_DIR)/,$(SYNTH_ENGINE_SRCS))
 SYNTH_OPEN_OBJS := $(patsubst $(SYNTH_OPEN_DIR)/%.cpp,$(OBJ_DIR)/synth-open/%.o,$(SYNTH_OPEN_SRCS))
@@ -71,7 +71,7 @@ SYNTH_OPT_SHIM ?=
 SYNTH_OPT_COLD ?=
 SYNTH_OPT_FAT ?= $(SYNTH_OPT_ENGINES)
 SYNTH_GUI_OBJS := $(addprefix $(OBJ_DIR)/,interface/instrumentEditor/SynthEditor.o interface/instrumentEditor/SynthPatchEditor.o interface/instrumentEditor/SynthMacros.o interface/instrumentEditor/SynthAutomation.o synth/Synth.o synth/FileSystemAdapter.o synth/MidiAdapter.o synth/registry.o)
-$(filter $(OBJ_DIR)/synth-open/ot/% $(OBJ_DIR)/synth-open/ot-synths/% $(OBJ_DIR)/synth-open/engine_chip.o,$(SYNTH_OPEN_OBJS)): EXTRA_OPT := $(SYNTH_OPT_ENGINES)
+$(filter $(OBJ_DIR)/synth-open/ot/% $(OBJ_DIR)/synth-open/engine_chip.o,$(SYNTH_OPEN_OBJS)): EXTRA_OPT := $(SYNTH_OPT_ENGINES)
 # CHIP (the voice and its glue) has its own knob, default the engines' flag. -O2 makes a voice about 12 % cheaper (12.7 % of a
 # block instead of 14.4 %, default patch, synth-open/tools/phz_cycles/run_bench.sh -O2 CHIP) for +3.6 KB in the image
 SYNTH_OPT_CHIP ?= $(SYNTH_OPT_ENGINES)
@@ -89,12 +89,7 @@ $(OBJ_DIR)/synth-open/plug_host.o $(OBJ_DIR)/synth-open/plug_bench.o $(OBJ_DIR)/
 $(OBJ_DIR)/synth-open/plug_insert.o $(OBJ_DIR)/synth-open/plug_dirt_inimage.o: EXTRA_OPT := -O2 -ffp-contract=off
 $(OBJ_DIR)/synth-open/open_cold.o $(OBJ_DIR)/synth-open/open_patchio.o $(OBJ_DIR)/synth-open/stub_fmt.o: EXTRA_OPT := $(SYNTH_OPT_COLD)
 $(OBJ_DIR)/synth-open/ot/audio/engines/fat.o: EXTRA_OPT := $(SYNTH_OPT_FAT)
-# FM4 and B-Type: -O3 unrolls their operator and voice loops, FM4 24.4 to 16.8 %, B-Type 20.0 to 16.2 % of a block at 4 voices
-# (ref cpu-optimisation-plan item 3), output equal to -O2. The plugins use the same flags (plug/synth_engines.sh).
-SYNTH_OPT_FM4 ?= -O3
-SYNTH_OPT_BTYPE ?= -O3
-$(OBJ_DIR)/synth-open/ot-synths/fm4/fm4.o: EXTRA_OPT := $(SYNTH_OPT_FM4)
-$(OBJ_DIR)/synth-open/ot-synths/btype/btype.o: EXTRA_OPT := $(SYNTH_OPT_BTYPE)
+# FM4 and B-Type (-O3) are plugins built in poly-engines-os, SYNTH_OPT_FM4 and SYNTH_OPT_BTYPE are accepted and unused.
 # Our code under synth-open/ builds warning free with -Wall -Wextra, so the warning classes that found the real bugs in the stock
 # code (wrapped unsigned clamps, a missing return, an uninitialised read) are errors there and only there (not core/, not the platform).
 # make does not track flags: after changing this delete the core build dir of the SYNTH_TAG and platforms/mk66/build-trim.

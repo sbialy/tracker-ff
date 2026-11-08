@@ -51,22 +51,27 @@ jobs:
       - name: Check version configuration
         run: make version
 
-      # The private modules (PHZ, PLK, Console, Tube) live in the private repositories poly-engines and poly-effects. With a secret
-      # PRIVATE_RELEASES_TOKEN (a token that can read their releases) their published files are fetched at the tags pinned in
-      # engines/external.lock.json and checked against the public identity here. Without it (forks, pull requests from forks) both
-      # steps skip and the build goes on.
-      - name: Fetch the pinned private modules
+      # Every plugin module comes from a module repository pinned in engines/external.lock.json: poly-engines-os and poly-effects-os
+      # (public, fetched over https without a token) and poly-engines and poly-effects (private: PHZ, PLK, Console, Tube). With a secret
+      # PRIVATE_RELEASES_TOKEN (a token that can read the private releases) the private sets are fetched and checked too. Without it
+      # (forks, pull requests from forks) only the public sets are checked. A public set that cannot be fetched (its release is not
+      # published yet) skips the check with a note.
+      - name: Fetch the pinned plugin modules
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_RELEASES_TOKEN }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "PRIVATE_RELEASES_TOKEN is not set, the private modules are not checked"
-          else
-            python3 -I engines/external.py fetch "$RUNNER_TEMP/external"
+          vis=public
+          [ -n "$GH_TOKEN" ] && vis=all
+          args=""
+          [ "$vis" = public ] && args="--visibility public"
+          if python3 -I engines/external.py fetch "$RUNNER_TEMP/external" $args; then
             echo "EXTERNAL_DIR=$RUNNER_TEMP/external" >> "$GITHUB_ENV"
+            echo "EXTERNAL_VISIBILITY=$vis" >> "$GITHUB_ENV"
+          else
+            echo "the pinned module releases are not available, the modules are not checked"
           fi
 
-      - name: Check the private modules against the public identity (verify-external)
+      - name: Check the plugin modules against the public identity (verify-external)
         run: engines/ci_external.sh
 
       - name: Build Original Tracker, Tracker+, and Tracker Mini firmware

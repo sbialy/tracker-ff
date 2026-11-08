@@ -2,8 +2,8 @@
 //
 // A .plg is Thumb code that only a Cortex-M can run. The host UI build still has to show a plugin that is loaded: its name, its
 // parameters and their values. The plugin sources are plain C/C++ with one entry point each (plug_entry), so the same sources are
-// compiled natively into this binary (Makefile: synth-open/plug/fx/*.c and the private Console and Tube sources with plug_entry renamed, Dirt through the firmware's own
-// in-image copy plug_dirt_inimage.cpp) and plug::load() (overlay of plug_host.cpp, gen_overlay.py) asks uishot_twin() for the
+// compiled natively into this binary (Makefile: the insert sources of poly-effects-os and poly-effects at their pinned tags with plug_entry
+// renamed, Dirt through host_dirt.cpp with the PLUG_IN_IMAGE entry name) and plug::load() (overlay of plug_host.cpp, gen_overlay.py) asks uishot_twin() for the
 // descriptor instead of jumping into the file's image. The file itself is still read, CRC checked and rebased by the real loader:
 // a corrupt or foreign .plg fails as it does on the device. Audio is never run here.
 #include "plug/plug_abi.h"

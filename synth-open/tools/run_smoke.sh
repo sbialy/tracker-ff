@@ -10,7 +10,7 @@
 # tiny/optional.h only knows __x86_64__ and __arm__, so the native build adds -DTINY_OPTIONAL_x64 (its sentinel 0xffff8000...-1 is also
 # a non-canonical address on arm64 user space), no vendor file is touched.
 # The smoke test never loads a .plg. The synth plugins have their own acceptance test, the firmware's real checkSynth in Unicorn
-# (every public engine must PASS, also run by engines/crosscheck.sh):
+# (every engine plugin of the four module repositories must PASS, also run by engines/crosscheck.sh):
 #   TOOLCHAIN=.../agt/10.3/bin/arm-none-eabi- /tmp/phzvenv/bin/python -I synth-open/tools/validate_synth.py DIR_WITH_PLGS
 set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)

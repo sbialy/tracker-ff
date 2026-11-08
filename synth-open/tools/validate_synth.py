@@ -7,7 +7,7 @@ Cuts checkSynth (and in, fn, kLayout, kSynthSectionMax) out of synth-open/plug_s
 MK66 with the agt toolchain into a flat binary (chk.bin, kept next to the outputs with --keep DIR), loads every .plg the way the
 firmware's attach does (emu_synth.load: rebased for its FlexNVM home, rw in SRAM, entry, init, query PLUG_EXT_SYNTH) and runs
 the real checkSynth in Unicorn on that extension. An engine it rejects is listed in the picker but shows Missing when picked
-(attach error 4), and no other test sees it: emu_synth.py and synth_render_compare.sh never call checkSynth.
+(attach error 4), and no other test sees it: emu_synth.py and the module repositories' render checks never call checkSynth.
 
 It also prints the facts the check is about (sections, formats), and fails when a plugin uses a format the firmware only has
 for a built-in engine (PLUG_FMT_COUNT and up). Exit code 0 only when every synth plugin passes. Needs unicorn (pip).

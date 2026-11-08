@@ -1,13 +1,19 @@
 #!/usr/bin/env python3 -I
 """Host-only overlay of the firmware sources and headers that clang (macOS, 64 bit, Mach-O) cannot build as they are.
 
-Usage: gen_overlay.py ROOT OUTDIR. Writes OUTDIR/inc/<header> and OUTDIR/src/<source> (LF, edited copies). Nothing under
+Usage: gen_overlay.py ROOT OUTDIR [EXTDIR]. EXTDIR holds the module sources ui_shot.sh fetched from the pinned module repositories
+(fx_dirt_plug.cpp of poly-effects-os). Writes OUTDIR/inc/<header> and OUTDIR/src/<source> (LF, edited copies). Nothing under
 core/ or synth-open/ is touched: the Makefile compiles the copies instead of the originals and puts OUTDIR/inc first.
 Every edit is listed here with its reason, a source that changes upstream and no longer matches an edit fails loudly.
 """
 import os, re, sys
 
 root, out = sys.argv[1], sys.argv[2]
+ext = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(out), 'external')
+# module sources that are not in this repository: read from EXTDIR (engines/external.py source), path in the SOURCES table -> file name there
+EXTERNAL = {'synth-open/plug/fx_dirt_plug.cpp': 'fx_dirt_plug.cpp'}
+DIRT_STUB = ('// stub: fx_dirt_plug.cpp of poly-effects-os was not available (ui_shot.sh fetches it), Dirt fails to load on the pages\n'
+             '#include "plug_abi.h"\nextern "C" const plug_desc* plug_entry_dirt(const plug_host*, uint32_t) { return nullptr; }\n')
 SECTION = (re.compile(r'section\([^)]*\)'), 'unused')   # GCC/ELF section names are not valid Mach-O segment,section pairs
 
 
@@ -21,6 +27,12 @@ def put(path, text):
 
 
 def rd(p):
+    if p in EXTERNAL:
+        f = os.path.join(ext, EXTERNAL[p])
+        if not os.path.exists(f):
+            return DIRT_STUB
+        with open(f, encoding='latin-1', newline='') as fh:
+            return fh.read().replace('\r\n', '\n')
     with open(os.path.join(root, p), encoding='latin-1', newline='') as f:
         return f.read().replace('\r\n', '\n')
 

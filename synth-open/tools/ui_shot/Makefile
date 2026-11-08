@@ -16,7 +16,7 @@ SYNTH_OPEN := 1
 -include $(ROOT)/version.mk
 
 # the overlay copies must exist before make resolves its pattern rules, so generate at parse time (idempotent, rewrites changed files only)
-_gen := $(shell python3 -I $(HERE)/gen_overlay.py $(ROOT) $(GEN) 2>&1)
+_gen := $(shell python3 -I $(HERE)/gen_overlay.py $(ROOT) $(GEN) $(EXT) 2>&1)
 $(if $(_gen),$(error gen_overlay: $(_gen)))
 
 # overlay sources (gen_shim.sh) replace their originals
@@ -29,18 +29,18 @@ CORE_CPP  := $(filter-out $(foreach e,$(filter-out $(SYNTH_ENGINES_SEL),$(SYNTH_
 CORE_C    := $(shell cd $(CORE) && find libs -name '*.c')
 SO_CPP    := $(filter-out $(SO_OVERLAY),$(filter-out engine_%.cpp,$(notdir $(wildcard $(SO)/*.cpp)))) $(addprefix ot/audio/,$(notdir $(wildcard $(SO)/ot/audio/*.cpp))) $(SYNTH_ENGINE_SRCS)
 HOST_CPP  := $(wildcard $(HERE)/*.cpp)
-PLUG_FX_C := ot_tape_plug ot_lofi_plug ot_bbd_plug ot_phaser_plug
-# Console and Tube are private (poly-effects). ui_shot.sh puts their source at the pinned tag into $(EXT) (engines/external.py), without it
+# Every master insert source comes from its module repository: Tape, Lo-Fi, BBD, Phaser and the Dirt wrapper from poly-effects-os,
+# Console and Tube from poly-effects (private). ui_shot.sh puts their source at the pinned tag into $(EXT) (engines/external.py), without it
 # it writes a stub with the same entry point and the two inserts show as failed to load. Standalone, the rule below writes the stub
 EXT       ?= $(OUT)/external
-PLUG_EXT_C := ff_console_plug ff_tube_plug
+PLUG_EXT_C := ot_tape_plug ot_lofi_plug ot_bbd_plug ot_phaser_plug ff_console_plug ff_tube_plug
 EXCLUDE   := $(shell cat $(HERE)/exclude.txt 2>/dev/null | grep -v '^\#')
 
 OBJS := $(patsubst %.cpp,$(OBJ)/core/%.o,$(filter-out $(EXCLUDE),$(CORE_CPP))) \
         $(patsubst %.c,$(OBJ)/core/%.o,$(CORE_C)) \
         $(patsubst %.cpp,$(OBJ)/so/%.o,$(filter-out $(EXCLUDE),$(SO_CPP))) \
         $(patsubst %,$(OBJ)/gen/%.o,$(OVERLAY_SRCS)) \
-        $(patsubst %,$(OBJ)/plugfx/%.o,$(PLUG_FX_C) $(PLUG_EXT_C)) \
+        $(patsubst %,$(OBJ)/plugfx/%.o,$(PLUG_EXT_C)) \
         $(patsubst $(HERE)/%.cpp,$(OBJ)/host/%.o,$(HOST_CPP)) \
         $(OBJ)/plat/Keys.o
 
@@ -88,9 +88,6 @@ $(OBJ)/gen/%.o: $(GEN)/src/% $(GEN)/.stamp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -I$(CORE)/interface/sampleRecorder -MMD -MP -c $< -o $@
 # the master plugins' own sources, natively, with the entry point renamed per file (host_twins.cpp)
-$(OBJ)/plugfx/%.o: $(SO)/plug/fx/%.c $(GEN)/.stamp
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Dplug_entry=plug_entry_$* -MMD -MP -c $< -o $@
 $(OBJ)/plugfx/%.o: $(EXT)/%.c $(GEN)/.stamp
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Dplug_entry=plug_entry_$* -MMD -MP -c $< -o $@
@@ -98,7 +95,7 @@ $(OBJ)/plugfx/%.o: $(EXT)/%.c $(GEN)/.stamp
 .SECONDARY: $(patsubst %,$(EXT)/%.c,$(PLUG_EXT_C))
 $(EXT)/%.c:
 	@mkdir -p $(dir $@)
-	printf '/* stub: the private source of %s was not available */\nconst void *plug_entry(const void *host, unsigned abi) { (void)host; (void)abi; return 0; }\n' $* >$@
+	printf '/* stub: the module source of %s was not available */\nconst void *plug_entry(const void *host, unsigned abi) { (void)host; (void)abi; return 0; }\n' $* >$@
 # the firmware's own key queue (USB test console), with host stand-ins for the Teensy core headers
 $(OBJ)/plat/Keys.o: $(ROOT)/platforms/mk66/3rdparty/Buttons/Keys.cpp $(GEN)/.stamp
 	@mkdir -p $(dir $@)

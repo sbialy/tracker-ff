@@ -8,10 +8,11 @@
 # Plugins on the staged SD card: $PLG_DIR (default: the newest of ~/prj/poly/build/cpu-adopt, plugin-synth) with *.plg and *.plgi.
 # Master insert plugins run from native twins of their sources (host_twins.cpp), synth engine plugins are listed and show their card
 # logo but cannot install (the host has no FlexNVM bank): their part says "Missing: <name>".
-# The private modules (PHZ and PLK engines, Console and Tube inserts) come from the pins in engines/external.lock.json: their .plg and
-# .plgi files from $EXTERNAL_DIR (a directory with the published files, checked against the pins) or else fetched from the local build
-# directories of the private repositories, the sources of the Console and Tube twins from the pinned tag of a local checkout of
-# poly-effects ($EXTERNAL_SRC_EFFECTS, default ~/prj/poly-effects). Without them the pages still render and show those modules as missing.
+# The modules of the pinned module repositories (engines/external.lock.json): PHZ, PLK, Console and Tube .plg/.plgi from $EXTERNAL_DIR (a
+# directory with the published files, checked against the pins) or else from the local build directories of the private repositories.
+# The sources of the insert twins at the pinned tags of local checkouts: Tape, Lo-Fi, BBD, Phaser and the Dirt wrapper from
+# poly-effects-os ($EXTERNAL_SRC_EFFECTS_OS, default ~/prj/poly-effects-os), Console and Tube from poly-effects ($EXTERNAL_SRC_EFFECTS,
+# default ~/prj/poly-effects). Without them the pages still render and show those modules as missing.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -19,7 +20,7 @@ BUILD="$ROOT/build/ui-shot"
 OUT_DIR="${OUT_DIR:-$HOME/prj/poly/build/ui-shot}"
 BIN="$BUILD/ui_shot"
 EXTERNAL="$ROOT/engines/external.py"
-EXT_SRC="$BUILD/external"      # Console and Tube source at the pinned tag (or stubs), compiled by the Makefile
+EXT_SRC="$BUILD/external"      # the insert twin sources at the pinned tags (or stubs), compiled by the Makefile
 EXT_PLG="${EXTERNAL_DIR:-}"    # the published .plg and .plgi of PHZ, PLK, Console and Tube
 
 # page[:state]  ->  "setup commands"   (a ';' list for ui_shot, see ui_shot_main.cpp). Every entry ends with the screen shot.
@@ -88,6 +89,10 @@ ALL_PAGES="pattern master master:inserts song config performance sample-play sam
 # with a note, the pages then show those modules as missing
 fetch_private() {
     mkdir -p "$EXT_SRC"
+    if ! python3 -I "$EXTERNAL" source effects-os "$EXT_SRC" plug/fx/ot_tape_plug.c plug/fx/ot_lofi_plug.c plug/fx/ot_bbd_plug.c plug/fx/ot_phaser_plug.c plug/fx_dirt_plug.cpp; then
+        echo "ui_shot.sh: no poly-effects-os checkout, Tape, Lo-Fi, BBD, Phaser and Dirt will fail to load on the pages" >&2
+        rm -f "$EXT_SRC/fx_dirt_plug.cpp"   # gen_overlay.py writes the Dirt stub, the Makefile the others
+    fi
     if ! python3 -I "$EXTERNAL" source effects "$EXT_SRC" ff_console_plug.c ff_tube_plug.c; then
         echo "ui_shot.sh: no private source for the Console and Tube twins, they will fail to load on the pages" >&2
         for f in ff_console_plug ff_tube_plug; do   # a stub with the same entry point, rewritten only when it changes (make tracks the timestamp)

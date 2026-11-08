@@ -1,5 +1,5 @@
 // Spike bench (FEATURE_PLUG_BENCH): does DSP code loaded from the SD card run fast enough for the audio block, and from which
-// memory? At boot, when /plugbench.plg exists, the same plugin (the Dirt master insert, synth-open/plug/fx_dirt_plug.cpp) runs
+// memory? At boot, when /plugbench.plg exists, the same plugin (the Dirt master insert, src/synth-open/plug/fx_dirt_plug.cpp of poly-effects-os) runs
 //   F  in-image copy of the same source, from flash (LMEM code cache + FMC cache)        = the reference
 //   L  loaded into the SRAM_L slot (0x1FFFxxxx, code bus, zero wait, not cached)
 //   U  loaded into the heap (SRAM_U, 0x2000xxxx, system bus)

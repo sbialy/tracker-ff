@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
 # Package a tracker-ff (synth-open) firmware image with the license texts that must travel with it.
-#   synth-open/tools/package_release.sh <image.ptf> [out_dir] [--zip] [--card CARD_DIR]
+#   synth-open/tools/package_release.sh <image.ptf> [out_dir] [--zip] [--card CARD_DIR | --modules MODULES_DIR [--effects PTFX_DIR]]
 # Makes <out_dir>/<image name without .ptf>/ (default out_dir: build/release) with
 #   the .ptf, LICENSE, NOTICE.md, README-RELEASE.txt, SHA256SUMS and licenses/ (one text per bundled third-party component).
 # Texts that exist only as source file headers (FastCRC, Polyverb, FatFs, PJRC Teensy core and audio library) are copied out
 # of those headers verbatim (the leading comment block of the file). Never includes factory patches.
 # --card CARD_DIR copies the card files of a PLUG_HOST release, laid out as on the SD card (Plugins/Synth/*.plg *.plgi,
 # Plugins/Master/*.plg, optional Effects/*.ptfx), into the package next to the .ptf (the 1.2.0 release layout).
+# --modules MODULES_DIR does the same from the pinned plugin modules of the four module repositories (python3 -I engines/external.py
+# fetch MODULES_DIR): it checks them against engines/external.lock.json and engines/engines.json first, lays the engines of
+# engines.json out in Plugins/Synth (.plg + .plgi) and the inserts in Plugins/Master, and copies the notice files of every module
+# repository (MODULES_DIR/<set>/: NOTICE.md, LICENSE.md of the freeware modules, licence texts) to licenses/plugins/<repository>/.
+# --effects PTFX_DIR adds the .ptfx of that folder as Effects/.
 # With --zip the folder is also zipped next to itself (<name>.zip, needs zip).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ptf=""; out="$root/build/release"; zip=0; card=""
+ptf=""; out="$root/build/release"; zip=0; card=""; modules=""; effects=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --zip) zip=1 ;;
     --card) shift; card="${1:?--card needs a directory}"; [ -d "$card" ] || { echo "no such card dir: $card" >&2; exit 2; } ;;
+    --modules) shift; modules="${1:?--modules needs a directory}"; [ -d "$modules" ] || { echo "no such modules dir: $modules" >&2; exit 2; } ;;
+    --effects) shift; effects="${1:?--effects needs a directory}"; [ -d "$effects" ] || { echo "no such effects dir: $effects" >&2; exit 2; } ;;
     *) if [ -z "$ptf" ]; then ptf="$1"; else out="$1"; fi ;;
   esac
   shift
@@ -29,6 +36,32 @@ rm -rf "$dest"
 mkdir -p "$dest/licenses"
 
 cp "$ptf" "$dest/"
+if [ -n "$modules" ]; then
+  [ -z "$card" ] || { echo "--card and --modules exclude each other" >&2; exit 2; }
+  python3 -I "$root/engines/external.py" check "$modules" >&2 || { echo "the modules in $modules do not match engines/external.lock.json" >&2; exit 1; }
+  python3 -I "$root/engines/check_modules.py" verify-external "$modules" --host-abi "$root/synth-open/plug/plug_abi.h" >&2 || exit 1
+  card="$(mktemp -d)"; trap 'rm -rf "$card"' EXIT
+  mkdir -p "$card/Plugins/Synth" "$card/Plugins/Master"
+  python3 - "$root/engines/engines.json" "$modules" "$card" <<'PY'
+import json, os, shutil, sys
+t = json.load(open(sys.argv[1]))
+for e in t["engines"]:
+    for x in (".plg", ".plgi"):
+        shutil.copyfile(os.path.join(sys.argv[2], e["id"] + x), os.path.join(sys.argv[3], "Plugins", "Synth", e["id"] + x))
+for e in t["inserts"]:
+    shutil.copyfile(os.path.join(sys.argv[2], e["id"] + ".plg"), os.path.join(sys.argv[3], "Plugins", "Master", e["id"] + ".plg"))
+PY
+  [ -z "$effects" ] || { mkdir -p "$card/Effects"; cp "$effects"/*.ptfx "$card/Effects/"; }
+  python3 - "$root/engines/external.lock.json" "$root/engines/engines.json" "$modules" "$dest/licenses/plugins" <<'PY'
+import json, os, shutil, sys
+sets = json.load(open(sys.argv[1]))["sets"]
+for name, s in sets.items():
+    d = os.path.join(sys.argv[4], s["repo"].split("/")[-1])
+    os.makedirs(d, exist_ok=True)
+    for f in s.get("notice_files", {}):
+        shutil.copyfile(os.path.join(sys.argv[3], name, f), os.path.join(d, f))
+PY
+fi
 if [ -n "$card" ]; then
   for d in Plugins/Synth Plugins/Master; do
     ls "$card/$d"/*.plg > /dev/null 2>&1 || { echo "no .plg in $card/$d" >&2; exit 1; }
@@ -78,6 +111,9 @@ header platforms/mk66/3rdparty/Audio/input_i2s.h            LICENSE-PJRC-AudioLi
 
 # Where to find the source of this build
 rev="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+plugnotes=""
+[ -z "$modules" ] || plugnotes="licenses/plugins/<repository>/   the notices and licences of the plugins, per module repository (PHZ, PLK, Console and Tube are freeware: LICENSE.md there)
+"
 if [ -n "$card" ]; then
 cat > "$dest/README-RELEASE.txt" <<EOF
 tracker-ff  ($name)
@@ -88,7 +124,7 @@ Built from commit $rev of https://github.com/sbialy/tracker-ff (fork of https://
 LICENSE       the repository license (MIT with the Wholesale Commercial Clone Restriction): free to share, not to sell
 NOTICE.md     third-party notices and attributions
 licenses/     the full license text of every bundled third-party component (OpenTracker Apache-2.0, opentracker-synths MIT, opentracker-fx MIT, ...)
-
+${plugnotes}
 This image links neither libPolySynth.a nor libPolyDSP.a. Factory patches are not part of this package.
 Copy the .ptf to /Firmware on the SD card (Config > Firmware, the file name must stay as it is) and keep only one .ptf there.
 Plugins/Synth/ goes to /Plugins/Synth/ and Plugins/Master/ goes to /Plugins/Master/ on the card. Without the synth plugins the projects that use the twelve plugin engines show Missing on those parts.

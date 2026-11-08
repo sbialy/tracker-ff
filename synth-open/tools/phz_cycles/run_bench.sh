@@ -3,7 +3,8 @@
 # in a Unicorn (QEMU) emulator and turns the executed instructions into an estimated cycle count per 128 frame block.
 #   synth-open/tools/phz_cycles/run_bench.sh [OPT] [ENGINE]   OPT: fw (default: the firmware's flags per engine, -O2, FM4 and
 #   B-Type -O3), or one flag set for the engine, e.g. -Os / -O2
-#   ENGINE: any engine of synth-open/engines.mk (default ACD, bench_engine.cpp: 4 voices as the shim renders them,
+#   ENGINE: any built-in engine of synth-open/engines.mk, ACD FAT VAP WTFM PERC CHIP (default ACD; the plugin engines are not in this
+#   repository any more, their render checks run in poly-engines-os and poly-engines; bench_engine.cpp: 4 voices as the shim renders them,
 #   BENCH_VOICES=n for another count, scenarios default patch, all parameters max / mid / min, CHIP per model),
 #   engine and voice sources with OPT, libm and libc from the toolchain's newlib-nano as in the firmware link
 # Needs the pinned toolchain in agt/10.3 (or TC=/path/to/arm-none-eabi, the 12.3 release compiler) and a python with unicorn + capstone:

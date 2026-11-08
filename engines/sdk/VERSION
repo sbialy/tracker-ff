@@ -1,6 +1,6 @@
 # The plugin SDK header set the engine .plg set is built against (headers.txt, tools.txt). Bump sdk_version when a listed
 # header or tool changes what an engine compiles to or the layout it shares with the firmware (SynthVoice, SynthParams,
-# SynthNote, SynthSlotScratch, EngineDef, plug_abi.h). abi and host_level must equal synth-open/plug/plug_abi.h: engines/closure.py checks it.
+# SynthNote, SynthSlotScratch, EngineDef, plug_abi.h). abi and host_level must equal synth-open/plug/plug_abi.h. The module repositories vendor these files (sdk/files, tools/sdk_sync.py).
 sdk_version 1.0.0
 abi 1.1
 host_level 1

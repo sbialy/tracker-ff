@@ -5,7 +5,7 @@
 //   namespace polysynth::open { extern const EngineDef kJu6Def; }
 //   PLUG_SYNTH_PLUGIN("JU6", polysynth::open::kJu6Def, 7, 0x81)   // name, definition, stored number, .patch engine id
 //
-// The engine and definition sources are linked as they are (engine_ju6.cpp, ot-synths/ju6/ju6.cpp), built with the firmware's
+// The engine and definition sources are linked as they are (in poly-engines-os: engine_ju6.cpp, ot-synths/ju6/ju6.cpp), built with the firmware's
 // own flags so the plugin sounds bit identical to the built-in engine. plug_ext_synth is filled by init() (the definition is in
 // another translation unit, a constant initializer would be a static constructor): it lives in the rw segment.
 #pragma once
