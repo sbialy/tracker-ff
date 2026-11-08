@@ -4,6 +4,36 @@ All notable changes to the **Polyend Tracker Community Edition (CE)** firmware a
 
 ---
 
+## [1.2.0] - tracker-ff 1.2.0 (original Tracker, MK66)
+
+Version 1.2.0 of the tracker-ff firmware for the original Tracker. The Tracker+ and the Mini are not part of it.
+
+### Added
+
+1. **Master insert plugins.** Two insert slots on the master bus, a new Inserts page after the Global Mixer and seven inserts as `.plg` files in `/Plugins/Master/`: Dirt, Tape, Lo-Fi, Console, Tube, BBD and Phaser. The settings are saved with the project in `plugins.txt`. The page lists up to 272 inserts, and a project finds its inserts by id and not by position.
+2. **Mixer stage and Soft Knee.** The mixer stage in front of the inserts is Hard Clip, Soft Clip or Soft Knee. Soft Knee is also an entry of the Saturation list.
+3. **Synth engines as plugins.** ACD, FAT, VAP, WTFM, PERC and CHIP are built in. JU6, PHZ, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type, Arc-Type and PLK are `.plg` files in `/Plugins/Synth/`, up to 256 files with names of up to 23 characters. A part shows `Missing: <NAME>` and keeps its settings when its engine is not on the card.
+4. **Synth Automation.** Four LFO or envelope slots per patch, each on one engine parameter or macro, saved in the `.patch` file. The Params button cycles Synth Parameters, Synth Macros and Synth Automation.
+5. **Patch FX.** A bank of 16 patch slots per synth part and the `O - Patch` step FX that switches between them.
+6. **Sample editor effects.** Plate Reverb, Transient Shaper, Tape Saturation, Lo-Fi Chip, Dirt Drive, BBD Chorus, Dub Echo and Reverb join the existing effects, fifteen `.ptfx` files in all.
+7. **Workflow.** Add to Empty Slot in the Sample Loader, per-track MIDI-in (Config > MIDI, tracks 1 to 8), RAM or streaming mode per sample, Synth FX performance control from MIDI CC, and a project load that ends in the pattern editor.
+
+### Changed
+
+1. **Lower audio CPU.** The synth engine code is built with `-O2` (FM4 and B-Type `-O3`) and without fused multiply and add steps, which are faster on the Tracker's processor. The sound of a note can differ from earlier builds in its exact waveform.
+2. **Plugins load safely.** A marker on the card keeps a crashing plugin from loading at the next start, and holding Shift in the first 4 seconds after power on starts without plugins.
+3. **Dirt is a plugin.** The five built-in Dirt entries of the Saturation list are replaced by `dirt.plg`. A project that used one opens with Dirt in insert 1 at the same values.
+
+### Fixed
+
+1. The main loop, the display and the 8-Type and T-Type engines use less stack in the audio interrupt, a deep plugin together with an insert and a card write can no longer run past the end of the stack.
+2. A failed card write reports an error and keeps the old patch, plugin settings and project files.
+3. An unreadable folder no longer breaks the file lists, a corrupt `.it` module cannot overflow the stack on import and an out of range audio connection index is rejected.
+4. The playhead stays inside very short backward, ping-pong and granular loops, wavetable and granular position modulation clamps at 0, and song blocks smaller than 32 steps copy and paste correctly.
+5. The CHIP engine no longer overloads the audio interrupt with many voices.
+
+---
+
 ## [1.0.0] - Initial Community Edition Release
 
 > **⚠️ Important :: Project Compatibility Notice:**
