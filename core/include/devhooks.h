@@ -19,7 +19,7 @@
 //
 // Plain C and C++ (platforms/mk66/3rdparty/teensy_core/mk20dx128.c includes it).
 
-#define DEVHOOKS_API 1
+#define DEVHOOKS_API 2
 
 #define DEVHOOK_STR_(x) #x
 #define DEVHOOK_STR(x) DEVHOOK_STR_(x)
@@ -61,6 +61,14 @@
 
 // core/interface/core/interface.h
 #define DEVHOOK_INTERFACE_MEMBERS
+
+// Stall diagnosis of a console image (hook set 2). SITE notes where the main loop is (a stall record names it), a SPIN pair
+// bounds one busy-wait: BEGIN declares the poll counter, STEP counts a poll and, when the console image gives up, runs
+// `onExpire` (a statement, so `break` and `return` act on the caller's loop and function). Sites: FT812 command FIFO waits
+// (platforms/mk66/3rdparty/FT812/EVE_Layer.cpp and API_Layer.cpp) and the display's immediate update (core/libs/NewDisplay/display.cpp).
+#define DEVHOOK_SITE(id, arg)
+#define DEVHOOK_SPIN_BEGIN(n)
+#define DEVHOOK_SPIN_STEP(n, site, onExpire)
 
 #endif
 

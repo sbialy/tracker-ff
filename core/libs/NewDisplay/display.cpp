@@ -400,6 +400,7 @@ void cDisplay::update()
         return;
 
     DEVHOOK_DISPLAY_UPDATE_HOLD();
+    DEVHOOK_SITE(DEVSITE_DISPLAY_STEP, updateStep);
 
     if (updateDisplaySettings)
     {
@@ -554,6 +555,7 @@ void cDisplay::step1()
         {
             actualUpdatingIndex = refreshQueue[refreshQueueBott];
             actualUpdating = controlsTable[actualUpdatingIndex];
+            DEVHOOK_SITE(DEVSITE_CONTROL_UPDATE, actualUpdatingIndex);
             actualUpdating->update();
             break;
         }
@@ -1024,9 +1026,11 @@ void cDisplay::processDisplayUpdateImmediate()
 
     uint8_t queuePosition = refreshQueueTop;
 
+    DEVHOOK_SPIN_BEGIN(spins);
     while (refreshQueueBott != queuePosition && refreshQueueTop != refreshQueueBott)
     {
         update();
+        DEVHOOK_SPIN_STEP(spins, DEVSITE_DISPLAY_IMMEDIATE, break);
     }
 }
 
