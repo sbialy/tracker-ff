@@ -35,6 +35,16 @@ RM 			:= rm -rf
 
 CPP_SRCS 	+= $(shell find ./3rdparty/ -name *.cpp)
 CPP_SRCS 	+= $(shell find ./source/ -name *.cpp)
+# Development console image (-DENABLE_DEV_CONSOLE): the platform part comes from the private poly-devtools (../../devtools.mk). It takes
+# the place in the link order and the object name it had as source/<name>.cpp, so the image is the one of a tree that still held it
+DEVTOOLS_WANT := $(if $(filter -DENABLE_DEV_CONSOLE -DENABLE_DEV_CONSOLE=%,$(CUSTOM_DEFINES)),1)
+include ../../devtools.mk
+ifneq ($(DEVTOOLS_MK66_SRCS),)
+ifeq ($(filter $(DEVTOOLS_MK66_AFTER),$(CPP_SRCS)),)
+$(error poly-devtools: $(DEVTOOLS_MK66_AFTER) (DEVTOOLS_MK66_AFTER) is not a platform source)
+endif
+CPP_SRCS	:= $(patsubst $(DEVTOOLS_MK66_AFTER),$(DEVTOOLS_MK66_AFTER) $(addprefix ./source/,$(DEVTOOLS_MK66_SRCS)),$(CPP_SRCS))
+endif
 C_SRCS 	 	+= $(shell find ./3rdparty/ -name *.c)
 ASM_SRCS 	+= $(shell find ./3rdparty/ -name *.S)
 # TRIM=1 only: word-wise memcpy / memset, newlib-nano's are byte loops (about 8 cycles per byte) and the audio interrupt uses them
@@ -59,10 +69,12 @@ DEPS		:= $(OBJS:.o=.d)
 NOW := $(shell date +"%Y%m%d_%H%M")
 
 INCLUDES=-I./source -I./config -I./3rdparty/Audio -I./3rdparty/Encoder -I./3rdparty/Buttons -I./3rdparty/BlinkLed -I./3rdparty/radio -I./3rdparty/FastCRC -I./3rdparty/MIDI -I./3rdparty/I2C -I./3rdparty/Leds -I./3rdparty/Battery -I./3rdparty/teensy_core -I./3rdparty/SDRAM -I./3rdparty/Snooze -I./3rdparty/SPI -I./3rdparty/FT812 -I./3rdparty/EEPROM -I./3rdparty/SD -I./3rdparty/SD/drivers -I./3rdparty/SD/fatfs/source -I./3rdparty/SD/fatfs/source/fsl_sd_disk -I./3rdparty/SD/fatfs/source/fsl_ram_disk -I./3rdparty/SD/sdmmc/inc -I${TRACKER_DIR}/include
+INCLUDES+=$(DEVTOOLS_INC)
 LIBS=-lTracker -larm_cortexM4lf_math
 
 DEFINES=-D__NEWLIB__ -D__MK66FX1M0__ -DF_CPU=180000000 -DUSB_MIDI -DTEENSYDUINO=142 -DARDUINO=10805 -DLAYOUT_US_ENGLISH -DCPU_MK66FX1M0VMD18 -DBUILD_ID=\"$(BUILD_ID_STR)\"
-# CUSTOM_DEFINES reaches core/makefile too (make original ... CUSTOM_DEFINES="-DENABLE_DEV_CONSOLE", the USB test image, docs/usb-test-console.md).
+# CUSTOM_DEFINES reaches core/makefile too. -DENABLE_DEV_CONSOLE builds the development console image, which needs the private
+# poly-devtools checkout (../../devtools.mk, core/include/devhooks.h).
 # make does not track flags: wipe the core build dir of the SYNTH_TAG and platforms/mk66/build* when it changes.
 DEFINES+=$(CUSTOM_DEFINES)
 
@@ -102,6 +114,11 @@ CC_OPTIONS=
 
 $(OBJ_DIR)/%.o: %.cpp
 	$(TOOLCHAIN)c++ -MMD -MP $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) -o "$@" "$<"
+
+ifneq ($(DEVTOOLS_MK66_SRCS),)
+$(addprefix $(OBJ_DIR)/source/,$(DEVTOOLS_MK66_SRCS:.cpp=.o)): $(OBJ_DIR)/source/%.o: $(DEVTOOLS_MK66_DIR)/%.cpp
+	$(TOOLCHAIN)c++ -MMD -MP $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) -o "$@" "$<"
+endif
 
 $(OBJ_DIR)/%.o: %.c
 	$(TOOLCHAIN)gcc -MMD -MP $(DEFINES) $(INCLUDES) $(CC_OPTIONS) $(COMPILER_OPTIONS) -o "$@" "$<"

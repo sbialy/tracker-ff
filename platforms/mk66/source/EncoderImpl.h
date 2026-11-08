@@ -2,6 +2,7 @@
 #define SOURCE_ENCODERIMPL_H_
 #include "Encoder.h"
 #include "Platform.h"
+#include "devhooks.h"
 
 class EncoderImpl : Encoder
 {
@@ -11,17 +12,11 @@ class EncoderImpl : Encoder
 
     void init();
     void update();
-#ifdef ENABLE_DEV_CONSOLE
-    // USB test console: added to the next reading, so the delta goes the way a turn of the knob does
-    void inject(int delta) { injected += delta; }
-    bool injectPending() const { return injected != 0; }
-#endif
+    DEVHOOK_ENCODER_PUBLIC // development hooks (devhooks.h): the injected encoder turns
 
   private:
     uint32_t encTimer;
-#ifdef ENABLE_DEV_CONSOLE
-    volatile int32_t injected = 0;
-#endif
+    DEVHOOK_ENCODER_PRIVATE
     cEncoder encoderDriver;
 };
 

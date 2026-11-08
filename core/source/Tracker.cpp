@@ -1,7 +1,7 @@
 #include "Platform.h"
 #include "Profiler.h"
 #include "TrackerImpl.h"
-#include "UsbTest.h"
+#include "devhooks.h"
 #include "mtWavetableEnvelopes.h"
 #ifdef FEATURE_PLUG_HOST
 #include "plug_host.h"
@@ -164,9 +164,7 @@ void TrackerImpl::init(Platform* platform)
     plug::boot(platform);
 #endif
 
-#ifdef FW_USB_TEST
-    UsbTest_Init(platform, interfaceGlobals.devMode);
-#endif
+    DEVHOOK_TRACKER_INIT(platform, interfaceGlobals.devMode);
 
 #if defined(PLATFORM_IMX) && defined(ENABLE_DEV_CONSOLE)
     if (interfaceGlobals.devMode)
@@ -200,9 +198,7 @@ void TrackerImpl::update()
 #endif
     engine.updateSdStream();
     sequencer.update();
-#ifdef FW_USB_TEST
-    UsbTest_Update();
-#endif
+    DEVHOOK_TRACKER_UPDATE();
 }
 
 void TrackerImpl::updateAudioBuffers(void* left, void* right, int length)

@@ -582,19 +582,7 @@ bool Interface::isSongScreenActive()
     return isOnScreenModule(&songEditor);
 }
 
-#ifdef ENABLE_DEV_CONSOLE
-int Interface::devPageIndex()
-{
-    for (int i = 0; i < modulesCount; i++)
-    {
-        if (modules[i] != nullptr && onScreenModule == modules[i])
-        {
-            return i;
-        }
-    }
-    return -1;
-}
-#endif
+#include DEVHOOK_DEFS(interface) // development hooks (devhooks.h): Interface::devPageIndex
 
 bool Interface::isPatternScreenActive()
 {

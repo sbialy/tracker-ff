@@ -1,6 +1,7 @@
 #ifndef LIBS_NEWDISPLAY_DISPLAY_H_
 #define LIBS_NEWDISPLAY_DISPLAY_H_
 
+#include "devhooks.h"
 #include <stdint.h>
 #include <typeinfo>
 
@@ -126,15 +127,7 @@ class cDisplay
 
     void scheduleScreenShot(int timeSec);
     void doScreenShot();
-#ifdef ENABLE_DEV_CONSOLE
-    // USB test console (core/source/UsbTest.cpp): the same snapshot as doScreenShot, in steps, and the shown control texts
-    bool devShotBegin();
-    void devShotSnapshot(int half);
-    void devShotRow(int row, uint8_t* dest);
-    void devShotEnd();
-    bool devNextText(int* cursor, int* id, int* x, int* y, int* w, int* h, const char** text);
-    bool devShotFrozen = false;
-#endif
+    DEVHOOK_DISPLAY_MEMBERS // development hooks (devhooks.h): the screenshot in steps and the shown control texts
 
     void hideAllControls();
 

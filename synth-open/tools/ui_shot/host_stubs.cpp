@@ -40,7 +40,7 @@ Profiler* Profiler::instance = nullptr;
 void Profiler::init() {}
 size_t Profiler::freeRamBytes() { return 40000; }
 size_t Profiler::maxStackBytes() { return 3000; }
-// The host has no audio interrupt. The USB test console's cpu command gets fixed numbers, UISHOT_FAKE_CPU=avg,max (us) changes them
+// The host has no audio interrupt. The development console's cpu command (CONSOLE=1) gets fixed numbers, UISHOT_FAKE_CPU=avg,max (us) changes them
 // (that is how the runner's threshold check is exercised without a device)
 // UISHOT_FAKE_CPU_BUILD="ID=avg,max ID=avg,max" picks the numbers by the build id the simulated unit reports (after a simulated firmware update
 // it is the new image's), that is how ab_e2e.py gives the two flavours of an A/B run different CPU. UISHOT_FAKE_CPU_JITTER=N adds 0..N us to

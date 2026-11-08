@@ -119,11 +119,21 @@ $(error TRIM=1 only applies to SYNTH_OPEN=1 builds)
 endif
 endif
 
+# Development console image (MK66, -DENABLE_DEV_CONSOLE): its sources come from the private poly-devtools (../devtools.mk). The objects
+# keep the names they had under source/, so the sorted archive and the link order are the ones of a tree that still held them
+ifeq ($(PLATFORM),MK66)
+DEVTOOLS_WANT := $(if $(filter -DENABLE_DEV_CONSOLE -DENABLE_DEV_CONSOLE=%,$(CUSTOM_DEFINES)),1)
+include ../devtools.mk
+endif
+DEVTOOLS_CORE_OBJS := $(patsubst %.cpp,$(OBJ_DIR)/source/%.o,$(DEVTOOLS_CORE_SRCS))
+OBJS		+= $(DEVTOOLS_CORE_OBJS)
+
 OBJS_SORTED := $(sort $(OBJS))
 OBJ_DIRS	:= $(dir $(OBJS_SORTED))
 DEPS		:= $(OBJS_SORTED:.o=.d)
 
 INCLUDES=-I./include -I./config -I./source -I./synth -I./libs -I./libs/Audio -I./libs/ElapsedMillis -I./libs/SerialFlash -I./libs/SPI -I./libs/Audio/utility -I./libs/FT812 -I./libs/fonts -I./libs/NewDisplay -I./interface -I./effector -I./FileManager -I./Exporter -I./AudioEngine -I./libs/Audio/Polyverb -I./AudioEngine/ConstantValues -I./AudioEngine/MasterEnhancer -I${POLYUTIL_DIR}/include -I${POLYUTIL_DIR}/3rdparty -I${POLYSYNTH_DIR}/include  
+INCLUDES+=$(DEVTOOLS_INC)
 COMPILER_OPTIONS=-MMD -MP -fno-common -g -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -fstack-usage -specs=nano.specs -Wall -Wextra -c -ffunction-sections -fdata-sections -ffreestanding -fno-builtin 
 ifdef DEBUG
 COMPILER_OPTIONS+=-Og -DDEBUG
@@ -213,6 +223,11 @@ $(OBJ_DIR)/synth-open/%.o: $(SYNTH_OPEN_DIR)/%.cpp
 
 $(OBJ_DIR)/%.o: %.c
 	$(TOOLCHAIN)gcc $(DEFINES) $(INCLUDES) $(CC_OPTIONS) $(COMPILER_OPTIONS) -o "$@" "$<"
+
+ifneq ($(DEVTOOLS_CORE_OBJS),)
+$(DEVTOOLS_CORE_OBJS): $(OBJ_DIR)/source/%.o: $(DEVTOOLS_CORE_DIR)/%.cpp
+	$(TOOLCHAIN)c++ $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) $(EXTRA_OPT) -o "$@" "$<"
+endif
 
 $(TARGET): $(OBJS)
 	$(TOOLCHAIN)ar -r "$(BUILD_DIR)/$(TARGET)" $(OBJS_SORTED)
