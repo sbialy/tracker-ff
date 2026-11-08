@@ -24,6 +24,7 @@ Nothing here needs the firmware to be rebuilt. A plugin is compiled and linked o
 14. [Testing on the Mac](#14-testing-on-the-mac)
 15. [Pitfalls from Real Bugs](#15-pitfalls-from-real-bugs)
 16. [Licence Notes for Plugin Authors](#16-licence-notes-for-plugin-authors)
+17. [The Browser Twin (`.wasm`)](#17-the-browser-twin-wasm)
 
 ---
 
@@ -148,7 +149,7 @@ It prints the sizes, for example `image 664 B (text 664, rw 0), bss 8 B, 16 reba
 
 New plugins use `-O2 -ffp-contract=off`. `-O2` matters: at `-Os` GCC 10.3 kept small per-sample helpers as calls with their state in memory, and moving the shipped engines from `-Os` to `-O2` saved up to about 28 points of CPU at four voices (CS-Type 74.9 to 46.3 percent worst case, see [section 10](#10-memory-and-cpu-budgets)). `-ffp-contract=off` stops GCC from fusing a multiply and an add into a `vfma`, which costs 3 cycles on the M4F against 2 for a multiply followed by an add.
 
-The shipped synth plugins are compiled with the **firmware's own flags per engine**: `-O2 -ffp-contract=off` for the OpenTracker modules, PHZ and PLK, `-O3 -ffp-contract=off` for FM4 and B-Type (the 1.2.0 release recipe, synth-open/README.md, "Release 1.2.0 lines"). They are the same sources the firmware compiled when those engines were built in, and they render bit identical to the built-in engine. A new plugin has nothing to match, so it uses the defaults.
+The shipped synth plugins are compiled with the **firmware's own flags per engine**: `-O2 -ffp-contract=off` for the OpenTracker modules, PHZ and PLK, `-O3 -ffp-contract=off` for FM4 and B-Type (the 1.2.0 release recipe, synth-open/README.md, "Release 1.2.0 lines"). They are the same sources the firmware compiled when those engines were built in, and they render bit identical to the built-in engine. The flags of each engine are in `engines/engines.json`. A new plugin has nothing to match, so it uses the defaults.
 
 ### Ports of firmware code
 
@@ -162,14 +163,24 @@ export PY=/tmp/phzvenv/bin/python
 synth-open/plug/build_plugs.sh build/plugins        # optional second argument: folder of the firmware's ff_dirt objects
 ```
 
-It builds the seven shipped inserts, the twelve shipped engines and the two examples of this guide, and checks each one:
+It builds the seven shipped inserts and the two examples of this guide, and checks each one:
 
 - no `R_ARM_GOT*` relocation, and the rebase table holds exactly the `R_ARM_ABS32` words of the ELF
 - the insert renders to the same checksum at the SRAM_L home, the FlexNVM home with rw on the heap and in SDRAM, with default settings and again with every parameter moved and one more change in block 5
-- every synth plugin passes the firmware's own attach check ([`validate_synth.py`](#13-validation-safe-mode-and-the-crash-marker)), renders bit identical to the firmware objects of the same engine, and carries its numbers in the manifest
-- the logo records parse
+- the synth example passes the firmware's own attach check ([`validate_synth.py`](#13-validation-safe-mode-and-the-crash-marker)) and renders to the same checksum at two homes
 
 The examples build into `build/plugins/examples/`, apart from the shipped set. The script prints `PASSED` or `FAILED` last.
+
+### Building the shipped engines: `engines/`
+
+The ten public synth engines have their own standalone build in [`engines/`](../engines/README.md) (PHZ and PLK are built from the private repository `poly-engines`). It needs no firmware build and writes nothing into the source tree:
+
+```bash
+make -C engines TOOLCHAIN=$PWD/agt/10.3/bin/arm-none-eabi- PY=/tmp/phzvenv/bin/python OUT=$PWD/build/engines
+make -C engines verify OUT=$PWD/build/engines
+```
+
+`OUT` then holds the ten `.plg` and `.plgi` files, `SET.json` (set version, compiler, flags, SDK version and ABI, one record per engine) and `SHA256SUMS`: copy the folder to `/Plugins/Synth/`. `FLAVOUR=fused` builds the set without `-ffp-contract=off`. Each build starts from a scratch copy of the files listed in `engines/sdk/` (the header set the engines compile against), so an engine cannot depend on a header outside it. The checks that need a firmware tree (the attach check and the render compare against the firmware's own objects) run as `engines/crosscheck.sh OUT`.
 
 ---
 
@@ -399,7 +410,7 @@ PLUG_SYNTH_PLUGIN("JU6", polysynth::open::kJu6Def, 7, 0x81)   // name, definitio
 
 All three must be unique among built-in engines and among the engines on the card. If a number is taken, the engine is not listed (`synth.txt` shows `err 6`). The ABI note says a new engine uses its uid for all three, and the example does that: `0x64880b9c` is the FNV-1a hash of `org.example.synth.sawf`. The same three numbers go to `build_plug.py --synth STORED,PATCH,TYPE` so the manifest carries them. They must equal the numbers in the plugin line and the definition's `typeId`, or attach fails with error 8.
 
-The twelve shipped engines keep the numbers they had when they were built in, so old projects and patches find them: JU6 7 / `0x81`, PHZ 8 / `0x82`, FM4 9 / `0x80`, D-Type 10 / `0xA2`, CS-Type 11 / `0x83`, A-Type 12 / `0x84`, T-Type 13 / `0x85`, 8-Type 14 / `0x86`, Hand-Type 15 / `0x87`, B-Type 16 / `0x88`, Arc-Type 17 / `0x89`, PLK 18 / `0x8A`.
+The twelve shipped engines keep the numbers they had when they were built in, so old projects and patches find them: JU6 7 / `0x81`, PHZ 8 / `0x82`, FM4 9 / `0x80`, D-Type 10 / `0xA2`, CS-Type 11 / `0x83`, A-Type 12 / `0x84`, T-Type 13 / `0x85`, 8-Type 14 / `0x86`, Hand-Type 15 / `0x87`, B-Type 16 / `0x88`, Arc-Type 17 / `0x89`, PLK 18 / `0x8A`. PHZ and PLK are private modules (source in the private repository `poly-engines`), this repository keeps their numbers.
 
 The engine `name` is 1 to 8 printable characters with no `/`. It is the on-screen name and the `Patches/<name>/` folder.
 
@@ -511,7 +522,7 @@ The host points its engine description **straight at your arrays**. Nothing is c
 
 ### Working memory (`work_bytes`, `set_work`)
 
-An engine cannot call `alloc`. Large state (a delay line pool) comes from the host through `PLUG_SYNTH_PLUGIN_WORK`: `work_bytes` and a `set_work(void*, uint32_t)` function. The host hands it out of a 16 KB SDRAM arena, zeroed, 8 byte aligned, once after `init` and before any audio call. It stays while the engine is installed. Keep only state there that is touched a few times per sample (a delay line read once per sample). An uncached SDRAM access costs about 20 to 30 cycles on the MK66, so never put hot per-sample state there. `pluck_plug.cpp` is the example.
+An engine cannot call `alloc`. Large state (a delay line pool) comes from the host through `PLUG_SYNTH_PLUGIN_WORK`: `work_bytes` and a `set_work(void*, uint32_t)` function. The host hands it out of a 16 KB SDRAM arena, zeroed, 8 byte aligned, once after `init` and before any audio call. It stays while the engine is installed. Keep only state there that is touched a few times per sample (a delay line read once per sample). An uncached SDRAM access costs about 20 to 30 cycles on the MK66, so never put hot per-sample state there. The Karplus-Strong plugin PLK (source in the private repository `poly-engines`) uses it.
 
 ### Presets and patches
 
@@ -866,10 +877,10 @@ Emulated with the cost table bench, 4 voices playing the chord 57 61 64 68, in p
 | Engine | Default | Worst | Engine | Default | Worst |
 | :--- | ---: | ---: | :--- | ---: | ---: |
 | JU6 | 18.6 | 21.4 | 8-Type | 14.8 | 42.5 |
-| PHZ | 17.4 | 23.5 | Hand-Type | 9.3 | 9.3 |
+| PHZ (private) | 17.4 | 23.5 | Hand-Type | 9.3 | 9.3 |
 | FM4 | 16.6 | 16.8 | B-Type | 8.8 | 16.2 |
 | D-Type | 25.9 | 34.9 | Arc-Type | 21.0 | 27.7 |
-| CS-Type | 30.5 | 46.3 | PLK | 5.6 | 6.3 |
+| CS-Type | 30.5 | 46.3 | PLK (private) | 5.6 | 6.3 |
 | A-Type | 22.5 | 27.3 | T-Type | 9.2 | 9.2 |
 
 Three parts each asking for 4 voices is 12 voices on paper. Only the pool (default 4) keeps the total from exceeding the figures above.
@@ -881,8 +892,8 @@ Shipped inserts, emulated with `emu_plug.py` at default settings, instructions p
 | Dirt | 14,721 | 2.82 |
 | Tape | 15,992 | 3.07 |
 | Lo-Fi | 16,452 | 3.15 |
-| Console | 8,794 | 1.68 |
-| Tube | 9,681 | 1.85 |
+| Console (private) | 8,794 | 1.68 |
+| Tube (private) | 9,681 | 1.85 |
 | BBD | 11,762 | 2.25 |
 | Phaser | 7,855 (up to 9,181) | 1.76 |
 | `tilt.plg` (example) | 2,855 | 0.55 |
@@ -1007,7 +1018,7 @@ What `checkSynth` checks:
 
 It also prints the facts (sections, formats used), and fails when a plugin uses a format the firmware has only for a built-in engine.
 
-`build_plugs.sh` runs it on every synth plugin, and on the example.
+`build_plugs.sh` runs it on the example, and `engines/crosscheck.sh` on the shipped engines.
 
 ### Crash marker and safe mode
 
@@ -1080,6 +1091,21 @@ These are facts from the files in this repository, not legal advice.
 - **The SDK files** in [`synth-open/plug/`](../synth-open/plug/) are **MIT** (`synth-open/plug/LICENSE`, Copyright (c) 2026 sbialy (tracker-ff)). That file names `plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`, `build_plugs.sh` and `README.md` as its scope. The files `synth_plug.h`, `emu_synth.py`, `synth_engines.sh` and the `examples/` folder are not named in that scope text. The two examples carry their own MIT header.
 - **Your plugin** may use any licence that allows shipping it as a separate file (`synth-open/plug/README.md`). The firmware licence is unchanged. A `.plg` is a separate file loaded by the firmware, and the plugin's own `licence` field in the manifest records the SPDX id you choose.
 - **The repository `LICENSE`** is MIT with a Wholesale Commercial Clone Restriction. Its Part 2 names `.ptfx` Sample Editor plugins as expressly permitted to sell. It does not mention `.plg` plugins. Part 2 prohibits selling the complete firmware, a substantially unmodified derivative of it or `.ptf` firmware images. It grants no right to the Polyend trademarks.
-- **Third party code your plugin may include.** A synth plugin includes `ot/audio/synth_engine.h` and `ot/model/synth_patch.h`, which are **OpenTracker, Apache-2.0** (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `NOTICE.md` item 10, each file has a provenance line). The shipped OpenTracker engines in `ot-synths/` and the ports in `plug/fx/` are **MIT** from opentracker-synths and opentracker-fx (`licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`), with Console and Tube original. `synth-open/plug/fx/NOTICE.md` lists the notices that ship with each shipped insert `.plg`. Check the headers you include and the notices that come with them before you distribute a binary.
+- **Third party code your plugin may include.** A synth plugin includes `ot/audio/synth_engine.h` and `ot/model/synth_patch.h`, which are **OpenTracker, Apache-2.0** (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `NOTICE.md` item 10, each file has a provenance line). The shipped OpenTracker engines in `ot-synths/` and the ports in `plug/fx/` are **MIT** from opentracker-synths and opentracker-fx (`licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`), with Console and Tube original (private modules, source in the private repository `poly-effects`, proprietary freeware like PHZ and PLK, see `NOTICE.md` items 13 to 13b). `synth-open/plug/fx/NOTICE.md` lists the notices that ship with each shipped insert `.plg`. Check the headers you include and the notices that come with them before you distribute a binary.
 - **Origin of the examples.** `tilt.c` and `saw_synth.cpp` are original code written for this guide. The filter is the textbook Chamberlin state variable filter and the band limiting is the textbook polynomial step. No third party source was copied.
 - The firmware is unofficial, noncommercial community work for the Original Tracker. It is not affiliated with or supported by Polyend.
+
+---
+
+## 17. The Browser Twin (`.wasm`)
+
+A plugin can ship a second file for the browser editor: `<id>.wasm`, built from the same sources as the `.plg`, plus a manifest `<id>.json`. The editor loads it at run time, so it can play an engine or an insert without having its source. The format is in [`synth-open/plug/plug_wasm.h`](../synth-open/plug/plug_wasm.h) (module ABI 1.0).
+
+- **Same plugin ABI.** The module exports `plug_entry()` and returns the same `plug_desc` (and for a synth engine the same `plug_ext_synth`) as the `.plg`. wasm32 has 32 bit pointers like the Cortex-M4, so every struct keeps its layout. It also exports `plug_wasm_abi()`.
+- **No imports but the five.** The module is position independent (a `dylink.0` section, `emcc -sSIDE_MODULE=2`) and imports only `env.memory`, `env.__indirect_function_table`, `env.__memory_base`, `env.__table_base` and `env.__stack_pointer`. libm and the memory functions come through the host table, as on the device: link [`plug_rt_wasm.c`](../synth-open/plug/plug_rt_wasm.c) instead of `plug_rt.c`.
+- **Refused** when the manifest or `plug_wasm_abi()` names another module ABI major, when the plugin ABI major differs, when `min_host` is above the host level, when the size or sha256 differ from the manifest or when the module has any other import.
+- **Sound.** Built with the editor's compiler and flags, a module renders bit identical to the same source linked into the editor. It is not bit identical to the device: the device runs the ARM build with its own libm and GCC fuses some multiply-adds on the Cortex-M4 that wasm cannot fuse (a one LSB difference in Dirt).
+- **Protection.** A `.wasm` file can be decompiled like a `.plg`. Ship it stripped (no name section, no DWARF, no source map), but do not treat it as secret.
+
+Build it with `emcc` (the editor pins the version) and check it with the editor's loader. The manifest fields are listed in the header of `plug_wasm.h`.
+

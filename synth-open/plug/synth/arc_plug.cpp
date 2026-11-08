@@ -1,4 +1,4 @@
-// ARCTYPE as a synth plugin: engine_arc.cpp and ot-synths/arc/arc.cpp as they are (built with the firmware's own flags, build_plugs.sh).
+// ARCTYPE as a synth plugin: engine_arc.cpp and ot-synths/arc/arc.cpp as they are (built with the firmware's own flags, engines/).
 #include "synth_plug.h"
 namespace polysynth::open
 {

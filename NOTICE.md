@@ -68,15 +68,19 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Location**: `core/synth/engines/ChiptuneSynthVoice.cpp` is Polyend's own open Chiptune voice from this repository (the repository licence applies, see LICENSE). The only change is a small block of hooks marked `FEATURE_SYNTH_OPEN` (parameter switch, bend, reset, create) that `synth-open/engine_chip.cpp` calls. Its parameter table follows the same file.
 * **Note**: compiled only when `CHIP` is in `SYNTH_ENGINES`. Nothing here uses `libPolySynth.a` or `libPolyDSP.a`.
 
-## 13. PHZ (clean-room phase distortion engine for the `SYNTH_OPEN=1` build, optional)
-* **Location**: `synth-open/phz/phz.{cpp,h}` and `synth-open/engine_phz.cpp`, `synth-open/tools/phz_render.*`, `synth-open/tools/phz_cycles/`.
-* **Source**: written for this project from the public Polyend Synth manual (SYN2 p.76-80). Nothing of Polyend's closed code or binaries was read. The block rate voice skeleton and the filter stages are adapted from OpenTracker's VAP engine (item 10, Apache-2.0), the header of `phz.cpp` says so. No Mutable Instruments Plaits code is used.
-* **Note**: compiled only when `PHZ` is in `SYNTH_ENGINES`. The PHZ icons are Polyend's (already in `core/libs/images`).
+## 13. PHZ (clean-room phase distortion engine, source in the private repository poly-engines)
+* **Location**: the source is not in this repository any more. It lives in the private repository `poly-engines` (`src/synth-open/phz/`). This repository keeps the engine's public identity (stored number, type id and name in `synth-open/engine_list.h` and `engines/engines.json`) and loads the built plugin from the SD card like any other engine plugin. The PHZ icons are Polyend's (already in `core/libs/images`).
+* **Source**: written for this project from the public Polyend Synth manual (SYN2 p.76-80). Nothing of Polyend's closed code or binaries was read. The block rate voice skeleton and the filter stages are adapted from OpenTracker's VAP engine (item 10, Apache-2.0), the header of `phz.cpp` says so. No Mutable Instruments Plaits code is used. The published `phz.plg`, `phz.plgi` and `phz.wasm` ship with a notice that keeps this attribution and the Apache-2.0 text. The PHZ source and binaries are proprietary freeware (free use with the Polyend Tracker and tracker-ff, unmodified redistribution, all rights reserved), the terms are in `LICENSE.md` of the private repository `poly-engines`. Earlier tracker-ff releases (up to 1.1.0) contain the PHZ source in this repository under the MIT licence, that history and licence stay.
+* **Note**: the engine is no longer built here, so `PHZ` is not accepted in `SYNTH_ENGINES`.
 
-## 13a. PLK (clean-room Karplus-Strong plucked string engine for the `SYNTH_OPEN=1` build, optional)
-* **Location**: `synth-open/pluck/pluck.{cpp,h}` and `synth-open/engine_pluck.cpp`, `synth-open/tools/pluck_render.*`.
-* **Source**: written for this project from the published Karplus-Strong algorithm (Karplus and Strong, CMJ 1983) and its extensions (Jaffe and Smith, CMJ 1983). No third-party code was read or adapted. Only the `ISynthEngine` interface (item 10, Apache-2.0) is shared.
-* **Note**: compiled only when `PLK` is in `SYNTH_ENGINES`. It borrows the VAP list icons.
+## 13a. PLK (clean-room Karplus-Strong plucked string engine, source in the private repository poly-engines)
+* **Location**: the source is not in this repository. It lives in the private repository `poly-engines` (`src/synth-open/pluck/`). This repository keeps only the public identity of the engine (stored number 18, type id 0x8A, name).
+* **Source**: written for this project from the published Karplus-Strong algorithm (Karplus and Strong, CMJ 1983) and its extensions (Jaffe and Smith, CMJ 1983). No third-party code was read or adapted. Only the `ISynthEngine` interface (item 10, Apache-2.0) is shared, and the headers of the PLK source keep that attribution. The published `pluck.plg`, `pluck.plgi` and `pluck.wasm` ship with our notice. The PLK source and binaries are proprietary freeware, the terms are in `LICENSE.md` of the private repository `poly-engines`.
+* **Note**: the engine is no longer built here. It borrows the VAP list icons.
+
+## 13b. Console and Tube (original master inserts, source in the private repository poly-effects)
+* **Location**: the source is not in this repository. It lives in the private repository `poly-effects`. This repository keeps only the public identity of the two inserts (plugin ids `ff.console` and `ff.tube`).
+* **Source**: written for this project, no third-party code. The published `console.plg`, `tube.plg` and their `.wasm` files are proprietary freeware (free use with the Polyend Tracker and tracker-ff, unmodified redistribution, all rights reserved), the terms are in `LICENSE.md` of the private repository `poly-effects`. The plugin runtime built into them stays MIT.
 
 ## 14. Mutable Instruments Polyverb sources (reverb code from Mutable Instruments Clouds and Rings)
 * **Location**: `core/libs/Audio/Polyverb/{reverb,fx_engine,util,cosine_oscillator}.h`

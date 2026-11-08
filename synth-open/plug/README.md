@@ -9,7 +9,7 @@ phases.
 Licence: the SDK files in this folder (`plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`,
 `build_plugs.sh`, this README) are MIT (`LICENSE` here). A plugin may use any licence that allows shipping it as a separate
 file. The firmware licence is unchanged. The plugins in `fx/` and `fx_dirt_plug.cpp` are ports of MIT and Apache-2.0
-OpenTracker code, except Console and Tube, which are original. See `fx/NOTICE.md`.
+OpenTracker code. Console and Tube are original, proprietary freeware, their source is in the private repository `poly-effects`. See `fx/NOTICE.md`.
 
 ## Files
 
@@ -20,7 +20,8 @@ OpenTracker code, except Console and Tube, which are original. See `fx/NOTICE.md
 | `plug.ld` | Link at address 0: entry first, then code, the descriptor (`__plug_desc`), constants, then the writable segment |
 | `build_plug.py` | Compile, link, check relocations, write header + manifest + image + rebase table |
 | `emu_plug.py` | The host loader re-done in Python, the plugin's ARM code in Unicorn: checks, instructions per block, output checksum, wav |
-| `build_plugs.sh` | Builds and checks the shipped plugins (dirt, tape, lofi, console, tube, bbd, phaser) |
+| `build_plugs.sh` | Builds and checks the public inserts (dirt, tape, lofi, bbd, phaser) and the examples. The synth engines have their own standalone build in `engines/` (`make -C engines`, `engines/README.md`) |
+| `synth_engines.sh` | The engine table as shell functions for `synth_render_compare.sh`, generated from `engines/engines.json` |
 | `fx_dirt_plug.cpp`, `fx/` | The shipped plugins |
 | `examples/` | `tilt.c` (a master insert) and `saw_synth.cpp` (a synth engine), the worked examples of the developer guide `docs/plugin_sdk.md`. `build_plugs.sh` builds and checks them into `OUT/examples` |
 
@@ -37,17 +38,17 @@ never clicks.
 | Dirt | `dirt.plg` | Type (Soft Hard Fold Asym, Soft), Drive 0-100 % (35), Bits 4-16 (16), Rate 1-32 (1), Tone 0-100 (100 = off), Mix 0-100 % (100) | 3,116 B, 680 B | 13.8 k |
 | Tape | `tape.plg` | Drive 0-100 % (30), Wow 0-100 % (20), Flutter 0-100 % (10), Mix 0-100 % (100) | 1,692 B, 1,072 B | 16.3 k |
 | Lo-Fi | `lofi.plg` | Bits, Rate, Ladder, Speaker, Mix | 2,668 B, 388 B | 18.4 k |
-| Console | `console.plg` | Drive 0-100 % (25), Weight 0-100 % (30), Output -12 to +12 dB (0), Mix 0-100 % (100) | 1,508 B, 80 B | 8.8 k |
-| Tube | `tube.plg` | Drive 0-100 % (25), Warmth 0-100 % (30), Tone 0-100 (80, 100 = off), Mix 0-100 % (100) | 1,496 B, 80 B | 9.7 k |
+| Console (private) | `console.plg` | Drive 0-100 % (25), Weight 0-100 % (30), Output -12 to +12 dB (0), Mix 0-100 % (100) | 1,508 B, 80 B | 8.8 k |
+| Tube (private) | `tube.plg` | Drive 0-100 % (25), Warmth 0-100 % (30), Tone 0-100 (80, 100 = off), Mix 0-100 % (100) | 1,496 B, 80 B | 9.7 k |
 | BBD | `bbd.plg` | Mode (I II, I), Mix 0-100 % (100), Width 0-100 % (100), Tone 0-100 % (50) | 2,128 B, 568 B | 11.8 k |
 | Phaser | `phaser.plg` | Mode (Classic 80s, Classic), Rate 0-100 (40), Depth 0-100 % (80), Feedback 0-100 % (30), Spread 0-100 % (25), Mix 0-100 % (50) | 4,792 B, 148 B | 7.8 k Classic, 11.9 k 80s, 14.0 k while a ramp runs |
 
 - **Dirt**: the OpenTracker DIRT port, the same kernel as before. The Bits quantiser is mid-tread (half a step added with saturation, then the low bits cleared), so zero in is exactly zero out at every Bits setting and an input smaller than half a step (a line-in noise floor, a reverb tail) is silent. Checked by `dirt_zero_check.py`.
-- **Console**: glue saturation. A rational tanh curve (small signal gain exactly 1 at every Drive, curve gain 0.05 to 3.5), with
+- **Console** (source in the private repository `poly-effects`): glue saturation. A rational tanh curve (small signal gain exactly 1 at every Drive, curve gain 0.05 to 3.5), with
   the lows pushed harder: Weight lifts everything below about 120 Hz by up to +12 dB before the curve and takes the same
   shelf out after it, so a signal too small to bend the curve passes unchanged. Drive 0 is transparent, Mix 0 is the dry
   signal exactly. Output trims the result (the curve lowers loud peaks, so a hot Drive wants a few dB back).
-- **Tube**: a triode style stage. The signal rides on a bias point of the curve (Warmth), so one half-wave compresses sooner
+- **Tube** (source in the private repository `poly-effects`): a triode style stage. The signal rides on a bias point of the curve (Warmth), so one half-wave compresses sooner
   than the other and the added harmonics are mostly even (2nd and 4th, warm). The small signal gain is 1 and DC is blocked
   (6 Hz). Tone is a one pole high cut from 2 kHz (0) to 20 kHz (99), 100 is off. Measured at 1 kHz and -9 dBFS with the
   defaults: 2nd harmonic -29 dB, 3rd -46 dB.
@@ -173,7 +174,7 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
   changes (design section 11, phase 1b).
 - `build_plug.py` refuses static constructors, GOT access, MOVW/MOVT absolute pairs and PC-relative references between the
   text and the rw segment, and prints image, rw, bss and rebase counts.
-- `build_plugs.sh OUT [FW_OBJ]` builds `dirt.plg`, `tape.plg`, `lofi.plg`, `console.plg`, `tube.plg`, `bbd.plg` and `phaser.plg` and
+- `build_plugs.sh OUT [FW_OBJ]` builds `dirt.plg`, `tape.plg`, `lofi.plg`, `bbd.plg` and `phaser.plg` and
   checks them: no `R_ARM_GOT*`, the rebase table equals the `R_ARM_ABS32` count, the same output checksum at the SRAM_L,
   FlexNVM plus heap and SDRAM homes, with the default settings and again with every parameter moved and one more change in
   block 5 (the checksum must differ from the default one), Dirt
@@ -233,19 +234,20 @@ A `PLUG_KIND_SYNTH` plugin answers `query(PLUG_EXT_SYNTH)` with a `plug_ext_synt
 folder), parameter, section and macro tables in the shim's `ParamDef` / `SectionDef` / `MacroDef` layout, and the
 `ISynthEngine` calls as C functions. An engine that used to be built in keeps its numbers (JU6 7 / 0x81, PHZ 8 / 0x82, FM4 9 / 0x80,
 D-Type 10 / 0xA2, CS-Type 11 / 0x83, A-Type 12 / 0x84, T-Type 13 / 0x85, 8-Type 14 / 0x86, Hand-Type 15 / 0x87, B-Type 16 / 0x88,
-Arc-Type 17 / 0x89, PLK 18 / 0x8A), so old projects and patches find it. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
-lines (`synth/ju6_plug.cpp`), `PLUG_SYNTH_PLUGIN_WORK` adds work memory (`synth/pluck_plug.cpp`). Large working RAM comes
+Arc-Type 17 / 0x89, PLK 18 / 0x8A), so old projects and patches find it. PHZ and PLK are private modules, their source and build are in the private repository `poly-engines`, this repository keeps their numbers. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
+lines (`synth/ju6_plug.cpp`), `PLUG_SYNTH_PLUGIN_WORK` adds work memory (PLK, source in the private repository `poly-engines`). Large working RAM comes
 from the host (`work_bytes`, `set_work`), not from bss: the host hands it out of a 16 KB SDRAM arena, so keep only state there
 that is touched a few times per sample (a delay line), never hot per-sample state. Work memory is also how a plugin keeps big
 scratch off the audio interrupt's stack, which is one stack with the main loop and has no guard (ref/stack-margin-1.2.0.md): 8-Type
 keeps the two Links of its voice pass there (1,544 B, `-DEIGHT_WORK_POOL`) and T-Type its 512 B square bank block (`-DTTYPE_WORK_POOL`),
 cold data that a pass reads only when it syncs, rings or plays a hat or a cymbal. A hot buffer (an oscillator bus) stays on the stack.
 
-Files go to `/Plugins/Synth/`. Build the engine sources with the firmware's own flags (`build_plugs.sh`, the fused vfma
-default at `-O2`, `-O3` for FM4 and B-Type, `--synth` with the engine's numbers, `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3` in
-`synth_engines.sh` set other flags for a test set and the render compare follows them), and prove bit identity with `synth_render_compare.sh` (the firmware's
-objects behind the same wrapper, rendered by `emu_synth.py`). Then run the firmware's own attach check on it,
-`tools/validate_synth.py` (the real `checkSynth` in Unicorn, no device needed): an engine it rejects is listed but shows
+Files go to `/Plugins/Synth/`. Build the engine sources with the firmware's own flags (`make -C engines`, which owns the flags,
+the `--synth` numbers and the versions in `engines/engines.json`, flavour `autof` = `-ffp-contract=off` on every engine for the
+1.2.0 release, `fused` = the compiler default, `-O3` for FM4 and B-Type, `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3` set other
+flags for a test set and the render compare follows them), and prove bit identity with `synth_render_compare.sh` (the firmware's
+objects behind the same wrapper, rendered by `emu_synth.py`, run by `engines/crosscheck.sh`). Then run the firmware's own attach check on it,
+`tools/validate_synth.py` (the real `checkSynth` in Unicorn, no device needed, also run by `crosscheck.sh`): an engine it rejects is listed but shows
 Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sections, 6 macros, 4 voices, formats
 `PLUG_FMT_PCT` to `PLUG_FMT_UNIT` (0 to 15, the higher shim formats are the built-in PERC's).
 
@@ -283,15 +285,15 @@ resident at once. The 3 biggest on the parts plus the one being picked need 18 s
 never decides what is evicted. The worst 3 at once need 1,928 B (2,048 B with the one being picked): a pool of that size would
 save 1,024 B of SRAM but then hold JU6 and three others only, and the 5th engine picked would rewrite the flash.
 
-The shipped synth plugins are the twelve custom engines (`plug/synth_engines.sh`, the PLUGS image builds in only ACD FAT VAP
-WTFM PERC CHIP):
+The shipped synth plugins are the twelve custom engines (`engines/engines.json`, the PLUGS image builds in only ACD FAT VAP
+WTFM PERC CHIP). Ten are built here, PHZ and PLK are private modules built from the private repository `poly-engines`:
 
 | Plugin | Engine | Image B | rw + bss B | Worst block, 4 voices (instructions, scenario 1, engine DSP at `-Os` as in 1.1.0) |
 |---|---|---|---|---|
 | `ju6.plg` | JU6 | 7,124 | 1,648 | 90,476 (17.3 %) |
 | `fm4.plg` | FM4 | 10,604 | 112 | 107,753 (20.6 %, scenario 0) |
 | `btype.plg` | B-Type | 13,440 | 120 | 51,963 (9.9 %) |
-| `phz.plg` | PHZ | 14,664 | 120 | 73,025 (14.0 %, scenario 0) |
+| `phz.plg` | PHZ (private) | 14,664 | 120 | 73,025 (14.0 %, scenario 0) |
 | `dtype.plg` | D-Type | 11,404 | 112 | 128,217 (24.6 %) |
 | `cstype.plg` | CS-Type | 12,252 | 112 | 220,049 (42.1 %) |
 | `atype.plg` | A-Type | 12,532 | 112 | 119,545 (22.9 %) |
@@ -299,7 +301,7 @@ WTFM PERC CHIP):
 | `eight.plg` | 8-Type | 20,320 | 120 | 152,331 (29.2 %) |
 | `hand.plg` | Hand-Type | 12,392 | 120 | 47,838 (9.2 %, scenario 0) |
 | `arc.plg` | Arc-Type | 19,136 | 120 | 142,787 (27.3 %) |
-| `pluck.plg` | PLK | 6,476 | 120 + 8,772 work (SDRAM) | 55,551 (10.6 %) |
+| `pluck.plg` | PLK (private) | 6,476 | 120 + 8,772 work (SDRAM) | 55,551 (10.6 %) |
 
 Instructions are a lower bound of cycles (the device measured 1.5 times the emulated count for Dirt), the percentage is of a
 522,240 cycle block, and the built-in engine executes the same count. The `-O2` figures are in `synth-open/README.md`, CPU at four
@@ -323,5 +325,5 @@ controls cache), one per listed engine whether it is installed or not (the first
 `/Plugins/synth.txt` (`logo <file> sidecar|trailer|text err <n>`). Make a record
 with `synth-open/tools/make_plgi.py`: from a PNG (white or opaque is drawn, black or transparent is not, scaled to both
 sizes), from two PNGs, or `--text NAME` for a text logo in the stock style. `--check` tests a `.plgi` or a `.plg` trailer,
-`--selftest` round-trips the stock logos. The twelve shipped `.plgi` files are text logos (`synth_plug_logo` in `synth_engines.sh`), `tools/plgi_sheet.py` stacks
+`--selftest` round-trips the stock logos. The twelve shipped `.plgi` files are text logos (`logo` in `engines/engines.json`), `tools/plgi_sheet.py` stacks
 their previews into one sheet.

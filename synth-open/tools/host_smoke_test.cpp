@@ -7,7 +7,7 @@
 // Optional OpenTracker oracle (ref/opentracker, not in the repository): add -DOT_ORACLE -I ref/opentracker/src/core
 // ref/opentracker/src/core/formats/patch_pb.cpp to the line above.
 // Checks: ACD metadata (29 params, 6 sections), note on -> pitch/amplitude, 2 voices, steal, release to silence, macro CC,
-// then one note per engine of the picked set (engine_list.h, e.g. ACD FAT VAP WTFM PERC CHIP JU6 PHZ): metadata counts, output finite and non-silent, fails with exit 1 otherwise.
+// then one note per engine of the picked set (engine_list.h, e.g. ACD FAT VAP WTFM PERC CHIP JU6): metadata counts, output finite and non-silent, fails with exit 1 otherwise.
 // PERC also gets one hit per drum (kick, tom, snare, hats, cymbal, perc) and the checks of its one voice kit.
 // Then the voice pool and the governor: 6 notes over 3 slots sound at most 4 voices (the oldest are stolen), budget 8 and the
 // per-instrument cap, a simulated overload (block cycles) makes the governor cut with hold-off, calm blocks restore one voice
@@ -34,9 +34,6 @@
 #include <new>
 #include <string>
 #include <vector>
-#ifdef SYNTH_ENGINE_PHZ
-#include "phz/phz.h"
-#endif
 namespace polysynth {
 std::unique_ptr<InstrumentType> createMidiOut();
 // The run time engine list (the engines picked with -DSYNTH_ENGINE_<NAME>, no plugins here) and the missing placeholders,
@@ -1415,80 +1412,6 @@ int main() {
     printf("  JU6 after release: pk=%g\n", pk);
     for (int k = 0; k < 2; k++) { s7->renderAudioBuffer({AudioBufferRef(L),AudioBufferRef(R)}, std::span<AudioBufferRef>(aux), k); printf("    slot %d alone: pk=%g\n", k, peakOf(L)); }
     check(std::isfinite(pk) && pk < 1e-4f, "JU6 released: voices and chorus tail end in silence");
-  }
-#endif
-#ifdef SYNTH_ENGINE_PHZ
-  // ---- PHZ: every model x character is finite and sounds, X and Y of the phase distortion change the spectrum, the
-  // filter Off path and a filtered type both stay finite, Reset restarts the cycle
-  {
-    using namespace ot::audio::phz;
-    auto s8 = Synth::createSynth([](size_t){return nullptr;});
-    auto st8 = s8->createPatchStore(Synth::FileSystemId::kPatches, true);
-    auto p8 = std::shared_ptr<Patch>(st8->createPatch(0x82));
-    Src src8; auto i8 = s8->createInstrument(0); i8->assignPatch(p8); i8->connect(src8); i8->setVoiceCount(1); i8->setMidiChannel(0);
-    std::shared_ptr<Instrument> a8[1] = { i8 };
-    s8->setup(std::span<std::shared_ptr<Instrument>>(a8,1), {}, nullptr, []{ return tiny::optional<float>(120.0f); });
-    auto blk8 = [&]() { s8->renderAudioBuffer({AudioBufferRef(L),AudioBufferRef(R)}, std::span<AudioBufferRef>(aux), 0); return peakOf(L); };
-    auto set = [&](int id, float v) { p8->setParamValue(id, v, Patch::ParamChangeSource::kKnob); };
-    // steady, dry, one oscillator, filter Off
-    set(kMix, 0.0f); set(kDetune, 0.0f); set(kAmpA, 0.0f); set(kAmpS, 1.0f); set(kCutoff, 20000.0f); set(kFilterEnvAmt, 0.0f);
-    constexpr int kBlocks = 64;   // 8192 samples
-    const double f0 = 220.0, fs = 44117.647;
-    // Spectrum of the held note: harmonics 1..24 (Goertzel, Hann window). Returns false when not finite
-    auto spectrum = [&](double* mag, float& peak) {
-      src8.send(MidiEvent::Type::kNoteOff, 0, 57, 0); for (int b = 0; b < 300; b++) blk8();
-      src8.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 12; b++) blk8();
-      static float x[kBlocks * 128]; peak = 0;
-      for (int b = 0; b < kBlocks; b++) { blk8(); for (int i = 0; i < 128; i++) { x[b * 128 + i] = L[i]; peak = std::max(peak, std::fabs(L[i])); if (!std::isfinite(L[i])) peak = INFINITY; } }
-      const int n = kBlocks * 128;
-      for (int h = 1; h <= 24; h++) {
-        double re = 0, im = 0; const double w = 2 * M_PI * h * f0 / fs;
-        for (int i = 0; i < n; i++) { const double hann = 0.5 - 0.5 * std::cos(2 * M_PI * i / n); re += hann * x[i] * std::cos(w * i); im -= hann * x[i] * std::sin(w * i); }
-        mag[h - 1] = std::sqrt(re * re + im * im) / n * 4;
-      }
-    };
-    auto brightness = [](const double* m) { double hi = 0, all = 1e-12; for (int h = 0; h < 24; h++) { all += m[h] * m[h]; if (h >= 1) hi += m[h] * m[h]; } return hi / all; };
-    auto dist = [](const double* a, const double* b) { double d = 0; for (int h = 0; h < 24; h++) d += (a[h] - b[h]) * (a[h] - b[h]); return std::sqrt(d); };
-    double ref[24], m[24]; float pk;
-    bool allOk = true;
-    for (int model = 0; model <= 5; model++) {
-      for (int ch : { 0, 1, 2, 3, 6, 8 }) {
-        set(kModel, float(model)); set(kChar1, float(ch)); set(kX1, 0.7f); set(kY1, 0.4f); set(kShape1, 0.6f);
-        spectrum(m, pk);
-        const bool ok = std::isfinite(pk) && pk > 0.05f && pk < 1.5f;
-        if (!ok) { printf("  PHZ model %d character %d: peak %g FAIL\n", model, ch, pk); allOk = false; }
-      }
-    }
-    check(allOk, "PHZ: all 6 models x 6 characters finite, non-silent, peak below 1.5");
-    // X changes the spectrum: OG Saw from sine (X 0) to saw (X 1)
-    set(kModel, 0.0f); set(kChar1, 0.0f); set(kShape1, 0.0f); set(kY1, 0.5f);
-    set(kX1, 0.0f); spectrum(ref, pk); const double bSine = brightness(ref);
-    set(kX1, 0.9f); spectrum(m, pk); const double bSaw = brightness(m);
-    printf("  PHZ OG Saw: brightness X=0 %.4f, X=0.9 %.4f, spectrum distance %.3f\n", bSine, bSaw, dist(ref, m));
-    check(bSine < 0.01 && bSaw > 0.15 && dist(ref, m) > 0.1, "PHZ: X moves OG Saw from a sine to a bright saw");
-    // Y changes the spectrum for the models it is meant for
-    for (int model : { 0, 4 }) {
-      set(kModel, float(model)); set(kX1, 0.35f);
-      set(kY1, 0.5f); spectrum(ref, pk);
-      set(kY1, 0.9f); spectrum(m, pk);
-      printf("  PHZ model %d: Y 0.5 -> 0.9 spectrum distance %.3f\n", model, dist(ref, m));
-      check(dist(ref, m) > 0.03, model == 0 ? "PHZ OG Saw: Y changes the spectrum" : "PHZ Linear: Y changes the spectrum");
-    }
-    // Shape moves along the Character row
-    set(kModel, 0.0f); set(kX1, 0.5f); set(kY1, 0.5f); set(kChar1, 6.0f);
-    set(kShape1, 0.0f); spectrum(ref, pk); set(kShape1, 1.0f); spectrum(m, pk);
-    check(dist(ref, m) > 0.05, "PHZ: Shape changes the spectrum (Add 5)");
-    // Filtered type and Reset: finite, quieter than the unfiltered note, and two notes with Reset On are identical
-    set(kShape1, 0.0f); set(kChar1, 0.0f); set(kX1, 0.8f); set(kCutoff, 800.0f); set(kResonance, 0.6f); set(kFilterType, 1.0f);
-    spectrum(m, pk); check(std::isfinite(pk) && pk > 0.01f, "PHZ: LP OB 24 dB at 800 Hz sounds and is finite");
-    set(kCutoff, 20000.0f); set(kReset1, 1.0f); set(kAmpD, 0.0f);
-    spectrum(ref, pk); spectrum(m, pk);
-    check(dist(ref, m) < 1e-3, "PHZ: Reset On starts every note on the same phase");
-    // Model and Character names reach the editor as text
-    const auto& md8 = p8->getMetadata();
-    check(md8.params[kModel].valueFormatter(*p8, 5.0f) == "Hermite FM" && md8.params[kChar2].valueFormatter(*p8, 8.0f) == "Add 11" && md8.params[kX1].valueFormatter(*p8, 0.25f) == "0.25",
-          "PHZ: value text for Model, Character and XMod");
-    src8.send(MidiEvent::Type::kNoteOff, 0, 57, 0);
   }
 #endif
   // ---- ids: the canonical stored numbers and the .patch engine numbers of the picked engines are unique and map back

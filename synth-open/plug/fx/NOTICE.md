@@ -46,11 +46,6 @@ Ship each `.plg` with this file and the licence texts it names (`licenses/` at t
   changes. Checked against the upstream source: the output is within 1 LSB of `PhaserEffect::process` on int16 input in
   Classic and 80s, with Rate, Depth, Feedback, Spread and Mix moved.
 
-## console.plg (`fx/ff_console_plug.c`) and tube.plg (`fx/ff_tube_plug.c`)
-
-- Original designs of this project from textbook techniques (rational tanh waveshaper, low shelf pre and de-emphasis, biased
-  waveshaper, DC blocker). No third party code. MIT licence, `synth-open/plug/LICENSE`.
-
 ## dirt.plg (`fx_dirt_plug.cpp` with `../ff_dirt.cpp`, `../ff_dirt_ctl.cpp`)
 
 - The firmware's built-in Dirt (a port of the DIRT module of opentracker-fx, `modules/dirt/src/dirt.cpp`, commit 6e5a7da,

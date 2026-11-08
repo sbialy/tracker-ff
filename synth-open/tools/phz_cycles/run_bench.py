@@ -1,4 +1,4 @@
-# PHZ cycle bench, host side (see run_bench.sh). Runs bench_arm.elf's bench_run() in a Unicorn emulator, counts the
+# Engine cycle bench, host side (see run_bench.sh). Runs bench_arm.elf's bench_run() in a Unicorn emulator, counts the
 # executed Thumb-2 instructions (single stepped) and
 # converts them to Cortex-M4F cycles with the cost table below. Not cycle accurate: no flash wait states, no cache,
 # loads and stores at 2 cycles, taken branches at 3, VMLA at 3, VDIV and VSQRT at 14. Run with python -I.
@@ -18,10 +18,6 @@ BASE, SIZE = 0x20000000, 0x400000
 TRAP = BASE + 0x3F0000
 BLOCK_CYCLES = 128 * 180e6 / 44117.647   # cycles available per 128 frame block at 180 MHz
 NB = 16                                  # blocks measured per scenario (after 6 warm up blocks)
-NAMES = ["default (OG Saw, Smoother, LP SVF 24, 2 osc)", "Cutoff Off (no filter)",
-         "worst (Hermite FM, Wilder x2, LP OB 24, 6 mod slots, glide)"]
-MODELS = ["OG Saw", "OG Square", "Hermite Smooth", "Squared", "Linear", "Hermite FM"]
-KINDS = ["Smoother", "Sharper", "Wilder", "Add 5"]
 
 
 def sh(*a):
@@ -171,46 +167,34 @@ def line(name, sc, detail=False):
 
 
 import os
-ENGINE = os.environ.get("ENGINE", "PHZ")
+ENGINE = os.environ.get("ENGINE", "ACD")
 print(f"block budget at 180 MHz: {BLOCK_CYCLES:,.0f} cycles. Target: under 6 % = {0.06 * BLOCK_CYCLES:,.0f} cycles per voice per block")
 print(f"{'scenario (per block, steady state, all voices of the bench)':<62} {'M4 insn':>9} {'cycles':>9} {'%blk':>7}")
-if ENGINE != "PHZ":
-    # bench_engine.cpp: scenario 0 = default patch, CHIP: 1 + model, 9 = sustain, 20 / 21 / 22 = every parameter at max / mid / min
-    name = os.environ.get("ENGINE_NAME", ENGINE)
-    cases = [(0, "default patch")]
-    if ENGINE == "CHIP":
-        cases += [(1 + i, "model %d %s" % (i, n)) for i, n in enumerate(
-            ["2A03 Pulse", "SID Saw/Tri", "Noise / LFSR", "FM Bell", "Super Square", "Zap / Laser", "Arp Chord", "Chip Drum"])]
-        cases += [(9, "default patch held in sustain (Decay 0.01 s)")]
-    cases += [(20, "all parameters max"), (21, "all parameters mid"), (22, "all parameters min")]
-    # synth automation (bench_engine.cpp): 30 every drivable param moving, 31 the first 4 of the picker order, 32 the modulator alone
-    auto = [(30, "automation: every drivable parameter moving"), (31, "automation: 4 parameters moving (picker order)"),
-            (32, "automation: default patch + 4 slot modulator")]
-    valid = []
-    got = {}
-    if os.environ.get("SCENARIOS"):
-        keep = [int(v) for v in os.environ["SCENARIOS"].split()]
-        cases = [c for c in cases if c[0] in keep]
-    for sc, n in cases + auto:
-        pb = line(f"{name} {n}", sc, detail=(sc == 0))
-        got[sc] = pb
-        if pb >= 5000 and sc < 30:   # voices alive and rendering (a dead voice costs about 1.5k cycles); quiet output still costs real cycles
-            valid.append((pb, n))
-    if valid:
-        w = max(valid)
-        print(f"WORST {name}: {w[0]:.0f} cycles per block = {100 * w[0] / BLOCK_CYCLES:.2f} % of a block ({w[1]})")
-    p = lambda c: 100 * c / BLOCK_CYCLES
-    print(f"AUTOMATION {name}: s0 {p(got[0]):.2f} %, s30 {p(got[30]):.2f} % ({p(got[30] - got[0]):+.2f}), "
-          f"s31 {p(got[31]):.2f} % ({p(got[31] - got[0]):+.2f}), modulator s32-s0 {got[32] - got[0]:.0f} cycles ({p(got[32] - got[0]):+.2f})")
-    sys.exit(0)
-for sc in range(3):
-    line(NAMES[sc], sc, detail=True)
-print()
-if os.environ.get("QUICK"):
-    sys.exit(0)
-print("model x character (Cutoff Off, 2 oscillators, Shape 0.5)")
-worst = 0
-for m in range(6):
-    for k in range(4):
-        worst = max(worst, line(f"  {MODELS[m]} / {KINDS[k]}", 3 + m * 4 + k))
-print(f"\nworst matrix entry {worst:.0f} cycles = {100 * worst / BLOCK_CYCLES:.2f} % of a block (a filter adds the default minus Cutoff Off)")
+# bench_engine.cpp: scenario 0 = default patch, CHIP: 1 + model, 9 = sustain, 20 / 21 / 22 = every parameter at max / mid / min
+name = os.environ.get("ENGINE_NAME", ENGINE)
+cases = [(0, "default patch")]
+if ENGINE == "CHIP":
+    cases += [(1 + i, "model %d %s" % (i, n)) for i, n in enumerate(
+        ["2A03 Pulse", "SID Saw/Tri", "Noise / LFSR", "FM Bell", "Super Square", "Zap / Laser", "Arp Chord", "Chip Drum"])]
+    cases += [(9, "default patch held in sustain (Decay 0.01 s)")]
+cases += [(20, "all parameters max"), (21, "all parameters mid"), (22, "all parameters min")]
+# synth automation (bench_engine.cpp): 30 every drivable param moving, 31 the first 4 of the picker order, 32 the modulator alone
+auto = [(30, "automation: every drivable parameter moving"), (31, "automation: 4 parameters moving (picker order)"),
+        (32, "automation: default patch + 4 slot modulator")]
+valid = []
+got = {}
+if os.environ.get("SCENARIOS"):
+    keep = [int(v) for v in os.environ["SCENARIOS"].split()]
+    cases = [c for c in cases if c[0] in keep]
+for sc, n in cases + auto:
+    pb = line(f"{name} {n}", sc, detail=(sc == 0))
+    got[sc] = pb
+    if pb >= 5000 and sc < 30:   # voices alive and rendering (a dead voice costs about 1.5k cycles); quiet output still costs real cycles
+        valid.append((pb, n))
+if valid:
+    w = max(valid)
+    print(f"WORST {name}: {w[0]:.0f} cycles per block = {100 * w[0] / BLOCK_CYCLES:.2f} % of a block ({w[1]})")
+p = lambda c: 100 * c / BLOCK_CYCLES
+print(f"AUTOMATION {name}: s0 {p(got[0]):.2f} %, s30 {p(got[30]):.2f} % ({p(got[30] - got[0]):+.2f}), "
+      f"s31 {p(got[31]):.2f} % ({p(got[31] - got[0]):+.2f}), modulator s32-s0 {got[32] - got[0]:.0f} cycles ({p(got[32] - got[0]):+.2f})")
+sys.exit(0)

@@ -1,4 +1,4 @@
-// HANDTYPE as a synth plugin: engine_hand.cpp and ot-synths/hand/hand.cpp as they are (built with the firmware's own flags, build_plugs.sh).
+// HANDTYPE as a synth plugin: engine_hand.cpp and ot-synths/hand/hand.cpp as they are (built with the firmware's own flags, engines/).
 #include "synth_plug.h"
 namespace polysynth::open
 {

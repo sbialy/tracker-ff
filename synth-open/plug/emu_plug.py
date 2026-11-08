@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Host harness for a .plg (spike): the firmware loader re-done in Python, the plugin's ARM code run in Unicorn.
 
-    python -I emu_plug.py <file.plg> [--base 0x1FFF0BD0] [--blocks 64] [--wav out.wav] [--inwav in.wav] [--param 0=2.5]
+    python -I emu_plug.py <file.plg> [--base 0x1FFF0BD0] [--blocks 64] [--wav out.wav] [--inwav in.wav] [--param 0=2.5] [--raw PREFIX]
 
 Checks the header and CRC, copies the image to --base, applies the rebase table, calls plug_entry, checks the descriptor
 like plug::checkDesc, then init() and process() on stereo 128-frame float blocks. Prints the instruction count per block
@@ -84,6 +84,7 @@ def main():
                     help="BLOCK:INDEX=VALUE, set_param just before that block runs (repeatable, tests the ramps after the first block)")
     ap.add_argument("--wav")
     ap.add_argument("--inwav", dest="inwav")
+    ap.add_argument("--raw", help="PREFIX: write PREFIX.in.f32 and PREFIX.out.f32, the float blocks as run (per block 128 L then 128 R)")
     a = ap.parse_args()
     data = open(a.plg, "rb").read()
     (magic, hsize, amaj, amin, kind, cpu, flags, uid, ver, min_host, img, bss, nreb, entry, ram, cyc,
@@ -234,6 +235,13 @@ def main():
             chk = ((chk ^ w) * 0x01000193) & 0xFFFFFFFF
         fl = struct.unpack("<%df" % (2 * N), ob)
         out.append((fl[:N], fl[N:]))
+    if a.raw:
+        with open(a.raw + ".in.f32", "wb") as f:
+            for b in range(a.blocks):
+                f.write(struct.pack("<%df" % N, *src[b][0]) + struct.pack("<%df" % N, *src[b][1]))
+        with open(a.raw + ".out.f32", "wb") as f:
+            for b in range(a.blocks):
+                f.write(struct.pack("<%df" % N, *out[b][0]) + struct.pack("<%df" % N, *out[b][1]))
     dump("after warm")
     print("process: %d blocks, instructions per block min/avg/max %d/%d/%d (%.2f%% of a 522,240 cycle block at 1 cycle each)" % (
         a.blocks, min(counts), sum(counts) // len(counts), max(counts), 100.0 * max(counts) / 522240))

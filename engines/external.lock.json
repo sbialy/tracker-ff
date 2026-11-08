@@ -1,0 +1,45 @@
+{
+ "_comment": "The private modules this repository checks, pinned by release tag, commit and sha256 (engines/external.py reads it). engines and effects are the private repositories poly-engines and poly-effects, which build and publish PHZ, PLK, Console and Tube. Only the published files are pinned: .plg and .plgi for the card, .json and .wasm for the browser editor. local_dirs are the build directories of a local checkout (external.py fetch --from-local, the stand-in while the tags are not published), source_root is where source files sit in the tag (ui_shot compiles the Console and Tube twins from them). Tags are local until a release is published. Regenerate the hashes after a rebuild of a private repository and a new tag.",
+ "format_version": 1,
+ "sets": {
+  "engines": {
+   "repo": "sbialy/poly-engines",
+   "tag": "engines-v1.0.0",
+   "tag_commit": "7823bfe8616671e83fdbfa0d8de7eeb13fa50f3b",
+   "local_repo": "~/prj/poly-engines",
+   "local_dirs": [
+    "~/prj/poly-engines/build/engines-autof",
+    "~/prj/poly-engines/build/wasm"
+   ],
+   "source_root": "src/synth-open/",
+   "files": {
+    "phz.plg": "a15e7409f716d8411b68f2514e7e906dd3e9df1106a0b762a58ef4396a8a564d",
+    "phz.plgi": "8c23438f494f2bc70c5d13cf27e55af86fa68ad05c5052276a96ba72b55d31a7",
+    "phz.json": "1cda009c02725e6853e31d2676bb9863e7e5b8c85e605221632af91145e85406",
+    "phz.wasm": "d523341801813d0d5cb37dd09815787d7fa4a8175ff7e1fd957dd4f3335d64ea",
+    "pluck.plg": "6d232ffeac5e2a312ea4c4ae4895b0874f84ac7bdb71083454656f290fd00201",
+    "pluck.plgi": "88978e6d1d8f7ef14a8b6c2a091ffb782bd18992aaeb1ae723074d81c650f19d",
+    "pluck.json": "096d10a8f7fba3e6dfc6f8ff08c1fc341156fc77b0babbc7bab012d7b9ff2014",
+    "pluck.wasm": "fc10abf705fc8b66a125ef696a5911b522c0083a91b871a4ebe5a7dcc10b435a"
+   }
+  },
+  "effects": {
+   "repo": "sbialy/poly-effects",
+   "tag": "effects-v1.0.0",
+   "tag_commit": "3954631b80bae37051cc53039e8f1128c357c136",
+   "local_repo": "~/prj/poly-effects",
+   "local_dirs": [
+    "~/prj/poly-effects/build/set"
+   ],
+   "source_root": "src/synth-open/plug/fx/",
+   "files": {
+    "console.plg": "10b3da9d48b96afb8a42a0d40762196fc185f73d8d51ca34381f1476f738c7e1",
+    "console.json": "91eb3718074bd50ea2c967f9cc41cfa4c48f8d2d467bf7c6e3f63b838be0c01d",
+    "console.wasm": "a3bb143b21307b7ff6783d4e1b5ba32a4d9088f9acfecbd675709dd0c51409ae",
+    "tube.plg": "0ea4233370437d48d90d9bec8b2bf5a060067338b6989183d3246b1ffba0d02f",
+    "tube.json": "dc60451ed31b3e8f1fdeb319fe2bb5fa733bc074f00d98484855c3987fa90222",
+    "tube.wasm": "a5370d4bab6974158c8a2ed3e2c56187de718045579e9d37e8424fcabfc0ceef"
+   }
+  }
+ }
+}

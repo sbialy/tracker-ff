@@ -55,7 +55,6 @@ chain stays in the stock build), checked over all 131 sections of the 18 engines
 | `engines.mk` `engine_list.h` | The engine picker: names, sources and default set (`engines.mk`, read by the top Makefile and `core/makefile`) and one X-macro entry per engine (`engine_list.h`: registry factory, `Synth::kSynthTypes`, editor name and icon, `.patch` engine id, stored project number) |
 | `engine_<name>.cpp` | One `EngineDef` per engine (parameter table, sections, default macros, value text). `engine_acd.cpp` also holds the enum name tables shared by all engines |
 | `engine_chip.cpp` | CHIP: also the `ISynthEngine` adapter that hosts `core/synth/engines/ChiptuneSynthVoice.cpp` |
-| `phz/` | PHZ, our own engine (`phz.cpp`, `phz.h`) |
 | `ot/` | Copies from OpenTracker (commit 927b1516385e, Apache-2.0): `audio/engines/{acd,fat,vap,wtfm,perc}.{h,cpp}`, `audio/dsp.h`, `audio/synth_engine.h`, `audio/audio_tables.h`, `audio/{governor,cpu_meter}.{h,cpp}`, `model/synth_patch.h`, `fastrun.h`, plus the 3.x headers the module engines need. Unmodified apart from a provenance line at the top (Apache section 4b) |
 | `ot-synths/` | The OpenTracker 3.x module engines from opentracker-synths (MIT), unmodified apart from a provenance line |
 | `ff_dirt.h` `ff_dirt.cpp` `ff_dirt_ctl.cpp` | The live Dirt master bus insert (FF_DIRT, see "Dirt master insert"): per block DSP at `-O2 -ffp-contract=off`, the preset table, coefficients and the `AudioEffectDirt` audio object at `-Os` |
@@ -64,7 +63,7 @@ chain stays in the stock build), checked over all 131 sections of the 18 engines
 | `tools/run_smoke.sh` | `run_smoke.sh "ACD VAP WTFM CHIP"` builds and runs the smoke test for an engine set (same names as `SYNTH_ENGINES`) |
 | `tools/validate_synth.py` | `python -I tools/validate_synth.py DIR` runs the firmware's own `checkSynth` (cut out of `plug_synth.cpp`, built with the agt toolchain) in Unicorn on every synth `.plg` in DIR. A reject shows as Missing on the device. All 12 must PASS |
 | `tools/engine_budget.sh` `.py` | Flash cost per engine from the link map, the image size against the cap, `BUILD.txt` |
-| `tools/phz_cycles/` `tools/phz_render.sh` | Emulated cycle bench for the engines and the WAV renderer for PHZ |
+| `tools/phz_cycles/` | Emulated cycle bench for the engines (`run_bench.sh [OPT] [ENGINE]`) |
 | `tools/dirt_cycles/` `tools/dirt_render.sh` | Emulated cycle bench of the Dirt insert and its host render (WAV files and self checks) |
 | `tools/idle_cycles/` `tools/audio_opt/` | Emulated benches for the audio graph (see "Idle synth parts" and "Audio CPU optimisations") |
 | `tools/package_release.sh` `tools/check_ptf.py` | Release packaging and the `.ptf` sanity check that runs on every SYNTH_OPEN build |
@@ -106,7 +105,7 @@ make original SYNTH_OPEN=1 SYNTH_ENGINES="ACD VAP WTFM CHIP"   # any subset of t
 make synth-engines [SYNTH_ENGINES="..."]                       # flash cost of every engine and what fits on top of the selection
 ```
 
-The 18 names are ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE PLK (PLK is our Karplus-Strong engine, `pluck/README.md`, stored 18, ids 0x8A). They are case-insensitive, commas work too and the order does not matter (the model list on screen always runs in the order above). An unknown name or an empty list stops with the list of valid names. Unlisted engines are not compiled and not linked: their `engine_<name>.cpp`, OpenTracker sources, `ChiptuneSynthVoice.cpp`, list icons, registry entry and `kSynthTypes` entry are all out. Every engine set other than the default builds in its own directory (`core/build-MK66-ORIGINAL-SYNTHOPEN-E<names>`) because the engine list is a `-D` flag that the dependency files do not see. `make clean` removes them all.
+The 18 names are ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE PLK (PHZ and PLK are our own engines, their source is in the private repository `poly-engines`, this repository keeps their numbers and names, PLK is stored 18, ids 0x8A). They are case-insensitive, commas work too and the order does not matter (the model list on screen always runs in the order above). An unknown name or an empty list stops with the list of valid names. Unlisted engines are not compiled and not linked: their `engine_<name>.cpp`, OpenTracker sources, `ChiptuneSynthVoice.cpp`, list icons, registry entry and `kSynthTypes` entry are all out. Every engine set other than the default builds in its own directory (`core/build-MK66-ORIGINAL-SYNTHOPEN-E<names>`) because the engine list is a `-D` flag that the dependency files do not see. `make clean` removes them all.
 
 - One place per engine: a line in `engines.mk` (name, sources), one entry in `engine_list.h`, its `EngineDef` and sources.
 - Size guards: `FLASH_IMG_MAX` is 1,044,480 B (0xFF000, the last 4 KB sector stays free) and is checked three times: the post-build `size` check of the platform makefile and the linker ASSERT (both on text+data), and again in the top Makefile from the linked `.axf`, so a second `make` of an oversize set fails as well. An oversize set leaves no `.ptf` in `build/`. `SYNTH_FLASH_IMG_MAX=n` lowers the cap for one build. The real flash image is text + data. The FLASH line of ld leaves out the `.data` load image and is about 6.5 KB too optimistic.
@@ -137,15 +136,9 @@ Emulated cost per voice per block, `-Os` / `-O2`: default patch 14.4 / 12.7 %, h
 
 ### PHZ
 
-PHZ is the Polyend Synth's dual phase distortion engine (Casio CZ style), which exists only in Polyend's closed code. This one is written from the public manual (SYN2 p.76 to 80) and nothing else. No Polyend binary or library was opened. The DSP is our own (`phz/phz.cpp`). The voice skeleton (block rate envelopes, LFOs, glide, mod matrix ramps, the TPT filter stages) follows OpenTracker's VAP engine (Apache-2.0). No Mutable Instruments Plaits code is in it, see the header of `phz/phz.cpp`.
+PHZ is the Polyend Synth's dual phase distortion engine (Casio CZ style), which exists only in Polyend's closed code. Ours is written from the public manual (SYN2 p.76 to 80) and nothing else. No Polyend binary or library was opened. Its voice skeleton follows OpenTracker's VAP engine (Apache-2.0).
 
-- 62 parameters in the page order of the manual: Oscillator 1 to 3 (Shape 1/2, Mix, Osc1/2 XMod, Osc1/2 YMod, Model, Reset 1/2, Detune, Tune 1/2, Finetune, Character 1/2, Glide Mode, Glide Time, Volume), Filter (Cutoff, Resonance, Type, Env Amount, Note Track), Amp, Filter and Aux envelopes, LFO 1 and 2 (Sync, Ratio, Waveform, Retrigger) and 6 mod slots. 10 sections and 6 default macros (Cutoff, Resonance, Timbre = both X, Bend = both Y, Mix, Detune).
-- One oscillator: a phase ramp goes through the phase distortion map of the Model (OG Saw, OG Square, Hermite Smooth, Squared, Linear, Hermite FM), controlled by X and Y, and a cosine based cycle reads it. Character picks the cycle family (Smoother, Sharper, Wilder, Add 1/2/3/5/7/11) and Shape moves along it. The 15 filter types are the VAP set. Cutoff at the top is "Off" (no filter, the cheap path).
-- What follows the manual and what is a guess: the parameter names, ranges, enum names, page order and the model descriptions follow the manual. The map formulas, the Character rows, every default, the mod destinations, the edit curves and the macros are our own.
-- CPU (Cortex-M4F, 128 frame block = 522,240 cycles at 180 MHz, `tools/phz_cycles/run_bench.sh`, an emulated instruction count with a cycle cost table, not hardware): default patch 22.6k cycles = 4.3 % of a block per voice, Cutoff Off 3.4 %, worst case measured (Hermite FM, Wilder x2, saturating 24 dB filter, six mod slots) 5.9 %. PHZ is built `-O2 -ffp-contract=off` (`SYNTH_OPT_PHZ` in `core/makefile`, fused multiply add costs 3 cycles on the M4F, and at `-Os` the worst case is 7.6 %). Per block code is `-Os`. CPU is secondary for PHZ, sound quality is never traded for it.
-- Flash: 15.3 KB linked (13.6 KB code and data plus the 1.66 KB PHZ list icons).
-- Listen to it without the device: `tools/phz_render.sh [outdir]` renders X and Y sweeps for every model, a Shape sweep for every Character and four small patches to WAV files (default `build/phz-wav`, mono 16 bit 44118 Hz).
-- Not done: no anti aliasing beyond limiting the steepness of the maps with pitch (a hard setting on a high note aliases), Linear and the Hermite models carry a DC offset up to about 0.2, the LFO Ratio shows Hz even with Sync On (as VAP).
+Its source (and the source of PLK, the Karplus-Strong engine) moved to the private repository `poly-engines`. This repository keeps the public identity of both (stored numbers 8 and 18, type ids, names in `engine_list.h` and `engines/engines.json`) and loads the built `phz.plg` and `pluck.plg` from the card like every other engine plugin. They are no longer built here: `SYNTH_ENGINES` does not accept `PHZ` or `PLK`, and `engines/build_set.py verify-external DIR` checks the files of the private repository against the numbers kept here. The CPU figures below stay as measured. The tracker-ff releases up to 1.1.0 contain the PHZ source.
 
 ### JU6 and the other OpenTracker 3.x engines
 
@@ -480,7 +473,7 @@ Proof that every `connect()` succeeds: the bench builds the six synth send conne
 
 From `ref/cpu-optimisation-plan.md` (items 1 and 3 to 6 and 10), all output bit identical or below -119 dBFS, all SYNTH_OPEN or plugin only (the stock image is unchanged):
 
-- Engine DSP at `-O2` (`SYNTH_OPT_ENGINES`), FM4 and B-Type at `-O3` (`SYNTH_OPT_FM4`, `SYNTH_OPT_BTYPE`), the synth plugins with the same flags (`plug/synth_engines.sh`). At `-Os` GCC 10.3 kept the per-sample helpers (`svfStep`, `limit`, `fastSine`, `fastPow2`) as calls with the filter state in memory. The table above has the gains. Output: 12 of 18 engines bit identical, the others differ by at most VAP -180.6, CHIP -162.6, CS-Type -119.2, A-Type -125.6, 8-Type -132.5 and Hand-Type -138.5 dBFS (where GCC places a fused multiply add, bench scenarios and plugin render compare). The PLUGS image grows by 14.9 KB, the twelve plugins by 15.5 KB.
+- Engine DSP at `-O2` (`SYNTH_OPT_ENGINES`), FM4 and B-Type at `-O3` (`SYNTH_OPT_FM4`, `SYNTH_OPT_BTYPE`), the synth plugins with the same flags (`engines/engines.json`). At `-Os` GCC 10.3 kept the per-sample helpers (`svfStep`, `limit`, `fastSine`, `fastPow2`) as calls with the filter state in memory. The table above has the gains. Output: 12 of 18 engines bit identical, the others differ by at most VAP -180.6, CHIP -162.6, CS-Type -119.2, A-Type -125.6, 8-Type -132.5 and Hand-Type -138.5 dBFS (where GCC places a fused multiply add, bench scenarios and plugin render compare). The PLUGS image grows by 14.9 KB, the twelve plugins by 15.5 KB.
 - Lo-Fi and Tape keep their coefficients and filter state in locals for the block (a float store to the output may alias any float of the instance, so GCC reloaded them after every sample): Lo-Fi 26.6k to 23.0k emulated cycles per block, Tape 18.4k to 17.9k, bit identical. Dirt, Console, Tube, BBD and Phaser already did.
 - `saturateSoftClip` (`SynthVoiceSDK.h`, twice per sounding part per block) multiplies by `1 / 6.72` instead of dividing, 3,328 cycles per part and block. 1.3 % of the results move 1 ulp (at most -144.5 dBFS). Stock keeps the divide.
 - The plugin runtime's `memset` and `memcpy` store words when aligned (see the CPU table).
@@ -532,9 +525,12 @@ E=-EACD_FAT_VAP_WTFM_PERC_CHIP
 make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTOF SYNTH_TAG=-fpc SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
   SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
   SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off" BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
-# the plugin set of the release (needs python3 with unicorn in PY), FW_OBJ is the obj/synth-open dir of the image build above
-SYNTH_PLUG_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_PLUG_OPT_O3="-O3 -ffp-contract=off" TOOLCHAIN=... PY=/tmp/phzvenv/bin/python \
-  synth-open/plug/build_plugs.sh OUT core/build-MK66-ORIGINAL-SYNTHOPEN-fpc$E-trim/obj/synth-open
+# the engine plugin set of the release: its own standalone build, no firmware build needed (engines/README.md, flavour autof is the default,
+# needs python3 with unicorn in PY for the render checks), then the firmware side checks (render compare, checkSynth, logos)
+make -C engines TOOLCHAIN=... PY=/tmp/phzvenv/bin/python OUT=OUT/engines
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/crosscheck.sh OUT/engines
+# the seven inserts and the examples, FW_OBJ is the obj/synth-open dir of the image build above
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT/inserts core/build-MK66-ORIGINAL-SYNTHOPEN-fpc$E-trim/obj/synth-open
 ```
 
 Against the plain AUTO build the default patch differs by at most -103 dBFS on every engine except A-Type (-80 dBFS), and the all-parameters-max scenarios of Arc-Type, WTFM and Hand-Type differ far more (Arc-Type -7 dBFS, WTFM -44, Hand-Type -69), measured on the 12.3.rel1 bench dumps. The user listened to both and chose AUTOF for all engines. Its CPU saving is an emulated figure, not device calibrated.
@@ -546,7 +542,9 @@ The plain **AUTO** build stays buildable as an unpublished fallback: the same tw
 ```
 make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTO SYNTH_TAG=-pa SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
   BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
-TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT core/build-MK66-ORIGINAL-SYNTHOPEN-pa$E-trim/obj/synth-open
+make -C engines FLAVOUR=fused TOOLCHAIN=... PY=/tmp/phzvenv/bin/python OUT=OUT/engines
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/crosscheck.sh OUT/engines
+TOOLCHAIN=... PY=/tmp/phzvenv/bin/python synth-open/plug/build_plugs.sh OUT/inserts core/build-MK66-ORIGINAL-SYNTHOPEN-pa$E-trim/obj/synth-open
 ```
 
 - `package-release` only packages. The default engine set is the 4 engine one, so build with the explicit 16 engine list first. `synth-open/tools/package_release.sh build/<image>.ptf` does the same packaging for an existing image.
