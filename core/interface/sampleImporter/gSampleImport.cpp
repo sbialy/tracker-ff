@@ -899,7 +899,7 @@ void cSampleImporter::showImportStartPointValue()
     float recTimeValue = importSampleSamplesCount / 44100.0;
     float localStartPoint = (recTimeValue * importStartPoint) / MAX_16BIT;
 
-    sprintf(startPointValueText, "%.3fs", localStartPoint);
+    snprintf(startPointValueText, sizeof(startPointValueText), "%.3fs", localStartPoint);
 
     display.setControlText2(label[1], startPointValueText);
     display.setControlShow(label[1]);

@@ -474,22 +474,17 @@ void cFileManager::browseGamesLocation()
               projectsList + gamesfoundCount,
               [](char* a, char* b) { return compareStrings(a, b); });
 
-    char lowCase[50];
-    // usuwanie koncówek .nes
+    // usuwanie koncówek .nes: cut at the first ".nes" in any case, scanned in place (names run to 255 characters,
+    // the old 50 byte lower-case copy was overrun by a longer one)
     for (uint8_t i = 0; i < gamesfoundCount; i++)
     {
-        strcpy(lowCase, projectsList[i]);
-        for (uint16_t a = 0; a < 50; a++)
+        for (char* p = projectsList[i]; *p != 0; p++)
         {
-            lowCase[a] = tolower(lowCase[a]);
-            if (lowCase[a] == 0)
+            if (p[0] == '.' && tolower(p[1]) == 'n' && tolower(p[2]) == 'e' && tolower(p[3]) == 's')
+            {
+                *p = 0;
                 break;
-        }
-
-        char* nes = strstr(lowCase, ".nes\0");
-        if (nes != nullptr)
-        {
-            *(projectsList[i] + (nes - lowCase)) = 0;
+            }
         }
     }
 

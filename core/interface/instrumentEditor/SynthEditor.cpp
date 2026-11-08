@@ -11,6 +11,7 @@
 #include "mtAudioEngine.h"
 #include "util_math.h"
 #include "util_string.h"
+#include "polyrequire.h"
 #ifdef FEATURE_PLUG_HOST
 #include "core/interface.h"
 #include "elapsedMillis.h"
@@ -778,7 +779,9 @@ void cInstrumentEditor::setSynthGain(int synthPartIdx, float value, bool show)
 
 void cInstrumentEditor::changeSynthReverbSend(int16_t value)
 {
-    uint8_t synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    // int, not uint8_t: -1 (not a synth instrument) must not wrap to 255 and index synthPart[]
+    const int synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    POLY_REQUIRE(synthPartIdx >= 0 && synthPartIdx < kSynthParts);
     SynthPartSettings& synthPart = mtProject.values.synthPart[synthPartIdx];
 
     synthPart.reverbSend = clamp<float>(synthPart.reverbSend + value, 0.0f, 100.0f);
@@ -788,7 +791,9 @@ void cInstrumentEditor::changeSynthReverbSend(int16_t value)
 
 void cInstrumentEditor::changeSynthDelaySend(int16_t value)
 {
-    uint8_t synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    // int, not uint8_t: -1 (not a synth instrument) must not wrap to 255 and index synthPart[]
+    const int synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    POLY_REQUIRE(synthPartIdx >= 0 && synthPartIdx < kSynthParts);
     SynthPartSettings& synthPart = mtProject.values.synthPart[synthPartIdx];
     synthPart.delaySend = clamp<float>(synthPart.delaySend + value, 0.0f, 100.0f);
 
@@ -827,7 +832,9 @@ void cInstrumentEditor::setSynthDelaySend(int synthPartIdx, float value, bool sh
 
 void cInstrumentEditor::setDefaultSynthReverb()
 {
-    uint8_t synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    // int, not uint8_t: -1 (not a synth instrument) must not wrap to 255 and index synthPart[]
+    const int synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    POLY_REQUIRE(synthPartIdx >= 0 && synthPartIdx < kSynthParts);
     SynthPartSettings& synthPart = mtProject.values.synthPart[synthPartIdx];
 
     synthPart.reverbSend = Synth::kSendDefaultValue;
@@ -837,7 +844,9 @@ void cInstrumentEditor::setDefaultSynthReverb()
 
 void cInstrumentEditor::setDefaultSynthDelay()
 {
-    uint8_t synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    // int, not uint8_t: -1 (not a synth instrument) must not wrap to 255 and index synthPart[]
+    const int synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    POLY_REQUIRE(synthPartIdx >= 0 && synthPartIdx < kSynthParts);
     SynthPartSettings& synthPart = mtProject.values.synthPart[synthPartIdx];
 
     synthPart.delaySend = Synth::kSendDefaultValue;

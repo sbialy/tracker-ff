@@ -24,6 +24,7 @@
 #include "util_math.h"
 
 #include "polyassert.h"
+#include "polyrequire.h"
 
 #include <cr_section_macros.h>
 
@@ -3865,13 +3866,13 @@ AUDIO_CORE_RAM bool isPerformanceTrack(int track)
 
 AUDIO_CORE_RAM bool isSampleTrack(int track)
 {
-    assert(track >= 0);
+    POLY_REQUIRE(track >= 0, false); // a negative index would pass the < test below
     return (track < kSampleTracks);
 }
 
 AUDIO_CORE_RAM bool isSampleInstrument(int instrument)
 {
-    assert(instrument >= 0);
+    POLY_REQUIRE(instrument >= 0, false); // a negative index would pass the < test below
     assert(instrument < kTotalInstrumentsCount);
     return instrument < kSampleInstrumentsCount;
 }
@@ -3894,7 +3895,7 @@ AUDIO_CORE_RAM bool isSynthInstrument(int instrument)
 
 AUDIO_CORE_RAM int instrumentIdxToMidiChannel(int instrument)
 {
-    assert(instrument >= 0);
+    POLY_REQUIRE(instrument >= 0, kNoChannel);
     if (isSampleInstrument(instrument))
     {
         return kNoChannel;
@@ -3913,8 +3914,9 @@ AUDIO_CORE_RAM int instrumentIdxToMidiChannel(int instrument)
     return kNoChannel;
 }
 
+// -1 when the instrument is not a synth one (the callers index synthPart[] with the result, test it)
 int instrumentIdxToSynthIdx(int instrumentIdx)
 {
-    assert(isSynthInstrument(instrumentIdx));
+    POLY_REQUIRE(isSynthInstrument(instrumentIdx), -1);
     return instrumentIdxToMidiChannel(instrumentIdx) - 1;
 }
