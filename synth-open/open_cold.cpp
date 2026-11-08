@@ -267,20 +267,24 @@ constexpr Builtin kBuiltin[] = {
 };
 constexpr int kBuiltinCount = int(sizeof(kBuiltin) / sizeof(kBuiltin[0]));
 constexpr int kPlugMax = 16;   // plug::kLibMax: the synth plugin library, installed or not
-// The engines that can be missing: the numbers 7 to 18 of engine_list.h (type id = .patch engine id for all of them).
+// Any plugin engine number (open::kPlugStoredFirst..kPlugStoredLast) that is not in the list is "missing": one placeholder for all
+// of them (type open::kMissingTypeId), the project keeps the number, the name comes from the names this firmware has seen.
 // 0 to 6 are Polyend's (always built in when they exist in this firmware family), DIRT (5) never had an open engine.
-constexpr int kKnownCount = 12;
-constexpr char kKnownName[kKnownCount][9] = { "JU6",   "PHZ",      "FM4",   "DTYPE",   "CSTYPE", "ATYPE",
-                                              "TTYPE", "8TYPE",    "HANDTYPE", "BTYPE", "ARCTYPE", "PLK" };
-constexpr uint8_t kKnownType[kKnownCount] = { 0x81, 0x82, 0x80, 0xA2, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A };
-constexpr int kKnownFirst = 7;
+constexpr int kNameMax = 64;   // remembered plugin engine names (one per stored number)
+struct EngineName
+{
+    int16_t stored;
+    char name[9];
+};
+static_assert(std::is_trivially_default_constructible_v<EngineName>, "OPEN_EXTERNAL_RAM: no static constructor may touch the SDRAM");
+OPEN_EXTERNAL_RAM EngineName gNames[kNameMax];
+int gNameCount;
 
 EngineRef gPlug[kPlugMax];
 int gPlugCount;
 EngineRef gList[kBuiltinCount + kPlugMax];
 int gCount; // 0 until the list is built (first use)
-EngineDef gMissing[kKnownCount] = {};
-bool gHasMissing[kKnownCount];
+EngineDef gMissing = {};
 
 // built in and plugin engines by stored number (the built-in ones ascend already)
 void buildList()
@@ -309,15 +313,10 @@ void buildList()
         }
         gCount++;
     }
-    for (int k = 0; k < kKnownCount; k++)
-    {
-        gHasMissing[k] = open::engineUiForStored(kKnownFirst + k) < 0;
-        EngineDef& d = gMissing[k];
-        d.name = kKnownName[k];
-        d.typeId = kKnownType[k];
-        d.volumeParam = -1;
-        d.maxVoices = open::kMaxVoicesPerInstrument; // never clamps the part's voice count
-    }
+    gMissing.name = "Missing";
+    gMissing.typeId = open::kMissingTypeId;
+    gMissing.volumeParam = -1;
+    gMissing.maxVoices = open::kMaxVoicesPerInstrument; // never clamps the part's voice count
 }
 
 inline void ensureList()
@@ -342,7 +341,7 @@ bool open::engineListAdd(const EngineDef* def, int stored, int patchEngine)
         const int st = bi ? kBuiltin[i].stored : r.stored;
         const int pe = bi ? kBuiltin[i].patchEngine : r.patchEngine;
         const int ty = bi ? kBuiltin[i].def->typeId : r.def->typeId;
-        if (st == stored || ty == def->typeId || pe == patchEngine)
+        if (st == stored || ty == def->typeId || pe == patchEngine || def->typeId == open::kMissingTypeId)
         {
             return false;
         }
@@ -378,16 +377,69 @@ int open::engineUiForStored(int stored)
 
 const EngineDef* open::missingDef(int stored)
 {
-    ensureList();
-    const int k = stored - kKnownFirst;
-    return k >= 0 && k < kKnownCount && gHasMissing[k] ? &gMissing[k] : nullptr;
+    return stored >= kPlugStoredFirst && stored <= kPlugStoredLast && engineUiForStored(stored) < 0 ? &gMissing : nullptr;
+}
+
+const char* open::missingName(int stored)
+{
+    if (!missingDef(stored))
+    {
+        return "";
+    }
+    for (int i = 0; i < gNameCount; i++)
+    {
+        if (gNames[i].stored == stored)
+        {
+            return gNames[i].name;
+        }
+    }
+    static char num[8];
+    snprintf(num, sizeof(num), "#%d", stored);
+    return num;
+}
+
+bool open::engineNameRemember(int stored, const char* name)
+{
+    if (stored < kPlugStoredFirst || stored > kPlugStoredLast || !name || !name[0])
+    {
+        return false;
+    }
+    int i = 0;
+    while (i < gNameCount && gNames[i].stored != stored)
+    {
+        i++;
+    }
+    if (i < gNameCount && std::strncmp(gNames[i].name, name, 8) == 0)
+    {
+        return false;
+    }
+    if (i == gNameCount)
+    {
+        if (gNameCount == kNameMax)
+        {
+            return false; // full: this number shows as "#<stored>" when it is missing
+        }
+        gNameCount++;
+    }
+    gNames[i].stored = int16_t(stored);
+    snprintf(gNames[i].name, sizeof(gNames[i].name), "%.8s", name);
+    return true;
+}
+
+int open::engineNamesText(char* buf, int cap)
+{
+    int len = 0;
+    for (int i = 0; i < gNameCount && len < cap; i++)
+    {
+        len += snprintf(buf + len, size_t(cap - len), "%d %s\r\n", gNames[i].stored, gNames[i].name);
+    }
+    return len < cap ? len : cap - 1;
 }
 
 int open::typeForStored(int stored)
 {
     const int ui = engineUiForStored(stored);
-    const EngineDef* m = missingDef(stored);
-    return ui >= 0 ? gList[ui].def->typeId : (m ? m->typeId : -1);
+    return ui >= 0 ? gList[ui].def->typeId : (missingDef(stored) ? kMissingTypeId : -1);
 }
 
 const EngineDef* open::engineDefForType(int typeId)
@@ -400,14 +452,7 @@ const EngineDef* open::engineDefForType(int typeId)
             return gList[i].def;
         }
     }
-    for (int k = 0; k < kKnownCount; k++)
-    {
-        if (gHasMissing[k] && gMissing[k].typeId == typeId)
-        {
-            return &gMissing[k];
-        }
-    }
-    return nullptr;
+    return typeId == kMissingTypeId ? &gMissing : nullptr;
 }
 
 int open::firstEngineTypeId()
@@ -425,8 +470,7 @@ int open::engineIdForType(int typeId)
             return gList[i].patchEngine;
         }
     }
-    const EngineDef* d = engineDefForType(typeId); // a missing engine: its type is its .patch id
-    return d ? d->typeId : 0;
+    return typeId == kMissingTypeId ? kMissingTypeId : 0; // the placeholder's own number (its files are never written)
 }
 
 int open::typeForEngineId(int engine)
@@ -439,7 +483,8 @@ int open::typeForEngineId(int engine)
             return gList[i].def->typeId;
         }
     }
-    return engineDefForType(engine) ? engine : -1; // a missing engine's .patch: its own type
+    // a plugin engine id this build has not got: the missing placeholder's (a part on it keeps its slot 0 backup on an engine change)
+    return engine >= kPlugPatchFirst && engine <= kPlugPatchLast ? kMissingTypeId : -1;
 }
 
 // Every engine of the list and every missing placeholder into the registry (InstrumentTypeRegistry::registerInstrumentTypes)
@@ -450,13 +495,7 @@ void open::registerEngines(InstrumentTypeRegistry& registry)
     {
         registry.addInstrumentType(gList[i].def->typeId, createFromDef(*gList[i].def));
     }
-    for (int k = 0; k < kKnownCount; k++)
-    {
-        if (gHasMissing[k])
-        {
-            registry.addInstrumentType(gMissing[k].typeId, createFromDef(gMissing[k]));
-        }
-    }
+    registry.addInstrumentType(kMissingTypeId, createFromDef(gMissing));
 }
 
 std::shared_ptr<const InstrumentType> InstrumentTypeRegistry::getInstrumentType(int typeId) const

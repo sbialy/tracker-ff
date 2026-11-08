@@ -131,11 +131,23 @@ bool engineListAdd(const EngineDef* def, int stored, int patchEngine);   // fals
 int engineCount();
 const EngineRef& engineAt(int ui);
 int engineUiForStored(int stored);   // -1: not in the list
-// A known engine (engine_list.h numbers 7 to 17) that is neither built in nor installed: a placeholder definition with its
-// name and type, no parameters and no engine. A part on it stays silent and keeps its project values and patch files
-// untouched ("missing" state), installing the plugin brings it back. nullptr for any other number.
+// A plugin engine number (stored kPlugStoredFirst..kPlugStoredLast) that is neither built in nor in the list: the one placeholder
+// definition, type kMissingTypeId, no parameters and no engine. A part on it stays silent and keeps its project values and patch
+// files untouched ("missing" state), the plugin on the card brings it back. Round G: any number in the range, no list of known
+// engines (before: the 12 engines of 1.1.0 by name, FORM and FLUX lost their parts). nullptr for any other number (a Polyend
+// number 0 to 6 this build has not got: the part falls back to the defaults, as before).
+constexpr int kPlugStoredFirst = 7, kPlugStoredLast = 255;   // engines.json: the plugin engines' stored numbers (7 to 20 in 1.2.0)
+constexpr int kPlugPatchFirst = 0x80, kPlugPatchLast = 0x3FFF; // and their .patch engine ids (0x80 to 0xA2 in 1.2.0)
+constexpr int kMissingTypeId = 0x7F00;                         // the placeholder's type: no engine may use it (engineListAdd)
 const EngineDef* missingDef(int stored);
 int typeForStored(int stored);       // the list entry's or the placeholder's type, -1 when neither
+// The name of a missing engine number for "Missing: <name>": the one the card's plugin had when this firmware last saw it
+// (engineNameRemember, plug_synth.cpp keeps /Plugins/names.txt), else "#<stored>". "" when the number is not missing.
+const char* missingName(int stored);
+// Remembers the name of a plugin engine number (8 characters). True when it is new or changed. Main thread, before or after
+// the synth starts. engineNamesText writes the remembered pairs as "<stored> <name>" lines, the length is returned.
+bool engineNameRemember(int stored, const char* name);
+int engineNamesText(char* buf, int cap);
 
 void registerEngines(InstrumentTypeRegistry& registry);   // the list and the missing placeholders (registry.cpp)
 

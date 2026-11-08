@@ -20,7 +20,7 @@ builds in only the six stock-named engines. Every custom engine is a card plugin
 engine plugins): `ju6 fm4 btype phz dtype cstype atype ttype eight hand arc pluck` (`.plg` plus a `.plgi` logo each). They
 keep their stored numbers and patch ids (JU6 7, PHZ 8, FM4 9, D-Type 10, CS-Type 11, A-Type 12, T-Type 13, 8-Type 14,
 Hand-Type 15, B-Type 16, Arc-Type 17, PLK 18), so old projects, patches and slot files open on the plugin. A part whose
-plugin is not installed shows `Missing: <name>` (`open_cold.cpp`, numbers 7 to 18). Every plugin rendered bit identical to
+plugin is not installed shows `Missing: <name>` (`open_cold.cpp`, any stored number 7 to 255, the name from `/Plugins/names.txt` or `#<number>`). Every plugin rendered bit identical to
 the built-in engine (the render compare, both scenarios, run before the engine sources moved to poly-engines-os). Moving the seven that were still built in (PHZ D-Type
 CS-Type A-Type T-Type 8-Type Arc-Type) frees 88,884 B: the image ends at 0xE535C instead of 0xFAEB8 (same tree, flag flipped).
 
@@ -31,8 +31,9 @@ that no part plays make room (`plug/README.md`, Library and cache). A Tracker ha
 part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set, 12.3.rel1): the twelve need 44 whole sectors, 7 to 8 stay resident, the 3
 biggest plus the one being picked need 18 (73,728 of 122,880 B). Engine rw and bss: 2,976 B of the 3,072 B SRAM pool for all twelve (the worst 3 at once
 need 1,928 B, the pool stays at all twelve so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
-work arena (`plug_synth.cpp`), no engine takes internal heap.
-RAM_G logos: 12 slots, one per listed plugin, installed or not. CPU: FlexNVM runs code at flash speed (device bench run 3), the plugin executes the same
+work arena (`plug_work.h`, a block per attached engine, given back when another engine needs the room and no part plays it, so the
+limit is the engines in use at once: worst 3 of 1.2.0 + formflux 15,000 B, all four hungry ones 15,512 B), no engine takes internal heap.
+RAM_G logos: a cache of 32 list and 2 editor images (`plug_logo.h`), every listed plugin shows its logo. CPU: FlexNVM runs code at flash speed (device bench run 3), the plugin executes the same
 instructions as the built-in engine (worst block equal in `emu_synth.py`, PLK +11 instructions for its pool pointer).
 
 The patch editor gives every section page an icon from one table (`open_section_icon.h`, SYNTH_OPEN builds only, the stock

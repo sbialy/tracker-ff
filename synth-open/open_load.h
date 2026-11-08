@@ -32,6 +32,12 @@ struct EngineDef;
 // A plugin engine is about to be detached (FEATURE_PLUG_HOST, plug_synth.cpp, its flash bytes may change next): every part whose
 // patch is of `def` has its voices cut and no engine (silent) until it gets a new patch. Call with audio interrupts disabled.
 void engineGone(const EngineDef* def);
+// A plugin engine starts again in place (plug_synth.cpp, its work memory moves while the arena is packed): every part whose patch
+// is of `def` has its voices cut and its slot scratch cleared, it keeps the engine (no call reaches the engine while it is stopped,
+// plug_synth.cpp clears PlugSynth::x). engineRestarted runs slotReset on the cleared scratch once the engine is back. Both with
+// audio interrupts disabled (the caller's window, they never touch the interrupt mask).
+void engineRestartLocked(const EngineDef* def);
+void engineRestartedLocked(const EngineDef* def);
 // The patch was made while its engine was not attached (no parameters) and the engine is attached now: the part needs a new
 // patch of the same type to play (Synth::setInstrumentType)
 bool patchStale(const Patch& patch);

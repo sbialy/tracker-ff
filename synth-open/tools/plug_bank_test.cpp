@@ -8,7 +8,7 @@
 //   - boot (bankOpen): no index and no plugin writes nothing, a damaged entry and the entry of a .plg that left the card or
 //     changed are dropped, never a flash command
 //   - install on demand: every engine starts on a sector boundary and shares no sector, an engine already there costs nothing
-//   - the 12 shipped plugins at their build_plugs.sh sizes: how many fit at once (30 sectors), LRU eviction when the bank is full,
+//   - the 14 plugins (formflux group included) at their pinned sizes: how many fit at once (30 sectors), LRU eviction when the bank is full,
 //     the engines the parts use (pinned) are never evicted and their bytes never change while the others come and go
 //   - an engine that comes back to the sectors it left finds its bytes there: only what another engine overwrote is written
 //   - a project whose engines do not fit together: the one that does not fit fails (kBankNoRoom), nothing else changes
@@ -261,22 +261,32 @@ Plg plg(const char* file, uint32_t uid, uint32_t len, uint32_t text, uint32_t rw
     return Plg{uid, 0x10000, crc ? crc : uid * 7u + len, (len + 3u) & ~3u, text, rwLen, file};
 }
 
-// The 12 shipped synth plugins at their build_plugs.sh sizes (image, text, rw + bss), engine DSP at -O2 (FM4 and B-Type -O3), 12.3.rel1 build of release 1.2.0
+// The 14 synth plugins of release 1.2.0 with the formflux group at their pinned sizes (image, text, rw + bss), engine DSP at -O2 (FM4 and
+// B-Type -O3), 12.3.rel1 AUTO-F build (engines/rebuild_pinned.sh ... --with formflux). Every count below follows kN, nothing pins 12.
 struct P
 {
     const char* f;
     uint32_t uid, len, text, rw;
 };
-const P kAll[12] = {
-    {"ju6.plg", 0x73ac7ee0, 7092, 7088, 1648},    {"fm4.plg", 0xea3d5a7a, 10556, 10552, 112},
-    {"btype.plg", 0x5e9b11f7, 13704, 13696, 120}, {"phz.plg", 0x6670b917, 14728, 14720, 120},
-    {"dtype.plg", 0x6754cf41, 11436, 11432, 112}, {"cstype.plg", 0xf73018f5, 12308, 12304, 112},
-    {"atype.plg", 0x24084bf2, 12748, 12744, 112}, {"ttype.plg", 0x318f12b1, 16108, 16104, 160},
-    {"hand.plg", 0xf00e588e, 12360, 12352, 120},  {"arc.plg", 0xc66464e9, 19448, 19440, 120},
-    {"pluck.plg", 0xb4a152b0, 6196, 6192, 120},   {"eight.plg", 0x9d7c57e2, 20424, 20416, 120},
+const P kAll[] = {
+    {"ju6.plg", 0x73ac7ee0, 7180, 7176, 1648},
+    {"fm4.plg", 0xea3d5a7a, 10652, 10648, 112},
+    {"btype.plg", 0x5e9b11f7, 13872, 13864, 120},
+    {"phz.plg", 0x6670b917, 14728, 14720, 120},
+    {"dtype.plg", 0x6754cf41, 11660, 11656, 112},
+    {"cstype.plg", 0xf73018f5, 12588, 12584, 112},
+    {"atype.plg", 0x24084bf2, 13468, 13464, 112},
+    {"ttype.plg", 0x318f12b1, 16492, 16488, 168},
+    {"hand.plg", 0xf00e588e, 12632, 12624, 120},
+    {"arc.plg", 0xc66464e9, 19472, 19464, 120},
+    {"pluck.plg", 0xb4a152b0, 6196, 6192, 120},
+    {"eight.plg", 0x9d7c57e2, 21160, 21152, 120},
+    {"form.plg", 0xdbc3be3d, 22148, 22144, 112},
+    {"flux.plg", 0x28785da0, 21868, 21864, 120},
 };
+constexpr int kN = int(sizeof(kAll) / sizeof(kAll[0]));
 
-Io allTwelve()
+Io allPlugins()
 {
     Io io;
     for (const P& p : kAll) io.card[p.f] = plg(p.f, p.uid, p.len, p.text, p.rw);
@@ -329,7 +339,7 @@ int main()
         BankOpenStatus st = open(f, none, b);
         check(none.indexWrites == 0 && !none.haveIndex && b.n == 0 && st.dropped == 0 && f.commands == 0,
               "no synth plugin, no index: nothing written");
-        Io io = allTwelve();
+        Io io = allPlugins();
         Cache c;
         open(f, io, b);
         check(install(f, io, b, "ju6.plg", c).err == 0 && install(f, io, b, "fm4.plg", c).err == 0 &&
@@ -352,7 +362,7 @@ int main()
     // ---- install on demand: sector aligned, nothing shared, an installed engine costs nothing
     {
         Flash f;
-        Io io = allTwelve();
+        Io io = allPlugins();
         Bank b;
         Cache c;
         open(f, io, b);
@@ -367,7 +377,7 @@ int main()
         printf("info  JU6 install: %d commands (%d phrases), FM4: %d commands\n", a.commands, int(align8(6956) / 8), m.commands);
     }
 
-    // ---- the 12 shipped plugins: how many fit, LRU, pinned engines untouched
+    // ---- the shipped plugins: how many fit, LRU, pinned engines untouched
     {
         uint32_t total = 0, sectors = 0, rwTotal = 0;
         for (const P& p : kAll)
@@ -376,9 +386,31 @@ int main()
             sectors += sectorsOf(p.len);
             rwTotal += align8(p.rw);
         }
-        printf("info  12 synth plugins: %u B packed, %u whole sectors of %d, rw %u of %u B\n", total, sectors, kBankSectors, rwTotal,
-               kPoolBytes);
-        check(sectors > uint32_t(kBankSectors) && rwTotal <= kPoolBytes, "all 12: more sectors than the bank, inside the rw pool");
+        // The rw pool must hold every set of engines the flash can hold at once (at most kBankMax entries in kBankSectors), else the
+        // pool would decide evictions and force flash rewrites. All of them together may exceed it: they never are resident together.
+        uint32_t worstRw = 0;
+        int worstN = 0;
+        for (uint32_t m = 1; m < (1u << kN); m++)
+        {
+            uint32_t sec = 0, rw = 0;
+            int n = 0;
+            for (int i = 0; i < kN; i++)
+                if (m & (1u << i))
+                {
+                    sec += sectorsOf(kAll[i].len);
+                    rw += align8(kAll[i].rw);
+                    n++;
+                }
+            if (n <= kBankMax && sec <= uint32_t(kBankSectors) && rw > worstRw)
+            {
+                worstRw = rw;
+                worstN = n;
+            }
+        }
+        printf("info  %d synth plugins: %u B packed, %u whole sectors of %d, rw %u B all, %u of %u B for the worst set that fits the bank (%d engines)\n",
+               kN, total, sectors, kBankSectors, rwTotal, worstRw, kPoolBytes, worstN);
+        check(sectors > uint32_t(kBankSectors) && worstRw <= kPoolBytes,
+              "all plugins: more sectors than the bank, every set the bank can hold fits the rw pool");
         uint32_t big3 = 0, big3rw = 0;
         {
             std::vector<uint32_t> s, r;
@@ -397,20 +429,20 @@ int main()
         check(big3 <= uint32_t(kBankSectors), "the 3 biggest engines on the parts plus the 4th biggest fit the bank together");
 
         Flash f;
-        Io io = allTwelve();
+        Io io = allPlugins();
         Bank b;
         Cache c;
         open(f, io, b);
         int failed = 0, firstEvict = -1;
-        for (int i = 0; i < 12; i++)
+        for (int i = 0; i < kN; i++)
         {
             BankInstallStatus st = install(f, io, b, kAll[i].f, c);
             failed += st.err != 0;
             if (st.evicted && firstEvict < 0) firstEvict = i;
         }
-        check(failed == 0 && exact(f, io, b) && layoutOk(b) && insert2Blank(f), "all 12 picked in turn: every install works");
+        check(failed == 0 && exact(f, io, b) && layoutOk(b) && insert2Blank(f), "every plugin picked in turn: every install works");
         check(firstEvict > 0 && !c.evicted.empty() && c.evicted[0] == kAll[0].uid, "the bank fills, then the least recently used goes first (JU6)");
-        printf("info  12 in card order: %d resident before the first eviction, %d resident at the end, %zu evicted\n", firstEvict, b.n,
+        printf("info  %d in card order: %d resident before the first eviction, %d resident at the end, %zu evicted\n", kN, firstEvict, b.n,
                c.evicted.size());
 
         // three parts pin PHZ, T-Type and 8-Type (three of the biggest), the others are picked again and again
@@ -430,7 +462,7 @@ int main()
         int bad = 0;
         for (int round = 0; round < 40; round++)
         {
-            const P& p = kAll[(round * 5) % 12];
+            const P& p = kAll[(round * 5) % kN];
             if (install(f, io, b, p.f, c).err) bad++;
             if (!exact(f, io, b) || !layoutOk(b)) bad++;
         }
@@ -444,7 +476,7 @@ int main()
         }
         check(bad == 0 && !c.evicted.empty(), "40 picks with three engines pinned: all installs work, evictions happen");
         check(!pinnedEvicted && !pinnedChanged, "the pinned engines are never evicted, their bytes never change (never erased)");
-        check(insert2Blank(f), "12 plugins: insert 2 sectors untouched");
+        check(insert2Blank(f), "all plugins: insert 2 sectors untouched");
     }
 
     // ---- an engine that comes back to the sectors it left
@@ -519,7 +551,7 @@ int main()
 
     // ---- power cut after every command of an install that evicts and erases, and a journal that cannot be written
     {
-        Io base = allTwelve();
+        Io base = allPlugins();
         Flash f0;
         Bank b0;
         Cache c0;
@@ -575,7 +607,7 @@ int main()
     // ---- wear: counters follow the flash, installs spread, worst case per pick
     {
         Flash f;
-        Io io = allTwelve();
+        Io io = allPlugins();
         Bank b;
         Cache c;
         open(f, io, b);

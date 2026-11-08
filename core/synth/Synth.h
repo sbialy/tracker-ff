@@ -52,7 +52,8 @@ class Synth
     // Position in the list of a stored engine number, -1 when this build has not got the engine (or it is missing)
     static int storedToUi(int stored) { return polysynth::open::engineUiForStored(stored); }
     static int uiToStored(int ui) { return polysynth::open::engineAt(ui).stored; }
-    // A known engine that is not installed (JU6 without ju6.plg): the part keeps its number and patches, silent
+    // A plugin engine number this build has not got (JU6 without ju6.plg, or any later engine): the part keeps its number and
+    // patches, silent
     // A listed plugin engine that is not attached (round E: not installed yet, or it could not be loaded) is missing too
     static bool storedIsMissing(int stored)
     {
@@ -64,12 +65,12 @@ class Synth
         const polysynth::open::EngineRef& r = polysynth::open::engineAt(ui);
         return r.builtin < 0 && !polysynth::open::engineOf(r.def);
     }
-    // The name of a stored engine number (the list entry's, or the missing placeholder's), "" when neither
+    // The name of a stored engine number (the list entry's, or the one remembered for a missing number, else "#<number>"), "" when
+    // neither
     static const char* storedName(int stored)
     {
         const int ui = storedToUi(stored);
-        const polysynth::open::EngineDef* d = ui >= 0 ? polysynth::open::engineAt(ui).def : polysynth::open::missingDef(stored);
-        return d ? d->name : "";
+        return ui >= 0 ? polysynth::open::engineAt(ui).def->name : polysynth::open::missingName(stored);
     }
     static bool isStoredTypeValid(int stored) { return polysynth::open::typeForStored(stored) >= 0; }
     static bool storedTypeIs(int stored, polysynth::InstrumentTypeId id)

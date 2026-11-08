@@ -190,6 +190,24 @@ class OpenInstrument final : public Instrument
         }
     }
 
+    // plug_synth.cpp starts the engine of def again (open::engineRestartLocked): no voice and no slot state of the old run is left
+    void engineRestart(const EngineDef* d)
+    {
+        if (def == d && engine)
+        {
+            cutAll();
+            std::memset(scratch.bytes, 0, sizeof(scratch.bytes));
+            paramsValid = false;
+        }
+    }
+    void engineRestarted(const EngineDef* d)
+    {
+        if (def == d && engine)
+        {
+            engine->slotReset(scratch);
+        }
+    }
+
     void connect(MidiSource& midiSource) override
     {
         callback = std::make_shared<MidiSource::MidiEventCallback>(
@@ -724,6 +742,24 @@ class OpenSynth final
             }
         }
     }
+    void engineRestart(const EngineDef* d, bool done)
+    {
+        for (const auto& i : instruments)
+        {
+            if (i)
+            {
+                auto& oi = static_cast<OpenInstrument&>(*i);
+                if (done)
+                {
+                    oi.engineRestarted(d);
+                }
+                else
+                {
+                    oi.engineRestart(d);
+                }
+            }
+        }
+    }
     void projectLoaded()
     {
         for (const auto& i : instruments)
@@ -923,6 +959,20 @@ void open::engineGone(const EngineDef* def)
     if (gActive)
     {
         gActive->engineGone(def);
+    }
+}
+void open::engineRestartLocked(const EngineDef* def)
+{
+    if (gActive)
+    {
+        gActive->engineRestart(def, false);
+    }
+}
+void open::engineRestartedLocked(const EngineDef* def)
+{
+    if (gActive)
+    {
+        gActive->engineRestart(def, true);
     }
 }
 void open::resetOnProjectLoad()

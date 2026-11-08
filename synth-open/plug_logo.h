@@ -16,8 +16,18 @@
 // The sidecar wins over the trailer, the trailer over the text name. A bad or missing record goes to the next source, the last
 // one is the engine's name drawn as text (round A), so nothing here can stop the picker.
 //
-// RAM_G: the free window between the last stock bitmap (CHIP med ends at 128,780, core/libs/NewDisplay/display.cpp) and the
-// controls cache at 150,000 (displayStructs.h controlsRamStartAddress) holds 12 records' pixels, one per bank entry.
+// RAM_G (round G): the free window between the last stock bitmap (CHIP med ends at 128,780, core/libs/NewDisplay/display.cpp) and
+// the controls cache at 150,000 (displayStructs.h controlsRamStartAddress) is a cache, not a table: 32 list image slots (580 B) and
+// 2 editor image slots (1,080 B), 20,720 of 21,220 B, each filled from the card on the main loop when an image is wanted and
+// reused least recently used first (LogoCache below). Before round G it held the 12 first engines' records, the others showed text.
+// The picker shows 7 rows and plug_synth.cpp prefetches the 15 around the selection, the editor shows one image: the slot that is
+// written over is never one on screen (drawing touches its slot, kLogoMiniSlots > 15 + 7 rows of the last frame). Nothing is read
+// from the card while the display list is built or in the audio interrupt: bitmapAt only looks the slot up.
+//
+// Card time per load (estimate, measured on the device by the "logo loads" line of /Plugins/synth.txt): open and read one
+// 1,676 B record (a sidecar, else the .plg trailer after a seek) on the 4 bit SDHC bus, FAT lookup in /Plugins/Synth included,
+// about 2 to 5 ms, plus 580 or 1,080 B over the FT812 SPI (about 0.3 ms). Only the patch editor's image and a picker list longer
+// than 32 engines load while the UI runs, the boot fills the list slots of the first 32 engines as before.
 #pragma once
 
 #include <stdint.h>
@@ -41,9 +51,11 @@ constexpr uint32_t kLogoHeader = 16;
 constexpr uint32_t kLogoRecord = kLogoHeader + kLogoPixels;              // 1,676
 constexpr uint32_t kLogoRamG = 128780;      // end of the last stock bitmap
 constexpr uint32_t kLogoRamGEnd = 150000;   // controlsRamStartAddress: never written
-constexpr int kLogoSlots = 12;
-static_assert(kLogoRamG % 4 == 0 && kLogoMiniBytes % 4 == 0 && kLogoPixels % 4 == 0, "RAM_G writes are whole words");
-static_assert(kLogoRamG + kLogoSlots * kLogoPixels <= kLogoRamGEnd, "the logo pool stays below the controls cache");
+constexpr int kLogoMiniSlots = 32;          // list images (picker)
+constexpr int kLogoMedSlots = 2;            // editor images (one on screen, the next one)
+constexpr uint32_t kLogoMedRamG = kLogoRamG + uint32_t(kLogoMiniSlots) * kLogoMiniBytes;
+static_assert(kLogoRamG % 4 == 0 && kLogoMiniBytes % 4 == 0 && kLogoMedBytes % 4 == 0, "RAM_G writes are whole words");
+static_assert(kLogoMedRamG + uint32_t(kLogoMedSlots) * kLogoMedBytes <= kLogoRamGEnd, "the logo pool stays below the controls cache");
 
 struct LogoHeader
 {
@@ -119,6 +131,111 @@ LogoSource logoFind(Fs& fs, const char* dir, const char* plgFile, uint32_t trail
     }
     if (err) *err = e;
     return kLogoNone;
+}
+
+// What the card holds for one engine: probed once, a bad or missing record is not read again this session
+struct LogoState
+{
+    bool probed;
+    int8_t src;   // LogoSource of the last probe
+    int8_t err;   // LogoErr why the last source tried was refused
+};
+
+// The RAM_G slots: two pools (list images, editor images), each slot owned by one library entry or free (-1), least recently used goes
+// first. Platform free (plug_logo_test fills it with 20 fake engines). All of it runs on the main loop (bitmapAt only finds and touches).
+struct LogoCache
+{
+    int16_t miniOwner[kLogoMiniSlots], medOwner[kLogoMedSlots];
+    uint32_t miniUsed[kLogoMiniSlots], medUsed[kLogoMedSlots];
+    uint32_t tick;
+    uint32_t loads, loadMs, loadMsMax;   // card loads this session and their time (synth.txt)
+
+    void reset()
+    {
+        for (int i = 0; i < kLogoMiniSlots; i++) miniOwner[i] = -1, miniUsed[i] = 0;
+        for (int i = 0; i < kLogoMedSlots; i++) medOwner[i] = -1, medUsed[i] = 0;
+        tick = loads = loadMs = loadMsMax = 0;
+    }
+    int slots(bool med) const { return med ? kLogoMedSlots : kLogoMiniSlots; }
+    int16_t* owner(bool med) { return med ? medOwner : miniOwner; }
+    const int16_t* owner(bool med) const { return med ? medOwner : miniOwner; }
+    uint32_t* used(bool med) { return med ? medUsed : miniUsed; }
+    int find(int entry, bool med) const
+    {
+        for (int i = 0; i < slots(med); i++)
+            if (owner(med)[i] == entry) return i;
+        return -1;
+    }
+    void touch(int slot, bool med) { used(med)[slot] = ++tick; }
+    int victim(bool med) const
+    {
+        int v = 0;
+        for (int i = 0; i < slots(med); i++)
+        {
+            if (owner(med)[i] < 0) return i;
+            if ((med ? medUsed : miniUsed)[i] < (med ? medUsed : miniUsed)[v]) v = i;
+        }
+        return v;
+    }
+    static uint32_t address(int slot, bool med)
+    {
+        return med ? kLogoMedRamG + uint32_t(slot) * kLogoMedBytes : kLogoRamG + uint32_t(slot) * kLogoMiniBytes;
+    }
+    int resident(bool med) const
+    {
+        int n = 0;
+        for (int i = 0; i < slots(med); i++) n += owner(med)[i] >= 0;
+        return n;
+    }
+};
+
+// The slot of entry's list (med false) or editor (med true) image, loaded from the card when it is not in RAM_G: logoFind into rec
+// (kLogoRecord + 1 bytes), then ram.write(pixels, bytes, address) of the half that is wanted. -1: the engine has no good record (its
+// name is drawn instead), that answer is kept in st so the card is asked once. Fs as logoFind, Ram:
+//   void write(const uint8_t* p, uint32_t n, uint32_t ramG)
+// now() gives milliseconds for the load time (synth.txt).
+template <class Fs, class Ram, class Now>
+int logoLoad(LogoCache& c, int entry, bool med, Fs& fs, Ram& ram, Now now, const char* dir, const char* plgFile, uint32_t trailerOff,
+             uint8_t* rec, LogoState& st)
+{
+    int s = c.find(entry, med);
+    if (s >= 0)
+    {
+        c.touch(s, med);
+        return s;
+    }
+    if (st.probed && st.src == kLogoNone) return -1;
+    const uint32_t t0 = now();
+    LogoErr why = kLogoOk;
+    const LogoSource src = logoFind(fs, dir, plgFile, trailerOff, rec, &why);
+    st.probed = true;
+    st.src = int8_t(src);
+    st.err = int8_t(why);
+    if (src == kLogoNone) return -1;
+    s = c.victim(med);
+    c.owner(med)[s] = -1;   // (the old owner's id draws nothing from here on)
+    ram.write(rec + kLogoHeader + (med ? kLogoMiniBytes : 0u), med ? kLogoMedBytes : kLogoMiniBytes, LogoCache::address(s, med));
+    c.owner(med)[s] = int16_t(entry);
+    c.touch(s, med);
+    const uint32_t ms = now() - t0;
+    c.loads++;
+    c.loadMs += ms;
+    c.loadMsMax = ms > c.loadMsMax ? ms : c.loadMsMax;
+    return s;
+}
+
+// The list images of entries[0..n) (the picker rows around the selection, nearest first): the ones already in RAM_G are touched first
+// (they become the most recent), then the others are loaded with load(entry) (logoLoad). So a load never takes the slot of an image
+// wanted now, and with n + the rows of the last frame <= kLogoMiniSlots never one on screen.
+template <class Load>
+void logoPrefetch(LogoCache& c, const int* entries, int n, Load load)
+{
+    for (int i = 0; i < n; i++)
+    {
+        const int s = c.find(entries[i], false);
+        if (s >= 0) c.touch(s, false);
+    }
+    for (int i = 0; i < n; i++) load(entries[i]);
 }
 
 }   // namespace plug

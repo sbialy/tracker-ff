@@ -75,7 +75,7 @@ bool nvmProgram(uint32_t off, const uint8_t* data8);
 // ---- synth engine plugins (plug_synth.cpp, phase 3): /Plugins/Synth/*.plg is the library, every engine in it is in the
 // shim's engine list from boot (TrackerImpl::init, before Synth::init), installed or not. The FlexNVM bank (plug_bank.h) is a
 // cache: an engine is installed when a part needs it (synthEnsure), the least recently used ones that no part needs make room.
-constexpr int kLibMax = 16;   // synth plugins listed (open_cold.cpp kPlugMax), the first 12 get a card logo
+constexpr int kLibMax = 16;   // synth plugins listed (open_cold.cpp kPlugMax), each with its card logo (a RAM_G cache, plug_logo.h)
 void synthBoot(FileSystem* fs);
 // Main thread. Makes the plugin engines of the types in want[] installed and attached (built-in types are skipped). The engines
 // of want[] are never evicted for each other, the ones of keep[] (what the parts play now) only when nothing else frees room.
@@ -85,10 +85,15 @@ bool synthEnsure(const int* want, int nWant, const int* keep, int nKeep);
 bool synthLoaded(int typeId);       // a library engine that is attached now (false for built-in and unknown types)
 bool synthIsPlugin(int typeId);     // a type of the library
 bool synthUiUp();                   // the display is up (synthLogos ran): an install may show its popup
-// The attached engines' card logos into the RAM_G logo pool (plug_logo.h): boot() calls it once, the display is up by then
+// The display is up: the list images of the first 32 listed engines go into the RAM_G logo cache (plug_logo.h). boot() calls it once
 void synthLogos(DisplayDriver* dd);
-// The bitmap id of a plugin engine's logo (the list image, or the editor image), -1: none, show its name
+// Main loop. The bitmap id of a plugin engine's logo (the list image, or the editor image), -1: none, show its name. The editor image
+// is loaded now when it is not in RAM_G (a card read of a few ms), a list image comes with synthLogoPrefetch (bitmapAt gives nullptr
+// until then, the list draws the name)
 int synthLogoBitmap(const polysynth::open::EngineDef* d, bool editor);
+// Main loop, before the picker is drawn at a new place: the list images of these engines (at most 16, the rows around the selection)
+// are put into RAM_G, the ones already there first, so no slot that is wanted or on screen is reused
+void synthLogoPrefetch(const polysynth::open::EngineDef* const* defs, int n);
 void useFs(FileSystem* fs);   // the card for writeText before boot() (synthBoot runs first)
 // scanIndex of one directory and kind on the card (the names are copied into index, the list buffers are shared)
 int scanDir(const char* dir, IndexEntry* index, int cap, ScanStats& st, uint32_t kind);

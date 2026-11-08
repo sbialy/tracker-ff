@@ -515,14 +515,14 @@ The host points its engine description **straight at your arrays**. Nothing is c
 
 ### Working memory (`work_bytes`, `set_work`)
 
-An engine cannot call `alloc`. Large state (a delay line pool) comes from the host through `PLUG_SYNTH_PLUGIN_WORK`: `work_bytes` and a `set_work(void*, uint32_t)` function. The host hands it out of a 16 KB SDRAM arena, zeroed, 8 byte aligned, once after `init` and before any audio call. It stays while the engine is installed. Keep only state there that is touched a few times per sample (a delay line read once per sample). An uncached SDRAM access costs about 20 to 30 cycles on the MK66, so never put hot per-sample state there. The Karplus-Strong plugin PLK (source in the private repository `poly-engines`) uses it.
+An engine cannot call `alloc`. Large state (a delay line pool) comes from the host through `PLUG_SYNTH_PLUGIN_WORK`: `work_bytes` and a `set_work(void*, uint32_t)` function. The host hands it out of a 16 KB SDRAM arena, zeroed, 8 byte aligned, after every `init` (every attach) and before any audio call. The block is the engine's while it is attached. When no part plays the engine and another engine needs the room, the host detaches it and gives the block away: when the engine comes back it is attached again (rw copied, `init`, a zeroed block through `set_work`). In the rare case that the blocks of the engines in use have to be packed together, the host stops an engine that plays (its voices are cut), runs `plug_entry` and `init` again and hands it a zeroed block at its new place. So keep nothing in work memory that a fresh `init` would not rebuild, as with rw. The limit is the engines in use at the same time (one per synth part), not every engine used since boot (`synth-open/plug_work.h`). Keep only state there that is touched a few times per sample (a delay line read once per sample). An uncached SDRAM access costs about 20 to 30 cycles on the MK66, so never put hot per-sample state there. The Karplus-Strong plugin PLK (source in the private repository `poly-engines`) uses it.
 
 ### Presets and patches
 
 - A **patch** is a `.patch` file (a protobuf `Patch` message, the format the Tracker Mini and OpenTracker use). The engine id in field 1 is your `patch_engine`. Library patches go to `Patches/<NAME>/<name>.patch`. Each synth part has 16 patch slots in the project (`<N>.patch` and `<N>-<n>.patch` in the Workspace and the project folder).
 - Parameters are stored **by index**. A parameter that is missing, not finite or out of range takes its default. **Append new parameters at the end. Do not reorder or remove parameters in a released engine**, or old patches change meaning.
 - The Init patch and the default macros come from your tables (`initPatchData` builds Init data from the engine definition).
-- A part whose engine is not on the card shows `Missing: <NAME>` and stays silent. Its project values and patch files are never rewritten, and installing the plugin brings it back.
+- A part whose engine is not on the card shows `Missing: <NAME>` and stays silent. Its project values and patch files are never rewritten, and installing the plugin brings it back. This holds for any stored number from 7 to 255 (and `.patch` ids from 0x80 up), there is no list of known engines: the name is the one the card's plugin had when the firmware last listed it (`/Plugins/names.txt`), else `Missing: #<stored>`.
 - A patch file also carries the synth automation block (field 64). It is the host's, not yours.
 
 ### Automation exposure
@@ -838,7 +838,7 @@ The firmware's own engine bench (`synth-open/tools/phz_cycles/run_bench.sh`) use
 | **Code** | SRAM_L slot, 8,192 B for image + bss. No wait states | FlexNVM `0x1001E000`, text up to 8,192 B (the last two 4 KB sectors of the 128 KB data flash). Erased and programmed when a different plugin is loaded there. No flash command when the bytes are already there | FlexNVM bank `0x10000000` to `0x1001E000`: 120 KB, 30 sectors of 4 KB |
 | **Writable data** | in the same slot | `rw + bss` up to **1,024 B**, fixed SRAM buffer. More is refused (error 4) | rw + bss from a **3,072 B** SRAM pool shared by the installed engines |
 | **Instance** | up to 16 KB from the SRAM heap | same | none (an 8 byte scratch). Per voice 128 B, per part 384 B |
-| **Big tables, delay lines** | `alloc(bytes, 1)`: SDRAM arena, 32 KB per slot | same | `work_bytes`: 16 KB SDRAM arena shared by all engines |
+| **Big tables, delay lines** | `alloc(bytes, 1)`: SDRAM arena, 32 KB per slot | same | `work_bytes`: 16 KB SDRAM arena shared by the engines in use at the same time |
 | **Limit on the file** | `image + bss` 8,192 | text 8,192 | `image + bss` 32,768 (staging buffer) |
 
 Notes:
@@ -914,7 +914,7 @@ It comes from one of two places, in this order:
 1. a **sidecar** `/Plugins/Synth/<name>.plgi` next to `<name>.plg` (the whole file is the record, any other size is refused)
 2. a **trailer** inside the `.plg` after the rebase table, named by `plug_manifest.reserved[0]` (`build_plug.py --logo x.plgi`). The record has its own CRC and the file CRC does not cover it
 
-A record that is missing, truncated, the wrong size or damaged goes to the next source, then to the text name. Nothing can stop the picker. The host loads logos once at boot into free RAM_G, one slot per listed engine whether it is installed or not, **for the first 12 engines of the library**. `/Plugins/synth.txt` lists what it used (`logo <file> sidecar|trailer|text err <n>`).
+A record that is missing, truncated, the wrong size or damaged goes to the next source, then to the text name. Nothing can stop the picker. The host keeps the logos in a RAM_G cache (32 list images, 2 editor images, least recently used reused): the list images of the first 32 listed engines at boot, the others when the picker comes near them, the editor image when the patch editor opens. Every listed engine shows its logo, however many there are. `/Plugins/synth.txt` lists what it used (`logo <file> sidecar|trailer|text err <n>`).
 
 ### `make_plgi.py`
 

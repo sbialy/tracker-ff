@@ -39,8 +39,8 @@ constexpr int kSynthModelsMax = 32;
 static int synthModelListImages[kSynthModelsMax];
 static char* synthModelListNames[kSynthModelsMax];
 
-// The list icon of model ui. A plugin engine shows its card logo (a .plgi sidecar or a .plg trailer, synth-open/plug_logo.h,
-// loaded at boot) or, without one, -1: its name.
+// The list icon of model ui. A plugin engine shows its card logo (a .plgi sidecar or a .plg trailer, synth-open/plug_logo.h, in a
+// RAM_G cache, synthModelLogos) or, without one, -1: its name.
 static int synthModelListImage(int ui)
 {
     const polysynth::open::EngineRef& m = polysynth::open::engineAt(ui);
@@ -50,6 +50,26 @@ static int synthModelListImage(int ui)
     return m.builtin >= 0 ? synthBuiltinListImages[m.builtin] : -1;
 #endif
 }
+
+#ifdef FEATURE_PLUG_HOST
+// The rows the picker can show around model ui (7 on screen, ui anywhere among them) get their card logo into RAM_G before the list is
+// drawn there: a card read only for an image that is not cached, never while the display list is built.
+static void synthModelLogos(int ui)
+{
+    constexpr int kAround = 7;
+    const polysynth::open::EngineDef* defs[2 * kAround + 1];
+    const int n = Synth::synthTypeCount();
+    int m = 0;
+    for (int d = 0; d <= kAround; d++)
+    {   // nearest first
+        if (ui + d < n && polysynth::open::engineAt(ui + d).builtin < 0) defs[m++] = polysynth::open::engineAt(ui + d).def;
+        if (d && ui - d >= 0 && polysynth::open::engineAt(ui - d).builtin < 0) defs[m++] = polysynth::open::engineAt(ui - d).def;
+    }
+    plug::synthLogoPrefetch(defs, m);
+}
+#else
+static void synthModelLogos(int) {}
+#endif
 
 static int fillSynthModelList()
 {
@@ -565,6 +585,7 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
         {   // not installed: the list shows it, synthModelTick installs and picks it when the list rests
             s_pendModel = { syntPartIdx, newUi };
             s_pendTimer = 0;
+            synthModelLogos(newUi);
             display.setControlValue(modelListControl, newUi);
             display.refreshControl(modelListControl);
             return;
@@ -1091,6 +1112,7 @@ void cInstrumentEditor::showSynthParamsScreen()
 
     modelListData.start = std::max(Synth::storedToUi(mtProject.values.synthPart[syntPartIdx].synthType), 0);
 #ifdef FEATURE_SYNTH_OPEN
+    synthModelLogos(modelListData.start);
     modelListData.length = fillSynthModelList();
     modelListData.linesCount = std::min<uint16_t>(modelListData.length, 7);
     modelListData.rowHeight = 50;
@@ -1185,6 +1207,9 @@ void cInstrumentEditor::showSynthParamsScreen()
 
 void cInstrumentEditor::showSynthModel(uint8_t synthPart)
 {
+#ifdef FEATURE_SYNTH_OPEN
+    synthModelLogos(std::max(Synth::storedToUi(mtProject.values.synthPart[synthPart].synthType), 0));
+#endif
     display.setControlValue(
       modelListControl,
       std::max(Synth::storedToUi(mtProject.values.synthPart[synthPart].synthType), 0));

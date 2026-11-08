@@ -375,10 +375,12 @@ int main() {
     }
 #ifndef SYNTH_ENGINE_HANDTYPE
     // Hand-Type (stored 15, type id and .patch engine 0x87) is in the source tree but not in the release set: a project or a
-    // patch from a build that has it is in the "missing" state (phase 3, open_engine.h missingDef): a placeholder without
-    // parameters or engine, silent, whose patch files are never read into it or written over
+    // patch from a build that has it is in the "missing" state (open_engine.h missingDef, round G: one placeholder for every
+    // plugin engine number, type open::kMissingTypeId): no parameters or engine, silent, its patch files never read into it or
+    // written over
     {
       const InstrumentTypeId kHand = static_cast<InstrumentTypeId>(0x87);
+      const int kMiss = open::kMissingTypeId;
       auto src = ps->createPatch(kLead); open::PatchData pd; static_cast<open::OpenPatch&>(*src).exportData(pd);
       pd.engine = 0x87; uint8_t pbuf[4096]; const size_t pn = open::encodePatch(pd, pbuf, sizeof(pbuf));
       bool refused = pn > 0, untouched = true;
@@ -387,15 +389,18 @@ int main() {
         mp->files[std::string(open::engineDefForType(int(kd.id))->name) + "/hand.patch"].assign(pbuf, pbuf + pn);
         refused = refused && !ps->loadPatch("hand", *t, true); untouched = untouched && *t->getParamValue(0) == b0;
       }
-      auto hp = ps->createPatch(int(kHand));
-      const open::EngineDef* hd = open::engineDefForType(int(kHand));
-      check(refused && untouched && open::typeForEngineId(0x87) == 0x87 && hd && !open::engineOf(hd) && hd->paramCount == 0 &&
-              std::string(hd->name) == "HANDTYPE" && open::missingDef(15) == hd && open::typeForStored(15) == 0x87 &&
-              open::engineUiForStored(15) == -1,
-            "Hand-Type is not in this build: its .patch is refused by every engine, its numbers name the missing placeholder");
+      const open::EngineDef* hd = open::missingDef(15);
+      check(refused && untouched && open::typeForEngineId(0x87) == kMiss && hd && !open::engineOf(hd) && hd->paramCount == 0 &&
+              hd->typeId == kMiss && open::engineDefForType(kMiss) == hd && open::typeForStored(15) == kMiss &&
+              open::engineUiForStored(15) == -1 && !open::engineDefForType(int(kHand)) && std::string(open::missingName(15)) == "#15",
+            "Hand-Type is not in this build: its .patch is refused by every engine, stored 15 is the missing placeholder (\"#15\" unnamed)");
+      check(open::engineNameRemember(15, "HANDTYPE") && !open::engineNameRemember(15, "HANDTYPE") && std::string(open::missingName(15)) == "HANDTYPE" &&
+              std::string(open::missingName(1)).empty(),
+            "a remembered name (plug_synth.cpp /Plugins/names.txt) names the missing number, a number that is not missing has none");
+      auto hp = ps->createPatch(kMiss);
       mw->files["0.patch"].assign(pbuf, pbuf + pn);
       const auto before = mw->files["0.patch"];
-      check(hp && hp->getMetadata().instrumentTypeId == int(kHand) && hp->getMetadata().params.empty() && ps->listPatchesByType(int(kHand)).empty() &&
+      check(hp && hp->getMetadata().instrumentTypeId == kMiss && hp->getMetadata().params.empty() && ps->listPatchesByType(kMiss).empty() &&
               ws->loadPatch("0", *hp, true) && ws->savePatch("0", *hp) && mw->files["0.patch"] == before && !mw->files.count("0.patch.tmp"),
             "a Hand-Type part is the placeholder: no parameters, its Workspace file loads as done and is never written over");
 #ifdef SMOKE_PLUGIN_ENGINE
@@ -407,16 +412,39 @@ int main() {
               open::engineAt(0).builtin == 0, "the engine list is the built-in set (and the two plugin engines), by stored number");
     }
 #endif
-#ifndef SYNTH_ENGINE_BTYPE
-    // B-Type (stored 16, type id and .patch engine 0x88) is a plugin since phase 3 (btype.plg): without it installed, a project
-    // that used it names the missing placeholder, and its stored number has no picker row
+    // Round G: ANY plugin engine number is kept, no list. Stored 99 with .patch engine 0xC7 is in no table of this firmware (a
+    // future engine): the part keeps its number (Synth::validateSynthPartSettings accepts it), shows "Missing: #99" or the remembered
+    // name, plays nothing, and its slot files round-trip byte for byte (load, save, the backup an engine change makes, its restore)
     {
-      const open::EngineDef* bd = open::missingDef(16);
-      check(bd && !open::engineOf(bd) && bd->paramCount == 0 && std::string(bd->name) == "BTYPE" && open::typeForStored(16) == 0x88 &&
-              open::typeForEngineId(0x88) == 0x88 && open::engineDefForType(0x88) == bd && open::engineUiForStored(16) == -1,
-            "B-Type not built in and not installed: stored 16 and engine id 0x88 name the missing placeholder BTYPE");
+      const int kMiss = open::kMissingTypeId;
+      const open::EngineDef* xd = open::missingDef(99);
+      check(xd && !open::engineOf(xd) && open::typeForStored(99) == kMiss && open::engineUiForStored(99) == -1 &&
+              std::string(open::missingName(99)) == "#99" && open::typeForEngineId(0xC7) == kMiss,
+            "stored 99 / engine 0xC7 (in no list): the missing placeholder, \"Missing: #99\"");
+      check(!open::missingDef(5) && open::typeForStored(5) == -1 && !open::missingDef(300) && open::typeForStored(300) == -1 &&
+              !open::missingDef(-1) && open::typeForEngineId(0x7F) == -1,
+            "outside the plugin numbers (Polyend's 0 to 6 this build lacks, over 255, negative): no placeholder, the part takes the defaults");
+      auto src = ps->createPatch(kLead); open::PatchData pd; static_cast<open::OpenPatch&>(*src).exportData(pd);
+      pd.engine = 0xC7; uint8_t pbuf[4096]; const size_t pn = open::encodePatch(pd, pbuf, sizeof(pbuf));
+      const std::vector<uint8_t> file0(pbuf, pbuf + pn);
+      const std::vector<uint8_t> file3 = file0;   // slot 3
+      mw->files["1.patch"] = file0; mw->files["1-3.patch"] = file3; mw->files.erase("1-b.patch");
+      auto xp = ws->createPatch(kMiss);
+      bool same = xp && xp->getMetadata().params.empty() && ws->loadPatch("1", *xp, true) && ws->savePatch("1", *xp) &&
+                  ws->loadPatch("1-3", *xp, true) && ws->savePatch("1-3", *xp);
+      open::patchBankSetLive(1, xp.get()); open::patchBankPreload(1, *xp, *ws);
+      same = same && !open::patchBankApply(1, 3);   // no parameters: nothing to apply, nothing written
+      // the part changes to a built-in engine: slot 0 of the missing engine is backed up first (as for any engine), then restored
+      const bool backedUp = open::patchBackupSave(1, *xp, *ws) == open::Backup::kSaved && mw->files["1-b.patch"] == file0;
+      open::patchBankSetLive(1, nullptr);
+      auto lead = ws->createPatch(kLead); ws->savePatch("1", *lead);
+      auto back = ws->createPatch(kMiss);
+      const bool restored = open::patchBackupRestore(1, *back, *ws) && mw->files["1.patch"] == file0;
+      check(same && mw->files["1.patch"] == file0 && mw->files["1-3.patch"] == file3 && !mw->files.count("1.patch.tmp"),
+            "stored 99: its slot files load as done and are never written over (byte for byte)");
+      check(backedUp && restored, "stored 99: an engine change backs its slot 0 up and switching back restores the same bytes");
+      mw->files.erase("1.patch"); mw->files.erase("1-3.patch"); mw->files.erase("1-b.patch");
     }
-#endif
     // workspace store: flat N.patch, as Synth::savePatchToWorkspace / loadPatchFromWorkspace use it
     auto w0 = ws->createPatch(kLead); const float w0v = float(w0->getMetadata().params[0].maxValue); w0->setParamValue(0, w0v, Patch::ParamChangeSource::kKnob);
     check(ws->savePatch("0", *w0) && mw->files.count("0.patch") == 1, "workspace store writes Workspace/0.patch (no type folder)");

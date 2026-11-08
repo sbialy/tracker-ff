@@ -586,10 +586,14 @@ void NewList::drawImagesList(int x1, int x2, int y, int rowH)
         }
 #endif
 #ifdef FEATURE_PLUG_HOST
-        // a stock bitmap or a synth plugin engine's card logo (plug_logo.h)
+        // a stock bitmap or a synth plugin engine's card logo (plug_logo.h), its name while the logo is not in RAM_G
         const strBitmap* const bm = bitmapAt(idx);
         if (bm == nullptr)
         {
+            if (idx >= kPlugLogoFirst && data->params != nullptr && data->params[dataIdx] != nullptr)
+            {
+                API_CMD_TEXT(x1 + (x2 - x1) / 2, y + (rowH * rowIdx), font->handle, OPT_CENTER, data->params[dataIdx]);
+            }
             continue;
         }
 #define LIST_BMP (*bm)

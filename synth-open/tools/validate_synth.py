@@ -10,9 +10,10 @@ the real checkSynth in Unicorn on that extension. An engine it rejects is listed
 (attach error 4), and no other test sees it: emu_synth.py and the module repositories' render checks never call checkSynth.
 
 It also prints the facts the check is about (sections, formats, work memory), the use of the firmware's 16 KB work arena (plug_synth.cpp
-kWorkBytes: a bump allocator, a library entry's block is never given back until the next boot, so the sum of the blocks of every
-engine that is ever attached in one session must fit), and fails when a plugin uses a format the firmware only has
-for a built-in engine (PLUG_FMT_COUNT and up). Exit code 0 only when every synth plugin passes. Needs unicorn (pip).
+kWorkBytes, plug_work.h since round G: a block is given back when another engine needs the room and no part plays its engine, so what
+must fit is the engines in use at the same time, one per synth part: the 3 biggest, and the 4 biggest as a margin), and fails when a
+plugin uses a format the firmware only has for a built-in engine (PLUG_FMT_COUNT and up). Exit code 0 only when every synth plugin
+passes. Needs unicorn (pip).
 """
 import os
 import re
@@ -197,9 +198,13 @@ def main():
     users = sorted(((b, f) for f, b in WORK.items() if b), reverse=True)
     if users:
         tot = sum(b for b, _ in users)
-        print("work arena: %d of %d B if every one is attached in one session (%s); largest pair %d B, %s" % (
-            tot, arena, ", ".join("%s %d" % (f.replace(".plg", ""), b) for b, f in users),
-            sum(b for b, _ in users[:2]), "FITS" if tot <= arena else "OVER by %d B (the last one attached is refused: attach error 5)" % (tot - arena)))
+        w3 = sum(b for b, _ in users[:3])
+        w4 = sum(b for b, _ in users[:4])
+        print("work arena: %d B (%s); in use at once, 3 synth parts: worst %d of %d B %s, 4 engines: worst %d B %s; all of them %d B "
+              "(no limit any more: an engine no part plays gives its block back)" % (
+                  arena, ", ".join("%s %d" % (f.replace(".plg", ""), b) for b, f in users), w3, arena,
+                  "FITS" if w3 <= arena else "OVER by %d B (the third part's engine is refused: attach error 5)" % (w3 - arena),
+                  w4, "fits" if w4 <= arena else "over by %d B" % (w4 - arena), tot))
     print("validate_synth: %d of %d synth plugins PASS" % (n - bad, n))
     sys.exit(1 if bad or not n else 0)
 

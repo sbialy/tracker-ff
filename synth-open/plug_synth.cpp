@@ -11,14 +11,17 @@
 // EngineDef. Evicting does the reverse with the audio interrupt off (open::engineGone cuts the parts that still point at it).
 // The engine text runs from the flash. /Plugins/synth.txt says what happened.
 //
-// Logos (round B, plug_logo.h): at the end of plug::boot, every listed engine's card logo (a .plgi sidecar, else a trailer in its
-// .plg) is written to the RAM_G logo pool, one slot per library entry (12 slots, the first 12 entries), installed or not.
+// Logos (round B, plug_logo.h, a cache since round G): an engine's card logo (a .plgi sidecar, else a trailer in its .plg) goes into a
+// RAM_G slot when it is wanted: the list images of the first 32 listed engines at the end of plug::boot, the ones around the picker's
+// selection when it moves (synthLogoPrefetch), the editor image when the patch editor opens (synthLogoBitmap). Least recently used
+// slots are reused, so the number of engines is not limited by RAM_G.
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
 #include "log.h"
 #include "plug_bank.h"
 #include "plug_logo.h"
+#include "plug_work.h"
 
 #include "DisplayDriver.h"
 #include "Platform.h"
@@ -59,6 +62,9 @@ constexpr uint32_t kLayout = PLUG_SYNTH_LAYOUT(sizeof(SynthVoice), sizeof(SynthP
 constexpr const char* kSynthDir = "/Plugins/Synth";
 constexpr const char* kIndexPath = "/Plugins/installed.txt";
 constexpr const char* kStatusPath = "/Plugins/synth.txt";
+// "<stored> <name>" of every plugin engine this firmware has listed on this card: a project whose engine's plugin is gone later
+// shows "Missing: <name>" (open::missingName), not only the number. Written at boot when a new engine shows up.
+constexpr const char* kNamesPath = "/Plugins/names.txt";
 // rw + bss of the installed engines. JU6 1,648 B (its chorus lines), the other 11 112 to 160 B each: all 12 together 2,976 B, so
 // every engine of the library keeps its own rw range and the pool never decides what is evicted (only the flash does). The worst
 // 3 at once need 1,928 B (JU6, T-Type and one of 120 B) and the 3 plus the one being picked 2,048 B: a 2,048 B pool would save
@@ -69,10 +75,12 @@ constexpr uint32_t kStageBytes = 32768;  // one engine's image + bss while it is
 __attribute__((aligned(8))) uint8_t s_pool[kPoolBytes];
 __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_bstage[kStageBytes];
 // The engines' work memory (PLUG_EXT_SYNTH work_bytes: PLK's 8,772 B delay line pool), SDRAM, so no engine takes internal
-// heap. A library entry gets its block at its first attach and keeps it (zeroed at every attach): attach and evict repeat.
+// heap. plug_work.h: a block per library entry, taken at its first attach (zeroed at every attach), parked across an eviction,
+// given back only when another engine needs the room and no part plays this one (round G, before: kept until the next boot).
 constexpr uint32_t kWorkBytes = 16384;
 __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_work[kWorkBytes];
-uint32_t s_workUsed;
+WorkArena<kLibMax> s_arena;   // the table (internal RAM, zero BSS, reset at boot)
+uint32_t s_workPacks, s_workRestarts, s_workReleases;
 __NOINIT(EXTERNAL_RAM) uint8_t s_sec[kBankSector];
 __NOINIT(EXTERNAL_RAM) char s_btext[4096];   // synth.txt
 __NOINIT(EXTERNAL_RAM) char s_itext[2048];   // installed.txt
@@ -84,11 +92,12 @@ FileSystem* s_sfs;
 int s_sn;            // library entries (the scan of /Plugins/Synth)
 bool s_safe;         // the crash marker was there at boot: no engine is attached this session
 bool s_uiUp;
-int s_logos;         // logo slots used, slot s at kLogoRamG + s * kLogoPixels
+DisplayDriver* s_dd;  // the FT812 (synthLogos), the logo cache writes RAM_G through it
+LogoCache s_logo;     // the RAM_G logo slots (plug_logo.h)
 BankOpenStatus s_open;
 uint32_t s_tick;     // last use clock (LRU)
-static_assert(kLibMax <= 16 && kLogoSlots <= kLibMax, "one logo slot per library entry, the first 12");
-static_assert(kPlugLogoFirst + 2 * kLogoSlots <= 255, "logo ids fit the label's uint8_t bitmapIndex");
+static_assert(kLibMax <= 16, "Lib and the engine list hold 16");
+static_assert(kPlugLogoFirst + 2 * kLibMax <= 255, "logo ids (two per library entry) fit the label's uint8_t bitmapIndex");
 extern "C" volatile uint32_t systick_millis_count;
 
 // The ISynthEngine of a library engine: every call goes to its PLUG_EXT_SYNTH function (audio context, as built in). x is null
@@ -151,11 +160,8 @@ struct Lib
     int8_t listed;      // 1 in the engine list, 0 not (no numbers in the manifest, numbers taken, bad name)
     int8_t err;         // 0, else the last attach (1..8) or install (10 + BankErr) error, 9 no numbers, 11.. see synth.txt
     bool attached;
-    uint8_t logo;       // 1 + its logo slot, 0 none (the text name)
-    int8_t logoSrc, logoErr;
+    LogoState logo;     // what the card holds for its logo (probed on the first load)
     uint32_t used;      // last use (s_tick)
-    uint8_t* work;      // its work memory block (kept across evictions)
-    uint32_t workLen;
 };
 Lib s_lib[kLibMax];
 EngineDef s_defs[kLibMax] = {};
@@ -314,9 +320,10 @@ void placeholder(int k)
     d.inst = nullptr;
 }
 
-// 0 attached, else: 1 entry refused the host, 2 descriptor, 3 init, 4 extension, 5 no working RAM, 7 not installed,
-// 8 the extension's numbers or name are not the manifest's
-int attach(int k)
+// Runs the installed engine k from its first byte: its rw initial bytes and zero bss, plug_entry, init, the extension and its numbers.
+// Nothing is published. 0, else 1 entry refused the host, 2 descriptor, 3 init, 4 extension, 7 not installed, 8 the extension's
+// numbers or name are not the manifest's
+int start(int k, const plug_ext_synth** out)
 {
     const int bi = bankOf(k);
     if (bi < 0) return 7;
@@ -340,19 +347,119 @@ int attach(int k)
     if (x->stored != ix.synthStored || x->patch_engine != ix.synthPatch || x->type_id != ix.synthType ||
         strncmp(x->name, s_lib[k].name, sizeof(s_lib[k].name)) != 0)
         return 8;
-    if (x->work_bytes)
-    {   // the engine's working RAM (pools, delay lines), SDRAM arena, zeroed at every attach, the block stays the entry's
-        const uint32_t need = (x->work_bytes + 7u) & ~7u;
-        if (!x->set_work) return 5;
-        if (!s_lib[k].work || s_lib[k].workLen < need)
+    *out = x;
+    return 0;
+}
+
+// The engine types synthEnsure was asked for (they must be there after it) and the part's old one (kept when possible)
+struct Need
+{
+    const int* want;
+    int nWant;
+    const int* keep;
+    int nKeep;
+};
+
+bool contains(const int* v, int n, int x)
+{
+    for (int i = 0; i < n; i++)
+        if (v[i] == x) return true;
+    return false;
+}
+
+void detach(int k);
+
+// Hands the work block of entry j to its engine: zeroed, set_work (after init, before any audio call, as the ABI says)
+inline void giveWork(int j, const plug_ext_synth* x)
+{
+    uint8_t* const w = s_work + s_arena.off[j];
+    memset(w, 0, s_arena.len[j]);
+    x->set_work(w, x->work_bytes);
+}
+
+// The arena was packed (plug_work.h workTake): the engines of the m moved blocks run again from their new place. All of them stop
+// first (no part reaches them, their voices are cut), only then is any moved block zeroed, so no engine ever runs on a block that
+// another one is given. One that does not start again is detached and loses its block (its parts are silent, as after an eviction).
+void restartMoved(const int* moved, int m)
+{
+    s_workPacks++;
+    DISABLE_AUDIO_INTERRUPTS();
+    for (int i = 0; i < m; i++)
+    {
+        polysynth::open::engineRestartLocked(&s_defs[moved[i]]);
+        eng(moved[i]).x = nullptr;
+    }
+    ENABLE_AUDIO_INTERRUPTS();
+    const plug_ext_synth* xs[kLibMax] = {};
+    for (int i = 0; i < m; i++)
+    {
+        const int j = moved[i];
+        const plug_ext_synth* x = nullptr;
+        if (start(j, &x) == 0 && x->set_work && workRound(x->work_bytes) <= s_arena.len[j])
         {
-            if (need > kWorkBytes - s_workUsed) return 5;
-            s_lib[k].work = s_work + s_workUsed;
-            s_lib[k].workLen = need;
-            s_workUsed += need;
+            giveWork(j, x);
+            xs[i] = x;
+            s_workRestarts++;
         }
-        memset(s_lib[k].work, 0, need);
-        x->set_work(s_lib[k].work, x->work_bytes);
+        else
+        {
+            s_lib[j].err = 5;
+            detach(j);
+            s_arena.give(j);
+        }
+    }
+    DISABLE_AUDIO_INTERRUPTS();
+    for (int i = 0; i < m; i++)
+        if (xs[i])
+        {
+            eng(moved[i]).x = xs[i];
+            polysynth::open::engineRestartedLocked(&s_defs[moved[i]]);
+        }
+    ENABLE_AUDIO_INTERRUPTS();
+}
+
+// A block entry k may take: a parked one first (its engine is detached), then an attached engine no part needs, the part's old engine
+// last, least recently used first in each group. -1: every block left belongs to an engine that must stay.
+int workVictim(int k, const Need& n)
+{
+    int best = -1;
+    long bestRank = 0;
+    for (int j = 0; j < s_sn; j++)
+    {
+        if (j == k || !s_arena.len[j] || contains(n.want, n.nWant, s_defs[j].typeId)) continue;
+        const long r = long(s_lib[j].used) + (s_lib[j].attached ? (1L << 29) : 0L) + (contains(n.keep, n.nKeep, s_defs[j].typeId) ? (1L << 30) : 0L);
+        if (best < 0 || r < bestRank)
+        {
+            best = j;
+            bestRank = r;
+        }
+    }
+    return best;
+}
+
+// 0 attached, else: start()'s errors, 5 no working RAM (no set_work, or the engines that must stay and this one do not fit the
+// arena together)
+int attach(int k, const Need& n)
+{
+    const plug_ext_synth* x = nullptr;
+    const int r = start(k, &x);
+    if (r) return r;
+    if (x->work_bytes)
+    {   // the engine's working RAM (pools, delay lines), SDRAM arena (plug_work.h), zeroed at every attach
+        const uint32_t need = workRound(x->work_bytes);
+        if (!x->set_work) return 5;
+        if (s_arena.len[k] && s_arena.len[k] < need) s_arena.give(k);   // a parked block too small for this version
+        if (!s_arena.len[k])
+        {
+            auto pick = [&]() { return workVictim(k, n); };
+            auto release = [&](int j) {
+                detach(j);   // no-op for a parked block, its engine is not attached
+                s_arena.give(j);
+                s_workReleases++;
+            };
+            if (!workTake(s_arena, k, need, pick, release, restartMoved)) return 5;
+        }
+        giveWork(k, x);
     }
     EngineDef& def = s_defs[k];
     def.params = reinterpret_cast<const polysynth::open::ParamDef*>(x->params);
@@ -371,7 +478,8 @@ int attach(int k)
     return 0;
 }
 
-// Before the engine's flash or rw bytes may change: no part may reach it any more, nothing runs from it
+// Before the engine's flash or rw bytes may change: no part may reach it any more, nothing runs from it. Its work block stays parked
+// (s_arena), attach gives it back to the engine, workTake to another one when the room is needed.
 void detach(int k)
 {
     if (!s_lib[k].attached) return;
@@ -385,11 +493,11 @@ void detach(int k)
 
 // Attach with the crash marker around it (plug_host.cpp boot() reads it): a crash in an engine's entry or init means safe mode
 // at the next boot
-int attachMarked(int k)
+int attachMarked(int k, const Need& n)
 {
     const bool had = s_sfs->exists(kMarker);   // an insert's own marker (plug_host.cpp) stays as it is
     if (!had) writeText(kMarker, "synth engines", 13);
-    const int r = attach(k);
+    const int r = attach(k, n);
     if (!had) s_sfs->remove(kMarker);
     if (r) placeholder(k);
     s_lib[k].attached = r == 0;
@@ -433,6 +541,17 @@ void status()
             len += snprintf(t + len, size_t(cap - len), " at %lx", (unsigned long)(kBankRun + s_bank.e[bi].off));
         if (len < cap) len += snprintf(t + len, size_t(cap - len), " err %d\r\n", int(s_lib[k].err));
     }
+    if (len < cap)
+    {
+        int parked = 0;
+        for (int k = 0; k < s_sn; k++) parked += s_arena.len[k] && !s_lib[k].attached;
+        len += snprintf(t + len, size_t(cap - len),
+                        "work arena: %lu of %lu B in %d blocks (%d parked), largest gap %lu, high water %lu, most at once %lu, "
+                        "released %lu, packed %lu (engines restarted %lu)\r\n",
+                        (unsigned long)s_arena.used(), (unsigned long)kWorkBytes, s_arena.blocks(), parked, (unsigned long)s_arena.largestGap(),
+                        (unsigned long)s_arena.peak, (unsigned long)s_arena.peakUsed, (unsigned long)s_workReleases, (unsigned long)s_workPacks,
+                        (unsigned long)s_workRestarts);
+    }
     if (len < cap) len += snprintf(t + len, size_t(cap - len), "wear (erases per sector, max %lu, total %lu):", (unsigned long)wearMax,
                                    (unsigned long)wearSum);
     for (int s = 0; s < kBankSectors && len < cap; s++) len += snprintf(t + len, size_t(cap - len), " %lu", (unsigned long)s_bank.wear[s]);
@@ -446,18 +565,15 @@ void status()
     static const char* const kSrc[3] = {"text", "sidecar", "trailer"};
     for (int k = 0; k < s_sn && s_uiUp && len < cap; k++)
         if (s_lib[k].listed)
-            len += snprintf(t + len, size_t(cap - len), "logo %s %s err %d\r\n", s_sidx[k].file, kSrc[s_lib[k].logoSrc], int(s_lib[k].logoErr));
+            len += snprintf(t + len, size_t(cap - len), "logo %s %s err %d\r\n", s_sidx[k].file,
+                            s_lib[k].logo.probed ? kSrc[s_lib[k].logo.src] : "not read yet", int(s_lib[k].logo.err));
     if (s_uiUp && len < cap)
-        len += snprintf(t + len, size_t(cap - len), "logos %d of %d, RAM_G %lu of %lu B\r\n", s_logos, kLogoSlots,
-                        (unsigned long)(s_logos * kLogoPixels), (unsigned long)(kLogoRamGEnd - kLogoRamG));
+        len += snprintf(t + len, size_t(cap - len),
+                        "logo slots: list %d of %d, editor %d of %d, RAM_G %lu of %lu B, card loads %lu (%lu ms, max %lu ms)\r\n",
+                        s_logo.resident(false), kLogoMiniSlots, s_logo.resident(true), kLogoMedSlots,
+                        (unsigned long)(kLogoMedRamG + kLogoMedSlots * kLogoMedBytes - kLogoRamG), (unsigned long)(kLogoRamGEnd - kLogoRamG),
+                        (unsigned long)s_logo.loads, (unsigned long)s_logo.loadMs, (unsigned long)s_logo.loadMsMax);
     writeText(kStatusPath, t, len < cap ? len : cap - 1);
-}
-
-bool contains(const int* v, int n, int x)
-{
-    for (int i = 0; i < n; i++)
-        if (v[i] == x) return true;
-    return false;
 }
 
 // Installs (when needed) and attaches library entry k. want / keep: as synthEnsure
@@ -517,7 +633,7 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
             return false;
         }
     }
-    const int r = attachMarked(k);
+    const int r = attachMarked(k, Need{want, nWant, keep, nKeep});
     s_lib[k].err = int8_t(r);
     LOGEF("syn%d att %d", k, r);
     status();
@@ -526,15 +642,52 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
 
 }   // namespace
 
+namespace
+{
+// The names file into the shim's name memory (also on a card without plugins: the projects there may name some)
+void namesRead()
+{
+    char* const t = s_btext;   // free until status() at the end of synthBoot
+    const int cap = int(sizeof(s_btext));
+    const int len = readText(kNamesPath, t, cap - 1);
+    for (int i = 0; i < len;)
+    {   // one line: digits, spaces, name
+        char* p = t + i;
+        int e = i;
+        while (e < len && t[e] != '\n' && t[e] != '\r') e++;
+        t[e] = 0;
+        char* q = p;
+        const long st = strtol(p, &q, 10);
+        while (*q == ' ') q++;
+        if (q != p && *q) polysynth::open::engineNameRemember(int(st), q);
+        i = e + 1;
+    }
+}
+
+// The listed engines into the name memory, the file written back when it learned something
+void namesLearn()
+{
+    char* const t = s_btext;   // free until status() at the end of synthBoot
+    const int cap = int(sizeof(s_btext));
+    bool learned = false;
+    for (int k = 0; k < s_sn; k++)
+        if (s_lib[k].listed) learned = polysynth::open::engineNameRemember(s_sidx[k].synthStored, s_lib[k].name) || learned;
+    if (learned) writeText(kNamesPath, t, polysynth::open::engineNamesText(t, cap));
+}
+}   // namespace
+
 void synthBoot(FileSystem* fs)
 {
     s_sfs = fs;
     useFs(fs);
     memset(&s_bank, 0, sizeof(s_bank));
     memset(s_lib, 0, sizeof(s_lib));
+    s_arena.reset(kWorkBytes);
+    s_logo.reset();   // every slot free (a zero table would say entry 0 owns them all)
     const int n = scanDir(kSynthDir, s_sidx, kLibMax, s_sscan, PLUG_KIND_SYNTH);
     s_sn = n;
     const bool hadIndex = fs->exists(kIndexPath);
+    namesRead();
     if (!n && !hadIndex) return;   // no synth plugin was ever installed: nothing to do, nothing written
     s_safe = fs->exists(kMarker);  // a marker left by the last session (plug_host.cpp boot() reads it too): no engine runs
     BankWant w[kLibMax] = {};
@@ -559,6 +712,7 @@ void synthBoot(FileSystem* fs)
         else
             l.listed = 1;
     }
+    namesLearn();
     NvmFlash f;
     SdIo io;
     s_open = bankOpen(f, io, w, n, uintptr_t(s_pool), kPoolBytes, s_bank, s_itext, int(sizeof(s_itext)));
@@ -610,37 +764,70 @@ struct LogoFs
 };
 }   // namespace
 
+namespace
+{
+struct LogoRam
+{
+    void write(const uint8_t* p, uint32_t n, uint32_t at) { s_dd->writeDataRAMG(const_cast<uint8_t*>(p), n, at); }
+};
+
+uint32_t nowMs()
+{
+    return systick_millis_count;
+}
+
+int libOfDef(const polysynth::open::EngineDef* d)
+{
+    for (int k = 0; k < s_sn; k++)
+        if (&s_defs[k] == d) return k;
+    return -1;
+}
+
+// The slot of k's image (main loop, may read the card), -1 none
+int logoSlot(int k, bool med)
+{
+    if (!s_dd || !s_uiUp || k < 0 || !s_lib[k].listed) return -1;
+    LogoFs fs;
+    LogoRam ram;
+    return logoLoad(s_logo, k, med, fs, ram, nowMs, kSynthDir, s_sidx[k].file, s_sidx[k].logoOff, s_sec, s_lib[k].logo);
+}
+}   // namespace
+
 void synthLogos(DisplayDriver* dd)
 {
-    s_logos = 0;
+    s_logo.reset();
     if (!s_sfs || !dd) return;
+    s_dd = dd;
     s_uiUp = true;
     if (!s_sn) return;
-    LogoFs fs;
-    for (int k = 0; k < s_sn; k++)
-    {
-        Lib& l = s_lib[k];
-        l.logo = 0;
-        l.logoSrc = kLogoNone;
-        if (!l.listed) continue;
-        LogoErr why = kLogoOk;
-        const LogoSource src = s_logos < kLogoSlots ? logoFind(fs, kSynthDir, s_sidx[k].file, s_sidx[k].logoOff, s_sec, &why) : kLogoNone;
-        if (src != kLogoNone)
+    // the list images of the first engines, as many as there are slots: with up to 32 engines the picker never reads the card
+    for (int k = 0, n = 0; k < s_sn && n < kLogoMiniSlots; k++)
+        if (s_lib[k].listed)
         {
-            dd->writeDataRAMG(s_sec + kLogoHeader, kLogoPixels, kLogoRamG + uint32_t(s_logos) * kLogoPixels);
-            l.logo = uint8_t(++s_logos);
+            n++;
+            logoSlot(k, false);
         }
-        l.logoSrc = int8_t(src);
-        l.logoErr = int8_t(why);
-    }
     status();
 }
 
 int synthLogoBitmap(const polysynth::open::EngineDef* d, bool editor)
 {
-    for (int k = 0; k < s_sn; k++)
-        if (&s_defs[k] == d && s_lib[k].logo) return kPlugLogoFirst + 2 * (s_lib[k].logo - 1) + (editor ? 1 : 0);
-    return -1;
+    const int k = libOfDef(d);
+    if (k < 0 || !s_lib[k].listed || !s_uiUp) return -1;
+    if (editor ? logoSlot(k, true) < 0 : (s_lib[k].logo.probed && s_lib[k].logo.src == kLogoNone)) return -1;
+    return kPlugLogoFirst + 2 * k + (editor ? 1 : 0);   // a list image not loaded yet comes with synthLogoPrefetch
+}
+
+void synthLogoPrefetch(const polysynth::open::EngineDef* const* defs, int n)
+{
+    int ks[kLogoMiniSlots / 2];
+    int m = 0;
+    for (int i = 0; i < n && m < kLogoMiniSlots / 2; i++)
+    {
+        const int k = libOfDef(defs[i]);
+        if (k >= 0) ks[m++] = k;
+    }
+    logoPrefetch(s_logo, ks, m, [](int k) { logoSlot(k, false); });   // (synth.txt counts the loads at its next write, no card write here)
 }
 
 }   // namespace plug
@@ -649,14 +836,17 @@ const strBitmap* bitmapAt(int id)
 {
     using namespace plug;
     if (id >= 0 && id < displayBitmapsCount) return &bitmaps[id];
-    const int s = (id - kPlugLogoFirst) >> 1;
-    if (id < kPlugLogoFirst || s >= s_logos) return nullptr;
-    // slot s: the list image, then the editor image (L2 = 17, FT81x.h)
-    static const strBitmap kTpl[2] = {{nullptr, kLogoRamG, kLogoMiniBytes, kLogoMiniW, kLogoMiniH, 17, kLogoMiniStride},
-                                      {nullptr, kLogoRamG + kLogoMiniBytes, kLogoMedBytes, kLogoMedW, kLogoMedH, 17, kLogoMedStride}};
+    if (id < kPlugLogoFirst || id >= kPlugLogoFirst + 2 * kLibMax) return nullptr;
+    const bool med = (id - kPlugLogoFirst) & 1;
+    const int slot = s_logo.find((id - kPlugLogoFirst) >> 1, med);
+    if (slot < 0) return nullptr;   // not in RAM_G (the list draws the name)
+    s_logo.touch(slot, med);        // on screen: never the next slot to be reused
+    // the list image or the editor image (L2 = 17, FT81x.h)
+    static const strBitmap kTpl[2] = {{nullptr, 0, kLogoMiniBytes, kLogoMiniW, kLogoMiniH, 17, kLogoMiniStride},
+                                      {nullptr, 0, kLogoMedBytes, kLogoMedW, kLogoMedH, 17, kLogoMedStride}};
     static strBitmap b;
-    b = kTpl[(id - kPlugLogoFirst) & 1];
-    b.address += uint32_t(s) * kLogoPixels;
+    b = kTpl[med ? 1 : 0];
+    b.address = LogoCache::address(slot, med);
     return &b;
 }
 

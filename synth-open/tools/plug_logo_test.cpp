@@ -1,12 +1,17 @@
 // Host test of the synth plugin logo records (synth-open/plug_logo.h): the PLGI parser, the source order (sidecar, then the
 // .plg trailer, then the text name) and the trailer offset the scan takes from the manifest. plug_synth.cpp runs the same code
 // on the SD card. Files given on the command line are checked as the firmware would read them: a .plgi must be one good record,
-// a .plg must carry a good trailer.
+// a .plg must carry a good trailer. Round G: the RAM_G cache (LogoCache, logoLoad, logoPrefetch) with 20 and 60 fake engines: the
+// boot fills the first 32 list slots, the picker scrolled up, down and fast always finds the rows' logos (prefetch of the 15 around
+// the selection), no RAM_G write lands on a slot that is on screen or outside the window, an engine without a logo is probed once,
+// up to 32 engines the picker never reads the card, the patch editor's image never overwrites the one shown.
 //
 //   c++ -std=c++20 -O1 -Wall -I synth-open synth-open/tools/plug_logo_test.cpp -o /tmp/plug_logo_test && /tmp/plug_logo_test [files]
 #include "plug_logo.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <set>
 #include <map>
 #include <string>
 #include <vector>
@@ -254,9 +259,143 @@ int main(int argc, char** argv)
         check(ok, "scan: trailer offset from manifest reserved[0], 0 inside the header, ._a.plg not listed");
     }
 
-    // ---- RAM_G pool
-    check(kLogoRamG + kLogoSlots * kLogoPixels == 148700 && 148700 <= 150000 && kLogoRamGEnd - kLogoRamG == 21220,
-          "12 slots 128,780..148,700 of the 21,220 B window, below the controls cache");
+    // ---- RAM_G cache (round G): 32 list slots + 2 editor slots, filled on demand, least recently used reused
+    check(kLogoMedRamG == 128780 + 32 * 580 && kLogoMedRamG + 2 * kLogoMedBytes == 149500 && kLogoRamGEnd - kLogoRamG == 21220,
+          "32 list slots 128,780..147,340 and 2 editor slots ..149,500 of the 21,220 B window, below the controls cache at 150,000");
+    for (int nEng : {20, 60})
+    {
+        // nEng fake engines: even ones a sidecar, odd ones a .plg trailer, every 7th none (text)
+        MemFs fs;
+        std::vector<std::string> recs(static_cast<size_t>(nEng)), file(static_cast<size_t>(nEng));
+        std::vector<uint32_t> toff(static_cast<size_t>(nEng));
+        for (int e = 0; e < nEng; e++)
+        {
+            char f[32];
+            snprintf(f, sizeof(f), "e%02d.plg", e);
+            file[size_t(e)] = f;
+            recs[size_t(e)] = makeRecord(uint8_t(e * 13 + 1));
+            const std::string path = std::string("/Plugins/Synth/") + f;
+            if (e % 7 == 3) fs.files[path] = makePlg(0, "");
+            else if (e % 2 == 0)
+            {
+                fs.files[path] = makePlg(0, "");
+                char sc[48];
+                snprintf(sc, sizeof(sc), "/Plugins/Synth/e%02d.plgi", e);
+                fs.files[sc] = recs[size_t(e)];
+            }
+            else
+            {
+                toff[size_t(e)] = 4096;
+                fs.files[path] = makePlg(4096, recs[size_t(e)]);
+            }
+        }
+        // the FT812's RAM_G window, with what is on screen (the last frame's slots) to catch a write under the picture
+        struct Ram
+        {
+            std::vector<uint8_t> g = std::vector<uint8_t>(kLogoRamGEnd - kLogoRamG, 0);
+            std::set<uint32_t> onScreen;
+            int outside = 0, underPicture = 0, writes = 0;
+            void write(const uint8_t* p, uint32_t n, uint32_t at)
+            {
+                writes++;
+                if (at < kLogoRamG || at + n > kLogoRamGEnd)
+                {
+                    outside++;
+                    return;
+                }
+                if (onScreen.count(at)) underPicture++;
+                memcpy(&g[at - kLogoRamG], p, n);
+            }
+        } ram;
+        LogoCache c;
+        c.reset();
+        std::vector<LogoState> st(static_cast<size_t>(nEng));
+        for (auto& x : st) x = LogoState{};
+        uint8_t rec[kLogoRecord + 1];
+        uint32_t clock = 0;
+        auto now = [&]() { return clock++; };
+        auto load = [&](int e, bool med) {
+            return logoLoad(c, e, med, fs, ram, now, "/Plugins/Synth", file[size_t(e)].c_str(), toff[size_t(e)], rec, st[size_t(e)]);
+        };
+        // the pixels at a slot are the entry's half of its record
+        auto shows = [&](int e, bool med) {
+            const int s = c.find(e, med);
+            if (s < 0) return false;
+            const uint32_t at = LogoCache::address(s, med) - kLogoRamG;
+            const std::string& r = recs[size_t(e)];
+            return memcmp(&ram.g[at], r.data() + kLogoHeader + (med ? kLogoMiniBytes : 0), med ? kLogoMedBytes : kLogoMiniBytes) == 0;
+        };
+        // boot: the list images of the first 32
+        for (int e = 0; e < nEng && e < kLogoMiniSlots; e++) load(e, false);
+        bool bootOk = true;
+        for (int e = 0; e < nEng && e < kLogoMiniSlots; e++)
+            bootOk = bootOk && (e % 7 == 3 ? c.find(e, false) < 0 && st[size_t(e)].probed && st[size_t(e)].src == kLogoNone : shows(e, false));
+        char what[200];
+        snprintf(what, sizeof(what), "%d engines, boot: the list images of the first %d are in RAM_G and right, every 7th has none (text)", nEng,
+                 nEng < kLogoMiniSlots ? nEng : kLogoMiniSlots);
+        check(bootOk, what);
+        // the picker: the selection walks down and up the whole list, 7 rows on screen, prefetch the 15 around it as SynthEditor does
+        int worstLoads = 0, textRows = 0, frames = 0;
+        auto step = [&](int sel) {
+            int want[15], m = 0;
+            for (int d = 0; d <= 7; d++)
+            {
+                if (sel + d < nEng) want[m++] = sel + d;
+                if (d && sel - d >= 0) want[m++] = sel - d;
+            }
+            const uint32_t before = c.loads;
+            logoPrefetch(c, want, m, [&](int e) { load(e, false); });
+            worstLoads = int(c.loads - before) > worstLoads ? int(c.loads - before) : worstLoads;
+            // NewList: 7 rows, the selection on the second row from an edge as it scrolls (any 7 rows that hold sel are inside the 15)
+            const int top = sel < 1 ? 0 : (sel > nEng - 6 ? (nEng > 7 ? nEng - 7 : 0) : sel - 1);
+            ram.onScreen.clear();
+            for (int r = top; r < top + 7 && r < nEng; r++)
+            {
+                const int s = c.find(r, false);   // bitmapAt: find and touch
+                if (s >= 0)
+                {
+                    c.touch(s, false);
+                    ram.onScreen.insert(LogoCache::address(s, false));
+                }
+                else if (r % 7 != 3)
+                    textRows++;   // a logo that is not there: the name is drawn (would be a visible change)
+            }
+            frames++;
+        };
+        for (int round = 0; round < 3; round++)
+        {
+            for (int sel = 0; sel < nEng; sel++) step(sel);
+            for (int sel = nEng - 1; sel >= 0; sel--) step(sel);
+            for (int sel = 0; sel < nEng; sel += 5) step(sel);   // a fast encoder: 5 rows a step
+        }
+        const int probesOf3 = int(std::count_if(fs.opened.begin(), fs.opened.end(),
+                                                 [](const std::string& p) { return p.find("/e03.") != std::string::npos; }));
+        printf("info  %d engines: %d frames, %u card loads (at most %d in one step), RAM_G writes outside %d, under the picture %d, rows drawn "
+               "as text for want of a slot %d, e03 (no logo) opened %d times\n",
+               nEng, frames, c.loads, worstLoads, ram.outside, ram.underPicture, textRows, probesOf3);
+        snprintf(what, sizeof(what), "%d engines, picker scrolled up, down and fast: every row with a logo shows it, no slot on screen is rewritten", nEng);
+        check(ram.outside == 0 && ram.underPicture == 0 && textRows == 0, what);
+        snprintf(what, sizeof(what), "%d engines: an engine without a logo is looked for on the card once, never again while the picker scrolls", nEng);
+        check(probesOf3 == 1, what);
+        if (nEng <= kLogoMiniSlots) check(c.loads == uint32_t(nEng - (nEng + 3) / 7), "up to 32 engines the picker never reads the card after the boot");
+        // the editor: one image on screen, two slots; the shown one is never the one rewritten
+        int under = 0;
+        int shown = -1;
+        for (int e = 0; e < nEng; e++)
+        {
+            ram.onScreen.clear();
+            if (shown >= 0) ram.onScreen.insert(LogoCache::address(c.find(shown, true), true));
+            const int s = load(e, true);
+            if (s >= 0)
+            {
+                under += !shows(e, true);
+                c.touch(s, true);   // drawn
+                shown = e;
+            }
+        }
+        snprintf(what, sizeof(what), "%d engines, the patch editor opened on each in turn: its image is loaded right, the one on screen is never rewritten", nEng);
+        check(ram.underPicture == 0 && under == 0 && c.resident(true) == 2, what);
+    }
 
     for (int i = 1; i < argc; i++) g_fail += checkFile(argv[i]);
     printf(g_fail ? "FAILED (%d)\n" : "PASSED\n", g_fail);

@@ -236,7 +236,8 @@ folder), parameter, section and macro tables in the shim's `ParamDef` / `Section
 D-Type 10 / 0xA2, CS-Type 11 / 0x83, A-Type 12 / 0x84, T-Type 13 / 0x85, 8-Type 14 / 0x86, Hand-Type 15 / 0x87, B-Type 16 / 0x88,
 Arc-Type 17 / 0x89, PLK 18 / 0x8A), so old projects and patches find it. PHZ and PLK are private modules, their source and build are in the private repository `poly-engines`, this repository keeps their numbers. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
 lines (`synth/ju6_plug.cpp`), `PLUG_SYNTH_PLUGIN_WORK` adds work memory (PLK, source in the private repository `poly-engines`). Large working RAM comes
-from the host (`work_bytes`, `set_work`), not from bss: the host hands it out of a 16 KB SDRAM arena, so keep only state there
+from the host (`work_bytes`, `set_work`), not from bss: the host hands it out of a 16 KB SDRAM arena (a block per attached engine,
+`plug_work.h`, reused for another engine when no part plays this one, a fresh `init` comes with a zeroed block), so keep only state there
 that is touched a few times per sample (a delay line), never hot per-sample state. Work memory is also how a plugin keeps big
 scratch off the audio interrupt's stack, which is one stack with the main loop and has no guard (ref/stack-margin-1.2.0.md): 8-Type
 keeps the two Links of its voice pass there (1,544 B, `-DEIGHT_WORK_POOL`) and T-Type its 512 B square bank block (`-DTTYPE_WORK_POOL`),
@@ -319,8 +320,9 @@ style and the theme colour. Without one it shows its name as text. The logo is a
    The record has its own CRC, the file CRC does not cover it, and hosts without logo support never read it.
 
 A record that is missing, truncated, the wrong size or damaged goes to the next source and finally to the text name. The host
-loads the logos once at boot into the free RAM_G window above the stock bitmaps (12 slots, 19,920 of the 21,220 B below the
-controls cache), one per listed engine whether it is installed or not (the first 12 of the library), and lists what it used in
+keeps the logos in the free RAM_G window above the stock bitmaps as a cache (`plug_logo.h`: 32 list slots and 2 editor slots,
+20,720 of the 21,220 B below the controls cache, least recently used reused, filled from the card on the main loop when the picker
+comes near an engine or the patch editor opens), so every listed engine shows its logo, and lists what it used in
 `/Plugins/synth.txt` (`logo <file> sidecar|trailer|text err <n>`). Make a record
 with `synth-open/tools/make_plgi.py`: from a PNG (white or opaque is drawn, black or transparent is not, scaled to both
 sizes), from two PNGs, or `--text NAME` for a text logo in the stock style. `--check` tests a `.plgi` or a `.plg` trailer,
