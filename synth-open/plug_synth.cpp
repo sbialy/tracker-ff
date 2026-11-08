@@ -169,7 +169,7 @@ struct Lib
     LogoState logo;     // what the card holds for its logo (probed on the first load)
     uint32_t used;      // last use (s_tick)
 };
-// The tables of the library entries are in the SDRAM (about 0.4 KB per entry with s_sidx and s_bwant), so the internal RAM does not
+// The tables of the library entries are in the SDRAM (260 B per entry with s_sidx and s_bwant), so the internal RAM does not
 // grow with the library. Raw storage, constructed at boot (synthBoot): no static constructor may touch the SDRAM (f563f27), and a
 // global PlugSynth (virtual destructor) or EngineDef (member initialisers) would need one. The audio interrupt reaches an attached
 // engine through its EngineDef and PlugSynth (a few reads per part and block).
