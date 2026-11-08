@@ -30,7 +30,7 @@ from usbtest import Disconnected, SimTransport, Tracker, UsbTestError  # noqa: E
 # stock findings that are in the baseline too (ref/mac-emulator-plan.md section 4, fPatternEdit.cpp:4628, mtWavetableEnvelopes.cpp:206, mtAudioEngine.cpp:1655)
 ALLOW = ['mtWavetableEnvelopes.cpp:206', 'fPatternEdit.cpp:4628', 'functPads', 'mtAudioEngine.cpp:1655']
 COVER = ['stopOperationWithError', 'WorkspaceProjectLoad::', 'ProjectOpen::', 'RecordingSave::', 'cFileManager::browseGamesLocation', 'cFileManager::listOnlyWav',
-         'cFileManager::browseProjectsLocation', 'cSampleImporter::showImportStartPointValue', 'cSampleImporter::showImportEndPointValue',
+         'cFileManager::browseProjectsLocation', 'cSampleImporter::showImportStartPointValue', 'cSampleImporter::showImportEndPointValue', 'cSampleImporter::showImportPreviewValue',
          'changeSynthReverbSend', 'changeSynthDelaySend', 'setDefaultSynthReverb', 'setDefaultSynthDelay', 'instrumentIdxToSynthIdx']
 GAMES = ['a.nes', 'B.NES', 'x' * 49 + '.nes', 'y' * 60 + '.NeS', 'z' * 200 + '.nes', 'dotted.name.nes.nes', 'noext', 'pre.nesx.nes']
 
@@ -46,6 +46,12 @@ def build_card(out, plg_dir):
         blk = b''.join(struct.pack('<h', int(8000 * math.sin(i * 0.05))) for i in range(44100))
         for _ in range(150):
             w.writeframes(blk)
+    for name, secs in (('zlong100.wav', 100), ('zlong1000.wav', 1000)):
+        with wave.open(sd + '/Samples/' + name, 'wb') as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(44100)
+            blk = b''.join(struct.pack('<h', int(8000 * math.sin(i * 0.05))) for i in range(44100))
+            for _ in range(secs):
+                w.writeframes(blk)
     for i in range(130):
         os.makedirs(sd + '/Projects/proj%03d' % i, exist_ok=True)
     return sd
@@ -272,42 +278,72 @@ def b1(rec):
     covered(rec, 'cFileManager::listOnlyWav')
 
 
-@scenario('c1', 'sample importer with a 150 s sample: start point at the end')
-def c1(rec):
-    s = Sim('c1')
+def importer_labels(rec, code, downs, secs):
+    """Open the file `downs` rows below the folder top in the importer, drag the start point to the end, read the three label buffers."""
+    s = Sim(code)
     ctx = s.ctx
+    last = '%.3fs' % secs
     try:
         to_sampleload_folder(ctx, 3)
-        ctx.tap('Down', 2, 500)             # long150.wav (after /.. and /big)
+        ctx.tap('Down', downs, 500)
         ctx.settle(1000)
         ctx.tap('F5', 1, 1500)
-        ctx.settle(3000)
+        ctx.settle(3000 + int(secs * 3))
         ctx.tap('F2', 1, 500)
         for _ in range(60):
             ctx.enc(200, 60)
         ctx.settle(800)
-        ctx.tr.shot(os.path.join(OUT, 'c1_start_%s.png' % LABEL))
+        ctx.tr.shot(os.path.join(OUT, '%s_start_%s.png' % (code, LABEL)))
         s.poke_cmd('importlabels')
-        out = '\n'.join(s.poke_out())
-        rec.notes.append(out)
-        m = re.search(r'sizeof\(start\)=(\d+) sizeof\(end\)=(\d+) sizeof\(play\)=(\d+)', out)
+        out1 = '\n'.join(s.poke_out())
+        s.poke_cmd('importplayend')
+        s.poke_cmd('importlabels')
+        out2 = '\n'.join(s.poke_out()[len(out1.splitlines()) + 1:])
+        rec.notes.append(out1)
+        rec.notes.append('after importplayend:\n' + out2)
+        m = re.search(r'sizeof\(start\)=(\d+) sizeof\(end\)=(\d+) sizeof\(play\)=(\d+)', out1)
         if m:
             rec.notes.append('buffer sizes start/end/play = %s/%s/%s' % m.groups())
-            rec.check(int(m.group(1)) >= 10, 'start point label buffer holds "149.995s" and the NUL (%s B)' % m.group(1))
-        st = re.search(r'start: ((?:[0-9a-f]{2} )+)', out)
-        en = re.search(r'end:   ((?:[0-9a-f]{2} )+)', out)
-        if st and en:
-            sb = bytes.fromhex(st.group(1))
-            eb = bytes.fromhex(en.group(1))
-            rec.check(sb.split(b'\0')[0] == b'149.995s', 'start label text is "%s"' % sb.split(b'\0')[0].decode())
-            rec.check(eb[0] == ord('1'), 'the start label did not write its NUL into the first byte of the end label buffer (end[0]=0x%02x)' % eb[0])
-            ebytes = eb.split(b'\0')[0]
-            rec.residual = len(eb) == 8 and b'\0' not in eb
-            rec.notes.append('end label buffer holds %r in %d bytes: "%s" needs %d with the NUL' % (ebytes, len(eb), '150.000s', 9))
+            need = len(last) + 1
+            for nm, v in zip(('start', 'end', 'play'), m.groups()):
+                rec.check(int(v) >= need, '%s label buffer holds "%s" and the NUL (%s B, needs %d)' % (nm, last, v, need))
+        for tag, out in (('drag', out1), ('play end', out2)):
+            st = re.search(r'start: ((?:[0-9a-f]{2} )+)', out)
+            en = re.search(r'end:   ((?:[0-9a-f]{2} )+)', out)
+            pl = re.search(r'play:  ((?:[0-9a-f]{2} )+)', out)
+            if st and en and pl:
+                txt = [bytes.fromhex(x.group(1)) for x in (st, en, pl)]
+                for nm, b in zip(('start', 'end', 'play'), txt):
+                    if nm == 'play' and tag == 'drag':
+                        continue
+                    t = b.split(b'\0')[0].decode(errors='replace')
+                    rec.check(b'\0' in b, '%s: %s label buffer is NUL terminated inside its %d bytes' % (tag, nm, len(b)))
+                    if nm == 'start':
+                        ok = re.fullmatch(r'\d+\.\d{3}s', t) is not None and secs - 0.5 <= float(t[:-1]) <= secs
+                        rec.check(ok, '%s: start label "%s" is a complete value near the end of the %d s sample' % (tag, t, secs))
+                    else:
+                        rec.check(t == last, '%s: %s label reads "%s" (%s), not truncated' % (tag, nm, last, t))
+            else:
+                rec.check(False, '%s: label dump parsed' % tag)
     except (Disconnected, UsbTestError) as e:
         rec.check(False, 'console lost: %s' % e)
     finish(rec, s)
-    covered(rec, 'cSampleImporter::showImportStartPointValue')
+    covered(rec, 'cSampleImporter::showImportStartPointValue', 'cSampleImporter::showImportEndPointValue', 'cSampleImporter::showImportPreviewValue', 'cSampleImporter::showImportPreviewValue')
+
+
+@scenario('c1', 'sample importer with a 150 s sample: start point at the end, labels read byte by byte')
+def c1(rec):
+    importer_labels(rec, 'c1', 2, 150)             # long150.wav (after /.. and /big)
+
+
+@scenario('c2', 'sample importer with a 100 s sample (the label needs exactly 8 characters plus the NUL)')
+def c2(rec):
+    importer_labels(rec, 'c2', 3, 100)             # zlong100.wav
+
+
+@scenario('c3', 'sample importer with a 1000 s sample (the label needs 9 characters plus the NUL)')
+def c3(rec):
+    importer_labels(rec, 'c3', 4, 1000)            # zlong1000.wav
 
 
 @scenario('d1', 'Games folder with .nes names of 5, 53, 64, 204 characters (browseGames via the poke hook, no UI page calls it)')
@@ -498,8 +534,6 @@ def main():
                 print('       FAILED: %s' % t)
         for n in rec.new[:3]:
             print('       finding: %s' % n)
-        if rec.residual:
-            print('       RESIDUAL: the end label buffer (8 B) holds "150.000s" without its NUL: the same overflow, not fixed in this commit')
         out.append({'code': rec.code, 'title': rec.title, 'ok': ok, 'checks': rec.checks, 'notes': rec.notes, 'new': rec.new, 'known': rec.known,
                     'residual': rec.residual, 'cover': {k: v for k, v in rec.cover.items() if v}})
     with open(os.path.join(OUT, 'crash_emu_%s.json' % LABEL), 'w') as f:

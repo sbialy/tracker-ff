@@ -6,7 +6,7 @@
 #include "../../../core/interface/sampleImporter/sampleImporter.h"
 #undef private
 
-// "start[12]='149.995s' end[8]='150.000s' play[8]='' | start NUL at 8: ..." with the raw bytes of the three buffers and the one after
+// the raw bytes of the three label buffers (start, end, play time) and their sizes and offsets
 extern "C" void hostPokeImporterLabels(std::string* out)
 {
     cSampleImporter& s = sampleImporter;
@@ -30,4 +30,15 @@ extern "C" void hostPokeImporterLabels(std::string* out)
              hex(s.startPointValueText, sizeof(s.startPointValueText)).c_str(), hex(s.endPointValueText, sizeof(s.endPointValueText)).c_str(),
              hex(s.playTimeValueText, sizeof(s.playTimeValueText)).c_str());
     *out = b;
+}
+
+// the play time label at the end of the sample, as the progress refresh in fSampleImport.cpp draws it while a preview runs past 100 s
+extern "C" void hostPokeImporterPlayEnd()
+{
+    cSampleImporter& s = sampleImporter;
+    s.playProgressValue = MAX_16BIT;
+    s.importPreviewEndPoint = MAX_16BIT;
+    s.showImportPreviewValue();
+    s.showImportStartPointValue();
+    s.showImportEndPointValue();
 }

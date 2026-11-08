@@ -9,6 +9,7 @@
 //                                        with SLOT the recording is imported into that instrument as the sample recorder does
 //   savemono NAME FRAMES                 the same with one buffer (left == right)
 //   importlabels                         the three importer label buffers byte by byte (start/end/play time)
+//   importplayend                        redraw the three importer labels with the play position at the end of the sample
 //   sizes                                sizeof(strProjectFile)
 //   status                               file manager status and current operation
 #include <cstdarg>
@@ -25,6 +26,7 @@
 #include "mtStructs.h"
 
 extern "C" void hostPokeImporterLabels(std::string* out);
+extern "C" void hostPokeImporterPlayEnd();
 
 namespace
 {
@@ -113,6 +115,11 @@ void run(const char* line)
         std::string t;
         hostPokeImporterLabels(&t);
         out("%s", t.c_str());
+    }
+    else if (!strcmp(cmd, "importplayend"))
+    {
+        hostPokeImporterPlayEnd();
+        out("importplayend done");
     }
     else if (!strcmp(cmd, "sizes"))
     {
