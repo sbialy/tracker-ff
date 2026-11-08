@@ -3,7 +3,7 @@
 # them in the layout of external.py fetch (modules flat, notice files in <set>/), so a release can be made from source and compared
 # with the pins.
 #
-#   TOOLCHAIN=.../arm-none-eabi- PY=/tmp/phzvenv/bin/python engines/rebuild_pinned.sh OUT [autof|fused] [public|all]
+#   TOOLCHAIN=.../arm-none-eabi- PY=/tmp/phzvenv/bin/python engines/rebuild_pinned.sh OUT [autof|fused] [public|all] [--with GROUP]...
 #
 # Each set is taken with git archive of its pinned tag from the local checkout named in the lock (or $EXTERNAL_SRC_<SET>, SET upper
 # case with - as _), the checkout itself is never touched, and built in OUT/src/<set>/ with that repository's own build:
@@ -14,15 +14,23 @@
 # The pinned files are then copied to OUT/modules (flat, notices in OUT/modules/<set>/). With flavour autof (the 1.2.0 release, the
 # default) OUT/modules must match the lock byte for byte (external.py check): that is the proof that the pins are reproducible.
 # fused (the unpublished AUTO fallback) rebuilds the engine sets with the compiler's fused multiply add, its files differ from the
-# pins by design and only the identity and checkSynth checks run. Then engines/crosscheck.sh, and the SDK examples
+# pins by design and only the identity and checkSynth checks run. --with formflux also takes the optional group of the lock (FORM and
+# FLUX: form/flux .plg .plgi .json .wasm and the 11 factory presets, laid out as OUT/modules/Patches/<ENGINE>/<name>.patch). Every set
+# is built the same way with or without it (the module repository builds all its engines), only the copy and the checks differ. Then engines/crosscheck.sh, and the SDK examples
 # (synth-open/plug/build_plugs.sh OUT/sdk-examples). Exit 1 on any failure.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
+groups=(); args=()
+while [ $# -gt 0 ]; do
+    case "$1" in --with) groups+=("${2:?--with needs a group}"); shift 2;; *) args+=("$1"); shift;; esac
+done
+set -- ${args[@]+"${args[@]}"}
 mkdir -p "${1:?output dir}"
 OUT="$(cd "$1" && pwd)"
 FLAVOUR="${2:-autof}"
 VIS="${3:-all}"
+with=(); for g in ${groups[@]+"${groups[@]}"}; do with+=(--with "$g"); done
 PY="${PY:-python3}"
 : "${TOOLCHAIN:?set TOOLCHAIN to the arm-none-eabi- prefix}"
 export TOOLCHAIN
@@ -65,10 +73,11 @@ for s in $sets; do
         *) echo "$s: no build recipe here, add one"; exit 1;;
     esac
     tail -1 "$OUT/build-$s.log"
-    python3 - "$LOCK" "$s" "$OUT/modules" $dirs <<'PY'
+    WITH_GROUPS="${groups[*]:-}" python3 - "$LOCK" "$s" "$OUT/modules" "$src" $dirs <<'PY'
 import json, os, shutil, sys
 s = json.load(open(sys.argv[1]))["sets"][sys.argv[2]]
-out, dirs = sys.argv[3], sys.argv[4:]
+out, src_tree, dirs = sys.argv[3], sys.argv[4], sys.argv[5:]
+groups = [g for g in os.environ.get("WITH_GROUPS", "").split() if g in s.get("optional", {})]
 def get(f, sub):
     src = next((os.path.join(d, f) for d in dirs if os.path.exists(os.path.join(d, f))), None)
     if not src:
@@ -79,17 +88,27 @@ for f in s["files"]:
     get(f, "")
 for f in s.get("notice_files", {}):
     get(f, sys.argv[2])
+for g in groups:   # the optional groups that are switched on: their files, their presets from the archived tag
+    for f in s["optional"][g].get("files", {}):
+        get(f, "")
+    pt = s["optional"][g].get("patches")
+    for rel in (pt or {}).get("files", {}):
+        src = os.path.join(src_tree, pt["root"], rel)
+        if not os.path.exists(src):
+            sys.exit("%s: the tag has no %s" % (sys.argv[2], pt["root"] + "/" + rel))
+        os.makedirs(os.path.dirname(os.path.join(out, "Patches", rel)), exist_ok=True)
+        shutil.copyfile(src, os.path.join(out, "Patches", rel))
 PY
 done
 fail=0
 if [ "$FLAVOUR" = autof ]; then
     vflag=(); [ "$VIS" = all ] || vflag=(--visibility "$VIS")
-    python3 -I "$HERE/external.py" check "$OUT/modules" ${vflag[@]+"${vflag[@]}"} || fail=1
-    PY="$PY" bash "$HERE/crosscheck.sh" "$OUT/modules" "$VIS" > "$OUT/crosscheck.log" 2>&1 || fail=1
+    python3 -I "$HERE/external.py" check "$OUT/modules" ${vflag[@]+"${vflag[@]}"} ${with[@]+"${with[@]}"} || fail=1
+    PY="$PY" bash "$HERE/crosscheck.sh" "$OUT/modules" "$VIS" ${with[@]+"${with[@]}"} > "$OUT/crosscheck.log" 2>&1 || fail=1
 else
-    NO_LOCK=1 PY="$PY" bash "$HERE/crosscheck.sh" "$OUT/modules" "$VIS" > "$OUT/crosscheck.log" 2>&1 || fail=1
+    NO_LOCK=1 PY="$PY" bash "$HERE/crosscheck.sh" "$OUT/modules" "$VIS" ${with[@]+"${with[@]}"} > "$OUT/crosscheck.log" 2>&1 || fail=1
 fi
 tail -1 "$OUT/crosscheck.log"
 PY="$PY" bash "$ROOT/synth-open/plug/build_plugs.sh" "$OUT/sdk-examples" > "$OUT/sdk-examples.log" 2>&1 || fail=1
 echo "SDK examples: $(tail -1 "$OUT/sdk-examples.log")"
-[ "$fail" = 0 ] && echo "rebuild_pinned PASSED ($FLAVOUR, $VIS): $OUT/modules" || { echo "rebuild_pinned FAILED"; exit 1; }
+[ "$fail" = 0 ] && echo "rebuild_pinned PASSED ($FLAVOUR, $VIS${groups[*]:+, with ${groups[*]}}): $OUT/modules" || { echo "rebuild_pinned FAILED"; exit 1; }

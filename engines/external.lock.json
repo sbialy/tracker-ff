@@ -91,6 +91,69 @@
     "NOTICE.md": "befe53fb34abe09781d524ede3ae851cab0917bfd7b148b88e1cabf11d2cb284",
     "LICENSE-OpenTracker-Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "LICENSE-tracker-ff-MIT.txt": "c922340e052e913e48e48f8827efc86833c9378380120bf85d67f8dba7056a78"
+   },
+   "optional": {
+    "formflux": {
+     "files": {
+      "form.plg": "f572eaf7bfe9fe16db696b34008395363261aa471ff52b27902356936e064b53",
+      "form.plgi": "6d597d306ce3b913550e0bd13a71cd0231d7bc900afd092c37649277684fb774",
+      "form.json": "43954a122eb444b84aa133048a4ed5e6f18f13528aa5f840551ca5fc5ec08efc",
+      "form.wasm": "a5b7b10881cd568ead543ae056b6f54fdc7ea228316cb8d671d06997bcf289d3",
+      "flux.plg": "8c3df72ede04a8ea4a6f362d306bdc2be294823374fd09fffd7f56bacbabda0c",
+      "flux.plgi": "8ac7db8a8e8f06ced70750b255b1cfdfeb68a84979763f68d3861e342a1caa03",
+      "flux.json": "0b8a76f77b7c169aa2e410813281f92db6f5f54d041bb44df64f2d53b0b4512e",
+      "flux.wasm": "ee4a5bfaf45e1bb6347f8b4ec3b00ddf9f5a645a476d6ae794879833baa13ebe"
+     },
+     "patches": {
+      "root": "presets/Patches",
+      "files": {
+       "FLUX/Breathing Pad.patch": {
+        "asset": "FLUX-Breathing_Pad.patch",
+        "sha256": "ab0becd0d8000cc2517516ad77440b35c643ea182b7d3b1f8adf3efd4d0a62b9"
+       },
+       "FLUX/Chaos Drone.patch": {
+        "asset": "FLUX-Chaos_Drone.patch",
+        "sha256": "a3dfbc00225db207721540a4b0c957e841d7d99b0cc01ebcd98f513ff62c126a"
+       },
+       "FLUX/Glass Rain.patch": {
+        "asset": "FLUX-Glass_Rain.patch",
+        "sha256": "3d9513a6441b79fca730d7996704be1ca27f101db08bd653bb54d4ab7b251fe8"
+       },
+       "FLUX/Metallic Swarm.patch": {
+        "asset": "FLUX-Metallic_Swarm.patch",
+        "sha256": "f198486ae455edcf5321b82a25914028f768bcb0d57782ae80c4ed1f9330ce5d"
+       },
+       "FLUX/Slow Scan.patch": {
+        "asset": "FLUX-Slow_Scan.patch",
+        "sha256": "61a7cf32af03e3985ac650019f88617a88565a10e9804b9222feb541fb8ae4ab"
+       },
+       "FORM/Brass Stab.patch": {
+        "asset": "FORM-Brass_Stab.patch",
+        "sha256": "b0dca3563bf73d18ee9050389ee7d4b4fbceb10dd60d8ccb76a63fe9e9adfc9d"
+       },
+       "FORM/Choir Pad.patch": {
+        "asset": "FORM-Choir_Pad.patch",
+        "sha256": "1ed550121fb39834b390bce9b4206b038f8736887b2983d7c0f59f9e86231b61"
+       },
+       "FORM/Formant Sweep.patch": {
+        "asset": "FORM-Formant_Sweep.patch",
+        "sha256": "dd199d572ac44cbfbbae3bd5cf6b44584d6334f4691a906a76a923f14f6218b2"
+       },
+       "FORM/Glass Bell.patch": {
+        "asset": "FORM-Glass_Bell.patch",
+        "sha256": "4443951126a70d7da008efb6004af2f3fbe883b19376d5c30b580dde71997d07"
+       },
+       "FORM/Growl Bass.patch": {
+        "asset": "FORM-Growl_Bass.patch",
+        "sha256": "4cc83fe4825a875baf74b39f50714a4a119b61607e0aca2c80805108cbe41306"
+       },
+       "FORM/Vocal Lead.patch": {
+        "asset": "FORM-Vocal_Lead.patch",
+        "sha256": "8acdfdbb1b8ef8517ab5a86649b435b0797549259d8621f045c42685ce788e8a"
+       }
+      }
+     }
+    }
    }
   },
   "effects-os": {

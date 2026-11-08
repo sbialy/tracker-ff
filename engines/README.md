@@ -48,6 +48,30 @@ repository in `build/modules/<set>/` (every repository has its own `NOTICE.md`; 
    engines out in `Plugins/Synth/`, the inserts in `Plugins/Master/` and the notices of every module repository in
    `licenses/plugins/<repository>/`, after `external.py check` and `verify-external`.
 
+## FORM and FLUX: an optional group, off in the 1.2.0 package
+
+FORM (stored 19, patch and type 0x8B) and FLUX (stored 20, 0x8C) are in `poly-engines` `engines-v1.2.0`. They ship only as plugins in the
+release zip, and only after the user has listened and approved them, so everything about them is behind one switch, the group
+`formflux`:
+
+- `engines.json`: the rows `form` and `flux` carry `"optional": "formflux"`. `check_modules.py verify-external` leaves them out unless `--with formflux`.
+- `external.lock.json`: the set `engines` has `"optional": {"formflux": {"files": ..., "patches": ...}}` (the 8 files of the two plugins
+  and the 11 factory presets of `presets/Patches/{FORM,FLUX}`, pinned with sha256). `external.py fetch|check --with formflux` takes them,
+  `relock` always re-pins them. The presets are laid out as `DEST/Patches/<ENGINE>/<name>.patch`, their release asset names are
+  `<ENGINE>-<name with _ for spaces>.patch`.
+- `rebuild_pinned.sh OUT autof all --with formflux`, `crosscheck.sh DIR all --with formflux`, `make -C engines check WITH=formflux`,
+  `EXTERNAL_WITH=formflux engines/ci_external.sh`: the same tools with the group on.
+- `package_release.sh ... --modules DIR --with formflux`: `Plugins/Synth/form.plg flux.plg` (+ `.plgi`), `Patches/FORM/*.patch`,
+  `Patches/FLUX/*.patch`, and the README counts (20 engines, 14 plugins). Without `--with` the package is byte for byte what it was before.
+
+The firmware image is the same with or without them: a plugin brings its own stored, patch and type numbers, the host takes any
+free ones (`engine_list.h` lists only the built-in engines and is a pinned SDK header, so FORM and FLUX are not added there).
+A project that uses FORM or FLUX on a card without the plugin falls back to a default part, like any engine the build has never heard
+of (the "known but missing" placeholders cover stored 7 to 18 only).
+
+To ship them: build both packages again with `--with formflux` (`~/prj/poly/ref/five-repos-1.2.0.md` lists the commands), or drop
+`"optional": "formflux"` from the two rows and make the group `files` part of `set["files"]` once nobody wants the switch any more.
+
 ## Build order for a new release
 
 1. tracker-ff: change the host or the SDK if needed, commit. If a file of `sdk/headers.txt` or `sdk/tools.txt` (or

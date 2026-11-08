@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The published plugin modules against the public identity this repository keeps (engines/engines.json).
 
-    python3 engines/check_modules.py verify-external DIR --host-abi synth-open/plug/plug_abi.h [--visibility public|private|all]
+    python3 engines/check_modules.py verify-external DIR --host-abi synth-open/plug/plug_abi.h [--visibility public|private|all] [--with GROUP]
 
 DIR is one flat directory with the published files of the module repositories (engines/external.py fetch DIR puts them there):
 poly-engines-os and poly-engines (synth engines: <id>.plg, <id>.plgi, <id>.wasm, <id>.json), poly-effects-os and poly-effects
@@ -11,6 +11,7 @@ poly-engines-os and poly-engines (synth engines: <id>.plg, <id>.plgi, <id>.wasm,
   - master insert: <id>.plg is there, is a master insert this host accepts, and its version equals the row
   - when DIR has the module manifest <id>.json: kind, visibility and source repository equal the row, the numbers of a synth
     equal the row, and the sha256 of the .wasm and .plg it names equal the files
+A row with "optional": GROUP is left out unless --with GROUP names it (FORM and FLUX: --with formflux).
 Exit 1 on any difference. The firmware's own checkSynth runs separately (synth-open/tools/validate_synth.py, engines/crosscheck.sh).
 """
 import argparse
@@ -92,7 +93,7 @@ def module_manifest(d, row, kind):
 def verify_external(a):
     t = table()
     host = abi_of(a.host_abi)
-    want = lambda r: a.visibility == "all" or r["visibility"] == a.visibility
+    want = lambda r: (a.visibility == "all" or r["visibility"] == a.visibility) and (not r.get("optional") or r["optional"] in a.with_)
     errs, seen = [], []
     for e in [x for x in t["engines"] if want(x)]:
         f = os.path.join(a.dir, e["id"] + ".plg")
@@ -132,7 +133,7 @@ def verify_external(a):
         for x in errs:
             print("  " + x)
         return 1
-    print("verify-external ok: %s (%d modules, %s: %s)" % (a.dir, len(seen), a.visibility, ", ".join(seen)))
+    print("verify-external ok: %s (%d modules, %s%s: %s)" % (a.dir, len(seen), a.visibility, "".join(", with " + g for g in a.with_), ", ".join(seen)))
     return 0
 
 
@@ -143,6 +144,7 @@ def main():
     ve.add_argument("dir")
     ve.add_argument("--host-abi", required=True)
     ve.add_argument("--visibility", default="all", choices=("public", "private", "all"))
+    ve.add_argument("--with", dest="with_", action="append", default=[], metavar="GROUP", help="also the rows of the optional group (formflux)")
     a = ap.parse_args()
     return {"verify-external": verify_external}[a.cmd](a)
 

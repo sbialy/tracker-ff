@@ -22,6 +22,12 @@ repository has its own NOTICE.md).
                                         lock's tag or TAG) and the sha256 of every pinned file from its local_dirs, written back to
                                         the lock. The file list stays (edit it by hand for a new module). Check with crosscheck.sh.
 
+Optional groups (formflux: FORM and FLUX of poly-engines and their factory presets): a set may carry "optional": {GROUP: {"files": {...},
+"patches": {...}}}. fetch, check and relock take --with GROUP (repeatable); without it the group is not fetched, not checked and not
+shipped. Files are pinned like "files". "patches" = {"root": path of the .patch folder in the repository, "files": {"FORM/Brass Stab.patch":
+{"asset": release asset name, "sha256": ...}}}: they are laid out as DEST/Patches/<ENGINE>/<name>.patch (from the tag with --from-local).
+relock always re-pins every optional group (a switch that is off must not drift).
+
 Nothing here reads a private repository unless the caller has it: CI and a clone without access skip those sets (exit 3 or
 --visibility public).
 """
@@ -62,14 +68,24 @@ def pick(names, sets, visibility=None):
     return [(n, sets[n]) for n in sets if (not names or n in names) and (not visibility or sets[n]["visibility"] == visibility)]
 
 
-def pinned(s):
-    """(file name, sha256, sub directory) of every pinned file of a set: modules flat, notices in <set>/."""
-    return [(f, h, "") for f, h in sorted(s["files"].items())] + [(f, h, s["_name"]) for f, h in sorted(s.get("notice_files", {}).items())]
+def groups_of(s, with_):
+    """The optional groups of a set that are switched on."""
+    return [(g, s["optional"][g]) for g in sorted(s.get("optional", {})) if g in (with_ or [])]
 
 
-def download(s, tmp):
+def pinned(s, with_=None):
+    """(release asset name, sha256, path below DEST) of every pinned file of a set: modules flat, notices in <set>/, then the files and
+    the patches of the optional groups that are switched on (patches in Patches/<ENGINE>/)."""
+    out = [(f, h, f) for f, h in sorted(s["files"].items())] + [(f, h, "%s/%s" % (s["_name"], f)) for f, h in sorted(s.get("notice_files", {}).items())]
+    for _, g in groups_of(s, with_):
+        out += [(f, h, f) for f, h in sorted(g.get("files", {}).items())]
+        out += [(v["asset"], v["sha256"], "Patches/" + rel) for rel, v in sorted(g.get("patches", {}).get("files", {}).items())]
+    return out
+
+
+def download(s, tmp, with_=None):
     """The pinned release assets of a set into tmp. Public: https, private: gh. Returns an error text or None."""
-    names = list(s["files"]) + list(s.get("notice_files", {}))
+    names = [n for n, _, _ in pinned(s, with_)]
     if s["visibility"] == "public":
         import urllib.request
         for f in names:
@@ -94,30 +110,41 @@ def fetch(a):
     sets = pick(a.set, lock(), a.visibility)
     for name, s in sets:
         with tempfile.TemporaryDirectory(prefix="extfetch") as tmp:
+            patch_src = {}
             if a.from_local:
                 dirs = [expand(d) for d in s["local_dirs"]]
                 if not all(os.path.isdir(d) for d in dirs):
                     print("external: %s: local build directories are missing (%s)" % (name, ", ".join(dirs)), file=sys.stderr)
                     return NA
+                for _, g in groups_of(s, a.with_):   # the patches are source: the tag of the local checkout
+                    for rel, v in g.get("patches", {}).get("files", {}).items():
+                        r = subprocess.run(["git", "-C", expand(s["local_repo"]), "show", "%s:%s/%s" % (s["tag"], g["patches"]["root"], rel)],
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        if r.returncode:
+                            print("external: %s: %s is not in %s of %s" % (name, rel, s["tag"], s["local_repo"]), file=sys.stderr)
+                            return NA
+                        with open(os.path.join(tmp, v["asset"]), "wb") as o:
+                            o.write(r.stdout)
+                dirs = dirs + [tmp]
             else:
-                err = download(s, tmp)
+                err = download(s, tmp, a.with_)
                 if err:
                     print("external: %s: %s" % (name, err), file=sys.stderr)
                     return NA
                 dirs = [tmp]
-            for f, want, sub in pinned(s):
+            for f, want, rel in pinned(s, a.with_):
                 src = next((os.path.join(d, f) for d in dirs if os.path.exists(os.path.join(d, f))), None)
                 if not src:
                     bad.append("%s: %s is not available" % (name, f))
                 elif sha256(src) != want:
                     bad.append("%s: %s has sha256 %s, the lock pins %s" % (name, f, sha256(src)[:12], want[:12]))
                 else:
-                    os.makedirs(os.path.join(out, sub), exist_ok=True)
-                    shutil.copyfile(src, os.path.join(out, sub, f))
+                    os.makedirs(os.path.dirname(os.path.join(out, rel)), exist_ok=True)
+                    shutil.copyfile(src, os.path.join(out, rel))
     for b in bad:
         print("external FAILED: " + b, file=sys.stderr)
     if not bad:
-        print("external ok: %d pinned files of %s in %s" % (sum(len(pinned(s)) for _, s in sets), ", ".join(n for n, _ in sets), out))
+        print("external ok: %d pinned files of %s in %s" % (sum(len(pinned(s, a.with_)) for _, s in sets), ", ".join(n for n, _ in sets), out))
     return 1 if bad else 0
 
 
@@ -125,8 +152,8 @@ def check(a):
     bad = []
     n = 0
     for name, s in pick(a.set, lock(), a.visibility):
-        for f, want, sub in pinned(s):
-            p = os.path.join(a.dir, sub, f)
+        for f, want, rel in pinned(s, a.with_):
+            p = os.path.join(a.dir, rel)
             n += 1
             if not os.path.exists(p):
                 bad.append("%s: %s is missing" % (name, f))
@@ -167,8 +194,10 @@ def source(a):
 
 def list_sets(a):
     for name, s in pick(None, lock(), a.visibility):
-        print("%-11s %-8s %-24s %-16s %s %3d files, %d notice files" % (name, s["visibility"], s["repo"], s["tag"], s["tag_commit"][:12],
-                                                                          len(s["files"]), len(s.get("notice_files", {}))))
+        print("%-11s %-8s %-24s %-16s %s %3d files, %d notice files%s" % (name, s["visibility"], s["repo"], s["tag"], s["tag_commit"][:12],
+                                                                          len(s["files"]), len(s.get("notice_files", {})),
+                                                                          "".join(", optional %s: %d files, %d patches" % (g, len(v.get("files", {})), len(v.get("patches", {}).get("files", {})))
+                                                                                  for g, v in sorted(s.get("optional", {}).items()))))
     return 0
 
 
@@ -194,6 +223,21 @@ def relock(a):
         return out
     files, notices = hashes(s["files"]), hashes(s.get("notice_files", {}))
     changed = sorted(f for f in files if files[f] != s["files"][f]) + sorted(f for f in notices if notices[f] != s["notice_files"][f])
+    for gname, g in s.get("optional", {}).items():   # every optional group is re-pinned, switched on or not
+        old = dict(g.get("files", {}))
+        g["files"] = hashes(old)
+        changed += sorted("%s:%s" % (gname, f) for f in old if g["files"][f] != old[f])
+        if "patches" in g:
+            root = g["patches"]["root"]
+            ls = subprocess.run(["git", "-C", repo, "ls-tree", "-r", "--name-only", tag, root + "/"], stdout=subprocess.PIPE, text=True, check=True)
+            rels = sorted(l[len(root) + 1:] for l in ls.stdout.splitlines() if l.endswith(".patch"))
+            before = {k: v["sha256"] for k, v in g["patches"]["files"].items()}
+            g["patches"]["files"] = {}
+            for rel in rels:
+                blob = subprocess.run(["git", "-C", repo, "show", "%s:%s/%s" % (tag, root, rel)], stdout=subprocess.PIPE, check=True).stdout
+                g["patches"]["files"][rel] = {"asset": rel.replace("/", "-").replace(" ", "_"), "sha256": hashlib.sha256(blob).hexdigest()}
+                if before.get(rel) != g["patches"]["files"][rel]["sha256"]:
+                    changed.append("%s:%s" % (gname, rel))
     s["tag"], s["tag_commit"], s["files"] = tag, r.stdout.strip(), files
     if notices:
         s["notice_files"] = notices
@@ -212,10 +256,12 @@ def main():
     f.add_argument("--from-local", action="store_true")
     f.add_argument("--set", action="append")
     f.add_argument("--visibility", choices=("public", "private"))
+    f.add_argument("--with", dest="with_", action="append", default=[], metavar="GROUP", help="also the optional group (formflux)")
     c = sp.add_parser("check")
     c.add_argument("dir")
     c.add_argument("--set", action="append")
     c.add_argument("--visibility", choices=("public", "private"))
+    c.add_argument("--with", dest="with_", action="append", default=[], metavar="GROUP", help="also the optional group (formflux)")
     rl = sp.add_parser("relock")
     rl.add_argument("set")
     rl.add_argument("--tag")

@@ -1,5 +1,5 @@
 {
- "_comment": "The public identity of every plugin module tracker-ff 1.2.0 ships, and the repository that builds it. No module source is in this repository: the synth engines are built in poly-engines-os (public, the OpenTracker 3.x module engines) and poly-engines (private, our own engines), the master inserts in poly-effects-os (public, the OpenTracker fx ports) and poly-effects (private, our own inserts). engines/external.lock.json pins a release of each repository (tag, commit, sha256 of every published file), engines/check_modules.py verify-external checks the published files against the rows here. Engine rows: id = file name (<id>.plg, <id>.plgi, <id>.wasm, <id>.json), name = the descriptor name (engine_list.h), stored, patch, type = the numbers of the engine (plug_abi.h PLUG_SYNTH_MANIFEST, engine_list.h), version = the .plg header version, logo = the card logo text. Insert rows: plug_id and version of the .plg header. visibility and repo: where the source lives (repos lists them). licence: what the published files carry, the module repository ships the texts. A module repository must not change these numbers: a new engine gets its row here (and its engine_list.h entry) first.",
+ "_comment": "The public identity of every plugin module tracker-ff 1.2.0 ships, and the repository that builds it. No module source is in this repository: the synth engines are built in poly-engines-os (public, the OpenTracker 3.x module engines) and poly-engines (private, our own engines), the master inserts in poly-effects-os (public, the OpenTracker fx ports) and poly-effects (private, our own inserts). engines/external.lock.json pins a release of each repository (tag, commit, sha256 of every published file), engines/check_modules.py verify-external checks the published files against the rows here. Engine rows: id = file name (<id>.plg, <id>.plgi, <id>.wasm, <id>.json), name = the descriptor name (engine_list.h), stored, patch, type = the numbers of the engine (plug_abi.h PLUG_SYNTH_MANIFEST, engine_list.h), version = the .plg header version, logo = the card logo text. Insert rows: plug_id and version of the .plg header. visibility and repo: where the source lives (repos lists them). licence: what the published files carry, the module repository ships the texts. A module repository must not change these numbers: a new engine gets its row here (and its engine_list.h entry) first. optional: a row with an optional group (formflux) is built and checked by every tool, but only shipped when the group is switched on (--with formflux): package_release.sh, external.py, check_modules.py, crosscheck.sh and rebuild_pinned.sh leave the row out by default (engines/README.md, FORM and FLUX). The firmware image does not change: a plugin engine brings its own stored, patch and type numbers, the host takes any free ones (engine_list.h lists the built-in engines only, and is a pinned SDK header).",
  "set_version": "1.2.0",
  "repos": {
   "poly-engines-os": {
@@ -22,6 +22,9 @@
    "kind": "master",
    "lock_set": "effects"
   }
+ },
+ "optional_groups": {
+  "formflux": "FORM (stored 19, 0x8B) and FLUX (stored 20, 0x8C) of poly-engines, plus their 11 factory presets. Off in the 1.2.0 package until the user has listened and approved them."
  },
  "engines": [
   {
@@ -167,6 +170,32 @@
    "visibility": "private",
    "repo": "poly-engines",
    "licence": "Proprietary freeware, Apache-2.0 and MIT parts"
+  },
+  {
+   "id": "form",
+   "name": "FORM",
+   "stored": 19,
+   "patch": 139,
+   "type": 139,
+   "version": "1.0.0",
+   "logo": "FORM",
+   "visibility": "private",
+   "repo": "poly-engines",
+   "licence": "Proprietary freeware, Apache-2.0 and MIT parts",
+   "optional": "formflux"
+  },
+  {
+   "id": "flux",
+   "name": "FLUX",
+   "stored": 20,
+   "patch": 140,
+   "type": 140,
+   "version": "1.0.0",
+   "logo": "FLUX",
+   "visibility": "private",
+   "repo": "poly-engines",
+   "licence": "Proprietary freeware, Apache-2.0 and MIT parts",
+   "optional": "formflux"
   }
  ],
  "inserts": [
