@@ -171,9 +171,8 @@ namespace
 
 // ----------------------------------------------------------------- registry
 
-std::unique_ptr<InstrumentType> createFromDef(const EngineDef& def)
+void fillFromDef(InstrumentType* type, const EngineDef& def)
 {
-    auto type = std::make_unique<InstrumentType>();
     type->name = def.name;
     type->createMetadata = [&def](Patch&, Patch::Metadata& metadata)
     {
@@ -235,6 +234,12 @@ std::unique_ptr<InstrumentType> createFromDef(const EngineDef& def)
         };
     };
     type->createVoice = [](int) -> std::unique_ptr<InstrumentVoice> { return nullptr; };
+}
+
+std::unique_ptr<InstrumentType> createFromDef(const EngineDef& def)
+{
+    auto type = std::make_unique<InstrumentType>();
+    fillFromDef(type.get(), def);
     return type;
 }
 
@@ -266,50 +271,60 @@ constexpr Builtin kBuiltin[] = {
 #undef SYNTH_ENGINE
 };
 constexpr int kBuiltinCount = int(sizeof(kBuiltin) / sizeof(kBuiltin[0]));
-constexpr int kPlugMax = 16;   // plug::kLibMax: the synth plugin library, installed or not
+// The plugin engines of the list (plug_synth.cpp synthBoot, installed or not): each has its own stored number, so the stored number space
+// bounds them (249), nothing else. Their tables are in the SDRAM: about 0.1 KB each here (list entries, registry entry, name).
+constexpr int kPlugMax = open::kPlugStoredLast - open::kPlugStoredFirst + 1;
 // Any plugin engine number (open::kPlugStoredFirst..kPlugStoredLast) that is not in the list is "missing": one placeholder for all
 // of them (type open::kMissingTypeId), the project keeps the number, the name comes from the names this firmware has seen.
 // 0 to 6 are Polyend's (always built in when they exist in this firmware family), DIRT (5) never had an open engine.
-constexpr int kNameMax = 64;   // remembered plugin engine names (one per stored number)
+// Remembered plugin engine names, one per stored number (name[0] 0: none). Every number has its place, so none is ever refused.
 struct EngineName
 {
-    int16_t stored;
     char name[9];
 };
 static_assert(std::is_trivially_default_constructible_v<EngineName>, "OPEN_EXTERNAL_RAM: no static constructor may touch the SDRAM");
-OPEN_EXTERNAL_RAM EngineName gNames[kNameMax];
-int gNameCount;
+OPEN_EXTERNAL_RAM EngineName gNames[kPlugMax];
+bool gNamesClear; // gNames was zeroed (the SDRAM holds garbage until then)
 
-EngineRef gPlug[kPlugMax];
+void namesClear()
+{
+    if (!gNamesClear)
+    {
+        std::memset(gNames, 0, sizeof(gNames));
+        gNamesClear = true;
+    }
+}
+
+static_assert(std::is_trivially_default_constructible_v<EngineRef>, "OPEN_EXTERNAL_RAM: no static constructor may touch the SDRAM");
+OPEN_EXTERNAL_RAM EngineRef gPlug[kPlugMax]; // by stored number (engineListAdd keeps them in order)
 int gPlugCount;
-EngineRef gList[kBuiltinCount + kPlugMax];
+OPEN_EXTERNAL_RAM EngineRef gList[kBuiltinCount + kPlugMax];
 int gCount; // 0 until the list is built (first use)
 EngineDef gMissing = {};
+// The registry entries of the plugin engines (getInstrumentType), made by registerEngines in place, never destroyed: in the SDRAM, so a
+// big library takes no internal heap (a std::map node and two blocks each would)
+struct TypeSlot
+{
+    alignas(InstrumentType) unsigned char bytes[sizeof(InstrumentType)];
+};
+static_assert(std::is_trivially_default_constructible_v<TypeSlot>, "OPEN_EXTERNAL_RAM: no static constructor may touch the SDRAM");
+OPEN_EXTERNAL_RAM TypeSlot gPlugType[kPlugMax];
+int gPlugTypes; // gPlugType[0..gPlugTypes) are made, for gPlug[0..gPlugTypes)
 
-// built in and plugin engines by stored number (the built-in ones ascend already)
+// built in and plugin engines by stored number (both ascend already): a merge
 void buildList()
 {
-    int b = 0;
-    bool used[kPlugMax] = {};
+    int b = 0, p = 0;
     while (gCount < kBuiltinCount + gPlugCount)
     {
-        int p = -1;
-        for (int i = 0; i < gPlugCount; i++)
-        {
-            if (!used[i] && (p < 0 || gPlug[i].stored < gPlug[p].stored))
-            {
-                p = i;
-            }
-        }
-        if (b < kBuiltinCount && (p < 0 || kBuiltin[b].stored < gPlug[p].stored))
+        if (b < kBuiltinCount && (p >= gPlugCount || kBuiltin[b].stored < gPlug[p].stored))
         {
             gList[gCount] = { kBuiltin[b].def, kBuiltin[b].stored, kBuiltin[b].patchEngine, int8_t(b) };
             b++;
         }
         else
         {
-            gList[gCount] = gPlug[p];
-            used[p] = true;
+            gList[gCount] = gPlug[p++];
         }
         gCount++;
     }
@@ -330,9 +345,9 @@ inline void ensureList()
 
 bool open::engineListAdd(const EngineDef* def, int stored, int patchEngine)
 {
-    if (gCount || gPlugCount >= kPlugMax)
+    if (gCount || gPlugCount >= kPlugMax || stored < kPlugStoredFirst || stored > kPlugStoredLast)
     {
-        return false; // the list is in use (the synth started), or full
+        return false; // the list is in use (the synth started), full, or not a plugin number (each has its own, so 249 never fill up)
     }
     for (int i = 0; i < kBuiltinCount + gPlugCount; i++) // its numbers must be its own
     {
@@ -346,7 +361,12 @@ bool open::engineListAdd(const EngineDef* def, int stored, int patchEngine)
             return false;
         }
     }
-    gPlug[gPlugCount++] = { def, stored, patchEngine, -1 };
+    int at = gPlugCount++; // in order of stored numbers (buildList merges)
+    for (; at > 0 && gPlug[at - 1].stored > stored; at--)
+    {
+        gPlug[at] = gPlug[at - 1];
+    }
+    gPlug[at] = { def, stored, patchEngine, -1 };
     return true;
 }
 
@@ -386,12 +406,10 @@ const char* open::missingName(int stored)
     {
         return "";
     }
-    for (int i = 0; i < gNameCount; i++)
+    namesClear();
+    if (gNames[stored - kPlugStoredFirst].name[0])
     {
-        if (gNames[i].stored == stored)
-        {
-            return gNames[i].name;
-        }
+        return gNames[stored - kPlugStoredFirst].name;
     }
     static char num[8];
     snprintf(num, sizeof(num), "#%d", stored);
@@ -404,34 +422,26 @@ bool open::engineNameRemember(int stored, const char* name)
     {
         return false;
     }
-    int i = 0;
-    while (i < gNameCount && gNames[i].stored != stored)
-    {
-        i++;
-    }
-    if (i < gNameCount && std::strncmp(gNames[i].name, name, 8) == 0)
+    namesClear();
+    EngineName& n = gNames[stored - kPlugStoredFirst];
+    if (std::strncmp(n.name, name, 8) == 0)
     {
         return false;
     }
-    if (i == gNameCount)
-    {
-        if (gNameCount == kNameMax)
-        {
-            return false; // full: this number shows as "#<stored>" when it is missing
-        }
-        gNameCount++;
-    }
-    gNames[i].stored = int16_t(stored);
-    snprintf(gNames[i].name, sizeof(gNames[i].name), "%.8s", name);
+    snprintf(n.name, sizeof(n.name), "%.8s", name);
     return true;
 }
 
 int open::engineNamesText(char* buf, int cap)
 {
+    namesClear();
     int len = 0;
-    for (int i = 0; i < gNameCount && len < cap; i++)
+    for (int i = 0; i < kPlugMax && len < cap; i++)
     {
-        len += snprintf(buf + len, size_t(cap - len), "%d %s\r\n", gNames[i].stored, gNames[i].name);
+        if (gNames[i].name[0])
+        {
+            len += snprintf(buf + len, size_t(cap - len), "%d %s\r\n", i + kPlugStoredFirst, gNames[i].name);
+        }
     }
     return len < cap ? len : cap - 1;
 }
@@ -493,7 +503,14 @@ void open::registerEngines(InstrumentTypeRegistry& registry)
     ensureList();
     for (int i = 0; i < gCount; i++)
     {
-        registry.addInstrumentType(gList[i].def->typeId, createFromDef(*gList[i].def));
+        if (gList[i].builtin >= 0)
+        {
+            registry.addInstrumentType(gList[i].def->typeId, createFromDef(*gList[i].def));
+        }
+    }
+    for (; gPlugTypes < gPlugCount; gPlugTypes++) // the plugin engines: in place, once (getInstrumentType finds them)
+    {
+        fillFromDef(new (gPlugType[gPlugTypes].bytes) InstrumentType(), *gPlug[gPlugTypes].def);
     }
     registry.addInstrumentType(kMissingTypeId, createFromDef(gMissing));
 }
@@ -501,7 +518,19 @@ void open::registerEngines(InstrumentTypeRegistry& registry)
 std::shared_ptr<const InstrumentType> InstrumentTypeRegistry::getInstrumentType(int typeId) const
 {
     auto it = instrumentTypes.find(typeId);
-    return it == instrumentTypes.end() ? nullptr : it->second;
+    if (it != instrumentTypes.end())
+    {
+        return it->second;
+    }
+    for (int i = 0; i < gPlugTypes; i++)
+    {
+        if (gPlug[i].def->typeId == typeId)
+        {   // owns nothing (aliasing constructor, no control block): the entry lives as long as the firmware runs
+            return std::shared_ptr<const InstrumentType>(std::shared_ptr<const InstrumentType>(),
+                                                         reinterpret_cast<const InstrumentType*>(gPlugType[i].bytes));
+        }
+    }
+    return nullptr;
 }
 
 void InstrumentTypeRegistry::addInstrumentType(int typeId,

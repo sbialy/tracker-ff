@@ -132,6 +132,20 @@ int main() {
   libDef.volumeParam = -1;
   libDef.maxVoices = open::kMaxVoicesPerInstrument;
   const bool libOk = open::engineListAdd(&libDef, 8, 0x82);
+  // poly-plug-lib: a library of 100 engines that are not installed (no fixed library size): stored 140..239, type 0x1000 + i, .patch
+  // id 0x200 + i, added in reverse (the list sorts by number), placeholder definitions as plug_synth.cpp synthBoot makes them
+  constexpr int kBig = 100;
+  static open::EngineDef bigDef[kBig] = {};
+  static char bigName[kBig][9];
+  int bigAdded = 0;
+  for (int i = kBig - 1; i >= 0; i--) {
+    snprintf(bigName[i], sizeof(bigName[i]), "BIG%03d", i);
+    bigDef[i].name = bigName[i]; bigDef[i].typeId = 0x1000 + i; bigDef[i].volumeParam = -1; bigDef[i].maxVoices = open::kMaxVoicesPerInstrument;
+    bigAdded += open::engineListAdd(&bigDef[i], 140 + i, 0x200 + i);
+  }
+  static open::EngineDef oddDef = libDef;
+  oddDef.typeId = 0x1F00;
+  const bool oddRefused = !open::engineListAdd(&oddDef, 256, 0x1F00) && !open::engineListAdd(&oddDef, 6, 0x1F00);   // not plugin numbers
 #endif
   auto synth = Synth::createSynth([](size_t){return nullptr;});
   auto store = synth->createPatchStore(Synth::FileSystemId::kPatches, true);
@@ -404,7 +418,7 @@ int main() {
               ws->loadPatch("0", *hp, true) && ws->savePatch("0", *hp) && mw->files["0.patch"] == before && !mw->files.count("0.patch.tmp"),
             "a Hand-Type part is the placeholder: no parameters, its Workspace file loads as done and is never written over");
 #ifdef SMOKE_PLUGIN_ENGINE
-      const int nList = nKinds + 2;   // the attached plugin engine and the library engine that is not installed
+      const int nList = nKinds + 2 + kBig;   // the attached plugin engine, the library engine that is not installed, the big library
 #else
       const int nList = nKinds;
 #endif
@@ -2016,6 +2030,51 @@ int main() {
     check(pj->getMetadata().instrumentTypeId == 0x81 && int(pj->getMetadata().params.size()) == plugDef.paramCount && pd.engine == 0x81 &&
             pn && open::decodePatch(pb, pn, back) && open::typeForEngineId(back.engine) == 0x81 && open::engineIdForType(0x81) == 0x81,
           "plugin engine: its patch carries engine 0x81 and reads back as the plugin's type");
+
+    // poly-plug-lib: the 100 engine library (picker order, registry, names), 40 missing numbers with remembered names, names.txt round trip
+    {
+      const int ui0 = open::engineUiForStored(140);
+      bool order = bigAdded == kBig && ui0 > 0 && open::engineAt(ui0 - 1).stored < 140;
+      for (int i = 0; i < kBig; i++)
+        order = order && open::engineUiForStored(140 + i) == ui0 + i && open::engineAt(ui0 + i).def == &bigDef[i] &&
+                open::engineAt(ui0 + i).builtin == -1 && open::typeForStored(140 + i) == 0x1000 + i && open::engineIdForType(0x1000 + i) == 0x200 + i &&
+                open::typeForEngineId(0x200 + i) == 0x1000 + i && !open::missingDef(140 + i);
+      for (int ui = 1; ui < open::engineCount(); ui++) order = order && open::engineAt(ui - 1).stored < open::engineAt(ui).stored;
+      check(order && oddRefused, "100 library engines: listed by stored number in the picker order, numbers outside 7..255 refused");
+      bool reg = true;
+      for (int i : {0, 39, 40, 99}) {
+        auto bp = pst->createPatch(0x1000 + i);
+        reg = reg && bp && bp->getMetadata().instrumentTypeId == 0x1000 + i && bp->getMetadata().params.empty() &&
+              sp->getInstrumentName(0x1000 + i) == bigName[i];
+      }
+      check(reg, "100 library engines: every one has its registry entry (name, Init patch of its type), no heap map entry needed");
+      bool missing = true;
+      for (int st = 100; st < 140; st++) {
+        char nm[9]; snprintf(nm, sizeof(nm), "MIS%03d", st);
+        missing = missing && open::missingDef(st) && open::engineNameRemember(st, nm) && std::string(open::missingName(st)) == nm;
+      }
+      check(missing, "40 missing numbers (100..139): each the placeholder, each named by its remembered name (no name limit)");
+      // names.txt: every number 7..255 known, written, read back line by line (plug_synth.cpp namesRead), nothing new learned
+      for (int st = 7; st <= 255; st++) {
+        char nm[9]; snprintf(nm, sizeof(nm), "N%03d", st);
+        if (st < 100 || st >= 140) open::engineNameRemember(st, nm);
+      }
+      static char txt[8192];
+      const int len = open::engineNamesText(txt, int(sizeof(txt)));
+      int lines = 0; bool same = len > 0 && len < int(sizeof(txt)) - 1;
+      for (int i = 0; i < len;) {
+        int e = i; while (e < len && txt[e] != '\n' && txt[e] != '\r') e++;
+        const std::string line(txt + i, size_t(e - i));
+        if (!line.empty()) {
+          char* q = nullptr; const long st = strtol(line.c_str(), &q, 10); while (*q == ' ') q++;
+          same = same && !open::engineNameRemember(int(st), q);
+          lines++;
+        }
+        i = e + 1;
+      }
+      check(same && lines == 249 && std::string(open::missingName(120)) == "MIS120" && std::string(open::missingName(99)) == "N099",
+            "names.txt with all 249 plugin numbers: written and read back, every line known (nothing learned), nothing refused");
+    }
 
     // round E: a listed engine that is not installed, then attached; a plugin engine detached while a part plays it
     const int lui = open::engineUiForStored(8);

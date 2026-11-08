@@ -651,6 +651,69 @@ int main()
         check(maxW <= 1.25 * avg, "installs spread over the free sectors (the most erased within 1.25 x the average)");
     }
 
+    // ---- poly-plug-lib: a library of 40 and 100 engines (the 14 sizes in turn, new uids and files) is a cache like the 14: the boot keeps the
+    // entries of files still on the card, 3 parts pin their engines, the picker walks every engine of the library twice and loads each, and
+    // also a project whose 3 engines are anywhere in the library. The bank never holds more than it can, every install succeeds, installed.txt
+    // stays within the firmware's 2,048 B (plug_synth.cpp s_itext), nothing grows with the library
+    for (int nLib : {40, 100})
+    {
+        Io io;
+        std::vector<std::string> files;
+        for (int i = 0; i < nLib; i++)
+        {
+            const P& q = kAll[i % kN];
+            char fn[kBankFileLen];
+            snprintf(fn, sizeof(fn), "lib%03d_%s", i, q.f);   // up to 23 characters (kBankFileLen 24)
+            io.card[fn] = plg(fn, 0xA0000000u + uint32_t(i) * 0x9E37u, q.len, q.text, q.rw);
+            files.push_back(fn);
+        }
+        Flash f;
+        Bank b = {};
+        open(f, io, b);
+        Cache c;
+        const int pins[3] = {1, nLib / 2, nLib - 1};
+        bool ok = true;
+        for (int p : pins)
+        {
+            ok = ok && install(f, io, b, files[size_t(p)], c).err == kBankOk;
+            c.pinned.push_back(io.card[files[size_t(p)]].uid);
+        }
+        int loads = 0, misses = 0, maxN = 0, maxIndex = 0;
+        for (int round = 0; round < 2; round++)
+            for (int i = 0; i < nLib; i++)
+            {
+                const int cmd = f.commands;
+                const BankInstallStatus st = install(f, io, b, files[size_t(i)], c);
+                ok = ok && st.err == kBankOk && find(b, io.card[files[size_t(i)]].uid) >= 0;
+                loads++;
+                misses += f.commands != cmd;
+                maxN = b.n > maxN ? b.n : maxN;
+                maxIndex = int(io.index.size()) > maxIndex ? int(io.index.size()) : maxIndex;
+            }
+        bool pinnedThere = true;
+        for (uint32_t u : c.pinned) pinnedThere = pinnedThere && find(b, u) >= 0;
+        // a project load: three engines from anywhere in the library, the old ones no longer pinned
+        c.pinned.clear();
+        const int proj[3] = {3, nLib / 3, nLib - 2};
+        for (int p : proj)
+        {
+            ok = ok && install(f, io, b, files[size_t(p)], c).err == kBankOk;
+            c.pinned.push_back(io.card[files[size_t(p)]].uid);
+        }
+        for (int p : proj) pinnedThere = pinnedThere && find(b, io.card[files[size_t(p)]].uid) >= 0;
+        // reboot with the library: the cache is kept as it is (every entry's file is on the card)
+        Bank r = {};
+        const int cmd = f.commands;
+        const BankOpenStatus os = open(f, io, r);
+        char what[220];
+        snprintf(what, sizeof(what), "%d engine library: %d loads all succeed, the pinned engines stay, at most %d installed at once (kBankMax %d), "
+                 "installed.txt at most %d B (2,048)", nLib, loads + 6, maxN, kBankMax, maxIndex);
+        check(ok && pinnedThere && maxN <= kBankMax && maxIndex <= 2048 && exact(f, io, b) && layoutOk(b) && insert2Blank(f), what);
+        snprintf(what, sizeof(what), "%d engine library: the reboot keeps the %d installed engines, no flash command, nothing stale", nLib, b.n);
+        check(r.n == b.n && os.stale == 0 && os.dropped == 0 && f.commands == cmd, what);
+        printf("info  %d engine library: %d picker loads, %d needed the flash (the rest were cached)\n", nLib, loads, misses);
+    }
+
     printf("%s  %d checks, %d failed\n", g_fail ? "FAILED" : "PASSED", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -78,7 +78,7 @@ inline bool isPlugName(const char* name)
 }
 
 constexpr int kIndexMax = 16;
-constexpr int kScanMax = 24;   // names listed per scan: rejected files take a place too
+constexpr int kScanMax = 272;  // names listed per scan (the synth library of 256, plug_host.h kLibMax): rejected files take a place too
 struct IndexEntry
 {
     uint32_t uid, version;

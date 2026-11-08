@@ -85,7 +85,7 @@ SD Card Root/
 ```
 
 - A plugin file is `*.plg` in any case. The name must be shorter than 40 characters. macOS `._` twin files are ignored (`isPlugName` in [`plug_index.h`](../synth-open/plug_index.h)).
-- A scan lists at most 24 names and keeps at most 16 entries per folder (`kScanMax`, `kIndexMax`, `kLibMax`). A file the host rejects still takes one of the 24 places.
+- A scan lists at most 272 names (`kScanMax`). `/Plugins/Master` keeps at most 16 inserts (`kIndexMax`), `/Plugins/Synth` at most 256 engine files (`kLibMax`), of which at most 249 are listed: a listed engine needs a stored number of its own (7 to 255, one byte in a project). A file the host rejects still takes one of the 272 places.
 - Two files with the same `uid` in one folder: the higher `version` wins.
 - The host reads only the header and manifest of each insert file at boot and when the Inserts page opens, and of each engine file at boot. Nothing executes until a plugin is picked or a project needs it.
 - A rejected file is listed in `/Plugins/host.txt` (inserts) with its error number. See [section 13](#13-validation-safe-mode-and-the-crash-marker).

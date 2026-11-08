@@ -262,7 +262,24 @@ int main(int argc, char** argv)
     // ---- RAM_G cache (round G): 32 list slots + 2 editor slots, filled on demand, least recently used reused
     check(kLogoMedRamG == 128780 + 32 * 580 && kLogoMedRamG + 2 * kLogoMedBytes == 149500 && kLogoRamGEnd - kLogoRamG == 21220,
           "32 list slots 128,780..147,340 and 2 editor slots ..149,500 of the 21,220 B window, below the controls cache at 150,000");
-    for (int nEng : {20, 60})
+    {   // poly-plug-lib: bitmap ids for any library size (kPlugLogoFirst stands in as 120): the editor id fits the label's uint8_t
+        constexpr int kFirst = 120;
+        bool ids = true;
+        for (int n : {16, 40, 100, 256})
+        {
+            for (int k = 0; k < n; k++)
+            {
+                bool med = true;
+                ids = ids && logoIdEntry(kFirst, logoListId(kFirst, k), n, -1, med) == k && !med;
+            }
+            bool med = false;
+            ids = ids && logoIdEntry(kFirst, kFirst, n, n - 1, med) == n - 1 && med && logoIdEntry(kFirst, kFirst, n, -1, med) == -1 &&
+                  logoIdEntry(kFirst, kFirst + n + 1, n, 0, med) == -1 && logoIdEntry(kFirst, kFirst - 1, n, 0, med) == -1 &&
+                  logoIdEntry(kFirst, kFirst, n, n, med) == -1;
+        }
+        check(ids && kFirst <= 255, "logo ids for 16, 40, 100 and 256 entries: each list id names its entry, the one editor id names the opened one");
+    }
+    for (int nEng : {20, 40, 60, 100, 249})
     {
         // nEng fake engines: even ones a sidecar, odd ones a .plg trailer, every 7th none (text)
         MemFs fs;
@@ -271,7 +288,7 @@ int main(int argc, char** argv)
         for (int e = 0; e < nEng; e++)
         {
             char f[32];
-            snprintf(f, sizeof(f), "e%02d.plg", e);
+            snprintf(f, sizeof(f), "e%02d.plg", e);   // e100.plg and on past 99
             file[size_t(e)] = f;
             recs[size_t(e)] = makeRecord(uint8_t(e * 13 + 1));
             const std::string path = std::string("/Plugins/Synth/") + f;

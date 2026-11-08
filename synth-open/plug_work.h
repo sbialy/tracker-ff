@@ -48,6 +48,7 @@ struct WorkArena
     uint32_t off[N], len[N];   // the block of entry k, len 0: none
     uint32_t peak;             // high water: the highest end offset a block ever had
     uint32_t peakUsed;         // the most bytes in blocks at once
+    int moved[N];              // workTake's list of the blocks compact moved (here, not on the stack: N follows the library)
 
     void reset(uint32_t bytes)
     {
@@ -62,14 +63,14 @@ struct WorkArena
         n = workRound(n);
         if (!n || n > size) return -1;
         uint32_t at = 0;
-        for (bool moved = true; moved;)
+        for (bool again = true; again;)
         {   // jump past every block that overlaps [at, at + n): no lower start can fit (bankFindRw does the same)
-            moved = false;
+            again = false;
             for (int k = 0; k < N; k++)
                 if (len[k] && off[k] < at + n && at < off[k] + len[k])
                 {
                     at = off[k] + len[k];
-                    moved = true;
+                    again = true;
                     if (at > size - n) return -1;
                 }
         }
@@ -108,29 +109,26 @@ struct WorkArena
         return n;
     }
 
-    // Slides every block down to the bottom, in the order of their offsets, so the free space is one gap at the end. moved[] gets the
+    // Slides every block down to the bottom, in the order of their offsets, so the free space is one gap at the end. out[] gets the
     // entries whose block changed place (their engines must start again there, see workTake), the count is returned. A block never
-    // moves up and never onto another block that stays, so the ones that keep their place keep their bytes.
-    int compact(int* moved)
+    // moves up and never onto another block that stays, so the ones that keep their place keep their bytes. No scratch the size of
+    // the table: the next block is the one with the lowest old offset above the last one placed (a block placed never moves up, so
+    // its new offset is below that mark and it is not picked again).
+    int compact(int* out)
     {
-        int order[N], n = 0, m = 0;
-        for (int k = 0; k < N; k++)
-            if (len[k]) order[n++] = k;
-        for (int i = 1; i < n; i++)   // by offset, a handful of entries
-            for (int j = i; j > 0 && off[order[j]] < off[order[j - 1]]; j--)
-            {
-                const int t = order[j];
-                order[j] = order[j - 1];
-                order[j - 1] = t;
-            }
-        uint32_t at = 0;
-        for (int i = 0; i < n; i++)
+        uint32_t at = 0, mark = 0;
+        int m = 0;
+        for (bool first = true;; first = false)
         {
-            const int k = order[i];
+            int k = -1;
+            for (int j = 0; j < N; j++)
+                if (len[j] && (first || off[j] > mark) && (k < 0 || off[j] < off[k])) k = j;
+            if (k < 0) break;
+            mark = off[k];
             if (off[k] != at)
             {
                 off[k] = at;
-                moved[m++] = k;
+                out[m++] = k;
             }
             at += len[k];
         }
@@ -182,9 +180,8 @@ bool workTake(WorkArena<N>& a, int k, uint32_t n, Pick pick, Release release, Re
             continue;
         }
         if (!n || workRound(n) > a.size - a.used()) return false;
-        int moved[N];
-        const int m = a.compact(moved);
-        restart(moved, m);
+        const int m = a.compact(a.moved);
+        restart(a.moved, m);
         return a.take(k, n);
     }
     return true;

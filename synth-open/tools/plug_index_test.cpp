@@ -263,6 +263,68 @@ int main(int argc, char** argv)
             strcmp(st.reject[1].file, "short.plg") == 0 && st.reject[1].err == kHeader,
           "rejects reported with file and error");
 
+    // ---- poly-plug-lib: /Plugins/Synth with 40, 100, 249, 256 and 300 engine files (fake headers with the synth manifest numbers, every
+    // 10th one damaged): the scan keeps every good file up to the library size (plug_host.h kLibMax 256, here 256 entries), names and
+    // numbers right, the damaged ones reported, nothing dropped for a fixed list size (before: 24 names listed, 16 kept)
+    for (int nFiles : {40, 100, 249, 256, 300})
+    {
+        constexpr int kLib = 256;   // plug_host.h kLibMax (plug_host.h needs the firmware, the value is checked by plug_synth.cpp)
+        CardFs lib;
+        lib.folder("", "Plugins");
+        lib.folder("Plugins", "Synth");
+        int good = 0;
+        for (int i = 0; i < nFiles; i++)
+        {
+            plug_file_header h = {};
+            h.magic = i % 10 == 9 ? 0 : PLUG_MAGIC;   // damaged: rejected, still takes a place in the listing
+            h.header_size = sizeof(plug_file_header) + sizeof(plug_manifest);
+            h.abi_major = PLUG_ABI_MAJOR;
+            h.kind = PLUG_KIND_SYNTH;
+            h.cpu = PLUG_CPU_CM4F;
+            h.uid = 0x5E000000u + uint32_t(i);
+            h.version = 1;
+            h.image_size = 4096;
+            h.crc32 = 0xC0000000u + uint32_t(i);
+            plug_manifest m = {};
+            m.struct_size = sizeof(m);
+            snprintf(m.name, sizeof(m.name), "E%03d", i);
+            m.reserved[1] = uint32_t(7 + i % 249);   // stored
+            m.reserved[2] = uint32_t(0x80 + i);      // .patch engine
+            m.reserved[3] = uint32_t(0x1000 + i);    // type id
+            m.reserved[4] = PLUG_SYNTH_MANIFEST;
+            std::string b(reinterpret_cast<const char*>(&h), sizeof(h));
+            b.append(reinterpret_cast<const char*>(&m), sizeof(m));
+            char f[24];
+            snprintf(f, sizeof(f), "eng%03d.plg", i);
+            lib.file("Plugins/Synth", f, b);
+            lib.file("Plugins/Synth", std::string("._") + f, appleDouble());   // macOS twins: never listed
+            good += i % 10 != 9;
+        }
+        static IndexEntry big[kLib];
+        static char names[kScanMax * 40];
+        static char* list[kScanMax];
+        ScanStats ss;
+        const int got = scanIndex(lib, "/Plugins/Synth", big, kLib, names, list, ss, PLUG_KIND_SYNTH);
+        const int listed = nFiles < kScanMax ? nFiles : kScanMax;
+        int wantKept = 0;
+        for (int i = 0; i < listed; i++) wantKept += i % 10 != 9;   // the listing is sorted, eng000.. in order
+        wantKept = wantKept < kLib ? wantKept : kLib;
+        bool right = got == wantKept && ss.listed == listed && ss.rejected == (got < kLib ? listed - got : ss.rejected);
+        for (int k = 0; k < got && right; k++)
+        {
+            const int i = k + k / 9;   // every 10th file is missing from the index
+            char nm[8], fl[24];
+            snprintf(nm, sizeof(nm), "E%03d", i);
+            snprintf(fl, sizeof(fl), "eng%03d.plg", i);
+            right = strcmp(big[k].name, nm) == 0 && strcmp(big[k].file, fl) == 0 && big[k].synthStored == 7 + i % 249 &&
+                    big[k].synthPatch == 0x80 + i && big[k].synthType == 0x1000 + i && big[k].uid == 0x5E000000u + uint32_t(i);
+        }
+        char what[200];
+        snprintf(what, sizeof(what), "%d engine files (%d good): listed %d, kept %d (library %d), numbers and names right, rejects counted",
+                 nFiles, good, ss.listed, got, kLib);
+        check(right, what);
+    }
+
     // ---- no directory at all
     CardFs empty;
     n = scan(empty, ix, st);

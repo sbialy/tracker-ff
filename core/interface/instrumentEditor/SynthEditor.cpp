@@ -35,9 +35,11 @@ static const int synthBuiltinListImages[] = {
 #include "engine_list.h"
 #undef SYNTH_ENGINE
 };
-constexpr int kSynthModelsMax = 32;
-static int synthModelListImages[kSynthModelsMax];
-static char* synthModelListNames[kSynthModelsMax];
+// Every engine of the list: a project stores the engine as one byte, so the list never holds more than 256 (built in and plugin engines
+// have numbers of their own). SDRAM, filled when the picker opens (fillSynthModelList), so a long plugin library takes no internal RAM.
+constexpr int kSynthModelsMax = 256;
+__NOINIT(EXTERNAL_RAM) static int synthModelListImages[kSynthModelsMax];
+__NOINIT(EXTERNAL_RAM) static char* synthModelListNames[kSynthModelsMax];
 
 // The list icon of model ui. A plugin engine shows its card logo (a .plgi sidecar or a .plg trailer, synth-open/plug_logo.h, in a
 // RAM_G cache, synthModelLogos) or, without one, -1: its name.

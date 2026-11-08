@@ -224,6 +224,21 @@ int logoLoad(LogoCache& c, int entry, bool med, Fs& fs, Ram& ram, Now now, const
     return s;
 }
 
+// Bitmap ids of the logos (displayStructs.h kPlugLogoFirst is first, bitmapAt). The label of the patch editor keeps a uint8_t bitmapIndex
+// and shows one engine: first is the editor image of the entry it opened last (editorEntry). The model list keeps int ids: first + 1 + k
+// is the list image of library entry k, for any library size (before poly-plug-lib two ids per entry had to fit 255, 16 entries).
+inline int logoListId(int first, int entry)
+{
+    return first + 1 + entry;
+}
+// The library entry of id (n entries) and whether it is the editor image, -1: not a logo id, or the editor id with no entry opened
+inline int logoIdEntry(int first, int id, int n, int editorEntry, bool& med)
+{
+    med = id == first;
+    if (id < first || id > first + n) return -1;
+    return med ? (editorEntry < n ? editorEntry : -1) : id - first - 1;
+}
+
 // The list images of entries[0..n) (the picker rows around the selection, nearest first): the ones already in RAM_G are touched first
 // (they become the most recent), then the others are loaded with load(entry) (logoLoad). So a load never takes the slot of an image
 // wanted now, and with n + the rows of the last frame <= kLogoMiniSlots never one on screen.

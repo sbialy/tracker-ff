@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <type_traits>
 
 namespace plug
 {
@@ -79,14 +80,15 @@ __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_bstage[kStageBytes]
 // given back only when another engine needs the room and no part plays this one (round G, before: kept until the next boot).
 constexpr uint32_t kWorkBytes = 16384;
 __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_work[kWorkBytes];
-WorkArena<kLibMax> s_arena;   // the table (internal RAM, zero BSS, reset at boot)
+__NOINIT(EXTERNAL_RAM) WorkArena<kLibMax> s_arena;   // the table (reset at boot, synthBoot)
 uint32_t s_workPacks, s_workRestarts, s_workReleases;
 __NOINIT(EXTERNAL_RAM) uint8_t s_sec[kBankSector];
-__NOINIT(EXTERNAL_RAM) char s_btext[4096];   // synth.txt
+__NOINIT(EXTERNAL_RAM) char s_btext[32768];  // synth.txt (two lines per engine, about 130 B), also names.txt at boot
 __NOINIT(EXTERNAL_RAM) char s_itext[2048];   // installed.txt
 __NOINIT(EXTERNAL_RAM) Bank s_bank;
 __NOINIT(EXTERNAL_RAM) Bank s_bankWork[2];   // bankInstall's plan and journal (main loop only, as every bankInstall call)
 __NOINIT(EXTERNAL_RAM) IndexEntry s_sidx[kLibMax];
+__NOINIT(EXTERNAL_RAM) BankWant s_bwant[kLibMax];   // synthBoot: what the library wants of the bank (bankOpen)
 __NOINIT(EXTERNAL_RAM) ScanStats s_sscan;
 FileSystem* s_sfs;
 int s_sn;            // library entries (the scan of /Plugins/Synth)
@@ -96,8 +98,12 @@ DisplayDriver* s_dd;  // the FT812 (synthLogos), the logo cache writes RAM_G thr
 LogoCache s_logo;     // the RAM_G logo slots (plug_logo.h)
 BankOpenStatus s_open;
 uint32_t s_tick;     // last use clock (LRU)
-static_assert(kLibMax <= 16, "Lib and the engine list hold 16");
-static_assert(kPlugLogoFirst + 2 * kLibMax <= 255, "logo ids (two per library entry) fit the label's uint8_t bitmapIndex");
+static_assert(kLibMax >= polysynth::open::kPlugStoredLast - polysynth::open::kPlugStoredFirst + 1,
+              "the library can list an engine for every plugin stored number");
+// Logo bitmap ids (bitmapAt): kPlugLogoFirst is the editor image of the engine the patch editor shows (s_editorK, the label keeps a
+// uint8_t bitmapIndex), kPlugLogoFirst + 1 + k the list image of entry k (the model list keeps int ids)
+static_assert(kPlugLogoFirst <= 255, "the editor logo id fits the label's uint8_t bitmapIndex");
+int s_editorK = -1;
 extern "C" volatile uint32_t systick_millis_count;
 
 // The ISynthEngine of a library engine: every call goes to its PLUG_EXT_SYNTH function (audio context, as built in). x is null
@@ -163,13 +169,22 @@ struct Lib
     LogoState logo;     // what the card holds for its logo (probed on the first load)
     uint32_t used;      // last use (s_tick)
 };
-Lib s_lib[kLibMax];
-EngineDef s_defs[kLibMax] = {};
-// raw storage, constructed at boot: a global PlugSynth (virtual destructor) would need a static constructor
-alignas(PlugSynth) uint8_t s_eng[kLibMax][sizeof(PlugSynth)];
+// The tables of the library entries are in the SDRAM (about 0.4 KB per entry with s_sidx and s_bwant), so the internal RAM does not
+// grow with the library. Raw storage, constructed at boot (synthBoot): no static constructor may touch the SDRAM (f563f27), and a
+// global PlugSynth (virtual destructor) or EngineDef (member initialisers) would need one. The audio interrupt reaches an attached
+// engine through its EngineDef and PlugSynth (a few reads per part and block).
+static_assert(std::is_trivially_default_constructible_v<Lib>, "SDRAM: no static constructor");
+__NOINIT(EXTERNAL_RAM) Lib s_lib[kLibMax];
+__NOINIT(EXTERNAL_RAM) __attribute__((aligned(alignof(EngineDef)))) uint8_t s_defRaw[kLibMax][sizeof(EngineDef)];
+__NOINIT(EXTERNAL_RAM) __attribute__((aligned(alignof(PlugSynth)))) uint8_t s_eng[kLibMax][sizeof(PlugSynth)];
+__NOINIT(EXTERNAL_RAM) const plug_ext_synth* s_xs[kLibMax];   // restartMoved: the engines that start again
 inline PlugSynth& eng(int k)
 {
     return *reinterpret_cast<PlugSynth*>(s_eng[k]);
+}
+inline EngineDef& def(int k)
+{
+    return *reinterpret_cast<EngineDef*>(s_defRaw[k]);
 }
 
 // The last installs, for synth.txt
@@ -240,7 +255,7 @@ int bankOf(int k)
 int libForType(int type)
 {
     for (int k = 0; k < s_sn; k++)
-        if (s_lib[k].listed && s_defs[k].typeId == type) return k;
+        if (s_lib[k].listed && def(k).typeId == type) return k;
     return -1;
 }
 
@@ -307,7 +322,7 @@ bool checkSynth(const plug_ext_synth* x, uintptr_t t, uint32_t tn, uintptr_t rw,
 // The definition of an engine that is not attached: its name and type only, as the shim's missing placeholder
 void placeholder(int k)
 {
-    EngineDef& d = s_defs[k];
+    EngineDef& d = def(k);
     d.params = nullptr;
     d.paramCount = 0;
     d.sections = nullptr;
@@ -386,13 +401,14 @@ void restartMoved(const int* moved, int m)
     DISABLE_AUDIO_INTERRUPTS();
     for (int i = 0; i < m; i++)
     {
-        polysynth::open::engineRestartLocked(&s_defs[moved[i]]);
+        polysynth::open::engineRestartLocked(&def(moved[i]));
         eng(moved[i]).x = nullptr;
     }
     ENABLE_AUDIO_INTERRUPTS();
-    const plug_ext_synth* xs[kLibMax] = {};
+    const plug_ext_synth** const xs = s_xs;
     for (int i = 0; i < m; i++)
     {
+        xs[i] = nullptr;
         const int j = moved[i];
         const plug_ext_synth* x = nullptr;
         if (start(j, &x) == 0 && x->set_work && workRound(x->work_bytes) <= s_arena.len[j])
@@ -413,7 +429,7 @@ void restartMoved(const int* moved, int m)
         if (xs[i])
         {
             eng(moved[i]).x = xs[i];
-            polysynth::open::engineRestartedLocked(&s_defs[moved[i]]);
+            polysynth::open::engineRestartedLocked(&def(moved[i]));
         }
     ENABLE_AUDIO_INTERRUPTS();
 }
@@ -426,8 +442,8 @@ int workVictim(int k, const Need& n)
     long bestRank = 0;
     for (int j = 0; j < s_sn; j++)
     {
-        if (j == k || !s_arena.len[j] || contains(n.want, n.nWant, s_defs[j].typeId)) continue;
-        const long r = long(s_lib[j].used) + (s_lib[j].attached ? (1L << 29) : 0L) + (contains(n.keep, n.nKeep, s_defs[j].typeId) ? (1L << 30) : 0L);
+        if (j == k || !s_arena.len[j] || contains(n.want, n.nWant, def(j).typeId)) continue;
+        const long r = long(s_lib[j].used) + (s_lib[j].attached ? (1L << 29) : 0L) + (contains(n.keep, n.nKeep, def(j).typeId) ? (1L << 30) : 0L);
         if (best < 0 || r < bestRank)
         {
             best = j;
@@ -461,19 +477,19 @@ int attach(int k, const Need& n)
         }
         giveWork(k, x);
     }
-    EngineDef& def = s_defs[k];
-    def.params = reinterpret_cast<const polysynth::open::ParamDef*>(x->params);
-    def.paramCount = int(x->param_count);
-    def.sections = reinterpret_cast<const polysynth::open::SectionDef*>(x->sections);
-    def.sectionCount = int(x->section_count);
-    def.macros = reinterpret_cast<const polysynth::open::MacroDef*>(x->macros);
-    def.macroCount = int(x->macro_count);
-    def.volumeParam = x->volume_param;
-    def.maxVoices = int(x->max_voices);
-    def.slotFx = (x->flags & PLUG_SYNTH_SLOT_FX) && x->slot_post;
+    EngineDef& dd = def(k);
+    dd.params = reinterpret_cast<const polysynth::open::ParamDef*>(x->params);
+    dd.paramCount = int(x->param_count);
+    dd.sections = reinterpret_cast<const polysynth::open::SectionDef*>(x->sections);
+    dd.sectionCount = int(x->section_count);
+    dd.macros = reinterpret_cast<const polysynth::open::MacroDef*>(x->macros);
+    dd.macroCount = int(x->macro_count);
+    dd.volumeParam = x->volume_param;
+    dd.maxVoices = int(x->max_voices);
+    dd.slotFx = (x->flags & PLUG_SYNTH_SLOT_FX) && x->slot_post;
     DISABLE_AUDIO_INTERRUPTS();
     eng(k).x = x;
-    def.inst = &eng(k);
+    dd.inst = &eng(k);
     ENABLE_AUDIO_INTERRUPTS();
     return 0;
 }
@@ -484,7 +500,7 @@ void detach(int k)
 {
     if (!s_lib[k].attached) return;
     DISABLE_AUDIO_INTERRUPTS();
-    polysynth::open::engineGone(&s_defs[k]);   // the parts on it: voices cut, no engine (silent until they get a new patch)
+    polysynth::open::engineGone(&def(k));   // the parts on it: voices cut, no engine (silent until they get a new patch)
     eng(k).x = nullptr;
     placeholder(k);
     ENABLE_AUDIO_INTERRUPTS();
@@ -601,7 +617,7 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
         auto rank = [&](const BankEntry& e) -> long {
             const int j = libOf(e);
             if (j < 0) return 0;   // not in the library any more: first to go
-            const int ty = s_defs[j].typeId;
+            const int ty = def(j).typeId;
             if (contains(want, nWant, ty)) return -1;
             return long(s_lib[j].used) + (contains(keep, nKeep, ty) ? (1L << 30) : 0L);
         };
@@ -682,6 +698,7 @@ void synthBoot(FileSystem* fs)
     useFs(fs);
     memset(&s_bank, 0, sizeof(s_bank));
     memset(s_lib, 0, sizeof(s_lib));
+    s_editorK = -1;
     s_arena.reset(kWorkBytes);
     s_logo.reset();   // every slot free (a zero table would say entry 0 owns them all)
     const int n = scanDir(kSynthDir, s_sidx, kLibMax, s_sscan, PLUG_KIND_SYNTH);
@@ -690,16 +707,17 @@ void synthBoot(FileSystem* fs)
     namesRead();
     if (!n && !hadIndex) return;   // no synth plugin was ever installed: nothing to do, nothing written
     s_safe = fs->exists(kMarker);  // a marker left by the last session (plug_host.cpp boot() reads it too): no engine runs
-    BankWant w[kLibMax] = {};
+    BankWant* const w = s_bwant;
     for (int k = 0; k < n; k++)
     {
         const IndexEntry& x = s_sidx[k];
         Lib& l = s_lib[k];
+        w[k] = BankWant{};
         w[k].uid = x.uid;
         w[k].fileCrc = x.crc;
         snprintf(l.name, sizeof(l.name), "%s", x.name);
         new (s_eng[k]) PlugSynth(x.synthType, l.name);
-        EngineDef& d = s_defs[k];
+        EngineDef& d = *new (s_defRaw[k]) EngineDef{};
         d.name = l.name;
         d.typeId = x.synthType;
         d.engine = nullptr;
@@ -778,9 +796,9 @@ uint32_t nowMs()
 
 int libOfDef(const polysynth::open::EngineDef* d)
 {
-    for (int k = 0; k < s_sn; k++)
-        if (&s_defs[k] == d) return k;
-    return -1;
+    const uintptr_t at = uintptr_t(d) - uintptr_t(s_defRaw);
+    const uintptr_t k = at / sizeof(EngineDef);
+    return at < sizeof(s_defRaw) && at % sizeof(EngineDef) == 0 && int(k) < s_sn ? int(k) : -1;
 }
 
 // The slot of k's image (main loop, may read the card), -1 none
@@ -815,7 +833,8 @@ int synthLogoBitmap(const polysynth::open::EngineDef* d, bool editor)
     const int k = libOfDef(d);
     if (k < 0 || !s_lib[k].listed || !s_uiUp) return -1;
     if (editor ? logoSlot(k, true) < 0 : (s_lib[k].logo.probed && s_lib[k].logo.src == kLogoNone)) return -1;
-    return kPlugLogoFirst + 2 * k + (editor ? 1 : 0);   // a list image not loaded yet comes with synthLogoPrefetch
+    if (editor) s_editorK = k;   // one editor image on screen: its id names whatever entry the patch editor opened last
+    return editor ? kPlugLogoFirst : logoListId(kPlugLogoFirst, k);   // a list image not loaded yet comes with synthLogoPrefetch
 }
 
 void synthLogoPrefetch(const polysynth::open::EngineDef* const* defs, int n)
@@ -836,9 +855,10 @@ const strBitmap* bitmapAt(int id)
 {
     using namespace plug;
     if (id >= 0 && id < displayBitmapsCount) return &bitmaps[id];
-    if (id < kPlugLogoFirst || id >= kPlugLogoFirst + 2 * kLibMax) return nullptr;
-    const bool med = (id - kPlugLogoFirst) & 1;
-    const int slot = s_logo.find((id - kPlugLogoFirst) >> 1, med);
+    bool med = false;
+    const int k = logoIdEntry(kPlugLogoFirst, id, s_sn, s_editorK, med);
+    if (k < 0) return nullptr;
+    const int slot = s_logo.find(k, med);
     if (slot < 0) return nullptr;   // not in RAM_G (the list draws the name)
     s_logo.touch(slot, med);        // on screen: never the next slot to be reused
     // the list image or the editor image (L2 = 17, FT81x.h)
