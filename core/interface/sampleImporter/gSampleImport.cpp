@@ -271,7 +271,7 @@ void cSampleImporter::showPreviewVolume()
     float masterVolumeInDecybels =
       20 * log10f((float)mixAmpLogValues[mtConfig.general.previewVolume]);
 
-    sprintf(previewVolumeText, "%0.2f dB", masterVolumeInDecybels);
+    snprintf(previewVolumeText, sizeof(previewVolumeText), "%0.2f dB", masterVolumeInDecybels);
 
     display.setControlText2(label[6], previewVolumeText);
     display.refreshControl(label[6]);
@@ -287,7 +287,7 @@ void cSampleImporter::showMemoryUsage()
         display.setControlShow(memoryBarControl);
         display.refreshControl(memoryBarControl);
 
-        sprintf(memoryUsageValue, "%d%c", memoryUsage, '%');
+        snprintf(memoryUsageValue, sizeof(memoryUsageValue), "%d%c", memoryUsage, '%');
         display.setControlText2(label[7], memoryUsageValue);
         display.refreshControl(label[7]);
     }
@@ -912,7 +912,7 @@ void cSampleImporter::showImportEndPointValue()
     float recTimeValue = importSampleSamplesCount / 44100.0;
     float localEndPoint = (recTimeValue * importEndPoint) / MAX_16BIT;
 
-    sprintf(endPointValueText, "%.3fs", localEndPoint);
+    snprintf(endPointValueText, sizeof(endPointValueText), "%.3fs", localEndPoint);
 
     display.setControlText2(label[2], endPointValueText);
     display.setControlShow(label[2]);
@@ -929,7 +929,7 @@ void cSampleImporter::showImportPreviewValue()
     if (playTimeValue >= (localEndPoint - 0.01))
         playTimeValue = localEndPoint;
 
-    sprintf(playTimeValueText, "%.3fs", playTimeValue);
+    snprintf(playTimeValueText, sizeof(playTimeValueText), "%.3fs", playTimeValue);
 
     display.setControlText2(label[0], playTimeValueText);
     display.setControlShow(label[0]);
