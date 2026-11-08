@@ -25,6 +25,7 @@ all:
 	@echo "CORE='\$(foreach e,\$(SYNTH_ENGINES_SEL),\$(SYNTH_ENGINE_CORE_SRCS_\$(e)))'"
 MK
 )"
+[ -n "$SEL" ] || { echo "run_smoke.sh: no engine selected, see the engines.mk error above (only the built-in engines can be linked in)" >&2; exit 2; }
 echo "engines: $SEL"
 SRCS_ABS=""
 for s in $SRCS; do SRCS_ABS="$SRCS_ABS $ROOT/synth-open/$s"; done
