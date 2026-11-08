@@ -211,6 +211,8 @@ make mini CUSTOM_DEFINES="-DENABLE_DEV_CONSOLE -DENABLE_LOG"
 
 The makefiles do not track compiler flags, so run `make clean` when switching `CUSTOM_DEFINES`.
 
+On the original Tracker (MK66, `make original`) the same flag builds a different development console, a USB test console for scripted UI tests. Its code is kept outside this repository in the private `poly-devtools`; this tree only has the one-line hooks of [`core/include/devhooks.h`](../core/include/devhooks.h), which compile to nothing without the flag. An MK66 build with `-DENABLE_DEV_CONSOLE` therefore needs a `poly-devtools` checkout (`DEVTOOLS_DIR`, default `../poly-devtools` next to this repository) and stops with a message without it, see [`devtools.mk`](../devtools.mk). Default and release builds and every Tracker+ and Mini build never need it.
+
 ### Logging
 
 ```cpp

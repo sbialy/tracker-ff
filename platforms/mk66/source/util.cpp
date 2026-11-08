@@ -1,14 +1,12 @@
 #include "Drivers/ClockCyclesCounter.h"
 #include "core_pins.h"
 #include "usb_serial.h"
-#include "UsbTest.h"
+#include "devhooks.h"
 
-#ifdef ENABLE_DEV_CONSOLE
-// LOG() runs in any context, the audio interrupt included, and usb_serial_write can wait up to 70 ms for a host that does
-// not read. With the test console the text goes into its ring instead and the main loop sends it.
+// A console image (devhooks.h) sends the text to its own ring instead of the serial port
 void _debuglog(const char* msg)
 {
-    UsbTest_Log(msg);
+    DEVHOOK_LOG(msg, Serial.println(msg));
 }
 
 void _debuglogf(const char* format, ...)
@@ -16,26 +14,10 @@ void _debuglogf(const char* format, ...)
     va_list args;
     va_start(args, format);
 
-    UsbTest_LogV(format, args);
+    DEVHOOK_LOGV(format, args, Serial.vprintf(format, args));
 
     va_end(args);
 }
-#else
-void _debuglog(const char* msg)
-{
-    Serial.println(msg);
-}
-
-void _debuglogf(const char* format, ...)
-{
-    va_list args;
-    va_start(args, format);
-
-    Serial.vprintf(format, args);
-
-    va_end(args);
-}
-#endif
 
 uint32_t cpuCycles()
 {

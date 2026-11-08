@@ -5,6 +5,7 @@
 #include "core/interfaceDefs.h"
 #include "core/modulesBase.h"
 #include "elapsedMillis.h"
+#include "devhooks.h"
 #include <stdint.h>
 
 #include "mtHardware.h"
@@ -53,9 +54,7 @@ class Interface
     void toggleActiveModule(uint8_t state);
     bool isSongScreenActive();
     bool isPatternScreenActive();
-#ifdef ENABLE_DEV_CONSOLE
-    int devPageIndex(); // index of the page on screen in modules[], -1 if none (USB test console)
-#endif
+    DEVHOOK_INTERFACE_MEMBERS // development hooks (devhooks.h)
     bool isPerformanceModeScreenActive();
     bool isMasterScreenActive();
     bool isInstrumentParamsScreenActive();

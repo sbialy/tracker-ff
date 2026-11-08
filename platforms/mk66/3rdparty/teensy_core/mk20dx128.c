@@ -29,6 +29,7 @@
  */
 
 #include "kinetis.h"
+#include "devhooks.h"
 #include <errno.h>
 
 
@@ -72,39 +73,8 @@ void _init_Teensyduino_internal_(void) __attribute__((noinline));
 void __libc_init_array(void);
 
 
-#ifdef REBOOT_ON_FAULT
-// USB test image: remember where the CPU was, then reset. The record sits in .noinit RAM, UsbTestPlatform.cpp reads it
-// after the reboot (markers command). fault_isr is naked to find the stacked frame: msp or psp by EXC_RETURN bit 2.
-volatile uint32_t usbtest_fault_record[6] __attribute__((section(".noinit.usbtest_fault")));
-
-__attribute__((used)) void usbtest_fault_capture(uint32_t *frame)
-{
-	usbtest_fault_record[1] = frame[6];	// pc
-	usbtest_fault_record[2] = frame[5];	// lr
-	usbtest_fault_record[3] = frame[7];	// xpsr
-	usbtest_fault_record[4] = *(volatile uint32_t *)0xE000ED28;	// CFSR
-	usbtest_fault_record[0] = 0xFA17C0DE;
-	usbtest_fault_record[5] = ~(usbtest_fault_record[1] ^ usbtest_fault_record[0]);
-	restartMCU();
-	while (1) ;
-}
-
-__attribute__((naked)) void fault_isr(void)
-{
-	__asm volatile (
-		"tst lr, #4\n\t"
-		"ite eq\n\t"
-		"mrseq r0, msp\n\t"
-		"mrsne r0, psp\n\t"
-		"b usbtest_fault_capture\n\t"
-	);
-}
-
-__attribute__((naked)) void unused_isr(void)
-{
-	__asm volatile ("b fault_isr\n\t");
-}
-#else
+#include DEVHOOK_DEFS(fault_isr) // development hooks (devhooks.h): a console image with REBOOT_ON_FAULT records the fault
+#ifndef DEVHOOK_FAULT_ISR
 void fault_isr(void)
 {
 #if 0
@@ -176,7 +146,7 @@ void unused_isr(void)
 {
 	fault_isr();
 }
-#endif
+#endif /* DEVHOOK_FAULT_ISR */
 
 void nmi_isr(void)		__attribute__ ((weak, alias("unused_isr")));
 void hard_fault_isr(void)	__attribute__ ((weak, alias("fault_isr")));

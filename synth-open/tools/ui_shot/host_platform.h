@@ -16,22 +16,11 @@ Platform* platform();
 EveModel& eve();
 void setSdRoot(const std::string& dir);
 
-// USB test console (host_usbtest.cpp)
+// Development console (make CONSOLE=1, the private poly-devtools: host/ui_shot/host_usbtest.cpp). host_platform.cpp has weak
+// defaults for a plain build: no key is held by the firmware's Keys class, the build id is "uishot", the bootloader hand-off does nothing.
 bool keyPressed(bool pad, int idx);   // the firmware's Keys class holds the state of the buttons and pads
-void usbtestStep();                   // 5 ms of the virtual clock and one main loop pass
-void usbtestFeed(const void* data, size_t n);
-size_t usbtestRxPending();
-std::string& usbtestTx();
-void usbtestSetLink(bool up);
-void usbtestSetTxRate(size_t perStep);
-extern bool g_resetRequested;
-
-// Simulated bootloader for the firmware update (host_usbtest.cpp). The hand-off writes /Firmware/_fwinfo like
-// PlatformImpl::runBootloader, appends the name to $UISHOT_BOOTLOADER_LOG and ends the process with exit code 77 (a reset).
-// The next start "installs" the named .ptf: the reported build id becomes the one found in it. UISHOT_BOOTLOADER_STUCK=1 never comes back.
+extern bool g_resetRequested;        // Platform::resetMCU was called
 const std::string& sdRoot();
 const char* simBuildId();
-void simBootloaderOnStart();
-void simBootloaderHandoff(const char* name);   // returns only with UISHOT_BOOTLOADER_FAIL=1 (the _fwinfo file could not be written)
-long simFreeBytes();             // $UISHOT_FREE_BYTES or the free space of the folder
+void simBootloaderHandoff(const char* name);   // Platform::runBootloader
 }   // namespace hostp

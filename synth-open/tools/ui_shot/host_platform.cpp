@@ -20,6 +20,10 @@ void advance(uint32_t ms) { g_nowMs += ms; }
 void setHeld(int idx, bool on) { if (idx >= 0 && idx < 64) g_held[idx] = on; }
 void setSdRoot(const std::string& d) { s_root = d; }
 const std::string& sdRoot() { return s_root; }
+// replaced by poly-devtools host_usbtest.cpp in a CONSOLE=1 build (host_platform.h)
+__attribute__((weak)) bool keyPressed(bool, int) { return false; }
+__attribute__((weak)) const char* simBuildId() { return "uishot"; }
+__attribute__((weak)) void simBootloaderHandoff(const char*) {}
 
 namespace
 {

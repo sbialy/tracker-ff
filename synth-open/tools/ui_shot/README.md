@@ -106,3 +106,10 @@ Titles that look cut ("Synth Automation 3/3 - Slo", "Safe mode: Shift at power o
 Known differences to the chip: edge anti-aliasing (signed distance at the pixel centre instead of the 16 sample pattern), the
 gradient (linear in sRGB values, the coprocessor's own ramp is not modelled), bilinear filtering and palettes are absent, ROM fonts,
 and the host starts with an empty project and no theme or font files on the card.
+
+## Development console (`CONSOLE=1`)
+
+`ui_shot --serve`, the Mac side of the original Tracker's USB test console, is not in this repository. `make CONSOLE=1` builds it
+from the private poly-devtools (`DEVTOOLS_DIR`, default `../poly-devtools` next to this checkout, see `devtools.mk` at the top of the
+tree) into `build/ui-shot-console/`. The plain build (`ui_shot.sh`, `make`) has no console, `--serve` only says so, and renders the
+same pages as before the console moved (all 23 pages of `ui_shot.sh all` byte identical).

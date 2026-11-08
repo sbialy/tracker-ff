@@ -28,10 +28,7 @@ void EncoderImpl::update()
         encTimer = millis();
 
         int32_t encValue = encoderDriver.read();
-#ifdef ENABLE_DEV_CONSOLE
-        encValue += injected;
-        injected = 0;
-#endif
+        DEVHOOK_ENCODER_READ(encValue);
         if (encValue != 0)
             onPotChange(0, encValue);
     }
