@@ -1,15 +1,15 @@
-# tracker-ff 1.1.0 - synth-open, the open PolySynth shim for the original Tracker (MK66)
+# tracker-ff 1.2.0 - synth-open, the open PolySynth shim for the original Tracker (MK66)
 
 tracker-ff is a fork of Polyend's Tracker CE firmware (FF as in 0xFF). `synth-open/` is the directory and the make flag (`SYNTH_OPEN=1`) of its synth layer. The repository README is `../README.md`. This file is the technical description of the shim and of the build.
 
 The shim is built only with `make original SYNTH_OPEN=1`. It replaces the closed `libPolySynth.a` and `libPolyDSP.a` (Cortex-M7 only, the licence forbids reverse engineering) on the original Tracker. The closed libraries are never linked here and nothing in this directory was derived from them. Everything is written from the open headers in `synth/include/PolySynth` and from OpenTracker (Apache-2.0).
 
-What 1.1.0 has:
+What 1.2.0 has:
 
 - Synth engines chosen at build time (see "Engine picker") plus synth plugins at run time. The PLUGS configuration has six built in (ACD, FAT, VAP, WTFM, PERC, CHIP) and a library of twelve plugins in `/Plugins/Synth/` (JU6, PHZ, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type, Arc-Type, PLK). ACD, FAT, VAP and WTFM are the Polyend engines as OpenTracker re-implements them. PERC is OpenTracker's drum engine, CHIP is Polyend's own open Chiptune voice, PHZ (phase distortion) and PLK (Karplus-Strong) are our own, the rest are OpenTracker 3.x modules. Other built-in sets still build, for example the 16 engine 1.1.0 image. MIDI registers by name only and Shaping has no engine.
 - Up to 4 voices per instrument, a shared voice pool and OpenTracker's governor.
 - `.patch` files that load and save from the SD card, a bank of 16 patch slots per synth part with the Patch step FX (see "Patch files"), and pitch bend.
-- A live Dirt master insert with five presets in the master Saturation entry (see "Dirt master insert").
+- Master insert plugins (`/Plugins/Master/`, two slots on the master bus, seven inserts with the release, Dirt among them), see `plug/README.md`.
 - A flash trim (`TRIM=1`). It made the 16 built-in engines of 1.1.0 fit the original's flash, the PLUGS configuration uses it with six built-in engines and the rest as plugins.
 - A set of audio CPU optimisations that remove work the stock firmware does for silence.
 
