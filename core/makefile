@@ -152,6 +152,11 @@ DEFINES += $(FW_VERSION_DEFINES) $(CUSTOM_DEFINES)
 
 ifeq ($(PLATFORM), MK66)
 COMPILER_OPTIONS+=-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 
+# Crash-class warnings (ref/crash-class-audit.md section 6), warn only, 0 B of flash: the audio ISR and the main loop share one stack
+# with no guard page, so a frame of 512 B or more (-Wstack-usage) or a VLA (-Wvla) deserves a look. The image already has about 30 hits,
+# watch for NEW names. Not -Wconversion (4,951 lines), see the lint target below. CRASH_WARN= switches them off.
+CRASH_WARN ?= -Wstack-usage=512 -Wvla
+COMPILER_OPTIONS+=$(CRASH_WARN)
 ifeq ($(SYNTH_OPEN),1)
 # Patch.h uses __fp16. FEATURE_SYNTH_OPEN also makes interfaceDefs.h set GUI_HANDLE_SYNTH=1.
 COMPILER_OPTIONS+=-mfp16-format=ieee
@@ -250,6 +255,17 @@ engine-objs:
 	$(MAKE) --no-print-directory $(ENGINE_OBJS)
 .PHONY: engine-objs
 endif
+
+# make lint-original (top Makefile): the warnings the release flags hide, on the files that count, output to /dev/null, nothing is built.
+# The release flags carry -ffreestanding -fno-builtin, which turn the format and string bound checks off, so lint runs with builtins on,
+# plus -Wconversion scoped to the file manager, the sequencer file code and (SYNTH_OPEN=1) the plugin host and shim: narrowing into
+# counts and indexes is where the device crashes came from (about 130 sites there, against 4,951 for the whole tree).
+# Add -Wconversion to a single file for good with `#pragma GCC diagnostic error "-Wconversion"` after cleaning it.
+LINT_SRCS := $(wildcard ./FileManager/*.cpp ./source/File*.cpp) $(if $(filter 1,$(SYNTH_OPEN)),$(wildcard $(SYNTH_OPEN_DIR)/plug*.cpp $(SYNTH_OPEN_DIR)/open_*.cpp))
+LINT_OPTIONS := $(filter-out -c -g -MMD -MP -ffreestanding -fno-builtin -fstack-usage,$(COMPILER_OPTIONS)) -S -Wconversion -Wno-sign-conversion -Wformat-overflow=2 -Wformat-truncation=2 -Warray-bounds=2 -Wstringop-overflow=4 -Wnull-dereference
+lint:
+	@for f in $(LINT_SRCS); do $(TOOLCHAIN)c++ $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(LINT_OPTIONS) $(EXTRA_OPT) -o /dev/null "$$f" || true; done
+.PHONY: lint
 
 pre-build:
 	$(foreach dir,$(sort $(OBJ_DIRS)),mkdir -p $(dir);)

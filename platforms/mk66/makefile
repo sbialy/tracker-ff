@@ -79,6 +79,9 @@ DEFINES=-D__NEWLIB__ -D__MK66FX1M0__ -DF_CPU=180000000 -DUSB_MIDI -DTEENSYDUINO=
 DEFINES+=$(CUSTOM_DEFINES)
 
 COMPILER_OPTIONS=-fno-common -g -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -fstack-usage -specs=nano.specs -Wall -Wextra -c -ffunction-sections -fdata-sections -ffreestanding -fno-builtin 
+# Crash-class warnings, warn only, see core/makefile (CRASH_WARN= switches them off)
+CRASH_WARN ?= -Wstack-usage=512 -Wvla
+COMPILER_OPTIONS+=$(CRASH_WARN)
 ifdef DEBUG
 COMPILER_OPTIONS+=-Og -DDEBUG
 else
