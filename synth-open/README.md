@@ -62,6 +62,7 @@ chain stays in the stock build), checked over all 131 sections of the 18 engines
 | `stub_fmt.cpp` | `fmt::v9::vformat` replacement so the 37 KB `fmt/format.cc` is not linked |
 | `tools/host_smoke_test.cpp` | Host (Mac) smoke test of the shim, not firmware. It plays notes on every engine and checks finite, non-silent output, patch round trips, the id tables, the voice pool, the governor, the idle skip and the synth automation (codec, math, hook, gates, Patch FX, identity, backup). Build line in the file header |
 | `tools/run_smoke.sh` | `run_smoke.sh "ACD VAP WTFM CHIP"` builds and runs the smoke test for an engine set (same names as `SYNTH_ENGINES`) |
+| `tools/run_tests.sh` `run_host_tests.sh` | `run_tests.sh [WORKTREE [OUTDIR]]` runs every host test of the tree (smoke variants, plugin SDK examples, plugin host unit tests against the pinned modules) and ends with `RESULT: GREEN` or `RESULT: RED`. Needs `TOOLCHAIN` (Arm GNU 12.3 prefix) and a `PY` with `unicorn`. `run_host_tests.sh` skips the SDK examples and takes the plugins from `$PLUGDIR` |
 | `tools/validate_synth.py` | `python -I tools/validate_synth.py DIR` runs the firmware's own `checkSynth` (cut out of `plug_synth.cpp`, built with the agt toolchain) in Unicorn on every synth `.plg` in DIR. A reject shows as Missing on the device. All 12 must PASS |
 | `tools/engine_budget.sh` `.py` | Flash cost per engine from the link map, the image size against the cap, `BUILD.txt` |
 | `tools/phz_cycles/` | Emulated cycle bench for the engines (`run_bench.sh [OPT] [ENGINE]`) |
