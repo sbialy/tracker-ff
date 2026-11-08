@@ -7,7 +7,7 @@
    "visibility": "public",
    "kind": "synth",
    "tag": "v1.2.0",
-   "tag_commit": "70c18d58b91ce44f0863c46502179c3dba5eaf9c",
+   "tag_commit": "dbef541f4c883351b255c1fc7be780aaea58310a",
    "local_repo": "~/prj/poly-engines-os",
    "local_dirs": [
     "~/prj/poly-engines-os/build/engines-autof",
@@ -98,7 +98,7 @@
    "visibility": "public",
    "kind": "master",
    "tag": "v1.2.0",
-   "tag_commit": "aba39acff445aab6dfbe593a8c32c489c2027f37",
+   "tag_commit": "3c0f9af26e83aa9fc8193f54d46fe3650869ea1d",
    "local_repo": "~/prj/poly-effects-os",
    "local_dirs": [
     "~/prj/poly-effects-os/build/set",
