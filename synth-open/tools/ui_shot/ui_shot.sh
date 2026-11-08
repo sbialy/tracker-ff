@@ -72,6 +72,8 @@ script_for() {   # page[:state] -> commands, empty when the page does not exist 
         inserts:bbd) echo "$INS_OPEN; tap Right; wait 600" ;;
         inserts:safe-mixed) echo "$INS_OPEN; tap Right; tap Down; wait 800" ;;
         inserts:dirt2) echo "$INS_OPEN; tap F2; wait 600" ;;
+        inserts:many) echo "$INS_OPEN; tap Down 60; wait 1200" ;;
+        inserts:many-end) echo "$INS_OPEN; tap Down 300; wait 1200" ;;
         engines) echo "$SYNTH_PAGES; wait 2500" ;;
         engines:library) echo "$SYNTH_PAGES; tap Down 9; wait 3500" ;;
         synth-params) echo "$SYNTH_PAGES; wait 2500; tap Right; tap Right; wait 500" ;;
@@ -83,7 +85,7 @@ script_for() {   # page[:state] -> commands, empty when the page does not exist 
         *) echo "" ;;
     esac
 }
-ALL_PAGES="pattern master master:inserts song config performance sample-play sample-load instrument inserts:empty inserts:running inserts:bbd inserts:dirt2 inserts:safe inserts:safe-mixed engines engines:library synth-params synth-edit synth-edit:filter synth-macros automation automation:lfo"
+ALL_PAGES="pattern master master:inserts song config performance sample-play sample-load instrument inserts:empty inserts:running inserts:bbd inserts:dirt2 inserts:safe inserts:safe-mixed inserts:many inserts:many-end engines engines:library synth-params synth-edit synth-edit:filter synth-macros automation automation:lfo"
 
 # the private modules: the twin sources of Console and Tube at the pinned tag, the published files of all four. Anything missing is skipped
 # with a note, the pages then show those modules as missing
@@ -125,7 +127,10 @@ stage_sd() {   # stage_sd DIR
     fi
 }
 
-needs_sidecar() { case "$1" in master:inserts|inserts|inserts:running|inserts:bbd|inserts:dirt2|inserts:safe|inserts:safe-mixed) return 0 ;; *) return 1 ;; esac; }
+needs_sidecar() { case "$1" in master:inserts|inserts|inserts:running|inserts:bbd|inserts:dirt2|inserts:safe|inserts:safe-mixed|inserts:many*) return 0 ;; *) return 1 ;; esac; }
+# inserts:many*: the card also holds 100 fake inserts FX000 .. FX099 (make_fake_inserts.py, listed, a pick fails with err 6): the picker of
+# Insert 1 scrolled 60 rows down from Dirt (a fake picked) or to the end of the 108 rows (Tube)
+needs_fakes() { case "$1" in inserts:many*) return 0 ;; *) return 1 ;; esac; }
 
 render() {   # render page[:state] out.png
     local key="$1" out="$2" script
@@ -133,6 +138,7 @@ render() {   # render page[:state] out.png
     [ -n "$script" ] || { echo "ui_shot.sh: unknown page '$key' (ui_shot.sh list)" >&2; return 2; }
     local sd="$BUILD/sd/${key//[:]/_}"
     stage_sd "$sd"
+    if needs_fakes "$key"; then python3 -I "$HERE/../make_fake_inserts.py" "$sd/Plugins/Master" 100; fi
     mkdir -p "$(dirname "$out")"
     if needs_sidecar "$key"; then
         # a first power up writes the Workspace project, the sidecar goes next to it, the real run then opens it

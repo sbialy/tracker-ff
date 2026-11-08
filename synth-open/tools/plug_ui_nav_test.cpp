@@ -152,16 +152,16 @@ int main()
         check(p == 0 && seen == 0xF, "4 presses on a 4-entry enum visit every entry and come back");
     }
 
-    // bounds over every list size up to LIST_LENGTH_MAX (50) and every start
+    // bounds over every list size up to the insert picker's (None + kIndexMax 272 = 273, plug_ui.cpp kPickMax) and every start
     bool inRange = true;
-    for (int len = 1; len <= 50; len++)
+    for (int len = 1; len <= 300; len++)
         for (int p = 0; p < len; p++)
             for (int d = -60; d <= 60; d++)
             {
                 const int a = clampStep(p, len, d), b = nextWrap(p, len);
                 inRange = inRange && a >= 0 && a < len && b >= 0 && b < len;
             }
-    check(inRange, "clampStep and nextWrap stay inside [0, n) for n 1..50");
+    check(inRange, "clampStep and nextWrap stay inside [0, n) for n 1..300");
 
     // column order: Mixer, Insert 1, Insert 2, parameters, Back
     check(kMixerCol == 0 && colOfInsert(0) == 1 && colOfInsert(1) == 2 && kParamCol0 == 3 && kBackCol == 7,

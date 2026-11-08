@@ -77,8 +77,11 @@ inline bool isPlugName(const char* name)
     return l > 4 && l < 40 && !(name[0] == '.' && name[1] == '_') && strcasecmp(name + l - 4, ".plg") == 0;
 }
 
-constexpr int kIndexMax = 16;
 constexpr int kScanMax = 272;  // names listed per scan (the synth library of 256, plug_host.h kLibMax): rejected files take a place too
+// The master insert index keeps every insert a scan lists. A project names its inserts by uid and name (plug_sidecar.h), never by
+// position, so nothing stored bounds the count: the scan does. Per entry: IndexEntry in the SDRAM, a picker row (plug_ui.cpp), a
+// host.txt line (plug_host.cpp kStatusMax)
+constexpr int kIndexMax = kScanMax;
 struct IndexEntry
 {
     uint32_t uid, version;

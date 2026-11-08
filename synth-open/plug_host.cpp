@@ -226,11 +226,13 @@ namespace
 // /Plugins/host.txt: what each slot holds, after every load and on every Workspace save (the device test reads it back)
 // host.txt text off the stack (a local gave writeStatus an 896 B frame on the project open and save paths, see
 // mainLoopScratch.h for the main loop's room). Every caller (apply, rescan, projectLoaded, projectSave) is main loop only.
-__NOINIT(EXTERNAL_RAM) char s_statusText[800];
+// Room for the head and slot lines (about 700 B) and a "plugin" line per index entry (at most 96 B: name 15, file 39)
+constexpr int kStatusMax = 1024 + kIndexMax * 96;
+__NOINIT(EXTERNAL_RAM) char s_statusText[kStatusMax];
 
 void writeStatus()
 {
-    char (&t)[800] = s_statusText;
+    char (&t)[kStatusMax] = s_statusText;
     int n = snprintf(t, sizeof(t), "plugin host 1, index %d, inserts %s, safe %d %s, nvm commands %lu\r\n", s_count,
                      s_on ? "on" : "bypassed", int(s_safe), s_reason, (unsigned long)nvmCommands());
     n += snprintf(t + n, sizeof(t) - size_t(n), "scan %s: listed %d, rejected %d\r\n", kDir, s_scan.listed, s_scan.rejected);

@@ -29,6 +29,7 @@
 #include "fileManager.h"
 #include "masterParams/masterParams.h"
 #include "mtAudioEngine.h"
+#include "cr_section_macros.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -65,7 +66,9 @@ const uint8_t kMixerVals[] = {plug::kSatHardClip, plug::kSatSoftClip};
 #endif
 constexpr int kMixerN = int(sizeof(kMixerVals));
 const char* s_mixerNames[kMixerN];
-const char* s_pick[plug::kIndexMax + 1];   // "None", then the index names: both plugin columns
+constexpr int kPickMax = plug::kIndexMax + 1;
+// "None", then the index names: both plugin columns. In the SDRAM (1 KB, never constructed, showSlot fills it before it is bound)
+__NOINIT(EXTERNAL_RAM) const char* s_pick[kPickMax];
 strList s_list[7];                          // the data of the list in column c
 hControl s_extra[2] = {-1, -1};             // the lists of columns 3 and 6 (created with the module's controls)
 const char* const* s_bound[7];              // the entries list c was bound to (null: not bound, setData next time)
@@ -156,7 +159,7 @@ void showList(int col, const char* const* names, int n, int pos)
         return;
     }
     strList& l = s_list[col];
-    if (n > LIST_LENGTH_MAX) n = LIST_LENGTH_MAX;
+    if (n > kPickMax) n = kPickMax;   // the insert picker: None and every index entry (the list control counts rows in int16)
     if (s_bound[col] != names || l.length != n)
     {   // new entries: bind them with the window on pos. Same entries: only the value, the list animates to it as stock
         l.data = const_cast<char**>(names);

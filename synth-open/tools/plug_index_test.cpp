@@ -198,7 +198,7 @@ int main(int argc, char** argv)
     }
     card.file("", "plugbench.plg", bytes[0]);
 
-    IndexEntry ix[kIndexMax];
+    static IndexEntry ix[kIndexMax];
     ScanStats st;
     int n = scan(card, ix, st);
     printf("      scan: listed %d, rejected %d, index %d\n", st.listed, st.rejected, n);
@@ -323,6 +323,90 @@ int main(int argc, char** argv)
         snprintf(what, sizeof(what), "%d engine files (%d good): listed %d, kept %d (library %d), numbers and names right, rejects counted",
                  nFiles, good, ss.listed, got, kLib);
         check(right, what);
+    }
+
+    // ---- poly-plug-fx: /Plugins/Master with 40, 100, 272 and 300 insert files (fake headers with a manifest name, every 10th one damaged,
+    // two files share a uid and the newer version wins): the index keeps every good insert the scan lists (kIndexMax = kScanMax, 272),
+    // before 16 (kIndexMax) of 24 names (kScanMax)
+    check(kIndexMax == kScanMax && kIndexMax >= 256, "the master insert index holds every name a scan lists (272)");
+    struct FxCase
+    {
+        int files, damagedEvery;   // 0: none damaged
+    };
+    for (FxCase c : {FxCase{40, 10}, FxCase{100, 10}, FxCase{272, 10}, FxCase{300, 10}, FxCase{272, 0}, FxCase{300, 0}})
+    {
+        const int nFiles = c.files;
+        auto damaged = [&](int i) { return c.damagedEvery && i % c.damagedEvery == c.damagedEvery - 1; };
+        CardFs fx;
+        fx.folder("", "Plugins");
+        fx.folder("Plugins", "Master");
+        for (int i = 0; i < nFiles; i++)
+        {
+            plug_file_header h = {};
+            h.magic = damaged(i) ? 0 : PLUG_MAGIC;   // damaged: rejected, still takes a place in the listing
+            h.header_size = sizeof(plug_file_header) + sizeof(plug_manifest);
+            h.abi_major = PLUG_ABI_MAJOR;
+            h.kind = PLUG_KIND_MASTER_INSERT;
+            h.cpu = PLUG_CPU_CM4F;
+            h.uid = 0x7F000000u + uint32_t(i);
+            h.version = 1;
+            h.image_size = 4096;
+            h.crc32 = 0xD0000000u + uint32_t(i);
+            plug_manifest m = {};
+            m.struct_size = sizeof(m);
+            m.num_params = 1 + i % 8;
+            snprintf(m.name, sizeof(m.name), "FX%03d", i);
+            std::string b(reinterpret_cast<const char*>(&h), sizeof(h));
+            b.append(reinterpret_cast<const char*>(&m), sizeof(m));
+            char f[24];
+            snprintf(f, sizeof(f), "fx%03d.plg", i);
+            fx.file("Plugins/Master", f, b);
+            fx.file("Plugins/Master", std::string("._") + f, appleDouble());   // macOS twins: never listed
+        }
+        {   // zz_dup.plg (sorted last) has fx000's uid and version 2: it replaces entry 0 when the scan reaches it
+            plug_file_header h = {};
+            h.magic = PLUG_MAGIC;
+            h.header_size = sizeof(plug_file_header) + sizeof(plug_manifest);
+            h.abi_major = PLUG_ABI_MAJOR;
+            h.kind = PLUG_KIND_MASTER_INSERT;
+            h.cpu = PLUG_CPU_CM4F;
+            h.uid = 0x7F000000u;
+            h.version = 2;
+            h.image_size = 4096;
+            plug_manifest m = {};
+            m.struct_size = sizeof(m);
+            snprintf(m.name, sizeof(m.name), "FXNEW");
+            std::string b(reinterpret_cast<const char*>(&h), sizeof(h));
+            b.append(reinterpret_cast<const char*>(&m), sizeof(m));
+            fx.file("Plugins/Master", "zz_dup.plg", b);
+        }
+        ScanStats ss;
+        const int got = scan(fx, ix, ss);
+        const int all = nFiles + 1;
+        const int listed = all < kScanMax ? all : kScanMax;
+        const bool dupSeen = all <= kScanMax;   // zz_dup.plg is the last name: past the scan room it is not listed
+        int wantKept = 0;
+        for (int i = 0; i < listed && i < nFiles; i++) wantKept += !damaged(i);
+        bool right = got == wantKept && ss.listed == listed && ss.rejected == listed - wantKept - (dupSeen ? 1 : 0);
+        for (int k = 0; k < got && right; k++)
+        {
+            const int i = c.damagedEvery ? k + k / (c.damagedEvery - 1) : k;
+            char nm[8], fl[24];
+            snprintf(nm, sizeof(nm), "FX%03d", i);
+            snprintf(fl, sizeof(fl), "fx%03d.plg", i);
+            if (k == 0 && dupSeen)
+                right = strcmp(ix[0].name, "FXNEW") == 0 && ix[0].version == 2 && strcmp(ix[0].file, "zz_dup.plg") == 0;
+            else
+                right = strcmp(ix[k].name, nm) == 0 && strcmp(ix[k].file, fl) == 0 && ix[k].uid == 0x7F000000u + uint32_t(i) &&
+                        ix[k].numParams == 1 + i % 8 && ix[k].synthStored == -1;
+        }
+        int uniq = 1;   // every uid once (what indexFind and the sidecar's uid lookup rely on)
+        for (int a = 0; a < got && uniq; a++)
+            for (int b = a + 1; b < got && uniq; b++) uniq = ix[a].uid != ix[b].uid;
+        char what[200];
+        snprintf(what, sizeof(what), "%d insert files (%s) + a newer twin: listed %d, kept %d (index %d), names, files, uids right%s",
+                 nFiles, c.damagedEvery ? "every 10th damaged" : "all good", ss.listed, got, kIndexMax, dupSeen ? ", newer twin wins" : "");
+        check(right && uniq, what);
     }
 
     // ---- no directory at all
