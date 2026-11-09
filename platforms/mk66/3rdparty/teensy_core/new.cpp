@@ -34,10 +34,12 @@
 static inline void * newNoteNull(void * p, size_t size)
 {
 #ifdef ENABLE_DEV_CONSOLE
+  unsigned sp;
+  __asm__ volatile("mov %0, sp" : "=r" (sp));
   if (p == nullptr) {
-    unsigned sp;
-    __asm__ volatile("mov %0, sp" : "=r" (sp));
     DEVHOOK_TRACE(0x4F4F4D, size, mallinfo().fordblks, sp);
+  } else if ((unsigned)p < 0x1FFF0000u || (unsigned)p + size > 0x20030000u) {
+    DEVHOOK_TRACE(0x4F4F52, (unsigned)p, size, sp);   // a block outside the RAM
   }
 #else
   (void)size;
