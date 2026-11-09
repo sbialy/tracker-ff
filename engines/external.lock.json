@@ -1,5 +1,5 @@
 {
- "_comment": "Every plugin module tracker-ff ships, pinned per module repository (engines/external.py reads it, engines/README.md explains it). engines-os (poly-engines-os, public) and effects-os (poly-effects-os, public) hold the OpenTracker ports, engines (poly-engines, private) and effects (poly-effects, private) our own modules. visibility decides how external.py fetch gets the release assets (public: plain https, private: gh with a token). Only the published files are pinned: .plg and .plgi for the card, .json and .wasm for the browser editor, each by sha256, plus the tag and the commit behind it. local_dirs are the build directories of a local checkout (external.py fetch --from-local, the stand-in while the tags are not published), source_root is where the module sources sit in the tag (external.py source, for ui_shot). Tags are local until a release is published. After a module repository is rebuilt and tagged: python3 -I engines/external.py relock SET, or edit the tag, tag_commit and sha256 values by hand, then engines/crosscheck.sh on the fetched set.",
+ "_comment": "Every plugin module tracker-ff ships, pinned per module repository (engines/external.py reads it, engines/README.md explains it). engines-os (poly-engines-os, public) and effects-os (poly-effects-os, public) hold the OpenTracker ports, engines (poly-engines, private) and effects (poly-effects, private) our own modules. visibility decides how external.py fetch gets the release assets (public: plain https, private: gh with a token). Only the published files are pinned: .plg and .plgi for the card, .json and .wasm for the browser editor, each by sha256, plus the tag and the commit behind it. local_repo and local_dirs are a local checkout and its build directories, relative to the tracker-ff checkout (external.py fetch --from-local, the stand-in for the published release assets), source_root is where the module sources sit in the tag (external.py source, for ui_shot). After a module repository is rebuilt and tagged: python3 -I engines/external.py relock SET, or edit the tag, tag_commit and sha256 values by hand, then engines/crosscheck.sh on the fetched set.",
  "format_version": 2,
  "sets": {
   "engines-os": {
@@ -7,11 +7,11 @@
    "visibility": "public",
    "kind": "synth",
    "tag": "v1.2.0",
-   "tag_commit": "dbef541f4c883351b255c1fc7be780aaea58310a",
-   "local_repo": "~/prj/poly-engines-os",
+   "tag_commit": "d5427e192de180588c4162ab685e46bdfe35b8db",
+   "local_repo": "../poly-engines-os",
    "local_dirs": [
-    "~/prj/poly-engines-os/build/engines-autof",
-    "~/prj/poly-engines-os/build/wasm"
+    "../poly-engines-os/build/engines-autof",
+    "../poly-engines-os/build/wasm"
    ],
    "source_root": "src/synth-open/",
    "files": {
@@ -70,10 +70,10 @@
    "kind": "synth",
    "tag": "engines-v1.2.0",
    "tag_commit": "3ec1380b9ffc9f4db990cfee72f4d4a6a5bf2e8e",
-   "local_repo": "~/prj/poly-engines",
+   "local_repo": "../poly-engines",
    "local_dirs": [
-    "~/prj/poly-engines/build/engines-autof",
-    "~/prj/poly-engines/build/wasm"
+    "../poly-engines/build/engines-autof",
+    "../poly-engines/build/wasm"
    ],
    "source_root": "src/synth-open/",
    "files": {
@@ -161,11 +161,11 @@
    "visibility": "public",
    "kind": "master",
    "tag": "v1.2.0",
-   "tag_commit": "3c0f9af26e83aa9fc8193f54d46fe3650869ea1d",
-   "local_repo": "~/prj/poly-effects-os",
+   "tag_commit": "f4cc7f1f4d134bab242a1904ff8ad71350990bdb",
+   "local_repo": "../poly-effects-os",
    "local_dirs": [
-    "~/prj/poly-effects-os/build/set",
-    "~/prj/poly-effects-os/build/wasm"
+    "../poly-effects-os/build/set",
+    "../poly-effects-os/build/wasm"
    ],
    "source_root": "src/synth-open/",
    "files": {
@@ -198,9 +198,9 @@
    "kind": "master",
    "tag": "effects-v1.0.0",
    "tag_commit": "3954631b80bae37051cc53039e8f1128c357c136",
-   "local_repo": "~/prj/poly-effects",
+   "local_repo": "../poly-effects",
    "local_dirs": [
-    "~/prj/poly-effects/build/set"
+    "../poly-effects/build/set"
    ],
    "source_root": "src/synth-open/plug/fx/",
    "files": {

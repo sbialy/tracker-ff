@@ -3,9 +3,9 @@
 # them in the layout of external.py fetch (modules flat, notice files in <set>/), so a release can be made from source and compared
 # with the pins.
 #
-#   TOOLCHAIN=.../arm-none-eabi- PY=/tmp/phzvenv/bin/python engines/rebuild_pinned.sh OUT [autof|fused] [public|all] [--with GROUP]...
+#   TOOLCHAIN=.../arm-none-eabi- PY=/path/to/venv/bin/python engines/rebuild_pinned.sh OUT [autof|fused] [public|all] [--with GROUP]...
 #
-# Each set is taken with git archive of its pinned tag from the local checkout named in the lock (or $EXTERNAL_SRC_<SET>, SET upper
+# Each set is taken with git archive of its pinned tag from the local checkout named in the lock (relative to this checkout, or $EXTERNAL_SRC_<SET>, SET upper
 # case with - as _), the checkout itself is never touched, and built in OUT/src/<set>/ with that repository's own build:
 #   engines-os  poly-engines-os  make FLAVOUR=... OUT=... && make verify && make wasm
 #   engines     poly-engines     make FLAVOUR=... OUT=... && make verify && python3 wasm/build_wasm.py --out ... --plg-dir ...
@@ -13,7 +13,7 @@
 #   effects     poly-effects     python3 build.py --out ... --py ...
 # The pinned files are then copied to OUT/modules (flat, notices in OUT/modules/<set>/). With flavour autof (the 1.2.0 release, the
 # default) OUT/modules must match the lock byte for byte (external.py check): that is the proof that the pins are reproducible.
-# fused (the unpublished AUTO fallback) rebuilds the engine sets with the compiler's fused multiply add, its files differ from the
+# fused (not released) rebuilds the engine sets with the compiler's fused multiply add, its files differ from the
 # pins by design and only the identity and checkSynth checks run. --with formflux also takes the optional group of the lock (FORM and
 # FLUX: form/flux .plg .plgi .json .wasm and the 11 factory presets, laid out as OUT/modules/Patches/<ENGINE>/<name>.patch). Every set
 # is built the same way with or without it (the module repository builds all its engines), only the copy and the checks differ. Then engines/crosscheck.sh, and the SDK examples
@@ -41,10 +41,11 @@ import json,sys
 s=json.load(open(sys.argv[1]))['sets']
 print(' '.join(n for n in s if sys.argv[2]=='all' or s[n]['visibility']==sys.argv[2]))" "$LOCK" "$VIS")
 field() { python3 -c "import json,sys,os; print(os.path.expanduser(json.load(open(sys.argv[1]))['sets'][sys.argv[2]][sys.argv[3]]))" "$LOCK" "$1" "$2"; }
+repo_of() { python3 -c "import json,sys,os; print(os.path.normpath(os.path.join(sys.argv[3], os.path.expanduser(json.load(open(sys.argv[1]))['sets'][sys.argv[2]]['local_repo']))))" "$LOCK" "$1" "$ROOT"; }
 rm -rf "$OUT/src" "$OUT/modules"; mkdir -p "$OUT/src" "$OUT/modules"
 for s in $sets; do
     env="EXTERNAL_SRC_$(echo "$s" | tr 'a-z-' 'A-Z_')"
-    repo="${!env:-$(field "$s" local_repo)}"
+    repo="${!env:-$(repo_of "$s")}"
     tag=$(field "$s" tag); want=$(field "$s" tag_commit)
     got=$(git -C "$repo" rev-parse "$tag^{commit}" 2>/dev/null || true)
     [ "$got" = "$want" ] || { echo "$s: tag $tag is '$got' in $repo, the lock pins $want"; exit 1; }

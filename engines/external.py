@@ -14,7 +14,7 @@ repository has its own NOTICE.md).
   external.py check DIR [--set NAME] [--visibility ...]
                                 every pinned file of the chosen sets is in DIR and has its sha256. Exit 1 on any difference.
   external.py source SET DEST FILE...
-                                source files of a set at its pinned tag (git show from a local checkout: the repository path in the lock
+                                source files of a set at its pinned tag (git show from a local checkout: the repository path in the lock, relative to this checkout,
                                 or $EXTERNAL_SRC_<SET>, SET upper case with - as _), for host tools that compile module source (ui_shot).
                                 FILE is relative to the set's source_root. The tag must still point at tag_commit. Exit 3: no checkout.
   external.py list [--visibility ...]   one line per set: name, visibility, repository, tag, commit, file count
@@ -62,6 +62,11 @@ def sha256(p):
 
 def expand(p):
     return os.path.expanduser(p)
+
+
+def lockpath(p):
+    """A local_repo or local_dirs entry of the lock: relative to the tracker-ff checkout (the module checkouts sit next to it)."""
+    return os.path.normpath(os.path.join(os.path.dirname(HERE), os.path.expanduser(p)))
 
 
 def pick(names, sets, visibility=None):
@@ -112,13 +117,13 @@ def fetch(a):
         with tempfile.TemporaryDirectory(prefix="extfetch") as tmp:
             patch_src = {}
             if a.from_local:
-                dirs = [expand(d) for d in s["local_dirs"]]
+                dirs = [lockpath(d) for d in s["local_dirs"]]
                 if not all(os.path.isdir(d) for d in dirs):
                     print("external: %s: local build directories are missing (%s)" % (name, ", ".join(dirs)), file=sys.stderr)
                     return NA
                 for _, g in groups_of(s, a.with_):   # the patches are source: the tag of the local checkout
                     for rel, v in g.get("patches", {}).get("files", {}).items():
-                        r = subprocess.run(["git", "-C", expand(s["local_repo"]), "show", "%s:%s/%s" % (s["tag"], g["patches"]["root"], rel)],
+                        r = subprocess.run(["git", "-C", lockpath(s["local_repo"]), "show", "%s:%s/%s" % (s["tag"], g["patches"]["root"], rel)],
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                         if r.returncode:
                             print("external: %s: %s is not in %s of %s" % (name, rel, s["tag"], s["local_repo"]), file=sys.stderr)
@@ -171,7 +176,7 @@ def source(a):
     if not s:
         sys.exit("external: no set '%s' in the lock" % a.set)
     env = "EXTERNAL_SRC_" + a.set.upper().replace("-", "_")
-    repo = expand(os.environ.get(env, s["local_repo"]))
+    repo = expand(os.environ[env]) if env in os.environ else lockpath(s["local_repo"])
     if not os.path.isdir(os.path.join(repo, ".git")):
         print("external: %s: no checkout of %s at %s (set %s)" % (a.set, s["repo"], repo, env), file=sys.stderr)
         return NA
@@ -208,11 +213,11 @@ def relock(a):
     if not s:
         sys.exit("external: no set '%s' in the lock" % a.set)
     tag = a.tag or s["tag"]
-    repo = expand(s["local_repo"])
+    repo = lockpath(s["local_repo"])
     r = subprocess.run(["git", "-C", repo, "rev-parse", tag + "^{commit}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if r.returncode:
         sys.exit("external: %s has no tag %s" % (repo, tag))
-    dirs = [expand(d) for d in s["local_dirs"]]
+    dirs = [lockpath(d) for d in s["local_dirs"]]
     def hashes(names):
         out = {}
         for f in names:
