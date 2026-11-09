@@ -16,6 +16,9 @@
 
 #define NOOPT __attribute__((noinline, optnone, no_sanitize("returns-nonnull-attribute")))
 
+void* hostHeapAllocate(size_t size); // host_heapmodel.cpp: the device heap model (UISHOT_HEAP=device), plain malloc without it
+void hostHeapRelease(void* p);
+
 namespace
 {
 struct Rule
@@ -89,7 +92,7 @@ NOOPT void* alloc(size_t n)
             return nullptr;
         }
     }
-    return malloc(n ? n : 1);
+    return hostHeapAllocate(n);
 }
 } // namespace
 
@@ -97,9 +100,9 @@ NOOPT void* operator new(size_t n) { return alloc(n); }
 NOOPT void* operator new[](size_t n) { return alloc(n); }
 NOOPT void* operator new(size_t n, const std::nothrow_t&) noexcept { return alloc(n); }
 NOOPT void* operator new[](size_t n, const std::nothrow_t&) noexcept { return alloc(n); }
-void operator delete(void* p) noexcept { free(p); }
-void operator delete[](void* p) noexcept { free(p); }
-void operator delete(void* p, size_t) noexcept { free(p); }
-void operator delete[](void* p, size_t) noexcept { free(p); }
-void operator delete(void* p, const std::nothrow_t&) noexcept { free(p); }
-void operator delete[](void* p, const std::nothrow_t&) noexcept { free(p); }
+void operator delete(void* p) noexcept { hostHeapRelease(p); }
+void operator delete[](void* p) noexcept { hostHeapRelease(p); }
+void operator delete(void* p, size_t) noexcept { hostHeapRelease(p); }
+void operator delete[](void* p, size_t) noexcept { hostHeapRelease(p); }
+void operator delete(void* p, const std::nothrow_t&) noexcept { hostHeapRelease(p); }
+void operator delete[](void* p, const std::nothrow_t&) noexcept { hostHeapRelease(p); }

@@ -434,16 +434,9 @@ static void release(void* p)
     free(p);
 }
 
-void* operator new(size_t size) { return allocate(size); }
-void* operator new[](size_t size) { return allocate(size); }
-void* operator new(size_t size, const std::nothrow_t&) noexcept { return allocate(size); }
-void* operator new[](size_t size, const std::nothrow_t&) noexcept { return allocate(size); }
-void operator delete(void* p) noexcept { release(p); }
-void operator delete[](void* p) noexcept { release(p); }
-void operator delete(void* p, size_t) noexcept { release(p); }
-void operator delete[](void* p, size_t) noexcept { release(p); }
-void operator delete(void* p, const std::nothrow_t&) noexcept { release(p); }
-void operator delete[](void* p, const std::nothrow_t&) noexcept { release(p); }
+// The global operator new / delete family is defined in host_fault.cpp (allocation fault injection), which forwards here.
+void* hostHeapAllocate(size_t size) { return allocate(size); }
+void hostHeapRelease(void* p) { release(p); }
 
 // ---- reports -------------------------------------------------------------------------------------------------------------------------
 // the arena command of the console (UsbTest.cpp) on the Mac: size, in use, peak, allocations, big blocks that fell back to the heap, small
