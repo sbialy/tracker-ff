@@ -2,6 +2,7 @@
 #define LIBS_NEWDISPLAY_DISPLAY_H_
 
 #include "devhooks.h"
+#include <new>
 #include <stdint.h>
 #include <typeinfo>
 
@@ -83,7 +84,10 @@ class cDisplay
             properties->style &= ~(15 << 8);
         }
 
-        *newControlSlot = new controlClass(properties);
+        // MK66 operator new returns null on a full heap: no control then, instead of a constructor writing through null
+        *newControlSlot = new (std::nothrow) controlClass(properties);
+        if (*newControlSlot == nullptr)
+            return -1;
 
         return limit;
     }
