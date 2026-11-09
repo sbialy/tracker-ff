@@ -3,6 +3,9 @@
 #include "host_platform.h"
 
 #include "ConfigManager.h"
+#if __has_include("PowerOffGuard.h")
+#include "PowerOffGuard.h"
+#endif
 
 #include <algorithm>
 #include <dirent.h>
@@ -21,7 +24,86 @@ uint32_t g_powerOffAtMs;
 int g_guardArmed, g_guardKicks;
 static std::string s_root = ".";
 static bool g_held[64];
+
+// ---- MK66 power model (PowerControl.cpp checkPowerState, PlatformImpl.cpp, PowerOffGuard.h) ----
+// The EEPROM start state byte, the off marker in RAM that survives a reset, the power-off guard checked every millisecond (SysTick).
+// The decisions are the firmware's own (PowerOffGuard.h). A reset does not restart the host process: it is recorded and the start
+// decision the unit would take is printed, the script goes on.
+// UISHOT_K66_WDOG=1 models 5878f0e instead: setPowerOffGuard(true) arms the K66 WDOG, which on the unit ignores the refresh and the
+// disable (ref/shot-hang-1.2.0.md R8.2), so it bites kTimeoutMs after the arm whatever the firmware does next.
+int g_startState = 1;       // EEPROM byte 0 (UISHOT_START_STATE, default 1 = the unit was switched on)
+bool g_offMarker;           // RAM marker of a guard reset
+bool g_unitOff;             // setPowerMode(false) ran (the unit is off), until a reset that starts it
+int g_mcuResets, g_resetsWhileOff;
+#if __has_include("PowerOffGuard.h")
+#define UISHOT_HAVE_GUARD 1
+static power_off_guard::Guard g_guard;
+static bool g_wdogModel;          // UISHOT_K66_WDOG
+static uint32_t g_wdogBiteAt;     // 0 = not armed
+static uint32_t g_tickMs;         // last millisecond the SysTick model ran
+
+// any MCU reset: what checkPowerState decides at the next boot
+static void mcuReset(const char* why, bool watchdog)
+{
+    g_mcuResets++;
+    if (g_unitOff) g_resetsWhileOff++;
+    power_off_guard::StartInputs in;
+    in.startStateSave = true;   // release build
+    in.consoleBuild = false;
+    in.offMarker = g_offMarker;
+    in.watchdogReset = watchdog;
+    in.configValid = true;
+    in.startState = uint8_t(g_startState);
+    g_offMarker = false;        // checkPowerState takes it
+    const bool run = power_off_guard::decideStart(in) == power_off_guard::Start::kRun;
+    g_startState = 0;           // both branches write 0 (saveStartState(0), setPowerMode(false))
+    g_guard.disarm();
+    g_wdogBiteAt = 0;
+    printf("mcu reset (%s)%s: start %s\n", why, in.watchdogReset ? " wdog" : "", run ? "RUN" : "off");
+    g_unitOff = !run;
+}
+
+// SysTick: every millisecond, also while the main loop is blocked
+static void sysTick(uint32_t now)
+{
+    if (g_guard.expired(now))
+    {
+        g_offMarker = true;     // resetToOffState
+        mcuReset("guard", false);
+    }
+    if (g_wdogBiteAt != 0 && int32_t(now - g_wdogBiteAt) >= 0)
+    {
+        mcuReset("k66 wdog", true);
+    }
+}
+
+void advance(uint32_t ms)
+{
+    for (uint32_t i = 0; i < ms; i++)
+    {
+        g_nowMs++;
+        sysTick(g_nowMs);
+    }
+}
+
+void bootModel()
+{
+    g_wdogModel = getenv("UISHOT_K66_WDOG") != nullptr;
+    if (const char* e = getenv("UISHOT_START_STATE")) g_startState = atoi(e);
+    power_off_guard::StartInputs in{true, false, false, false, true, uint8_t(g_startState)};
+    const bool run = power_off_guard::decideStart(in) == power_off_guard::Start::kRun;
+    printf("boot: start state %d: start %s\n", g_startState, run ? "RUN" : "off");
+    g_startState = 0;
+}
+
+void resetCommand() { mcuReset("reset", false); }
+void stall(uint32_t ms) { advance(ms); }   // the main loop blocked in a call: time and SysTick go on, no main loop pass
+#else
 void advance(uint32_t ms) { g_nowMs += ms; }
+void bootModel() {}
+void resetCommand() { printf("mcu reset: no model in this tree\n"); }
+void stall(uint32_t ms) { g_nowMs += ms; }
+#endif
 void setHeld(int idx, bool on) { if (idx >= 0 && idx < 64) g_held[idx] = on; }
 void setSdRoot(const std::string& d) { s_root = d; }
 const std::string& sdRoot() { return s_root; }
@@ -40,7 +122,7 @@ class HTimer : public Timer
   public:
     uint32_t millis() override { hostPokePoll(); return g_nowMs; }
     uint32_t micros() override { return g_nowMs * 1000u; }
-    void delay(int ms) override { g_nowMs += uint32_t(ms); }
+    void delay(int ms) override { advance(uint32_t(ms)); }
     uint32_t clockCycles() override { return g_nowMs * 180000u; }
     uint32_t clockCyclesPerUs() override { return 180; }
 };
@@ -416,11 +498,44 @@ class HPlatform : public Platform
     void setPowerMode(bool on) override
     {
         if (!on && g_powerOffCalls++ == 0) g_powerOffAtMs = g_nowMs;
-        if (!on) g_guardArmed = 0;   // the MK66 disarms it after the teardown, before the sleep
+        if (!on)
+        {
+            g_guardArmed = 0;   // the MK66 disarms it after the teardown, before the sleep
+            g_startState = 0;   // saveStartState(0)
+            g_unitOff = true;
+#ifdef UISHOT_HAVE_GUARD
+            g_guard.disarm();
+#endif
+        }
     }
-    // the MK66 watchdog is not modelled (a stalled host main loop is a hung process): this only counts what the firmware asks for
-    void setPowerOffGuard(bool armed) { g_guardArmed = armed; }   // no override: also builds against a tree without the guard (bug mode)
-    void kickPowerOffGuard() { if (g_guardArmed) g_guardKicks++; }
+    // no override: also builds against a tree without the guard (bug mode)
+    void setPowerOffGuard(bool armed)
+    {
+        g_guardArmed = armed;
+#ifdef UISHOT_HAVE_GUARD
+        if (g_wdogModel)
+        {   // 5878f0e: the arm starts the K66 WDOG, the disarm does not stop it
+            if (armed && g_wdogBiteAt == 0) g_wdogBiteAt = g_nowMs + power_off_guard::kTimeoutMs;
+            return;
+        }
+        if (armed)
+        {
+            g_startState = 0;   // saveStartState(0)
+            g_guard.arm(g_nowMs);
+        }
+        else
+        {
+            g_guard.disarm();
+        }
+#endif
+    }
+    void kickPowerOffGuard()
+    {
+        if (g_guardArmed) g_guardKicks++;
+#ifdef UISHOT_HAVE_GUARD
+        if (!g_wdogModel) g_guard.kick(g_nowMs);   // the K66 ignores the WDOG refresh
+#endif
+    }
     void resetMCU() override { g_resetRequested = true; }
     void runBootloader(char* name) override { hostp::simBootloaderHandoff(name); }
     void setPowerButtonCallback(PowerButtonCallback f) override { g_powerButtonCallback = f; }

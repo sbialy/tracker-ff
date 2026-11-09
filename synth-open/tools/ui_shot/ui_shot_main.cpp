@@ -17,6 +17,10 @@
 //   power press|release        the power button (the callback the firmware registered, Tracker.cpp onPowerButtonChange)
 //   power hold MS              press, run MS, print whether the shutdown reached setPowerMode(false), then keep holding
 //   fm                         print the file manager status and operation
+//   eeprom N                   set the MK66 EEPROM start state byte (1 = what a console image or a power-on leaves)
+//   reset                      an MCU reset now (any cause): prints the start decision of the MK66 model
+//   stall MS                   the main loop blocked in one call for MS (time and SysTick go on, no main loop pass)
+//   resets                     print the MCU reset counters of the MK66 model
 //   fmset N                    set the file manager status to N (fileManager.h fileManagerStatus), an injection
 //   touch PATH / rm PATH       create or remove a file (absolute path), e.g. the UISHOT_FAIL_ARM file of host_fault.cpp
 //   chmod MODE PATH            chmod a path of the SD folder (octal MODE), e.g. 555 Workspace makes every Workspace save fail
@@ -151,6 +155,10 @@ bool command(const std::string& line)
                hostp::g_guardArmed, hostp::g_guardKicks);
         return true;
     }
+    if (c == "eeprom") { int n = 0; is >> n; hostp::g_startState = n; return true; }
+    if (c == "reset") { hostp::resetCommand(); return true; }
+    if (c == "stall") { int ms = 0; is >> ms; hostp::stall(uint32_t(ms)); return true; }
+    if (c == "resets") { printf("resets %d while off %d start state %d\n", hostp::g_mcuResets, hostp::g_resetsWhileOff, hostp::g_startState); return true; }
     if (c == "fm") { printf("fm status %d op %d\n", int(newFileManager.getStatus()), int(newFileManager.getCurrentOperation())); return true; }
     if (c == "fmset") { int n = 0; is >> n; newFileManager.setStatus(uint8_t(n)); return true; }
     if (c == "chmod")
@@ -210,6 +218,7 @@ int main(int argc, char** argv)
     hostp::setSdRoot(sd);
     Platform* p = hostp::platform();
     Tracker* t = Tracker::getInstance();
+    hostp::bootModel();
     // UISHOT_SHIFT_BOOT=1: Shift held while the unit powers up (the plugin host's safe mode), released once the pattern screen is up
     const bool shiftBoot = getenv("UISHOT_SHIFT_BOOT") != nullptr;
     if (shiftBoot) hostp::setHeld(29, true);
