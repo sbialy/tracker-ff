@@ -1,4 +1,5 @@
 // Host Platform for ui_shot. NOT firmware. See host_platform.h.
+#include "eve_model.h"
 #include "host_platform.h"
 
 #include "ConfigManager.h"
@@ -17,6 +18,7 @@ bool g_resetRequested;
 Platform::PowerButtonCallback g_powerButtonCallback;
 int g_powerOffCalls;
 uint32_t g_powerOffAtMs;
+int g_guardArmed, g_guardKicks;
 static std::string s_root = ".";
 static bool g_held[64];
 void advance(uint32_t ms) { g_nowMs += ms; }
@@ -221,6 +223,7 @@ class HFileSystem : public FileSystem
   public:
     std::string abs(const char* p) const
     {
+        HostFaultSuspend keep;   // simulator memory: the device's FatFs paths are fixed buffers
         std::string s = p ? p : "";
         while (!s.empty() && s[0] == '/') s.erase(0, 1);
         return s_root + "/" + s;
@@ -232,6 +235,7 @@ class HFileSystem : public FileSystem
     bool rename(const char* a, const char* b) override { return ::rename(abs(a).c_str(), abs(b).c_str()) == 0; }
     bool mkdir(uint8_t, const char* path, bool pFlag) override
     {
+        HostFaultSuspend keep;
         std::string p = abs(path);
         if (pFlag)
             for (size_t i = s_root.size() + 1; i < p.size(); i++)
@@ -239,8 +243,8 @@ class HFileSystem : public FileSystem
         return ::mkdir(p.c_str(), 0755) == 0 || exists(path);
     }
     bool remove(const char* path) override { return ::remove(abs(path).c_str()) == 0; }
-    bool removeDirWithFiles(const char* path) override { return system(("rm -rf '" + abs(path) + "'").c_str()) == 0; }
-    bool removeOnlyDirFiles(const char* path) override { return system(("find '" + abs(path) + "' -type f -delete").c_str()) == 0; }
+    bool removeDirWithFiles(const char* path) override { HostFaultSuspend keep; return system(("rm -rf '" + abs(path) + "'").c_str()) == 0; }
+    bool removeOnlyDirFiles(const char* path) override { HostFaultSuspend keep; return system(("find '" + abs(path) + "' -type f -delete").c_str()) == 0; }
     size_t getFileSize(const char* path) override { struct stat st; return stat(abs(path).c_str(), &st) == 0 ? size_t(st.st_size) : 0; }
     size_t getFileSize(FileHandle h) override
     {
@@ -260,6 +264,7 @@ class HFileSystem : public FileSystem
     }
     std::tuple<bool, FileHandle> openFile(const char* filepath, FileOpenMode mode, FileHandle* fileHandle) override
     {
+        HostFaultSuspend keep;   // the device takes its SdFile from a fixed pool (FileSystemImpl::allocateSdFile) and checks it
         const char* m = mode == kRead ? "rb" : (mode == kWriteOpen ? "r+b" : (mode == kWriteAppend ? "ab" : "wb"));
         const std::string p = abs(filepath);
         if (mode == kWriteCreateNew || mode == kWriteAppend)
@@ -303,6 +308,7 @@ class HFileSystem : public FileSystem
     // directory listings: names of the entries of path, folders first when asked (a stand-in: the file browsers are not drawn here)
     static std::vector<std::string> names(const std::string& dir, bool folders)
     {
+        HostFaultSuspend keep;
         std::vector<std::string> v;
         if (DIR* d = opendir(dir.c_str()))
         {
@@ -410,7 +416,11 @@ class HPlatform : public Platform
     void setPowerMode(bool on) override
     {
         if (!on && g_powerOffCalls++ == 0) g_powerOffAtMs = g_nowMs;
+        if (!on) g_guardArmed = 0;   // the MK66 disarms it after the teardown, before the sleep
     }
+    // the MK66 watchdog is not modelled (a stalled host main loop is a hung process): this only counts what the firmware asks for
+    void setPowerOffGuard(bool armed) { g_guardArmed = armed; }   // no override: also builds against a tree without the guard (bug mode)
+    void kickPowerOffGuard() { if (g_guardArmed) g_guardKicks++; }
     void resetMCU() override { g_resetRequested = true; }
     void runBootloader(char* name) override { hostp::simBootloaderHandoff(name); }
     void setPowerButtonCallback(PowerButtonCallback f) override { g_powerButtonCallback = f; }

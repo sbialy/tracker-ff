@@ -8,6 +8,9 @@
 //   UISHOT_FAIL_LOGMIN=N                       log from N bytes instead of 256 (the editor list strings are a few hundred bytes)
 //   UISHOT_FAIL_REPORT=PATH                    append one line per injected failure
 // With none of them set this is a plain forwarding allocator.
+// Allocations of the simulator itself (the FT812 model, eve_model.cpp) are never failed: they hold a HostFaultSuspend while they
+// run, so an injected null lands in firmware code only (the MK66 has no such model, a null there would be a host artefact).
+#include "eve_model.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +30,7 @@ struct Rule
     const char *arm = nullptr, *logPath = nullptr, *reportPath = nullptr;
 };
 Rule g;
+int g_suspend;
 
 NOOPT bool armed()
 {
@@ -66,7 +70,7 @@ NOOPT void* alloc(size_t n)
 {
     if (!g.init)
         setup();
-    if (g.logPath && n >= g.logMin && armed())
+    if (g.logPath && n >= g.logMin && g_suspend == 0 && armed())
     {
         if (FILE* f = fopen(g.logPath, "a"))
         {
@@ -74,7 +78,7 @@ NOOPT void* alloc(size_t n)
             fclose(f);
         }
     }
-    if (g.on && n == g.size && armed())
+    if (g.on && n == g.size && g_suspend == 0 && armed())
     {
         g.seen++;
         if (g.seen > g.skip && (g.count == 0 || g.failed < g.count))
@@ -92,6 +96,9 @@ NOOPT void* alloc(size_t n)
     return malloc(n ? n : 1);
 }
 } // namespace
+
+HostFaultSuspend::HostFaultSuspend() { g_suspend++; }
+HostFaultSuspend::~HostFaultSuspend() { g_suspend--; }
 
 NOOPT void* operator new(size_t n) { return alloc(n); }
 NOOPT void* operator new[](size_t n) { return alloc(n); }

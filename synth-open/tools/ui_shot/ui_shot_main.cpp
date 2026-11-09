@@ -145,9 +145,10 @@ bool command(const std::string& line)
         int ms = 40;
         if (a == "hold") is >> ms;
         run(uint32_t(ms));
-        printf("power %s: off %d after %d ms, sleep state %d, fm status %d op %d, progress %d\n", a.c_str(), hostp::g_powerOffCalls,
-               hostp::g_powerOffCalls ? int(hostp::g_powerOffAtMs - t0) : -1, int(lowPower.getLowPowerState()), int(newFileManager.getStatus()),
-               int(newFileManager.getCurrentOperation()), int(lowPower.getShutdownProgress()));
+        printf("power %s: off %d after %d ms, sleep state %d, fm status %d op %d, progress %d, guard armed %d kicks %d\n", a.c_str(),
+               hostp::g_powerOffCalls, hostp::g_powerOffCalls ? int(hostp::g_powerOffAtMs - t0) : -1, int(lowPower.getLowPowerState()),
+               int(newFileManager.getStatus()), int(newFileManager.getCurrentOperation()), int(lowPower.getShutdownProgress()),
+               hostp::g_guardArmed, hostp::g_guardKicks);
         return true;
     }
     if (c == "fm") { printf("fm status %d op %d\n", int(newFileManager.getStatus()), int(newFileManager.getCurrentOperation())); return true; }

@@ -25,6 +25,7 @@ extern bool g_resetRequested;        // Platform::resetMCU was called
 extern Platform::PowerButtonCallback g_powerButtonCallback;
 extern int g_powerOffCalls;          // setPowerMode(false) calls
 extern uint32_t g_powerOffAtMs;      // virtual time of the first one
+extern int g_guardArmed, g_guardKicks; // power-off stall guard (Platform::setPowerOffGuard): armed now, kicks while armed
 const std::string& sdRoot();
 const char* simBuildId();
 void simBootloaderHandoff(const char* name);   // Platform::runBootloader
