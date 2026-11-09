@@ -38,6 +38,7 @@ static inline void * newNoteNull(void * p, size_t size)
   __asm__ volatile("mov %0, sp" : "=r" (sp));
   if (p == nullptr) {
     DEVHOOK_TRACE(0x4F4F4D, size, mallinfo().fordblks, sp);
+    __builtin_trap();   // DIAGNOSTIC: a null from malloc becomes a fault inside operator new, the record names it
   } else if ((unsigned)p < 0x1FFF0000u || (unsigned)p + size > 0x20030000u) {
     DEVHOOK_TRACE(0x4F4F52, (unsigned)p, size, sp);   // a block outside the RAM
   }
