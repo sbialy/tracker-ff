@@ -20,6 +20,11 @@ void setSdRoot(const std::string& dir);
 // defaults for a plain build: no key is held by the firmware's Keys class, the build id is "uishot", the bootloader hand-off does nothing.
 bool keyPressed(bool pad, int idx);   // the firmware's Keys class holds the state of the buttons and pads
 extern bool g_resetRequested;        // Platform::resetMCU was called
+// The power button: what the firmware registered with setPowerButtonCallback (Tracker.cpp onPowerButtonChange), and the last
+// setPowerMode the core asked for. On the original setPowerMode(false) is the last step of the shutdown (PlatformImpl.cpp: Snooze).
+extern Platform::PowerButtonCallback g_powerButtonCallback;
+extern int g_powerOffCalls;          // setPowerMode(false) calls
+extern uint32_t g_powerOffAtMs;      // virtual time of the first one
 const std::string& sdRoot();
 const char* simBuildId();
 void simBootloaderHandoff(const char* name);   // Platform::runBootloader

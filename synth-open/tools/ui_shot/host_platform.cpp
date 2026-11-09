@@ -14,6 +14,9 @@ namespace hostp
 {
 uint32_t g_nowMs = 1000;
 bool g_resetRequested;
+Platform::PowerButtonCallback g_powerButtonCallback;
+int g_powerOffCalls;
+uint32_t g_powerOffAtMs;
 static std::string s_root = ".";
 static bool g_held[64];
 void advance(uint32_t ms) { g_nowMs += ms; }
@@ -404,10 +407,13 @@ class HFileSystem : public FileSystem
 class HPlatform : public Platform
 {
   public:
-    void setPowerMode(bool) override {}
+    void setPowerMode(bool on) override
+    {
+        if (!on && g_powerOffCalls++ == 0) g_powerOffAtMs = g_nowMs;
+    }
     void resetMCU() override { g_resetRequested = true; }
     void runBootloader(char* name) override { hostp::simBootloaderHandoff(name); }
-    void setPowerButtonCallback(PowerButtonCallback) override {}
+    void setPowerButtonCallback(PowerButtonCallback f) override { g_powerButtonCallback = f; }
     bool getPowerButtonState() override { return true; }
     bool readForceStartUp() override { return true; }
     Sgtl5000* getCodecAudio() override { return &codec; }

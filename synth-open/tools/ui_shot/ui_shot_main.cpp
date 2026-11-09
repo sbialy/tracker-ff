@@ -14,6 +14,12 @@
 //   pad N              press pad N (0 based), release
 //   shot FILE.png      write the screen
 //   dump               print the model's statistics
+//   power press|release        the power button (the callback the firmware registered, Tracker.cpp onPowerButtonChange)
+//   power hold MS              press, run MS, print whether the shutdown reached setPowerMode(false), then keep holding
+//   fm                         print the file manager status and operation
+//   fmset N                    set the file manager status to N (fileManager.h fileManagerStatus), an injection
+//   touch PATH / rm PATH       create or remove a file (absolute path), e.g. the UISHOT_FAIL_ARM file of host_fault.cpp
+//   chmod MODE PATH            chmod a path of the SD folder (octal MODE), e.g. 555 Workspace makes every Workspace save fail
 // Buttons: F1..F8 Params Performance File Config Master SampleLoad SamplePlay SampleEdit SampleRec Song Note Instr Vol Fx Pattern
 //          Play Copy Insert Up Delete Rec Shift Left Down Right
 #include "host_platform.h"
@@ -22,6 +28,8 @@
 #include "core/interface.h"
 #include "display.h"
 #include "mtStructs.h"
+#include "fileManager.h"
+#include "mtSleep.h"
 
 // The sample playback screen reads editorInstrument->playMode in initDisplayControls() before start() has set the pointer. On the
 // Cortex-M a null pointer reads the flash at address 0, on the Mac it is a fault. The host seeds the pointer first, which needs the
@@ -126,6 +134,34 @@ bool command(const std::string& line)
                mtInterface.isInstrumentParamsScreenActive(), mtInterface.isSamplePlayerScreenActive(), mtInterface.isPerformanceModeScreenActive());
         return true;
     }
+    if (c == "power")
+    {
+        is >> a;
+        if (!hostp::g_powerButtonCallback) { fprintf(stderr, "ui_shot: no power button callback registered\n"); return false; }
+        if (a == "press" || a == "hold") hostp::g_powerButtonCallback(1);
+        else if (a == "release") hostp::g_powerButtonCallback(0);
+        else { fprintf(stderr, "ui_shot: power press|release|hold MS\n"); return false; }
+        const uint32_t t0 = hostp::g_nowMs;
+        int ms = 40;
+        if (a == "hold") is >> ms;
+        run(uint32_t(ms));
+        printf("power %s: off %d after %d ms, sleep state %d, fm status %d op %d, progress %d\n", a.c_str(), hostp::g_powerOffCalls,
+               hostp::g_powerOffCalls ? int(hostp::g_powerOffAtMs - t0) : -1, int(lowPower.getLowPowerState()), int(newFileManager.getStatus()),
+               int(newFileManager.getCurrentOperation()), int(lowPower.getShutdownProgress()));
+        return true;
+    }
+    if (c == "fm") { printf("fm status %d op %d\n", int(newFileManager.getStatus()), int(newFileManager.getCurrentOperation())); return true; }
+    if (c == "fmset") { int n = 0; is >> n; newFileManager.setStatus(uint8_t(n)); return true; }
+    if (c == "chmod")
+    {
+        std::string mode;
+        is >> mode >> a;
+        const std::string path = g_sdRootForStat + "/" + a;
+        if (chmod(path.c_str(), mode_t(strtoul(mode.c_str(), nullptr, 8))) != 0) { fprintf(stderr, "ui_shot: chmod %s failed\n", path.c_str()); return false; }
+        return true;
+    }
+    if (c == "touch") { is >> a; if (FILE* f = fopen(a.c_str(), "a")) { fclose(f); return true; } fprintf(stderr, "ui_shot: cannot create %s\n", a.c_str()); return false; }
+    if (c == "rm") { is >> a; unlink(a.c_str()); return true; }
     if (c == "dump")
     {
         const auto& s = hostp::eve().stats;
