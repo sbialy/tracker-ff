@@ -28,6 +28,7 @@ int main()
     a.free(p);
     CHECK(a.freeBytes() == total);                 // merged back into one block
     CHECK(!a.owns(&total));
+    CHECK(a.usedBytes() == 0 && a.peakBytes() == total - 8 && a.largestFree() == total);
     // random stress: contents survive, blocks never overlap, the arena returns to one block
     struct Blk { uint8_t* p; size_t n; uint8_t tag; };
     std::vector<Blk> live;

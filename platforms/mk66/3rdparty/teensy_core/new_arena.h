@@ -42,6 +42,11 @@ class NewArena
                 h->size = uint32_t(n);
             }
             h->used = 1;
+            used_ += h->size;
+            if (used_ > peak_)
+            {
+                peak_ = used_;
+            }
             return reinterpret_cast<uint8_t*>(h) + sizeof(Hdr);
         }
         return nullptr;
@@ -51,6 +56,7 @@ class NewArena
     {
         Hdr* h = reinterpret_cast<Hdr*>(static_cast<uint8_t*>(p) - sizeof(Hdr));
         h->used = 0;
+        used_ -= h->size;
         for (Hdr* a = reinterpret_cast<Hdr*>(base_); reinterpret_cast<uint8_t*>(a) < end_;)
         {
             Hdr* b = next(a);
@@ -61,6 +67,21 @@ class NewArena
             }
             a = b;
         }
+    }
+
+    size_t usedBytes() const { return used_; }   // payload bytes of the live blocks
+    size_t peakBytes() const { return peak_; }   // the most usedBytes() has been
+    size_t largestFree() const
+    {
+        size_t m = 0;
+        for (const Hdr* h = reinterpret_cast<const Hdr*>(base_); reinterpret_cast<const uint8_t*>(h) < end_; h = next(h))
+        {
+            if (!h->used && h->size > m)
+            {
+                m = h->size;
+            }
+        }
+        return m;
     }
 
     size_t freeBytes() const
@@ -83,6 +104,8 @@ class NewArena
     static const Hdr* next(const Hdr* h) { return reinterpret_cast<const Hdr*>(reinterpret_cast<const uint8_t*>(h) + sizeof(Hdr) + h->size); }
     uint8_t* base_ = nullptr;
     uint8_t* end_ = nullptr;
+    size_t used_ = 0;
+    size_t peak_ = 0;
 };
 
 #endif /* NEW_ARENA_H */

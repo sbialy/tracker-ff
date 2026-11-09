@@ -25,7 +25,7 @@
 
 #include "new.h"
 
-#ifdef FW_SDRAM_FILE_POOLS
+#if defined(FW_SDRAM_FILE_POOLS) && !defined(FW_NO_NEW_ARENA)
 // SYNTH_OPEN builds (platforms/mk66/makefile). Blocks of 1 KB and more come from a 48 KB arena in the SDRAM, the internal heap (about 52 KB
 // in all) keeps the small ones. The heap is too small for the engine metadata: a patch holds a vector of up to 84 parameters of 56 B
 // (4,704 B in one piece), a part change builds two of them next to the old one, and the free space of the heap is in pieces by then. An
@@ -38,6 +38,7 @@ static constexpr size_t kArenaBytes = 49152;
 static constexpr size_t kBigBytes = 1024;
 __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) static uint8_t s_newArenaBytes[kArenaBytes];
 static NewArena s_newArena;   // trivially constructible: no static constructor touches the SDRAM
+static uint32_t s_newBigFallbacks, s_newSmallFallbacks, s_newAllocs, s_newMaxRequest;
 
 // After the SDRAM is up (hardware.cpp). Until then everything comes from the heap.
 void operatorNewArenaInit()
@@ -68,17 +69,42 @@ static void * arenaAlloc(size_t size)
   return p;
 }
 
+// Console `arena` command (poly-devtools): size, in use, peak, big blocks served, big blocks that found no room (went to the heap), small
+// blocks the heap could not give (went to the arena), the largest request, the largest free piece, free bytes
+void operatorNewArenaStats(uint32_t * o)
+{
+  o[0] = kArenaBytes;
+  o[1] = s_newArena.usedBytes();
+  o[2] = s_newArena.peakBytes();
+  o[3] = s_newAllocs;
+  o[4] = s_newBigFallbacks;
+  o[5] = s_newSmallFallbacks;
+  o[6] = s_newMaxRequest;
+  o[7] = s_newArena.largestFree();
+  o[8] = s_newArena.freeBytes();
+}
+
 static void * newBlock(size_t size)
 {
   void * p = nullptr;
+  s_newAllocs++;
+  if (size > s_newMaxRequest) {
+    s_newMaxRequest = size;
+  }
   if (size >= kBigBytes) {
     p = arenaAlloc(size);
+    if (p == nullptr) {
+      s_newBigFallbacks++;
+    }
   }
   if (p == nullptr) {
     p = malloc(size);
   }
   if (p == nullptr) {
     p = arenaAlloc(size);   // the heap is out: even a small block may use the arena
+    if (p != nullptr) {
+      s_newSmallFallbacks++;
+    }
   }
   if (p == nullptr) {
     __builtin_trap();
@@ -97,6 +123,11 @@ static void deleteBlock(void * ptr)
   free(ptr);
 }
 #else
+#ifdef FW_SDRAM_FILE_POOLS
+// FW_NO_NEW_ARENA (an experiment: the release without the arena): the entry points stay, the arena does nothing
+void operatorNewArenaInit() {}
+void operatorNewArenaStats(uint32_t * o) { for (int i = 0; i < 9; i++) o[i] = 0; }
+#endif
 static inline void * newBlock(size_t size) { return malloc(size); }
 static inline void deleteBlock(void * ptr) { free(ptr); }
 #endif
