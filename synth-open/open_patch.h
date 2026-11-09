@@ -32,6 +32,8 @@ class OpenPatch final : public Patch
 {
   public:
     OpenPatch(int typeId, const InstrumentType* type);
+    OpenPatch(const OpenPatch&) = delete; // `cfg` points into the object
+    OpenPatch& operator=(const OpenPatch&) = delete;
 
     // The object (about 3 KB) lives in a small pool in the SDRAM (open_cold.cpp), not on the heap: on the device a short heap
     // failed the allocation and the project load faulted. Main thread only. A pool that is full falls back to the heap.
@@ -60,30 +62,37 @@ class OpenPatch final : public Patch
     // out * range to the param, every hit param is clamped once. nullptr: no automation (the editor's final value).
     void effective(float* out, const float* modOut = nullptr) const;
 
-    // Synth automation (open_mod.h). The slots belong to the patch (its .patch field 64), never to a Patch FX row: the FX swaps values
-    // only. A setter needs audio interrupts disabled by the caller. modSerial changes on every import, so the instrument restarts its
-    // modulators when another file comes in.
+    // Synth automation (open_mod.h). The slots belong to the patch (its .patch field 64) and the editor shows and edits the open slot's
+    // (modSlot, metadata macros). What the render path reads is liveCfg(): the open slot's own compact copy (ownCfg) or, while the Patch FX
+    // has another slot of the bank on, that slot's row (adoptCfg swaps a plain pointer, nothing is copied or allocated, so it can run in
+    // the audio callback). A setter needs audio interrupts disabled by the caller. modSerial changes on every import (the instrument
+    // restarts its modulators: another file came in), cfgSerial on every swap of the live config (the instrument keeps the modulators
+    // whose slot has the same type and starts the others, Instrument::modSwitch).
     const ModSlot& modSlot(int s) const { return mod[s]; }
-    void setModSlot(int s, const ModSlot& v)
-    {
-        mod[s] = v;
-        modOn = modAnyOn(mod);
-    }
+    void setModSlot(int s, const ModSlot& v);
     uint8_t modSerial() const { return modSer; }
-    bool modActive() const { return modOn; }
-
-    // The macros and automation slots as the render path reads them now (the stress test compares them with the slot file, cold).
-    void liveCfg(SlotCfg& out) const;
+    uint8_t cfgSerial() const { return cfgSer; }
+    const SlotCfg& live() const { return *cfg; }                    // render path
+    bool modActive() const { return cfg->modOn != 0; }              // render path
+    void liveCfg(SlotCfg& out) const { out = *cfg; }                // the stress test compares it with the slot file
+    const SlotCfg* ownCfg() const { return &own; }
+    // The live config becomes `next` (a row of the Patch FX bank or ownCfg()). A macro whose bipolar flag differs goes to the resting
+    // position of the new one (centre / zero), as an import does. Audio callback or audio interrupts disabled.
+    void adoptCfg(const SlotCfg* next);
+    void useOwnCfg() { adoptCfg(&own); }
+    // The config a .patch file gives this patch, exactly what importData would make of it (cold, no allocation). `out` is overwritten.
+    void cfgFromData(const PatchData& d, SlotCfg& out) const;
 
     // Gain slope of Macro 7 (velocity) on the Volume param: gain = vol * (1 + k * (vel - 1))
     float velocityAmount() const
     {
         float k = 0.0f;
-        for (const auto& mod : metadata.macros[kVelocityMacro].modifiers)
+        const MacroRun& v = cfg->macro[kVelocityMacro];
+        for (int t = 0; def && t < v.count; t++)
         {
-            if (def && mod.paramId.has_value() && *mod.paramId == def->volumeParam)
+            if (v.param[t] == def->volumeParam)
             {
-                k += mod.amount;
+                k += v.amount[t];
             }
         }
         return k;
@@ -123,7 +132,9 @@ class OpenPatch final : public Patch
     void setSequencerConfig(const Sequencer::Config&) override {}
 
   private:
-    void buildCfg(SlotCfg& out) const; // from the metadata macros and the slots (cold)
+    void buildCfg(SlotCfg& out) const; // own: from the metadata macros and the slots (cold)
+    void rebuildOwn();                 // after every change of the macros or the slots, under the caller's audio lock; the live config follows when it is the own
+    ModSlot resolveMod(const ModSlot& in) const; // range checks and destination lookup of a slot read from a file (cold)
     bool inRange(int id) const { return id >= 0 && id < count; }
     bool validMacro(int id) const { return id >= 0 && id < int(kMacroCount); }
     Metadata::Macro::ParamModifier* modifier(int macroId, int idx);
@@ -136,7 +147,9 @@ class OpenPatch final : public Patch
     uint8_t macroCC[kMacroCount] = {};
     ModSlot mod[kModSlots];
     uint8_t modSer = 0;
-    bool modOn = false;                  // some slot is not Off (the render path skips the automation when not)
+    uint8_t cfgSer = 0;
+    SlotCfg own;                         // macros and slots of this patch in the form the render path reads (rebuildOwn)
+    const SlotCfg* cfg = &own;           // the live one: own, or a row of the Patch FX bank
     PatchExtra extra;                    // raw .patch fields kept for the round trip
 };
 

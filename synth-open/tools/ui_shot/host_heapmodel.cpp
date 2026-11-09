@@ -260,8 +260,9 @@ bool hostCaller(Model& m, const char** siteName)
         if (!e)
             continue;
         if (!strncmp(e->name, "_ZN12_GLOBAL__N_110hostCaller", 29) || !strncmp(e->name, "_ZN12_GLOBAL__N_18allocate", 26) || !strncmp(e->name, "_Znwm", 5) ||
-            !strncmp(e->name, "_Znam", 5) || !strncmp(e->name, "_ZnwmRKSt9nothrow_t", 19) || !strncmp(e->name, "_ZnamRKSt9nothrow_t", 19))
-            continue;   // this file
+            !strncmp(e->name, "_Znam", 5) || !strncmp(e->name, "_ZnwmRKSt9nothrow_t", 19) || !strncmp(e->name, "_ZnamRKSt9nothrow_t", 19) ||
+            !strncmp(e->name, "_Z16hostHeapAllocatem", 21) || !strncmp(e->name, "_ZN12_GLOBAL__N_15allocEm", 25))
+            continue;   // this file and the fault injection allocator in front of it (host_fault.cpp)
         host = e->host;
         name = e->name;
         break;
