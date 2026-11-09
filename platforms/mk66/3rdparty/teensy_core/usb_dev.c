@@ -39,6 +39,7 @@
 // clang-format off
 
 #include "usb_dev.h"
+#include "devhooks.h"
 #if F_CPU >= 20000000 && defined(NUM_ENDPOINTS)
 
 #include "kinetis.h"
@@ -608,6 +609,7 @@ static void usb_control(uint32_t stat)
 			//serial_phex32(usb_cdc_line_coding[0]);
 			//serial_print("\n");
 			if (usb_cdc_line_coding[0] == 134) usb_reboot_timer = 15;
+			DEVHOOK_USB_LINE_CODING(usb_cdc_line_coding[0]);
 			endpoint0_transmit(NULL, 0);
 		}
 #endif
@@ -875,6 +877,7 @@ void usb_isr(void)
 
 	if ((status & USB_ISTAT_SOFTOK /* 04 */ )) {
 		if (usb_configuration) {
+			DEVHOOK_USB_SOF();
 			t = usb_reboot_timer;
 			if (t) {
 				usb_reboot_timer = --t;

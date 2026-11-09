@@ -193,12 +193,14 @@ void fillFromDef(InstrumentType* type, const EngineDef& def)
             p.editCurve = static_cast<Meta::Param::Curve>(d.curve);
             p.valueFormatter = [&d](const Patch&, float v) { return formatValue(d, v); };
         }
+        metadata.layoutFlat.sections.reserve(def.sectionCount); // exact sizes: no doubling steps that leave holes in the heap
         for (int s = 0; s < def.sectionCount; s++)
         {
             const auto& sd = def.sections[s];
             Meta::EditorLayout::EditorSection section;
             section.name = sd.name;
             section.shortName = sd.shortName;
+            section.elements.reserve(sd.count);
             for (int e = 0; e < sd.count; e++)
             {
                 section.elements.push_back(

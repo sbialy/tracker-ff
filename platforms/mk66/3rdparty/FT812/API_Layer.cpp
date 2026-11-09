@@ -37,6 +37,7 @@ RE-CERTIFICATION AS A RESULT OF MAKING THESE CHANGES.
 */
 
 #include "FT812.h"
+#include "devhooks.h"
 #include <stdint.h> // for Uint8/16/32 and Int8/16/32 data types
 #include <string.h>
 
@@ -316,9 +317,11 @@ void API_LIB_WriteDataToCMD(const uint8_t* ImgData, uint32_t TotalDataSize)
         }
 
         Freespace = 0; // Wait until there is space
+        DEVHOOK_SPIN_BEGIN(spins);
         while (Freespace < MaxChunkSize)
         {
             Freespace = EVE_CheckFreeSpace(*cmdOffset);
+            DEVHOOK_SPIN_STEP(spins, DEVSITE_FT812_WAIT_SPACE, { usbtest_coproc_reset(); return; });
         }
 
         CurrentChunk = 0;

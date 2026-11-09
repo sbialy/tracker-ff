@@ -40,6 +40,7 @@ RE-CERTIFICATION AS A RESULT OF MAKING THESE CHANGES.
 */
 
 #include "FT812.h"
+#include "devhooks.h"
 
 #include <stdint.h> // for Uint8/16/32 and Int8/16/32 data types
 #include <string.h>
@@ -316,11 +317,13 @@ extern uint16_t* cmdOffset;
 uint8_t EVE_WaitCmdFifoEmpty(void)
 {
     uint32_t ReadPointer, WritePointer;
+    DEVHOOK_SPIN_BEGIN(spins);
 
     do
     {
         ReadPointer = EVE_MemRead32(REG_CMD_READ);   // Read the graphics processor read pointer
         WritePointer = EVE_MemRead32(REG_CMD_WRITE); // Read the graphics processor write pointer
+        DEVHOOK_SPIN_STEP(spins, DEVSITE_FT812_WAIT_EMPTY, { usbtest_coproc_reset(); return 0xFF; });
     } while ((WritePointer != ReadPointer) &&
              (ReadPointer != 0xFFF)); // Wait until the two registers match
 
