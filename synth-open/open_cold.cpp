@@ -556,7 +556,7 @@ void patchBankExportLocked(const OpenPatch& p, PatchData& out);            // lo
 void patchBankValuesReplaced(const OpenPatch& p);                          // locked: an import replaced the values, no shadow is left
 void patchBankPublish(int part, const OpenPatch& p, const PatchData& saved); // takes the lock: the row of the open slot is what was saved
 
-// The pool of OpenPatch objects (3,036 B each on the MK66), in the SDRAM. A part holds one live patch, a new one is made before the old is
+// The pool of OpenPatch objects (3,520 B a slot on the MK66), in the SDRAM. A part holds one live patch, a new one is made before the old is
 // freed (engine change, init) and the Synth keeps a few spare references, so 5 is enough. Main thread only, like every create and free of a
 // patch. A full pool falls back to the heap, as before.
 namespace
@@ -1382,7 +1382,7 @@ std::unique_ptr<PatchStore> makePatchStore(const InstrumentTypeRegistry& registr
 }
 
 // ------------------------------------------------------------- patch slots and bank (Patch step FX)
-// Per part: the values (floats only, no macros) of every slot file of the part's engine. Built in the main thread, applied by
+// Per part: the values (floats) and the macros and automation (SlotCfg) of every slot file of the part's engine. Built in the main thread, applied by
 // a copy in the audio callback. The audio callback reads gLive (a plain pointer, one aligned word) and gBank, and the main
 // thread changes gBank only with the audio interrupt disabled.
 
