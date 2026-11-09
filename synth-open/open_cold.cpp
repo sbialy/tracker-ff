@@ -899,6 +899,39 @@ void OpenPatch::importData(const PatchData& d)
     extra = d.extra;
 }
 
+// The macros (the targets that name a parameter of this engine, in order, as effective() walks them) and the slots of the patch in the form the
+// render path reads. Targets beyond kMacroTargets cannot exist in a file but the editor may add more: the first kMacroTargets count.
+void OpenPatch::buildCfg(SlotCfg& out) const
+{
+    std::memset(&out, 0, sizeof(out));
+    for (int m = 0; m < kPatchMacros && m < int(metadata.macros.size()); m++)
+    {
+        const auto& src = metadata.macros[m];
+        MacroRun& dst = out.macro[m];
+        dst.bipolar = src.bipolar ? 1 : 0;
+        for (const auto& mod : src.modifiers)
+        {
+            if (mod.paramId.has_value() && *mod.paramId >= 0 && *mod.paramId < count && dst.count < kMacroTargets)
+            {
+                dst.param[dst.count] = int8_t(*mod.paramId);
+                dst.amount[dst.count] = mod.amount;
+                dst.count++;
+            }
+        }
+    }
+    for (int s = 0; s < kModSlots; s++)
+    {
+        const ModSlot& c = mod[s];
+        out.mod[s] = { c.type, c.kind, c.shape, c.speed, c.dest, c.amount, c.sustain, c.attack, c.decay, c.release };
+    }
+    out.modOn = modOn ? 1 : 0;
+}
+
+void OpenPatch::liveCfg(SlotCfg& out) const
+{
+    buildCfg(out);
+}
+
 // ------------------------------------------------------------- automation (editor access)
 
 const ModSlot& modSlotOf(const Patch& p, int s)

@@ -72,6 +72,9 @@ class OpenPatch final : public Patch
     uint8_t modSerial() const { return modSer; }
     bool modActive() const { return modOn; }
 
+    // The macros and automation slots as the render path reads them now (the stress test compares them with the slot file, cold).
+    void liveCfg(SlotCfg& out) const;
+
     // Gain slope of Macro 7 (velocity) on the Volume param: gain = vol * (1 + k * (vel - 1))
     float velocityAmount() const
     {
@@ -120,6 +123,7 @@ class OpenPatch final : public Patch
     void setSequencerConfig(const Sequencer::Config&) override {}
 
   private:
+    void buildCfg(SlotCfg& out) const; // from the metadata macros and the slots (cold)
     bool inRange(int id) const { return id >= 0 && id < count; }
     bool validMacro(int id) const { return id >= 0 && id < int(kMacroCount); }
     Metadata::Macro::ParamModifier* modifier(int macroId, int idx);
