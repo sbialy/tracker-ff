@@ -19,7 +19,7 @@
 //
 // Plain C and C++ (platforms/mk66/3rdparty/teensy_core/mk20dx128.c includes it).
 
-#define DEVHOOKS_API 3
+#define DEVHOOKS_API 4
 
 #define DEVHOOK_STR_(x) #x
 #define DEVHOOK_STR(x) DEVHOOK_STR_(x)
@@ -68,6 +68,8 @@
 // (platforms/mk66/3rdparty/FT812/EVE_Layer.cpp and API_Layer.cpp) and the display's immediate update (core/libs/NewDisplay/display.cpp).
 #define DEVHOOK_SITE(id, arg)
 #define DEVHOOK_SPIN_BEGIN(n)
+// Hook set 4: four words into a ring in RAM that survives the fault reset (console `trace`), for what happens right before a fault
+#define DEVHOOK_TRACE(tag, a, b, c)
 #define DEVHOOK_SPIN_STEP(n, site, onExpire)
 
 // platforms/mk66/3rdparty/teensy_core/usb_dev.c (hook set 3): a console image resets the unit from inside the USB interrupt, for a main

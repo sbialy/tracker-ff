@@ -5,6 +5,7 @@
 // Written only from the open headers in synth/include/PolySynth and OpenTracker's Apache-2.0
 // engine interface (synth-open/ot). Nothing here is derived from libPolySynth/libPolyDSP.
 #include "open_patch.h"
+#include "devhooks.h"
 #include "open_load.h"
 #include "open_fileops.h"
 
@@ -180,11 +181,18 @@ void fillFromDef(InstrumentType* type, const EngineDef& def)
         metadata.instrumentTypeId = def.typeId;
         metadata.outputChannels = Meta::OutputChannels::kMono;
         metadata.maxVoices = def.maxVoices;
+        DEVHOOK_TRACE(0x4D31, reinterpret_cast<uintptr_t>(&def), def.typeId, def.paramCount);
+        DEVHOOK_TRACE(0x4D32, reinterpret_cast<uintptr_t>(def.params), metadata.params.size(), metadata.params.capacity());
         metadata.params.resize(def.paramCount);
+        DEVHOOK_TRACE(0x4D33, reinterpret_cast<uintptr_t>(metadata.params.data()), metadata.params.size(), metadata.params.capacity());
         for (int i = 0; i < def.paramCount; i++)
         {
             const ParamDef& d = def.params[i];
             auto& p = metadata.params[i];
+            if (i == 0 || i == def.paramCount - 1)
+            {
+                DEVHOOK_TRACE(0x4D34, i, reinterpret_cast<uintptr_t>(d.name), reinterpret_cast<uintptr_t>(&p));
+            }
             p.displayName = d.name;
             p.defaultValue = d.def;
             p.minValue = d.min;
