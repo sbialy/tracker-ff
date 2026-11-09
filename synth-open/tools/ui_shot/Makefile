@@ -11,6 +11,8 @@ include $(ROOT)/devtools.mk
 SAN     ?=
 # STACKMODEL=1: core/ and synth-open/ code calls the hooks of host_stackmodel.cpp, a virtual ARM stack (UISHOT_STACK_FRAMES=frame table)
 STACKMODEL ?=
+# MCU_NULL=1: the display controls (core/libs/NewDisplay) read a null text as the MCU does (address 0 is readable flash there), host_mcunull.h
+MCU_NULL ?=
 OUT     ?= $(ROOT)/build/ui-shot$(if $(filter 1,$(CONSOLE)),-console)$(if $(SAN),-san)$(if $(STACKMODEL),-stack)
 OBJ     := $(OUT)/obj
 GEN     := $(OUT)/gen
@@ -76,6 +78,9 @@ CXXFLAGS := $(SANFLAGS) -std=gnu++20 $(OPT) -g -fno-rtti -fno-exceptions -includ
 CFLAGS   := $(SANFLAGS) $(OPT) -g -fno-strict-aliasing $(WARN) $(INC) $(DEFS)
 
 all: $(OUT)/ui_shot
+
+$(OBJ)/core/libs/NewDisplay/%.o: CXXFLAGS += $(if $(MCU_NULL),-include $(HERE)/host_mcunull.h)
+$(OBJ)/gen/textBox.cpp.o: CXXFLAGS += $(if $(MCU_NULL),-include $(HERE)/host_mcunull.h)   # overlay copy of a NewDisplay control
 
 $(OUT)/ui_shot: $(OBJS)
 	$(CXX) -o $@ $(OBJS) $(LDFLAGS) -lz

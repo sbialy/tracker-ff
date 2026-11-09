@@ -69,6 +69,8 @@ void EveModel::WriteData32(uint32_t w) { in_.push_back(w); }
 uint8_t EveModel::sendString(const char* s, uint32_t length)
 {
     // like the firmware's API_SendString: a length past the end of the string is clamped to it
+    // A null string is read from address 0 on the MCU (readable flash, host_mcunull.h), here it is the empty string
+    if (!s) s = "";
     const uint32_t have = uint32_t(strlen(s));
     if (!length || length > have) length = have;
     const uint32_t padded = (length + 1 + 3) & ~3u;
