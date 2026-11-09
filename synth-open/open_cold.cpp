@@ -593,7 +593,11 @@ void* OpenPatch::operator new(size_t n)
 
 void OpenPatch::operator delete(void* p) noexcept
 {
-    DEVHOOK_TRACE(0x4F44, reinterpret_cast<uintptr_t>(p), 0, 0);
+    {
+        uint32_t ipsr;
+        __asm volatile("mrs %0, ipsr" : "=r"(ipsr));
+        DEVHOOK_TRACE(0x4F44, reinterpret_cast<uintptr_t>(p), ipsr, 0);   // ipsr != 0: freed inside an interrupt
+    }
     const auto* b = static_cast<const unsigned char*>(p);
     if (b >= reinterpret_cast<const unsigned char*>(gPatchPool) && b < reinterpret_cast<const unsigned char*>(gPatchPool + kPatchPoolSize))
     {
