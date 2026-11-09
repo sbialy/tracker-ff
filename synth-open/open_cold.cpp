@@ -594,7 +594,9 @@ void* OpenPatch::operator new(size_t n)
             }
         }
     }
-    return ::operator new(n);
+    void* const heap = ::operator new(n);
+    DEVHOOK_TRACE(0x4F4E, n, reinterpret_cast<uintptr_t>(heap), 0);   // the pool is full: a 3 KB patch from the heap
+    return heap;
 }
 
 void OpenPatch::operator delete(void* p) noexcept
@@ -611,6 +613,11 @@ void OpenPatch::operator delete(void* p) noexcept
 OpenPatch::OpenPatch(int typeId, const InstrumentType* type)
   : def(open::engineDefForType(typeId))
 {
+    {
+        int used = 0;
+        for (int i = 0; i < kPatchPoolSize; i++) used += gPatchPoolUsed[i] ? 1 : 0;
+        DEVHOOK_TRACE(0x4F50, reinterpret_cast<uintptr_t>(this), typeId, used);
+    }
     metadata.instrumentTypeId = typeId;
     if (type && type->createMetadata)
     {
