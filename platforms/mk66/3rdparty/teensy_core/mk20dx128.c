@@ -1173,7 +1173,6 @@ void * _sbrk(int incr)
 	if (incr != 0) {
 		__asm__ volatile("mov %0, sp" : "=r" (stack) ::);
 		if (prev + incr >= stack - STACK_MARGIN) {
-			DEVHOOK_TRACE(0x534252, incr, prev, stack);   // sbrk refused: the heap met the stack margin
 			errno = ENOMEM;
 			return (void *)-1;
 		}

@@ -5,8 +5,6 @@
 // Written only from the open headers in synth/include/PolySynth and OpenTracker's Apache-2.0
 // engine interface (synth-open/ot). Nothing here is derived from libPolySynth/libPolyDSP.
 #include "open_patch.h"
-#include "devhooks.h"
-#include <malloc.h>
 #include "open_load.h"
 #include "open_fileops.h"
 
@@ -182,8 +180,6 @@ void fillFromDef(InstrumentType* type, const EngineDef& def)
         metadata.instrumentTypeId = def.typeId;
         metadata.outputChannels = Meta::OutputChannels::kMono;
         metadata.maxVoices = def.maxVoices;
-        DEVHOOK_TRACE(0x4D31, reinterpret_cast<uintptr_t>(&def), def.typeId, def.paramCount);
-        DEVHOOK_TRACE(0x4D30, reinterpret_cast<uintptr_t>(&metadata), reinterpret_cast<uintptr_t>(metadata.params.data()), metadata.params.size());
         metadata.params.resize(def.paramCount);
         for (int i = 0; i < def.paramCount; i++)
         {
@@ -197,7 +193,7 @@ void fillFromDef(InstrumentType* type, const EngineDef& def)
             p.editCurve = static_cast<Meta::Param::Curve>(d.curve);
             p.valueFormatter = [&d](const Patch&, float v) { return formatValue(d, v); };
         }
-        metadata.layoutFlat.sections.reserve(def.sectionCount);
+        metadata.layoutFlat.sections.reserve(def.sectionCount); // exact sizes: no doubling steps that leave holes in the heap
         for (int s = 0; s < def.sectionCount; s++)
         {
             const auto& sd = def.sections[s];
@@ -212,7 +208,6 @@ void fillFromDef(InstrumentType* type, const EngineDef& def)
             }
             metadata.layoutFlat.sections.push_back(std::move(section));
         }
-        DEVHOOK_TRACE(0x4D37, def.typeId, metadata.layoutFlat.sections.size(), 0);
         metadata.initDefaultMacros = [&def](std::vector<Meta::Macro>& macros)
         {
             for (int m = 0; m < def.macroCount && m < int(kUserMacroCount); m++)
@@ -585,23 +580,15 @@ void* OpenPatch::operator new(size_t n)
             if (!gPatchPoolUsed[i])
             {
                 gPatchPoolUsed[i] = true;
-                DEVHOOK_TRACE(0x4F4F, i, reinterpret_cast<uintptr_t>(gPatchPool[i].bytes), n);
                 return gPatchPool[i].bytes;
             }
         }
     }
-    void* const heap = ::operator new(n);
-    DEVHOOK_TRACE(0x4F4E, n, reinterpret_cast<uintptr_t>(heap), 0);   // the pool is full: a 3 KB patch from the heap
-    return heap;
+    return ::operator new(n);
 }
 
 void OpenPatch::operator delete(void* p) noexcept
 {
-    {
-        uint32_t ipsr;
-        __asm volatile("mrs %0, ipsr" : "=r"(ipsr));
-        DEVHOOK_TRACE(0x4F44, reinterpret_cast<uintptr_t>(p), ipsr, 0);   // ipsr != 0: freed inside an interrupt
-    }
     const auto* b = static_cast<const unsigned char*>(p);
     if (b >= reinterpret_cast<const unsigned char*>(gPatchPool) && b < reinterpret_cast<const unsigned char*>(gPatchPool + kPatchPoolSize))
     {
@@ -614,13 +601,6 @@ void OpenPatch::operator delete(void* p) noexcept
 OpenPatch::OpenPatch(int typeId, const InstrumentType* type)
   : def(open::engineDefForType(typeId))
 {
-    {
-        int used = 0;
-        for (int i = 0; i < kPatchPoolSize; i++) used += gPatchPoolUsed[i] ? 1 : 0;
-        DEVHOOK_TRACE(0x4F50, reinterpret_cast<uintptr_t>(this), typeId, used);
-        const struct mallinfo mi = mallinfo();
-        DEVHOOK_TRACE(0x4F51, mi.arena, mi.uordblks, mi.fordblks);
-    }
     metadata.instrumentTypeId = typeId;
     if (type && type->createMetadata)
     {
@@ -1023,9 +1003,7 @@ class OpenPatchStore final : public PatchStore
         {
             typeId = firstEngineTypeId();
         }
-        DEVHOOK_TRACE(0x4F43, typeId, 0, 0);
         auto type = registry.getInstrumentType(typeId);
-        DEVHOOK_TRACE(0x4F42, typeId, reinterpret_cast<uintptr_t>(type.get()), type ? type->createMetadata.operator bool() : 0);
         return std::make_unique<OpenPatch>(typeId, type.get());
     }
     std::vector<std::pair<std::string_view, int>> listPatchesFilter(
