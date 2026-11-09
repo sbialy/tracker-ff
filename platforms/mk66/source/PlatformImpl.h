@@ -62,6 +62,8 @@ class PlatformImpl final : public Platform
         return true;
     }
     uint8_t readStartState();
+    bool configValid();
+    bool powerOffGuardArmed() const;
     void saveStartState(uint8_t state);
     PowerButtonCallback getPowerButtonCallback();
 

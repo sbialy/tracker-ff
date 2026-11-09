@@ -34,9 +34,9 @@ class Platform
 
     virtual void setPowerMode(bool mode) = 0;
     virtual void resetMCU() = 0;
-    // Stall guard of the power-off sequence: armed when the sequence starts, kicked on every main loop pass of it, disarmed when
-    // it is aborted or right before the sleep. A platform that can (the MK66 watchdog) resets the MCU when the kicks stop for a
-    // while (main loop blocked in a call, a fault loop, a teardown that never ends), and a reset there boots into the off state.
+    // Stall guard of the power-off sequence (PowerOffGuard.h): armed when the sequence starts, kicked on every main loop pass of it,
+    // disarmed when it is aborted or right before the sleep. The MK66 checks it from SysTick and the fault handler and, when the
+    // kicks stop for a while (main loop blocked in a call, a fault), resets the MCU into the off state. A disarmed guard never acts.
     // Default: nothing.
     virtual void setPowerOffGuard(bool armed) { (void)armed; }
     virtual void kickPowerOffGuard() {}

@@ -1,4 +1,5 @@
 #include "PlatformImpl.h"
+#include "PowerOffGuard.h"
 #include "EEPROM.h"
 #include "PowerControl.h"
 #include "config.h"
@@ -49,7 +50,7 @@ void PlatformImpl::setPowerMode(bool mode)
 
         disableHardware();
 
-        setPowerOffGuard(false); // the teardown is done (display dark), the sleep below polls the power button
+        setPowerOffGuard(false); // interrupts are off from here, the sleep below polls the power button
 
         Snooze.sleep();
     }
@@ -75,27 +76,57 @@ void PlatformImpl::setPowerMode(bool mode)
 #endif
 }
 
-// Power-off stall guard: the K66 watchdog, clocked from the 1 kHz LPO. Armed when the power-off sequence starts and kicked on
-// every main loop pass of it (Interface::processPowerOffSequence). When the main loop stops coming round (blocked in a call, the
-// fault_isr loop, a teardown step that never returns with interrupts off) it resets the MCU after kPowerOffGuardMs. A release
-// build has written start state 0 at boot (checkPowerState), so that reset lands in the off state (PowerControl.cpp), where a
-// power button press starts the unit as usual. The startup code leaves the watchdog off with ALLOWUPDATE set (mk20dx128.c).
-static constexpr uint16_t kPowerOffGuardMs = 3000;
+// Power-off stall guard (PowerOffGuard.h): a deadline checked from SysTick and from the fault handler, no hardware watchdog (the K66
+// WDOG cannot be refreshed or stopped once armed on this unit, it reset the unit after it had gone off). When it runs out the MCU
+// resets into the off state through powerOffMarker, without writing the start state 1 that resetMCU (a power-on) writes.
+static power_off_guard::Guard powerOffGuard;
+extern "C" volatile uint32_t systick_millis_count;
+// survives a reset, not a power cycle (.noinit is not cleared by the startup code)
+uint32_t powerOffMarker __attribute__((section(".noinit.power_off")));
 
-static inline uint32_t irqSave()
+extern "C" void resetToOffState()
 {
-    uint32_t primask;
-    __asm volatile("mrs %0, primask" : "=r"(primask));
+#ifndef TRACKER_MINI
     __disable_irq();
-    return primask;
+    powerOffMarker = power_off_guard::kOffMarker;
+    __asm volatile("dsb");
+    (*(volatile uint32_t*)0xE000ED0C) = (uint32_t)((0x5FAUL << 16) | 0x04U);
+    __asm volatile("dsb");
+    for (;;)
+    {
+        __asm volatile("nop");
+    }
+#endif
 }
 
-static inline void irqRestore(uint32_t primask)
+bool takePowerOffMarker()
 {
-    if (primask == 0)
+    const bool set = powerOffMarker == power_off_guard::kOffMarker;
+    powerOffMarker = 0;
+    return set;
+}
+
+// SysTick (EventResponder.cpp), every millisecond: the main loop of the power-off sequence stopped coming round
+extern "C" void powerOffGuardTick()
+{
+    if (powerOffGuard.expired(systick_millis_count))
     {
-        __enable_irq();
+        resetToOffState();
     }
+}
+
+// fault_isr (mk20dx128.c) of a release image: a fault during the power-off sequence powers off instead of a lit, dead unit
+extern "C" void powerOffGuardFault()
+{
+    if (powerOffGuard.armed())
+    {
+        resetToOffState();
+    }
+}
+
+bool PlatformImpl::powerOffGuardArmed() const
+{
+    return powerOffGuard.armed();
 }
 
 void PlatformImpl::setPowerOffGuard(bool armed)
@@ -103,29 +134,17 @@ void PlatformImpl::setPowerOffGuard(bool armed)
 #ifndef TRACKER_MINI
     if (!START_STATE_SAVE)
     {
-        return; // debug build: a reset would start the unit again, not power it off
+        return; // debug build: always starts, a reset would not power it off
     }
-    const uint32_t primask = irqSave();
-    // unlock, then the new configuration within the 256 bus clock window (the core waits at least one bus clock first)
-    WDOG_UNLOCK = WDOG_UNLOCK_SEQ1;
-    WDOG_UNLOCK = WDOG_UNLOCK_SEQ2;
-    __asm volatile("nop");
-    __asm volatile("nop");
-    __asm volatile("nop");
-    __asm volatile("nop");
     if (armed)
     {
-        WDOG_TOVALH = 0;
-        WDOG_TOVALL = kPowerOffGuardMs; // LPO ticks, prescaler 1
-        WDOG_PRESC = 0;
-        // LPO clock, no window, no interrupt, counts on in wait and stop (a core parked in WFI does not hold it back)
-        WDOG_STCTRLH = WDOG_STCTRLH_ALLOWUPDATE | WDOG_STCTRLH_WAITEN | WDOG_STCTRLH_STOPEN | WDOG_STCTRLH_WDOGEN;
+        saveStartState(0); // a running release image holds 0 already (checkPowerState), no write then
+        powerOffGuard.arm(systick_millis_count);
     }
     else
     {
-        WDOG_STCTRLH = WDOG_STCTRLH_ALLOWUPDATE;
+        powerOffGuard.disarm();
     }
-    irqRestore(primask);
 #else
     (void)armed;
 #endif
@@ -133,16 +152,7 @@ void PlatformImpl::setPowerOffGuard(bool armed)
 
 void PlatformImpl::kickPowerOffGuard()
 {
-#ifndef TRACKER_MINI
-    if (!START_STATE_SAVE || !(WDOG_STCTRLH & WDOG_STCTRLH_WDOGEN))
-    {
-        return;
-    }
-    const uint32_t primask = irqSave();
-    WDOG_REFRESH = 0xA602;
-    WDOG_REFRESH = 0xB480;
-    irqRestore(primask);
-#endif
+    powerOffGuard.kick(systick_millis_count);
 }
 
 PlatformImpl::PowerButtonCallback PlatformImpl::getPowerButtonCallback()
@@ -203,15 +213,22 @@ void PlatformImpl::runBootloader(char* fileName)
     }
 }
 
-uint8_t PlatformImpl::readStartState()
+bool PlatformImpl::configValid()
 {
-    uint8_t startState = 1;
     constexpr int idSize = 7;
     char id[idSize];
 
     configManager.readData(0, &id, idSize);
 
-    if (strcmp(id, "EEPROM") == 0) // read start state only when valid config in eeprom
+    return memcmp(id, "EEPROM", idSize) == 0; // the id and its terminator
+
+}
+
+uint8_t PlatformImpl::readStartState()
+{
+    uint8_t startState = 1;
+
+    if (configValid()) // read start state only when valid config in eeprom
     {
         EEPROM.readData(START_STATE_EEPROM_ADRESS, &startState, 1);
     }

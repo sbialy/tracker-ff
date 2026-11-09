@@ -66,6 +66,7 @@ extern unsigned long _estack;
 
 
 extern void restartMCU();
+extern void powerOffGuardFault(void);
 
 extern int main (void);
 void ResetHandler(void);
@@ -128,6 +129,7 @@ void fault_isr(void)
         asm("ldr %0, [sp, #0]" : "=r" (addr) ::);
 #endif
 #ifndef REBOOT_ON_FAULT
+        powerOffGuardFault(); // PlatformImpl.cpp: during the power-off sequence, reset into the off state
         while (1) {
 		// keep polling some communication while in fault
 		// mode, so we don't completely die.

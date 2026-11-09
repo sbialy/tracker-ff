@@ -340,9 +340,11 @@ void MillisTimer::runFromTimer()
 // with libraries using mid-to-high priority interrupts.
 
 extern "C" volatile uint32_t systick_millis_count;
+extern "C" void powerOffGuardTick(void); // PlatformImpl.cpp (PowerOffGuard.h)
 void DEVHOOK_SYSTICK_ISR(void)
 {
 	systick_millis_count++;
+	powerOffGuardTick();
 	MillisTimer::runFromTimer();
 }
 
