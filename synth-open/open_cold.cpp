@@ -183,6 +183,7 @@ void fillFromDef(InstrumentType* type, const EngineDef& def)
         metadata.outputChannels = Meta::OutputChannels::kMono;
         metadata.maxVoices = def.maxVoices;
         DEVHOOK_TRACE(0x4D31, reinterpret_cast<uintptr_t>(&def), def.typeId, def.paramCount);
+        DEVHOOK_TRACE(0x4D30, reinterpret_cast<uintptr_t>(&metadata), reinterpret_cast<uintptr_t>(metadata.params.data()), metadata.params.size());
         metadata.params.resize(def.paramCount);
         for (int i = 0; i < def.paramCount; i++)
         {
@@ -582,6 +583,7 @@ void* OpenPatch::operator new(size_t n)
             if (!gPatchPoolUsed[i])
             {
                 gPatchPoolUsed[i] = true;
+                DEVHOOK_TRACE(0x4F4F, i, reinterpret_cast<uintptr_t>(gPatchPool[i].bytes), n);
                 return gPatchPool[i].bytes;
             }
         }
@@ -1019,7 +1021,9 @@ class OpenPatchStore final : public PatchStore
         {
             typeId = firstEngineTypeId();
         }
+        DEVHOOK_TRACE(0x4F43, typeId, 0, 0);
         auto type = registry.getInstrumentType(typeId);
+        DEVHOOK_TRACE(0x4F42, typeId, reinterpret_cast<uintptr_t>(type.get()), type ? type->createMetadata.operator bool() : 0);
         return std::make_unique<OpenPatch>(typeId, type.get());
     }
     std::vector<std::pair<std::string_view, int>> listPatchesFilter(
