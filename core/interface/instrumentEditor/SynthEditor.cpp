@@ -1,3 +1,5 @@
+#include <malloc.h>
+#include "devhooks.h"
 #include "instrumentEditor/instrumentEditor.h"
 #if GUI_HANDLE_SYNTH
 
@@ -602,6 +604,7 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
         }
     }
 #endif
+    { const struct mallinfo mi_ = mallinfo(); DEVHOOK_TRACE(0x5301, mi_.uordblks, mi_.fordblks, mi_.arena); }
     mtProject.values.synthPart[syntPartIdx].synthType = Synth::uiToStored(newUi);
 
     if (previousSynthType == mtProject.values.synthPart[syntPartIdx].synthType)
@@ -628,10 +631,13 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
 #else
     synth->setInstrumentType(syntPartIdx, Synth::kSynthTypes.at(newUi));
 #endif
+    { const struct mallinfo mi_ = mallinfo(); DEVHOOK_TRACE(0x5302, mi_.uordblks, mi_.fordblks, mi_.arena); }
 
     changeSynthPolyphony(0);
+    { const struct mallinfo mi_ = mallinfo(); DEVHOOK_TRACE(0x5303, mi_.uordblks, mi_.fordblks, mi_.arena); }
 
     showSynthModel(syntPartIdx);
+    { const struct mallinfo mi_ = mallinfo(); DEVHOOK_TRACE(0x5304, mi_.uordblks, mi_.fordblks, mi_.arena); }
 
 #ifdef FEATURE_SYNTH_OPEN
     initCurrentPatch(synth->restoreSlotZeroBackup(syntPartIdx));
@@ -639,6 +645,7 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     initCurrentPatch();
 #endif
     lightUpPadBoard();
+    { const struct mallinfo mi_ = mallinfo(); DEVHOOK_TRACE(0x5305, mi_.uordblks, mi_.fordblks, mi_.arena); }
     newFileManager.setProjectStructChanged();
 }
 
