@@ -25,14 +25,34 @@
 
 #include "new.h"
 
+#include "devhooks.h"
+#include <malloc.h>
+
+// Console images note a failed allocation (DEVHOOK_TRACE ring, `trace` command): operator new returns the null of malloc here, and the
+// first thing that writes through it is a bus fault far from the cause. tag 0x4F4F4D = OOM, a = size, b = free bytes in the heap's free
+// list, c = the stack pointer.
+static inline void * newNoteNull(void * p, size_t size)
+{
+#ifdef ENABLE_DEV_CONSOLE
+  if (p == nullptr) {
+    unsigned sp;
+    __asm__ volatile("mov %0, sp" : "=r" (sp));
+    DEVHOOK_TRACE(0x4F4F4D, size, mallinfo().fordblks, sp);
+  }
+#else
+  (void)size;
+#endif
+  return p;
+}
+
 void * operator new(size_t size)
 {
-  return malloc(size);
+  return newNoteNull(malloc(size), size);
 }
 
 void * operator new[](size_t size)
 {
-  return malloc(size);
+  return newNoteNull(malloc(size), size);
 }
 
 void operator delete(void * ptr) noexcept
