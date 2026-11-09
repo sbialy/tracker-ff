@@ -16,6 +16,17 @@ void checkPowerState(PlatformImpl* platformImpl)
     {
         if (platformImpl->readStartState() == 0)
         {
+#ifndef TRACKER_MINI
+            if (RCM_SRS0 & RCM_SRS0_WDOG)
+            {
+                // the power-off stall guard reset the MCU (PlatformImpl::setPowerOffGuard): the display controller kept
+                // running through the reset and may still show the last frame. Hold the FT812 in power down (PD#, PTD11, as
+                // FT812_Init drives it). The next start cycles PD# in FT812_Init.
+                GPIOD_PCOR = 1u << 11;
+                GPIOD_PDDR |= 1u << 11;
+                PORTD_PCR11 = PORT_PCR_MUX(1);
+            }
+#endif
             platformImpl->setPowerMode(false);
             while (1)
             {

@@ -13,12 +13,23 @@ void mtSleep::startPowerOffSequence()
     {
         shutdownState = shutdownStateStart;
         shutdownTimer = 0;
+        TrackerImpl::getInstance()->getPlatform()->setPowerOffGuard(true);
     }
 }
 
 void mtSleep::stopPowerOffSequence()
 {
+    if (shutdownState == shutdownStateStart)
+    {
+        TrackerImpl::getInstance()->getPlatform()->setPowerOffGuard(false);
+    }
     shutdownState = shutdownStateNone;
+}
+
+uint32_t mtSleep::getOverrun()
+{
+    const uint32_t t = shutdownTimer;
+    return t > TURN_OFF_TIME ? t - TURN_OFF_TIME : 0;
 }
 
 uint16_t mtSleep::getTimeLeft()

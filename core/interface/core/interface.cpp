@@ -287,6 +287,8 @@ void Interface::processPowerOffSequence()
 {
     if (lowPower.getLowPowerState() == shutdownStateStart)
     {
+        getPlatform()->kickPowerOffGuard(); // the main loop is alive (the guard resets the MCU when these stop)
+
         refreshDisplayShutdown();
 
         // A file operation that has ended (an End or an error status) waits for the screen that
@@ -314,7 +316,13 @@ void Interface::processPowerOffSequence()
             muteAudioOutByKey();
         }
 
-        if (lowPower.getTimeLeft() == 0 && newFileManager.getStatus() == fmIdle)
+        // Wait for the file manager, but not for ever: a status left in a running value with no operation behind it is given
+        // POWER_OFF_IDLE_WAIT, an operation that keeps running POWER_OFF_OPERATION_WAIT. Then the unit goes off anyway (an operation cut
+        // there can leave a partly written file, as pulling the power does).
+        const bool fmBusy = newFileManager.getStatus() != fmIdle;
+        const uint32_t waitLimit = newFileManager.getCurrentOperation() == fmNoOperation ? POWER_OFF_IDLE_WAIT
+                                                                                         : POWER_OFF_OPERATION_WAIT;
+        if (lowPower.getTimeLeft() == 0 && (!fmBusy || lowPower.getOverrun() >= waitLimit))
         {
             operatingMode = mtOperatingModeSleep;
             lowPower.goLowPower();
