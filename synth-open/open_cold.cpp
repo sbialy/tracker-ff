@@ -212,7 +212,11 @@ void fillFromDef(InstrumentType* type, const EngineDef& def)
                 section.elements.push_back(
                   { Meta::EditorLayout::EditorElement::Type::kParam, sd.ids[e] });
             }
+            DEVHOOK_TRACE(0x4D35, s, reinterpret_cast<uintptr_t>(metadata.layoutFlat.sections.data()),
+                          (metadata.layoutFlat.sections.size() << 16) | metadata.layoutFlat.sections.capacity());
             metadata.layoutFlat.sections.push_back(std::move(section));
+            DEVHOOK_TRACE(0x4D36, s, reinterpret_cast<uintptr_t>(metadata.layoutFlat.sections.data()),
+                          (metadata.layoutFlat.sections.size() << 16) | metadata.layoutFlat.sections.capacity());
         }
         metadata.initDefaultMacros = [&def](std::vector<Meta::Macro>& macros)
         {
