@@ -43,18 +43,20 @@ class NewList : public cDisplayControl
     virtual void setData(void* data);
 
   protected:
-    int textStyle;
+    // Default member initializers: the constructor returns early without properties and left these as heap garbage. A hidden control that
+    // a screenshot refresh (cDisplay::devShotEnd, doScreenShot) updates then wrote through a garbage `data` (ref/sim-parity.md)
+    int textStyle = 0;
 
-    strNewListData* data;
+    strNewListData* data = nullptr;
 
-    int listPosition;
-    int barPos;
-    int listPos;
-    bool disableBar;
+    int listPosition = 0;
+    int barPos = 0;
+    int listPos = 0;
+    bool disableBar = false;
 
-    uint32_t textScrollTimeStart;
-    uint8_t textScrollItem;
-    uint8_t textScrollStage;
+    uint32_t textScrollTimeStart = 0;
+    uint8_t textScrollItem = 0;
+    uint8_t textScrollStage = 0;
 
     void drawBar(int x1, int y1, int x2, int y2);
     void drawScrollBar();
