@@ -44,6 +44,7 @@
 
 std::string g_sdRootForStat;
 
+extern "C" void hostPokeRun(const char* line); // host_poke.cpp
 namespace
 {
 void run(uint32_t ms)
@@ -110,6 +111,13 @@ bool command(const std::string& line)
         int n = 0;
         is >> n;
         mtProject.values.lastUsedInstrument = uint8_t(n);
+        return true;
+    }
+    if (c == "poke")
+    {   // a host_poke.cpp action at this point of the script, the line is its text (the result goes to $UISHOT_POKE.out)
+        std::string rest;
+        std::getline(is, rest);
+        hostPokeRun(rest.c_str());
         return true;
     }
     if (c == "status")

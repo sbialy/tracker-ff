@@ -5,6 +5,7 @@
 //   UISHOT_FAIL=size=2048[,skip=K][,count=C]   fail the allocations of exactly this size: skip the first K, fail the next C (0 = all)
 //   UISHOT_FAIL_ARM=PATH                       injection only while the file PATH exists (the scenario creates it just before the action)
 //   UISHOT_FAIL_LOG=PATH                       append "size" of every allocation >= 256 B made while armed (to find the size to target)
+//   UISHOT_FAIL_LOGMIN=N                       log from N bytes instead of 256 (the editor list strings are a few hundred bytes)
 //   UISHOT_FAIL_REPORT=PATH                    append one line per injected failure
 // With none of them set this is a plain forwarding allocator.
 #include <cstdio>
@@ -22,6 +23,7 @@ struct Rule
     bool init = false, on = false;
     size_t size = 0;
     long skip = 0, count = 1, seen = 0, failed = 0;
+    size_t logMin = 256;
     const char *arm = nullptr, *logPath = nullptr, *reportPath = nullptr;
 };
 Rule g;
@@ -40,6 +42,8 @@ NOOPT void setup()
     g.arm = getenv("UISHOT_FAIL_ARM");
     g.logPath = getenv("UISHOT_FAIL_LOG");
     g.reportPath = getenv("UISHOT_FAIL_REPORT");
+    if (const char* v = getenv("UISHOT_FAIL_LOGMIN"))
+        g.logMin = strtoul(v, nullptr, 0);
     if (const char* v = getenv("UISHOT_FAIL"))
     {
         g.on = true;
@@ -62,7 +66,7 @@ NOOPT void* alloc(size_t n)
 {
     if (!g.init)
         setup();
-    if (g.logPath && n >= 256 && armed())
+    if (g.logPath && n >= g.logMin && armed())
     {
         if (FILE* f = fopen(g.logPath, "a"))
         {

@@ -12,6 +12,9 @@
 //   importplayend                        redraw the three importer labels with the play position at the end of the sample
 //   sizes                                sizeof(strProjectFile)
 //   status                               file manager status and current operation
+//   paramid POS VALUE                    the synth patch editor's section parameter id list at POS gets VALUE (corrupt patch metadata, a value out of range)
+//   macroid POS VALUE                    the same for the section id list, which holds the macro index on a macro section
+// The same lines run from a ui_shot script as "poke LINE" (ui_shot_main.cpp), at that point of the script.
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +27,16 @@
 #include "fileManager.h"
 #include "fileManagerDefs.h"
 #include "mtStructs.h"
+#include <algorithm>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <ranges>
+#include <variant>
+#define private public // host only: the poke actions reach the editor state the UI keeps private
+#include "instrumentEditor/instrumentEditor.h"
+#undef private
 
 extern "C" void hostPokeImporterLabels(std::string* out);
 extern "C" void hostPokeImporterPlayEnd();
@@ -135,10 +148,27 @@ void run(const char* line)
             (int)fmSaveRecordedSoundEnd,
             (int)fmBrowseGamesEnd);
     }
+    else if (!strcmp(cmd, "paramid") || !strcmp(cmd, "macroid"))
+    {
+        int* ids = !strcmp(cmd, "paramid") ? instrumentEditor.sectionParamsIds : instrumentEditor.sectionIds;
+        const int pos = atoi(a);
+        if (got < 3 || ids == nullptr || pos < 0 || pos >= 16)
+            out("%s: no list or bad position", cmd);
+        else
+        {
+            ids[pos] = (int)n;
+            out("%s[%d] = %ld", cmd, pos, n);
+        }
+    }
     else
         out("unknown command '%s'", cmd);
 }
 } // namespace
+
+extern "C" void hostPokeRun(const char* line)
+{
+    run(line);
+}
 
 extern "C" void hostPokePoll()
 {
