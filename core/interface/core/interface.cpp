@@ -289,6 +289,18 @@ void Interface::processPowerOffSequence()
     {
         refreshDisplayShutdown();
 
+        // A file operation that has ended (an End or an error status) waits for the screen that
+        // started it to clear it. Some screens never do (Song, Master, Params: an autosave error
+        // stays there), and no screen runs during the shutdown, so the status would block the save
+        // below and the power off for good. Nothing reads it from here on. A save below that fails
+        // is cleared the same way: the Workspace keeps what the last good save wrote and the unit
+        // still powers off. An operation still running is waited for, as before.
+        if (newFileManager.getStatus() >= fmLoadEnd &&
+            newFileManager.getCurrentOperation() == fmNoOperation)
+        {
+            newFileManager.clearStatus();
+        }
+
         if (shutdownSaveFlag == 0 && lowPower.getShutdownProgress() > 10 &&
             lowPower.getShutdownProgress() < 70)
         {
