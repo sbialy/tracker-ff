@@ -4,12 +4,12 @@
 # see bench_dirt.cpp. Scenarios: 0 off, 1 Soft, 2 Hard, 3 Fold, 4 Asym, 5 Crush, 6 no Dirt object (baseline), 7 Soft with a silent bus.
 #   synth-open/tools/dirt_cycles/run_bench.sh [scenario ...]      default: all
 # Needs the pinned toolchain in agt/10.3 and a python with unicorn + capstone:
-#   python3 -m venv /tmp/phzvenv && /tmp/phzvenv/bin/pip install unicorn capstone    (PYTHON=/tmp/phzvenv/bin/python)
+#   python3 -m venv $VENV && $VENV/bin/pip install unicorn capstone    (PYTHON=$VENV/bin/python)
 # The cycle counter is tools/idle_cycles/run_bench.py (one block is 522,240 cycles at 180 MHz and 44117.6 Hz).
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 HERE=$ROOT/synth-open/tools/dirt_cycles
-PY=${PYTHON:-/tmp/phzvenv/bin/python}
+PY=${PYTHON:-python3}
 TC=$ROOT/agt/10.3/bin/arm-none-eabi
 OUT=${TMPDIR:-/tmp}/dirt_cycles_$$
 mkdir -p "$OUT/o"

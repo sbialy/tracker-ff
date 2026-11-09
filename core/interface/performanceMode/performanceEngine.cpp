@@ -407,11 +407,25 @@ void cPerformEngine::loadCCValuesOnAffectedTracks(uint8_t slot)
 
     slotsTempValues[slot] = slotToCCValue[slot];
 
-    for (uint8_t track = 0; track < kPerformanceTracks; track++)
+    int fxIdx = slotToFx[slot];
+    if (fxIdx == 0)
     {
-        if (tracksPerformanceState[track] == 1)
+        return;
+    }
+
+    if (fxList[fxIdx]->setup->isGlobalFx)
+    {
+        int newValue = slotsTempValues[slot];
+        loadGlobalFxValue(fxIdx, newValue);
+    }
+    else
+    {
+        for (uint8_t track = 0; track < kPerformanceTracks; track++)
         {
-            loadFxValuesOnTrack(slot, track);
+            if (tracksPerformanceState[track] == 1)
+            {
+                loadFxValuesOnTrack(slot, track);
+            }
         }
     }
 }

@@ -8,6 +8,9 @@
 #include "projectEditor/projectEditor.h"
 
 #include "mtAudioEngine.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_sidecar.h"
+#endif
 #include "mtPadBoard.h"
 #include "sampleRecorder/sampleRecorder.h"
 
@@ -182,6 +185,15 @@ void cProjectEditor::update()
         ip->unblockAllInputs();
         newFileManager.clearStatus();
     }
+    else if (managerStatus == fmLoadEnd) // project opened, new project or mod import done
+    {
+        ip->unblockAllInputs();
+        newFileManager.clearStatus();
+
+        // leave the File screen for the pattern editor, like the project load at boot
+        uint8_t button = interfaceButtonPattern;
+        PE->eventFunct(eventSwitchModule, PE, &button, 0);
+    }
     else if (managerStatus >= fmLoadEnd) // catch rest of ends
     {
         setDefaultScreenFunct();
@@ -345,7 +357,13 @@ uint8_t cProjectEditor::loadProjectValues()
         mtProject.values.isHeadroomEnabled = 0;
     }
 
+#ifdef FEATURE_PLUG_HOST
+    // the reserved "Inserts" value stays (plug_sidecar.h kSatInserts), the audio engine runs hard clip under it
+    if (mtProject.values.saturationType >= SaturationType::kSaturationTypeEnd &&
+        mtProject.values.saturationType != plug::kSatInserts)
+#else
     if (mtProject.values.saturationType >= SaturationType::kSaturationTypeEnd)
+#endif
     {
         mtProject.values.saturationType = SaturationType::kHardClip;
     }

@@ -7,6 +7,10 @@
 #include "fileTransfer.h"
 #include <algorithm>
 
+#ifdef FEATURE_SYNTH_OPEN
+#include "mainLoopScratch.h"
+#endif
+
 static volatile uint8_t exportStep;
 
 static bool getSongExportFolderName(char* path);
@@ -423,9 +427,18 @@ void cFileManager::exportSamplesStart()
         fileSystem->writeFile(&header, sizeof(header), fileHandle);
 
         static constexpr uint32_t kChunkFrames = 512;
+#ifdef FEATURE_SYNTH_OPEN
+        // Chunk buffers off the stack (mainLoopScratch.h): main loop only, the loop calls only
+        // readInstrumentFramesBlocking (SD and SDRAM reads) and writeFile, so no other scratch user can run.
+        static_assert(kChunkFrames * 4 * sizeof(int16_t) <= kMainLoopScratchSize, "export chunks must fit the scratch");
+        int16_t* const bufL = reinterpret_cast<int16_t*>(g_mainLoopScratch);
+        int16_t* const bufR = bufL + kChunkFrames;
+        int16_t* const interleaved = bufR + kChunkFrames;
+#else
         int16_t bufL[kChunkFrames];
         int16_t bufR[kChunkFrames];
         int16_t interleaved[kChunkFrames * 2];
+#endif
 
         for (uint32_t offset = 0; offset < dataLength; offset += kChunkFrames)
         {

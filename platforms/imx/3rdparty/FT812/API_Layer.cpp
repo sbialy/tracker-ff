@@ -66,8 +66,6 @@ void API_LIB_BeginCoProList()
     MCU_CSlow();
     // CS low begins SPI transaction
 
-    MCU_Delay_3us();
-
     EVE_AddrForWr(
       RAM_CMD +
       *cmdOffset); // Send address for writing as the next free location in the co-pro buffer
@@ -76,8 +74,6 @@ void API_LIB_BeginCoProList()
 void API_LIB_BeginCoProListNoCheck()
 {
     MCU_CSlow(); // CS low begins SPI transaction
-
-    MCU_Delay_3us();
 
     // cmdOffset = 0;
 
@@ -92,8 +88,6 @@ void API_LIB_BeginCoProListNoCheck()
 void API_LIB_EndCoProList()
 {
     MCU_CShigh(); // Chip Select high concludes burst
-
-    MCU_Delay_3us();
 
     EVE_MemWrite32(REG_CMD_WRITE, (*cmdOffset)); // Update the ring buffer pointer
 }

@@ -1,6 +1,11 @@
 # Local toolchain
 agt/
 
+# Local notes, papers and reports (never committed)
+ref/
+papers/
+kb/
+
 # Build outputs
 /build/
 core/build-*/
@@ -30,3 +35,6 @@ __pycache__/
 
 # Pinned test builds (binaries stay out of git)
 releases/
+
+# a local copy for a FEATURE_PLUG_BENCH build (plug_dirt_inimage.cpp), the source lives in tracker-effects-os
+synth-open/plug/fx_dirt_plug.cpp

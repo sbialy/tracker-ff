@@ -13,6 +13,10 @@
 
 #include "interruptsControl.h"
 
+#ifdef FEATURE_SYNTH_OPEN
+#include "mainLoopScratch.h"
+#endif
+
 #include <algorithm>
 #include <string.h>
 
@@ -79,11 +83,20 @@ bool cFileManager::saveSampleDataToWorkspace(int idx)
                         fileSystem->seekFile(mtProject.sampleMemory[idx].fileDataOffset, srcHandle);
                         fileSystem->seekFile(sizeof(strInstrumentFile), dstHandle);
 
+#ifdef FEATURE_SYNTH_OPEN
+                        // Copy chunk off the stack (mainLoopScratch.h): main loop only, the loop calls nothing
+                        // but readFile and writeFile, so no other scratch user can run while it is live.
+                        constexpr uint32_t kCopyChunk = 4096;
+                        static_assert(kMainLoopScratchSize >= kCopyChunk, "copy chunk must fit the scratch");
+                        uint8_t* const copyBuf = g_mainLoopScratch;
+#else
                         uint8_t copyBuf[4096];
+                        constexpr uint32_t kCopyChunk = sizeof(copyBuf);
+#endif
                         uint32_t remaining = dataSizeBytes;
                         while (remaining > 0)
                         {
-                            uint32_t toRead = std::min<uint32_t>(remaining, sizeof(copyBuf));
+                            uint32_t toRead = std::min<uint32_t>(remaining, kCopyChunk);
                             int32_t bytesRead = fileSystem->readFile(copyBuf, toRead, srcHandle);
                             if (bytesRead <= 0)
                             {

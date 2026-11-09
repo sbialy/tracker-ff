@@ -290,14 +290,14 @@ inline void playerEngine::handleUpdateRefreshTune()
 
         int8_t localTune;
         if (trackControlParameter[(int)controlType::performanceMode]
-                                 [(int)parameterList::wavetablePosition])
+                                 [(int)parameterList::tune])
         {
             localTune = currentPerformanceValues.tune;
         }
         else if (trackControlParameter[(int)controlType::sequencerMode]
-                                      [(int)parameterList::wavetablePosition] ||
+                                      [(int)parameterList::tune] ||
                  trackControlParameter[(int)controlType::sequencerMode2]
-                                      [(int)parameterList::wavetablePosition])
+                                      [(int)parameterList::tune])
         {
             localTune = currentSeqModValues.tune;
         }

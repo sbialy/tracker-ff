@@ -12,6 +12,7 @@ static void Number2HexBitmaps(int16_t x, int16_t y, uint8_t font_x, uint8_t font
 #define ROW_NUM 1
 
 static constexpr uint8_t text_font = 1;
+static int16_t s_lastCell = -1;
 
 #if ROW_NUM
 // uint8_t fourParamsOffset[4] =		{	4,44,73,130,	};	// stara koncepcja z numerami
@@ -198,6 +199,8 @@ cTracker::cTracker(strControlProperties* properties)
 {
     colorsCount = 21;
     colors = display.getTheme().patternTrackerColors;
+    dimFx1Color = ((colors[8] & 0xFEFEFE) >> 1) + ((colors[1] & 0xFEFEFE) >> 1);
+    dimFx2Color = ((colors[9] & 0xFEFEFE) >> 1) + ((colors[1] & 0xFEFEFE) >> 1);
 
     if (properties == nullptr)
     {
@@ -211,7 +214,7 @@ cTracker::cTracker(strControlProperties* properties)
         return;
     }
 
-    colors = (properties->colors == nullptr) ? colors : properties->colors;
+    setColors((properties->colors == nullptr) ? colors : properties->colors);
 
     tracks = (strTrackerPattern*)properties->data;
     posX = properties->x;
@@ -251,6 +254,8 @@ void cTracker::setValue(int value)
 void cTracker::setColors(const uint32_t* colors)
 {
     this->colors = colors;
+    dimFx1Color = ((colors[8] & 0xFEFEFE) >> 1) + ((colors[1] & 0xFEFEFE) >> 1);
+    dimFx2Color = ((colors[9] & 0xFEFEFE) >> 1) + ((colors[1] & 0xFEFEFE) >> 1);
 }
 
 void cTracker::setData(void* data)
@@ -294,7 +299,8 @@ void cTracker::update()
     // colors[10] = tracks->selectColor;
     displayMode = value;
 
-    lastFontHandle = -1; // zerowanie ostatnio uzywanej czcionki
+    lastFontHandle = -1;
+    s_lastCell = -1; // zerowanie ostatnio uzywanej czcionki
 
     rightOffset = 0;
     leftOffset = 0;
@@ -975,6 +981,7 @@ void cTracker::tracksNumbers()
     API_SAVE_CONTEXT();
     API_COLOR(actualColor);
     lastFontHandle = -1;
+    s_lastCell = -1;
     API_BEGIN(BITMAPS);
 
     for (uint8_t i = 0; i < columnsCount; i++)
@@ -997,6 +1004,7 @@ void cTracker::notes()
     actualColor = lastFontColor = colors[2];
     // API_BITMAP_HANDLE(fonts[1].handle);
     lastFontHandle = -1;
+    s_lastCell = -1;
     API_BEGIN(BITMAPS);
 
     uint8_t offset_y = posY + 12;
@@ -1053,6 +1061,7 @@ void cTracker::instruments()
     actualColor = lastFontColor = colors[3];
     // API_BITMAP_HANDLE(fonts[1].handle);
     lastFontHandle = -1;
+    s_lastCell = -1;
     API_BEGIN(BITMAPS);
 
     uint8_t offset_y = posY + 12;
@@ -1118,6 +1127,7 @@ void cTracker::fxes1()
     API_COLOR(colors[4]);
     actualColor = lastFontColor = colors[4];
     lastFontHandle = -1;
+    s_lastCell = -1;
     // API_BITMAP_HANDLE(fonts[1].handle);
     API_BEGIN(BITMAPS);
 
@@ -1155,6 +1165,8 @@ void cTracker::fxes1()
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[8];
+                else if (text[1] == '-' && text[2] == '-')
+                    actualColor = dimFx1Color;
                 else
                     actualColor = colors[4];
             }
@@ -1170,6 +1182,7 @@ void cTracker::fxes2()
     API_COLOR(colors[5]);
     actualColor = lastFontColor = colors[5];
     lastFontHandle = -1;
+    s_lastCell = -1;
     // API_BITMAP_HANDLE(fonts[1].handle);
     API_BEGIN(BITMAPS);
 
@@ -1206,6 +1219,8 @@ void cTracker::fxes2()
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[9];
+                else if (text[1] == '-' && text[2] == '-')
+                    actualColor = dimFx2Color;
                 else
                     actualColor = colors[5];
             }
@@ -1273,17 +1288,22 @@ void cTracker::String2Bitmaps(int16_t x,
         {
             if ((x > 511 || y > 511) && font->data[ch])
             {
-                API_CELL(ch);
+                if (s_lastCell != (int16_t)ch)
+                {
+                    API_CELL(ch);
+                    s_lastCell = (int16_t)ch;
+                }
                 API_VERTEX2F(x, y);
             }
             else if (font->data[ch])
             {
+                s_lastCell = -1;
                 API_VERTEX2II(x, y, font->handle, ch);
             }
         }
 
         // if(font == &fonts[0])
-        if (string[0] == '-' && string[1] == '-')
+        if ((string[0] == '-' && string[1] == '-') || (string[1] == '-' && string[2] == '-'))
         {
             x += 11; // font->data['8'];
         }

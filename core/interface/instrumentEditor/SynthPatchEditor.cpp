@@ -12,18 +12,30 @@
 #include "util_string.h"
 
 #include "mtAudioEngine.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 #include <cmath>
 
 const char* const OffOnNames[] = { "Off", "On" };
 #ifdef FEATURE_SYNTH_OPEN
-// SYNTH_OPEN (MK66): the engines picked at build time, in the order of Synth::kSynthTypes (engine_list.h)
-static const int synthModelListImages[Synth::kSynthTypes.size()] = {
+#include "open_section_icon.h"
+
+// SYNTH_OPEN (MK66): the built-in engines' editor icons in engine_list.h order (EngineRef::builtin). A plugin engine shows its
+// card logo (synth-open/plug_logo.h, FEATURE_PLUG_HOST) or, without one, its name.
+static const int synthModelListImages[] = {
 #define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, PATCH_ENGINE, MINI_ICON, ICON) \
     enDisplayBitmaps::ICON,
 #include "engine_list.h"
 #undef SYNTH_ENGINE
 };
+// SectionIcon (synth-open/open_section_icon.h) to the editor's section icon
+static constexpr int8_t kSectionBitmap[] = {
+    kBitmapEnv,  kBitmapFilter, kBitmapGear,   kBitmapLfo,        kBitmapMod,   kBitmapOsc, kBitmapKick,
+    kBitmapTom,  kBitmapSnare,  kBitmapHihat,  kBitmapCymbal,     kBitmapPercussion, kBitmapMixer, kBitmapFX,
+};
+static_assert(sizeof(kSectionBitmap) == size_t(polysynth::open::SectionIcon::kFX) + 1, "one icon per SectionIcon");
 #else
 static const int synthModelListImages[Synth::kSynthTypes.size()] = {
     enDisplayBitmaps::kBitmapACD,  enDisplayBitmaps::kBitmapFAT,  enDisplayBitmaps::kBitmapVAP,
@@ -60,6 +72,28 @@ static void functSynthBack();
 static void functSynthInit();
 static void functSynthInitConfirm();
 static void functSynthInitCancel();
+
+// The value list of the parameter or macro line on screen, replaced on every selection. On the MK66 operator new is malloc and returns
+// null on a full heap, so the nothrow form is the one whose result the compiler keeps checking. false: nothing is allocated (both
+// pointers null) and the caller shows the line without the list.
+static bool newValueList(char*& text, char**& names, int length, int stringLen)
+{
+    delete[] text;
+    delete[] names;
+    text = new (std::nothrow) char[length * stringLen];
+    names = new (std::nothrow) char*[length];
+
+    if (text != nullptr && names != nullptr)
+    {
+        return true;
+    }
+
+    delete[] text;
+    delete[] names;
+    text = nullptr;
+    names = nullptr;
+    return false;
+}
 
 void cInstrumentEditor::cleanPatchEditorResources()
 {
@@ -863,7 +897,7 @@ void cInstrumentEditor::changeSynthMacroName()
 
     int macroIdx = sectionIds[sectionListPos];
 
-    if (macroIdx < 0 && macroIdx >= std::ssize(metadata.macros))
+    if (macroIdx < 0 || macroIdx >= std::ssize(metadata.macros))
     {
         return;
     }
@@ -1048,8 +1082,18 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
 
     uint8_t syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
     const int modelUi = std::max(Synth::storedToUi(mtProject.values.synthPart[syntPartIdx].synthType), 0);
+#ifdef FEATURE_SYNTH_OPEN
+    const polysynth::open::EngineRef& model = polysynth::open::engineAt(modelUi);
+#ifdef FEATURE_PLUG_HOST
+    const int modelIcon = model.builtin >= 0 ? synthModelListImages[model.builtin] : plug::synthLogoBitmap(model.def, true);
+#else
+    const int modelIcon = model.builtin >= 0 ? synthModelListImages[model.builtin] : -1;
+#endif
+    labelImage.bitmaps[0].bitmapIndex = modelIcon > 0 ? modelIcon : 0;
+#else
     assert(modelUi < static_cast<int>(Synth::kSynthTypes.size()));
     labelImage.bitmaps[0].bitmapIndex = synthModelListImages[modelUi];
+#endif
     labelImage.bitmaps[0].xValue = 116;
     labelImage.bitmaps[0].yValue = 49;
     labelImage.bitmaps[1].bitmapIndex = 0;
@@ -1057,6 +1101,13 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
     display.setControlStyle(noteLabel, controlStyleShowBitmap);
     display.setControlColors(noteLabel, display.getTheme().patchEditSynthModelIconColors);
     display.setControlText(noteLabel, "");
+#ifdef FEATURE_SYNTH_OPEN
+    if (modelIcon < 0)
+    {   // a plugin engine without a logo: its name in place of the icon
+        display.setControlStyle(noteLabel, controlStyleShow | controlStyleCenterY | controlStyleFont4);
+        display.setControlText(noteLabel, model.def->name);
+    }
+#endif
     display.setControlValue(noteLabel, 0);
     display.setControlPosition(noteLabel, 50, 45);
     display.setControlSize(noteLabel, 108, 40);
@@ -1194,6 +1245,22 @@ void cInstrumentEditor::showSynthPatchSection(bool refreshList)
                             sectionName.c_str(),
                             kMaxSynthListStringLen);
 
+#ifdef FEATURE_SYNTH_OPEN
+                // one table for every open engine and card plugin, the stock chain first (synth-open/open_section_icon.h)
+                if (const auto* rule = polysynth::open::sectionIconRule(sectionName.c_str()))
+                {
+                    using polysynth::open::SectionCount;
+                    shortName = rule->label ? rule->label : section.shortName.c_str();
+                    number = rule->count == SectionCount::kEnv ? envCount++ : rule->count == SectionCount::kLfo ? lfoCount++ : 0;
+                    sectionImgList[idx] = kSectionBitmap[int(rule->icon)];
+                }
+                else
+                {
+                    shortName = section.shortName.c_str();
+                    number = 0;
+                    sectionImgList[idx] = -1;
+                }
+#else
                 if (sectionName.find("Amp Envelope") != std::string::npos)
                 {
                     shortName = "Amp Env";
@@ -1306,6 +1373,7 @@ void cInstrumentEditor::showSynthPatchSection(bool refreshList)
                     number = 0;
                     sectionImgList[idx] = -1;
                 }
+#endif
 
                 sectionNamesList[idx] = &sectionNamesGridBuff[kMaxSynthGridStringLen * idx];
 
@@ -1597,7 +1665,7 @@ void cInstrumentEditor::showSynthPatchSectionParamValue(bool refreshList)
     const auto& metadata = patch.getMetadata();
 
     int paramIdx = sectionParamsIds[paramListPos];
-    if (paramIdx < 0 && paramIdx >= std::ssize(metadata.params))
+    if (paramIdx < 0 || paramIdx >= std::ssize(metadata.params))
     {
         display.setControlHide(barControl[7]);
         display.setControlHide(modelListControl);
@@ -1609,22 +1677,11 @@ void cInstrumentEditor::showSynthPatchSectionParamValue(bool refreshList)
 
     if (refreshList)
     {
-        if (param.isEnum && param.minValue == 0)
+        // an enum shows its values as a list, a full heap leaves it on the bar like any other parameter
+        if (param.isEnum && param.minValue == 0 &&
+            newValueList(paramValueListTextBuff, paramValueListNames, param.maxValue + 1, kMaxSynthListStringLen))
         {
-            if (paramValueListTextBuff != nullptr)
-            {
-                delete[] paramValueListTextBuff;
-            }
-
-            if (paramValueListNames != nullptr)
-            {
-                delete[] paramValueListNames;
-            }
-
             int length = param.maxValue + 1;
-
-            paramValueListTextBuff = new char[length * kMaxSynthListStringLen];
-            paramValueListNames = new char*[length];
 
             auto formatter = param.valueFormatter;
 
@@ -1739,7 +1796,7 @@ void cInstrumentEditor::showSynthPatchMacroParamValue(bool refreshList)
     const auto& metadata = patch.getMetadata();
 
     int macroIdx = sectionIds[sectionListPos];
-    if (macroIdx < 0 && macroIdx >= std::ssize(metadata.macros))
+    if (macroIdx < 0 || macroIdx >= std::ssize(metadata.macros))
     {
         display.setControlHide(barControl[7]);
         display.setControlHide(modelListControl);
@@ -1777,22 +1834,13 @@ void cInstrumentEditor::showSynthPatchMacroParamValue(bool refreshList)
 
                 paramValueMode = kList;
             }
-            else if (paramListPos % 2 == 0) // param
+            else if (paramListPos % 2 == 0 &&
+                     newValueList(paramValueListTextBuff,
+                                  paramValueListNames,
+                                  patch.getMetadata().params.size() + 1,
+                                  kMaxSynthListStringLen)) // param, no list on a full heap
             {
-                if (paramValueListTextBuff != nullptr)
-                {
-                    delete[] paramValueListTextBuff;
-                }
-
-                if (paramValueListNames != nullptr)
-                {
-                    delete[] paramValueListNames;
-                }
-
                 int length = patch.getMetadata().params.size() + 1;
-
-                paramValueListTextBuff = new char[length * kMaxSynthListStringLen];
-                paramValueListNames = new char*[length];
 
                 for (int idx = 0; idx < length; idx++)
                 {

@@ -1,6 +1,9 @@
 #include "dspApplyGain.h"
 #include "AudioStream.h"
 #include "dspinst.h"
+#ifdef FEATURE_SAT_SOFTKNEE
+#include "sat_softknee.h"
+#endif
 
 #define MULTI_UNITYGAIN 65536
 
@@ -284,6 +287,15 @@ AUDIO_CORE_RAM void saturate(int16_t* dstBuf, const int32_t* inBuf, SaturationTy
                 *dstBuf++ = out;
             } while (dstBuf < endBuf);
             break;
+#ifdef FEATURE_SAT_SOFTKNEE
+        case SaturationType::kSoftKnee:
+            // passthrough below -3 dBFS, a smooth curve into the int16 ceiling above (sat_softknee.h)
+            do
+            {
+                *dstBuf++ = softknee::apply(*inBuf++);
+            } while (dstBuf < endBuf);
+            break;
+#endif
         case SaturationType::kSaturationTypeEnd: assert(false); break;
     }
 }

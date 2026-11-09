@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Feature Requests & Ideas
+    url: https://github.com/polyend/tracker-ce/discussions/categories/feature-requests-ideas
+    about: Propose and discuss new features, workflow enhancements, synth engines, or .ptfx effects in GitHub Discussions.
   - name: Polyend Backstage Community Forum
     url: https://backstage.polyend.com/
     about: Discuss Tracker CE workflows, share custom themes/fonts/.ptfx plugins, and ask general questions on Polyend Backstage.

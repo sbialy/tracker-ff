@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Refuse .ptf images that cannot be flashed safely on the original Tracker (MK66, 1 MiB flash).
 
-Modelled on ref/opentracker/tools/check_image.py. Checks an Intel HEX .ptf for:
+Modelled on tools/check_image.py of OpenTracker. Checks an Intel HEX .ptf for:
   * Every data byte below FLASH_IMG_MAX (default 0xFF000): the top sector stays untouched.
     The ld -print-memory-usage FLASH line omits the .data load image, so only the highest
     ihex address tells the truth.

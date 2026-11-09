@@ -164,6 +164,8 @@ class cTracker : public cDisplayControl
 
     uint32_t actualColor;
     uint32_t lastFontColor;
+    uint32_t dimFx1Color;
+    uint32_t dimFx2Color;
 
     uint8_t stepHight;
 };

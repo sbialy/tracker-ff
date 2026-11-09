@@ -26,6 +26,8 @@
 #include "usb_device_descriptor.h"
 
 #include "composite.h"
+
+#include "DevConsole.h"
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
@@ -65,7 +67,9 @@ USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE) static usb_cdc_acm_info_t s_usbC
 USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE) static uint8_t s_currRecvBuf[DATA_BUFF_SIZE];
 USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE) static uint8_t s_currSendBuf[DATA_BUFF_SIZE];
 volatile static uint32_t s_recvSize = 0;
-volatile static uint32_t s_sendSize = 0;
+/* Set while a bulk IN transfer is in flight; s_currSendBuf must not be reused until the
+ * send-complete event clears it. */
+volatile static uint8_t s_sendBusy = 0;
 volatile static usb_device_composite_struct_t* g_deviceComposite;
 
 /*******************************************************************************
@@ -104,6 +108,14 @@ usb_status_t USB_DeviceCdcVcomCallback(class_handle_t handle, uint32_t event, vo
                  ** data, so it can flush the output.
                  */
                 error = USB_DeviceCdcAcmSend(handle, USB_CDC_VCOM_DIC_BULK_IN_ENDPOINT, NULL, 0);
+                if (kStatus_USB_Success != error)
+                {
+                    s_sendBusy = 0;
+                }
+            }
+            else
+            {
+                s_sendBusy = 0;
             }
         }
         break;
@@ -314,13 +326,9 @@ void USB_DeviceCdcVcomTask(void)
          * canceled */
         if ((0 != s_recvSize) && (USB_CANCELLED_TRANSFER_LENGTH != s_recvSize))
         {
-            serial_manager_callback_message_t msg;
-
-            msg.buffer = s_currRecvBuf;
-            msg.length = s_recvSize;
-
-            g_deviceComposite->cdcVcom.rx_callback(
-              g_deviceComposite->cdcVcom.rx_param, &msg, kStatus_SerialManager_Success);
+            /* The serial manager never installs an RX callback here (debug console input is
+             * disabled), so received bytes go straight to the development console. */
+            DevConsole_RxBytes(s_currRecvBuf, s_recvSize);
 
             s_recvSize = 0;
 
@@ -334,19 +342,25 @@ void USB_DeviceCdcVcomTask(void)
             }
         }
     }
-    if (s_sendSize)
+    if ((1 == g_deviceComposite->cdcVcom.attach) &&
+        (1 == g_deviceComposite->cdcVcom.startTransactions) && (0 == s_sendBusy))
     {
-        uint32_t size = s_sendSize;
-        s_sendSize = 0;
+        /* One byte short of a full packet, so a transfer never ends on a packet boundary and
+         * needs no zero-length packet to terminate it. */
+        uint32_t size = DevConsole_TxRead(s_currSendBuf, DATA_BUFF_SIZE - 1);
 
-        error = USB_DeviceCdcAcmSend(g_deviceComposite->cdcVcom.cdcAcmHandle,
-                                     USB_CDC_VCOM_DIC_BULK_IN_ENDPOINT,
-                                     s_currSendBuf,
-                                     size);
-
-        if (error != kStatus_USB_Success)
+        if (size)
         {
-            /* Failure to send Data Handling code here */
+            s_sendBusy = 1;
+            error = USB_DeviceCdcAcmSend(g_deviceComposite->cdcVcom.cdcAcmHandle,
+                                         USB_CDC_VCOM_DIC_BULK_IN_ENDPOINT,
+                                         s_currSendBuf,
+                                         size);
+
+            if (error != kStatus_USB_Success)
+            {
+                s_sendBusy = 0;
+            }
         }
     }
 }
@@ -366,6 +380,7 @@ usb_status_t USB_DeviceCdcVcomSetConfigure(class_handle_t handle, uint8_t config
     if (USB_COMPOSITE_CONFIGURE_INDEX == configure)
     {
         g_deviceComposite->cdcVcom.attach = 1;
+        s_sendBusy = 0;
         /* Schedule buffer for receive */
         USB_DeviceCdcAcmRecv(g_deviceComposite->cdcVcom.cdcAcmHandle,
                              USB_CDC_VCOM_DIC_BULK_OUT_ENDPOINT,
@@ -392,39 +407,20 @@ usb_status_t USB_DeviceCdcVcomInit(usb_device_composite_struct_t* deviceComposit
 
 status_t USB_DeviceVcomWrite(uint8_t controller, uint8_t* buffer, uint32_t length)
 {
-    if ((1 == g_deviceComposite->cdcVcom.attach) &&
-        (1 == g_deviceComposite->cdcVcom.startTransactions))
+    /* Queued and sent by USB_DeviceCdcVcomTask. Sending from here would race with a transfer
+     * already in flight and silently lose the data. */
+    DevConsole_Write(buffer, length);
+
+    if (NULL != g_deviceComposite->cdcVcom.tx_callback)
     {
-        USB_DeviceCdcAcmSend(g_deviceComposite->cdcVcom.cdcAcmHandle,
-                             USB_CDC_VCOM_DIC_BULK_IN_ENDPOINT,
-                             buffer,
-                             length);
+        serial_manager_callback_message_t msg;
+
+        msg.buffer = buffer;
+        msg.length = length;
+
+        g_deviceComposite->cdcVcom.tx_callback(
+          g_deviceComposite->cdcVcom.tx_param, &msg, kStatus_SerialManager_Success);
     }
-    else
-    {
-        uint32_t sendLength = length;
-
-        if (s_sendSize + sendLength >= DATA_BUFF_SIZE)
-        {
-            sendLength = (DATA_BUFF_SIZE - 1) - s_sendSize;
-        }
-
-        int i;
-        for (i = 0; i < sendLength; i++)
-        {
-            s_currSendBuf[s_sendSize + i] = buffer[i];
-        }
-
-        s_sendSize += sendLength;
-    }
-
-    serial_manager_callback_message_t msg;
-
-    msg.buffer = buffer;
-    msg.length = length;
-
-    g_deviceComposite->cdcVcom.tx_callback(
-      g_deviceComposite->cdcVcom.tx_param, &msg, kStatus_SerialManager_Success);
 
     return kStatus_Success;
 }

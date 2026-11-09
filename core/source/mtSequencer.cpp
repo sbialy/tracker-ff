@@ -5,6 +5,7 @@
 #include "Synth.h"
 #endif
 #include "fileManager.h"
+#include "log.h"
 #include "mtAudioEngine.h"
 #include "mtSequencer.h"
 #include "mtStructs.h"
@@ -23,6 +24,7 @@
 #include "util_math.h"
 
 #include "polyassert.h"
+#include "polyrequire.h"
 
 #include <cr_section_macros.h>
 
@@ -71,6 +73,7 @@ void Sequencer::init()
 
 void Sequencer::update()
 {
+    reloadPatternAfterStop();
     updatePatternManagment();
 }
 void Sequencer::initAfterReadConfig()
@@ -251,7 +254,7 @@ AUDIO_CORE_RAM void Sequencer::tick_uStep(void)
     }
 }
 
-AUDIO_CORE_FLASH void Sequencer::play_microStep(int row)
+AUDIO_CORE_RAM void Sequencer::play_microStep(int row)
 {
     assert(row < kAllTracks);
 
@@ -1322,6 +1325,8 @@ AUDIO_CORE_RAM void Sequencer::play(uint8_t fromPos)
 {
     fromPos = clamp<int>(fromPos, 0, MAXSTEP);
 
+    LOGF("sequencer play from step %d (%s mode)\n", fromPos, player.songMode ? "song" : "pattern");
+
     if (!(isRec() && isPreRollConfigOn()))
     {
         stopAllOpenNotes();
@@ -1556,6 +1561,13 @@ AUDIO_CORE_RAM void Sequencer::stopManualNotes(void)
 
 void Sequencer::stop(void)
 {
+    stop(StopContext::mainLoop);
+}
+
+void Sequencer::stop(StopContext context)
+{
+    LOG("sequencer stop");
+
     songTimer.stop();
     stopAllOpenNotes();
     cancelFxes();
@@ -1583,8 +1595,15 @@ void Sequencer::stop(void)
         player.onPatternOrSelectionEnd();
         if (sequencialSwitch_GetNext() > 0)
         {
-            newFileManager.loadWorkspacePatternNow(mtProject.values.actualPattern);
-            sequencer.switchRamPatternsNow();
+            if (context == StopContext::audioCallback)
+            {
+                player.reloadPatternAfterStop = true;
+            }
+            else
+            {
+                newFileManager.loadWorkspacePatternNow(mtProject.values.actualPattern);
+                sequencer.switchRamPatternsNow();
+            }
         }
     }
     player.onGlobalStep = nullCallback;
@@ -1614,6 +1633,21 @@ void Sequencer::stop(void)
     {
         player.track[trackIdx].stepSent.note = STEP_NOTE_EMPTY;
     }
+}
+
+void Sequencer::reloadPatternAfterStop()
+{
+    if (!player.reloadPatternAfterStop)
+    {
+        return;
+    }
+    player.reloadPatternAfterStop = false;
+
+    newFileManager.loadWorkspacePatternNow(mtProject.values.actualPattern);
+    // Playback may have been started again since the stop.
+    DISABLE_GLOBAL_INTERRUPTS();
+    switchRamPatternsNow();
+    ENABLE_GLOBAL_INTERRUPTS();
 }
 
 void Sequencer::updatePatternManagment()
@@ -1730,7 +1764,7 @@ void Sequencer::switchRowStep(uint8_t row) // przełączamy stepy w zależności
                 return;
             }
 
-            stop();
+            stop(StopContext::audioCallback);
             return;
         }
     }
@@ -1759,7 +1793,7 @@ void Sequencer::switchRowStep(uint8_t row) // przełączamy stepy w zależności
             // check if length was changed meantime
             if (player.selectionModeLooped && lastPos < player.loopSelection.firstStep)
             {
-                stop();
+                stop(StopContext::audioCallback);
                 return;
             }
 
@@ -2298,7 +2332,7 @@ AUDIO_CORE_RAM void Sequencer::inc_uStepGlobal()
         {
             if (player.globalPos > player.selectionModeLastStep)
             {
-                stop();
+                stop(StopContext::audioCallback);
                 player.onPatternOrSelectionEnd();
             }
         }
@@ -3721,7 +3755,7 @@ void Sequencer::handleMidiInStop()
     }
     externalClockPulses = 0;
     externalClocksToPlay = 0;
-    stop();
+    stop(StopContext::audioCallback);
 }
 
 void Sequencer::handleMidiInClock()
@@ -3794,19 +3828,11 @@ AUDIO_CORE_RAM void Sequencer::updateExternalClockTempo(seqtimesec_t deltaTime)
 
 bool Sequencer::copyBufferToBufferPattern(uint8_t* srcBuff)
 {
-    [[maybe_unused]] uint32_t checkCRC =
-      crcCalculator->calculate32bitCrc(srcBuff, sizeof(Sequencer::strPattern) - sizeof(uint32_t));
-
     uint8_t* destPattern = (uint8_t*)bufferPattern;
 
-    if (true)
-    {
-        memcpy(destPattern, srcBuff, sizeof(Sequencer::strPattern));
-        newFileManager.checkVersionAndTranslate((Sequencer::strPattern*)destPattern);
-        return true;
-    }
-
-    return false;
+    memcpy(destPattern, srcBuff, sizeof(Sequencer::strPattern));
+    newFileManager.checkVersionAndTranslate((Sequencer::strPattern*)destPattern);
+    return true;
 }
 
 bool Sequencer::copyCurrentPatternToBuff(uint8_t* destBuff)
@@ -3840,13 +3866,13 @@ AUDIO_CORE_RAM bool isPerformanceTrack(int track)
 
 AUDIO_CORE_RAM bool isSampleTrack(int track)
 {
-    assert(track >= 0);
+    POLY_REQUIRE(track >= 0, false); // a negative index would pass the < test below
     return (track < kSampleTracks);
 }
 
 AUDIO_CORE_RAM bool isSampleInstrument(int instrument)
 {
-    assert(instrument >= 0);
+    POLY_REQUIRE(instrument >= 0, false); // a negative index would pass the < test below
     assert(instrument < kTotalInstrumentsCount);
     return instrument < kSampleInstrumentsCount;
 }
@@ -3869,7 +3895,7 @@ AUDIO_CORE_RAM bool isSynthInstrument(int instrument)
 
 AUDIO_CORE_RAM int instrumentIdxToMidiChannel(int instrument)
 {
-    assert(instrument >= 0);
+    POLY_REQUIRE(instrument >= 0, kNoChannel);
     if (isSampleInstrument(instrument))
     {
         return kNoChannel;
@@ -3888,8 +3914,9 @@ AUDIO_CORE_RAM int instrumentIdxToMidiChannel(int instrument)
     return kNoChannel;
 }
 
+// -1 when the instrument is not a synth one (the callers index synthPart[] with the result, test it)
 int instrumentIdxToSynthIdx(int instrumentIdx)
 {
-    assert(isSynthInstrument(instrumentIdx));
+    POLY_REQUIRE(isSynthInstrument(instrumentIdx), -1);
     return instrumentIdxToMidiChannel(instrumentIdx) - 1;
 }

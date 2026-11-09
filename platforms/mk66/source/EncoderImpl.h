@@ -2,6 +2,7 @@
 #define SOURCE_ENCODERIMPL_H_
 #include "Encoder.h"
 #include "Platform.h"
+#include "devhooks.h"
 
 class EncoderImpl : Encoder
 {
@@ -11,9 +12,11 @@ class EncoderImpl : Encoder
 
     void init();
     void update();
+    DEVHOOK_ENCODER_PUBLIC // development hooks (devhooks.h): the injected encoder turns
 
   private:
     uint32_t encTimer;
+    DEVHOOK_ENCODER_PRIVATE
     cEncoder encoderDriver;
 };
 

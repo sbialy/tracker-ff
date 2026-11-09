@@ -40,6 +40,7 @@ RE-CERTIFICATION AS A RESULT OF MAKING THESE CHANGES.
 */
 
 #include "FT812.h"
+#include "devhooks.h"
 
 #include <stdint.h> // for Uint8/16/32 and Int8/16/32 data types
 #include <string.h>
@@ -311,21 +312,26 @@ uint16_t EVE_IncCMDOffset(uint16_t currentOffset, uint16_t commandSize)
 
 // ------ Wait for co-processor read and write pointers to be equal ------------
 
+extern uint16_t* cmdOffset;
+
 uint8_t EVE_WaitCmdFifoEmpty(void)
 {
     uint32_t ReadPointer, WritePointer;
+    DEVHOOK_SPIN_BEGIN(spins);
 
     do
     {
         ReadPointer = EVE_MemRead32(REG_CMD_READ);   // Read the graphics processor read pointer
         WritePointer = EVE_MemRead32(REG_CMD_WRITE); // Read the graphics processor write pointer
+        DEVHOOK_SPIN_STEP(spins, DEVSITE_FT812_WAIT_EMPTY, { usbtest_coproc_reset(); return 0xFF; });
     } while ((WritePointer != ReadPointer) &&
              (ReadPointer != 0xFFF)); // Wait until the two registers match
 
     if (ReadPointer == 0xFFF)
         return 0xFF; // Return 0xFF if an error occurred
-    else
-        return 0; // Return 0 if pointers became equal successfully
+    if (cmdOffset != nullptr)
+        *cmdOffset = (uint16_t)WritePointer;
+    return 0; // Return 0 if pointers became equal successfully
 }
 
 uint32_t error_counter = 0;
@@ -334,15 +340,6 @@ uint8_t EVE_IsCmdFifoEmpty(void)
 {
     uint32_t ReadPointer = EVE_MemRead32(REG_CMD_READ);
     uint32_t WritePointer = EVE_MemRead32(REG_CMD_WRITE);
-
-    /*
-        uint8_t flag = 0;
-        if(flag == 1)
-        {
-            EVE_MemWrite32(REG_CMD_READ, WritePointer);
-            EVE_MemWrite32(REG_CMD_WRITE, WritePointer);
-        }
-    */
 
     if (ReadPointer == 0xFFF || error_counter > 100000)
     {
@@ -357,6 +354,8 @@ uint8_t EVE_IsCmdFifoEmpty(void)
         EVE_MemWrite32(REG_CMD_READ, 0);
         EVE_MemWrite32(REG_CMD_WRITE, 0);
         EVE_MemWrite32(REG_CPURESET, 0);
+        if (cmdOffset != nullptr)
+            *cmdOffset = 0;
 
         return 1;
         // cmdOffset = 0;
@@ -365,6 +364,8 @@ uint8_t EVE_IsCmdFifoEmpty(void)
     if (WritePointer == ReadPointer)
     {
         error_counter = 0;
+        if (cmdOffset != nullptr)
+            *cmdOffset = (uint16_t)WritePointer;
         return 1;
     }
     else

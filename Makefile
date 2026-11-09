@@ -26,9 +26,11 @@ ifeq ($(SYNTH_OPEN),1)
 # Engine picker: make original SYNTH_OPEN=1 SYNTH_ENGINES="ACD VAP WTFM CHIP" (names in synth-open/engines.mk, default
 # ACD FAT VAP WTFM). Unknown names stop the build with the list of valid ones. make synth-engines prints the flash cost.
 include $(SYNTH_OPEN_DIR)/engines.mk
-# Flash fit (see synth-open/README.md): engines and cold synth GUI files at -Os. Override with
-# SYNTH_OPT_ENGINES= SYNTH_OPT_GUI= (empty = -O2) and give each variant its own SYNTH_TAG=-x.
-SYNTH_OPT_ENGINES ?= -Os
+# Engine DSP at -O2 (CPU: at -Os GCC keeps the per-sample helpers svfStep, limit and fastSine as calls, -O2 saves up to 28.7
+# points of a block at 4 voices for +14.9 KB, ref cpu-optimisation-plan item 1), FM4 and B-Type at -O3 (SYNTH_OPT_FM4,
+# SYNTH_OPT_BTYPE in core/makefile). Cold synth GUI files at -Os for the flash fit (see synth-open/README.md). Override with
+# SYNTH_OPT_ENGINES=-Os SYNTH_OPT_GUI= (empty = -O2) and give each variant its own SYNTH_TAG=-x.
+SYNTH_OPT_ENGINES ?= -O2
 SYNTH_OPT_GUI ?= -Os
 SYNTH_OPT_COLD ?= -Os
 # FAT at -O2 costs about +120 B over -Os in the linked image. It stays at -O2 as long as text+data keeps
@@ -43,6 +45,10 @@ TRIM_TAG := -trim
 SYNTH_TAG_NAME := FF
 else
 SYNTH_TAG_NAME := SO
+endif
+# PTF_TAG=PLUGH: another TAG in the .ptf name for a dev image (the name checks below still apply)
+ifneq ($(PTF_TAG),)
+SYNTH_TAG_NAME := $(PTF_TAG)
 endif
 # Device-facing .ptf name, same shape as stock: PolyendTracker_<TAG>_<A.B.C>.ptf with TAG = SO. The numeric
 # part is SYNTH_OPEN_VER without any dash suffix, so a plain SYNTH_OPEN build is PolyendTracker_SO_1.0.0.ptf (26 chars) and a TRIM build
@@ -80,7 +86,16 @@ MINI_POSTFIX     ?= $(EDITION_NAME)_$(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_V
 
 .DEFAULT_GOAL := all
 
-.PHONY: all original plus mini ptfx clean version bump-patch bump-minor synth-engines package-release
+.PHONY: all original plus mini ptfx ptfx-check clean version bump-patch bump-minor synth-engines package-release lint-original
+
+# Lint only, the original (MK66) target: -Wconversion scoped to the file manager and plugin host, format and bounds checks with builtins on.
+# Prints warnings, builds nothing, never fails. Same variables as `make original` (SYNTH_OPEN=1 PLUG_HOST=1 adds the plugin host files).
+lint-original:
+	$(MAKE) -C "$(CORE_DIR)" lint \
+		TOOLCHAIN="$(TOOLCHAIN)" PLATFORM=MK66 PRODUCT=ORIGINAL \
+		POLYUTIL_DIR="$(UTIL_DIR)" POLYSYNTH_DIR="$(SYNTH_DIR)" \
+		SYNTH_OPEN="$(SYNTH_OPEN)" SYNTH_OPEN_DIR="$(SYNTH_OPEN_DIR)" $(if $(filter 1,$(TRIM)),TRIM=1) \
+		$(if $(SYNTH_ENGINES_SEL),SYNTH_ENGINES="$(SYNTH_ENGINES_SEL)") SYNTH_TAG="$(SYNTH_TAG)"
 
 all: original plus mini
 
@@ -89,6 +104,8 @@ original:
 	@echo " Building Original Tracker (MK66) - $(EDITION_NAME) $(ORIGINAL_VER_MAJOR).$(ORIGINAL_VER_MINOR).$(ORIGINAL_VER_PATCH) ($(BUILD_TAG))"
 	@echo "=================================================================="
 	@rm -f "$(MK66_BUILD)/obj/source/PlatformImpl.o"
+	@# SDRAM_FILE_POOLS follows SYNTH_OPEN and the plain build shares these objects: rebuild them every time
+	@rm -f "$(MK66_BUILD)/obj/source/FileSystemImpl.o" "$(MK66_BUILD)/obj/3rdparty/SD/SdFile.o"
 ifeq ($(SYNTH_OPEN),1)
 	@rm -f "$(OUT_DIR)/$(SYNTH_PTF)" "$(OUT_DIR)/BUILD.txt"
 endif
@@ -110,6 +127,7 @@ endif
 		TARGET_POSTFIX="$(ORIGINAL_POSTFIX)" \
 		BUILD_ID_STR="$(BUILD_ID_STR)" \
 		$(if $(filter 1,$(TRIM)),TRIM=1 BUILD_DIR="build$(TRIM_TAG)") \
+		$(if $(filter 1,$(SYNTH_OPEN)),SDRAM_FILE_POOLS=1) \
 		$(if $(filter 1,$(SYNTH_OPEN)),LINK_EXTRA="-Xlinker -Map=build$(TRIM_TAG)/PolyendTracker.map")
 	@mkdir -p "$(OUT_DIR)"
 ifeq ($(SYNTH_OPEN),1)
@@ -218,6 +236,11 @@ ptfx:
 		base=$$(basename "$$src" .c); \
 		python3 "$(ROOT_DIR)/editor-fx-sdk/ptfx_builder.py" "$$src" -o "$(ROOT_DIR)/editor-fx-sdk/build/Effects/$$base.ptfx" --toolchain "$(TOOLCHAIN)"; \
 	done
+
+# Builds the ot_*.c effects, then renders each through a host harness (clang, real libm)
+# into build/ptfx-wav and checks the result. Host side only, nothing runs on the device.
+ptfx-check:
+	python3 -I "$(ROOT_DIR)/editor-fx-sdk/tools/ptfx_host_check.py"
 
 clean:
 	$(MAKE) -C "$(CORE_DIR)" clean PLATFORM=MK66 PRODUCT=ORIGINAL

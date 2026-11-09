@@ -89,6 +89,12 @@ const char* const envelopesLabels[autoDestCount] = {
     "Finetune"
 };
 
+#if GUI_SYNTH_AUTO
+// shared with the Synth Automation page (SynthAutomation.cpp)
+extern const char* const lfoShapeLabels[lfoShapeCount];
+extern const char* const lfoSpeedLabels[ENVELOPE_SPEED_OTHER_COUNT];
+#endif
+
 const char* const envStateLabels[5] = { "Off", "Envelope", "LFO", "WT Env", "WT LFO" };
 
 const char* const lfoShapeLabels[lfoShapeCount] = { "Rev Saw",
@@ -373,8 +379,26 @@ void cInstrumentEditor::showTitleBar()
             break;
         case mtInstEditModeInstrSynth: label = "Instrument MIDI Mapping"; break;
 #if GUI_HANDLE_SYNTH
+#if GUI_SYNTH_AUTO
+        case mtInstEditModeSynth: label = "Synth Parameters 1/3"; break;
+        case mtInstEditModeSynthMacros: label = "Synth Macros 2/3"; break;
+        case mtInstEditModeSynthAutomation:
+        {
+            // the automation belongs to the open slot's file: its number and name are in the title
+            int syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+            assert(syntPartIdx >= 0 && syntPartIdx < kSynthInstrumentsCount);
+            snprintf(synthPatchNameText,
+                     sizeof(synthPatchNameText),
+                     "Synth Automation 3/3 - Slot %d %s",
+                     synth->getPatchSlot(syntPartIdx),
+                     synth->getPatchName(syntPartIdx).c_str());
+            label = synthPatchNameText;
+            break;
+        }
+#else
         case mtInstEditModeSynth: label = "Synth Parameters 1/2"; break;
         case mtInstEditModeSynthMacros: label = "Synth Macros 2/2"; break;
+#endif
         case mtInstEditModeSynthPatchEdit:
         {
             int syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
@@ -887,6 +911,11 @@ void cInstrumentEditor::showInstrumentParams()
     display.setControlHide(list2Control);
     display.setControlHide(list3Control);
     display.setControlHide(list4Control);
+#if GUI_SYNTH_AUTO
+    // the Synth Automation page moves this list to its Type column
+    display.setControlPosition(filterModeListControl, (800 / 8) * 4 + 1, -1);
+    display.setControlData(filterModeListControl, &filterModeList);
+#endif
     display.setControlShow(filterModeListControl);
     display.setControlHide(doubleLabelAutomation);
     display.setControlHide(paramsListControl);
@@ -1830,6 +1859,18 @@ void cInstrumentEditor::refreshFramePosition()
 #endif
             break;
         }
+#if GUI_SYNTH_AUTO
+        case mtInstEditModeSynthAutomation:
+        {
+            frameData.placesCount = 8;
+            frameData.startPlace = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                frameData.places[i] = &framesPlaces[i][0];
+            }
+            break;
+        }
+#endif
         case mtInstEditModeSynthPatchEdit:
         {
             frameData.placesCount = 2;

@@ -1,4 +1,5 @@
 #include "Cpu.h"
+#include "DevConsole.h"
 #include "ExternalSdram.h"
 #include "MIMXRT1051.h"
 #include "TimeControl.h"
@@ -28,14 +29,14 @@ PlatformImpl platform;
 
 void _debuglog(const char* msg)
 {
-    DbgConsole_Printf("%s\n", msg);
+    DevConsole_Printf("%s\n", msg);
 }
 
 void _debuglogf(const char* format, ...)
 {
     va_list args;
     va_start(args, format);
-    DbgConsole_Vprintf(format, args);
+    DevConsole_Vprintf(format, args);
     va_end(args);
 }
 
@@ -143,10 +144,12 @@ int main(void)
     platform.init();
     trackerInstance->init(&platform);
     enableMallocCheck = true;
+    DevConsole_Init(&platform);
 
     while (1)
     {
         usb->update();
+        DevConsole_Update();
 #ifdef BLINK_LED_ENABLED
         if (timeControl.millis() > timeCounterMs + kLedTestBlinkTimeMs)
         {

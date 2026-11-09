@@ -3,6 +3,9 @@
 #include "ConfigManagerImpl.h"
 #include "Drivers/ClockCyclesCounter.h"
 #include "Drivers/ExternalSdram.h"
+#ifdef FW_SDRAM_FILE_POOLS
+void operatorNewArenaInit();
+#endif
 #include "FT812.h"
 #include "PlatformImpl.h"
 #include "PowerControl.h"
@@ -56,6 +59,9 @@ void initHardware(PlatformImpl* platform,
     pinMode(TrackerPinout::kExternalRamEnable, OUTPUT);
     digitalWrite(TrackerPinout::kExternalRamEnable, HIGH);
     externalRAM.init();
+#ifdef FW_SDRAM_FILE_POOLS
+    operatorNewArenaInit(); // new.cpp: the big blocks of operator new go to the SDRAM from here on
+#endif
 
     clockCyclesCounter.init();
 

@@ -543,18 +543,19 @@ void audioEngine::connectInputToOutput(AudioInput* input, AudioOutput* output)
 
 void audioEngine::connectMixerToOutput(MixerAndFxs<kVoices>* mixerAndFxs, AudioOutput* output)
 {
-#ifdef FEATURE_FF_DIRT
-    // through the Dirt insert (off: the blocks pass untouched), AudioOutput connects it to the limiters
+#if defined(FEATURE_FF_DIRT) || defined(FEATURE_PLUG_HOST)
+    // through the master inserts (Dirt, then the plugin node: off, the blocks pass untouched), AudioOutput connects them
+    // to the limiters
     connections.push_back(
       new AudioConnection(mixerAndFxs->getTracksAndSendsMixer(MixerAndFxChannelType::kLeft),
                           0,
-                          output->getDirt(),
+                          output->getMasterInsert(),
                           0));
 
     connections.push_back(
       new AudioConnection(mixerAndFxs->getTracksAndSendsMixer(MixerAndFxChannelType::kRight),
                           0,
-                          output->getDirt(),
+                          output->getMasterInsert(),
                           1));
 #else
     connections.push_back(
@@ -1648,6 +1649,15 @@ void audioEngine::setSnapToZeroEnable(bool enabled)
 
 void audioEngine::setSaturationType(SaturationType type)
 {
+#ifdef FEATURE_PLUG_HOST
+    // the reserved "Inserts" value (plug::kSatInserts): the master insert plugins on top of the mixer stage picked on the
+    // Inserts page (Hard Clip, Soft Clip or Soft Knee, the project sidecar)
+    if (type >= SaturationType::kSaturationTypeEnd) type = SaturationType(plug::mixerStage());
+#endif
+#if defined(FEATURE_SAT_SOFTKNEE) && !defined(FEATURE_FF_DIRT)
+    // 5..9: the Dirt entries of FF builds, not in this one (plug_host.cpp migrates the project at load)
+    if (type > SaturationType::kOverdrive2 && type < SaturationType::kSoftKnee) type = SaturationType::kHardClip;
+#endif
 #ifdef FEATURE_FF_DIRT
     // the Dirt entries run the mixers at hard clip and the master bus insert (synth-open/ff_dirt.h) on top
     const bool dirt = type >= SaturationType::kDirtSoft;

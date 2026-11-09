@@ -244,6 +244,10 @@ def build_ptfx(c_file, output_file, name=None, author=None, flags_str=None, scra
             "-fno-builtin",
             "-fno-tree-loop-distribute-patterns",
             "-fPIC",
+            # The loader applies no relocations, so a GOT access (default-visibility
+            # global under -fPIC) would read an unrelocated link-time-absolute slot.
+            # Hidden visibility makes the compiler address globals PC-relative.
+            "-fvisibility=hidden",
             "-mpic-data-is-text-relative",
             "-mlong-calls",
             "-nostdlib",
@@ -254,6 +258,24 @@ def build_ptfx(c_file, output_file, name=None, author=None, flags_str=None, scra
         res = subprocess.run(gcc_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if res.returncode != 0:
             print("Compilation Error:\n" + res.stderr.decode(), file=sys.stderr)
+            sys.exit(1)
+
+        # The loader copies the payload as-is and applies no relocations, so any
+        # GOT-based access in the object would use unrelocated (base 0) addresses.
+        res = subprocess.run([toolchain + "objdump", "-r", obj_path],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res.returncode != 0:
+            print("Objdump Error:\n" + res.stderr.decode(), file=sys.stderr)
+            sys.exit(1)
+        got_relocs = [ln.split(None, 2) for ln in res.stdout.decode().splitlines()
+                      if "R_ARM_GOT" in ln]
+        if got_relocs:
+            syms = sorted({r[2].strip() for r in got_relocs if len(r) == 3 and not r[2].startswith("_GLOBAL_OFFSET_TABLE_")})
+            print("Error: plugin object contains GOT relocations, which the .ptfx loader "
+                  "does not apply (it would read unrelocated addresses at runtime).\n"
+                  f"  Offending symbols: {', '.join(syms) or '(none named)'}\n"
+                  "  Avoid default-visibility attributes on globals or functions the plugin references.",
+                  file=sys.stderr)
             sys.exit(1)
 
         ld_objs = [obj_path]

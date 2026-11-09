@@ -28,6 +28,7 @@ void EncoderImpl::update()
         encTimer = millis();
 
         int32_t encValue = encoderDriver.read();
+        DEVHOOK_ENCODER_READ(encValue);
         if (encValue != 0)
             onPotChange(0, encValue);
     }

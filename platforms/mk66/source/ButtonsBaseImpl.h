@@ -12,6 +12,7 @@ class ButtonsBaseImpl : public SwitchGroup
     virtual void setActionCallback(ActionType action, void (*callback)(uint8_t)) override;
     void disableInterrupts();
     bool update();
+    DEVHOOK_BUTTONS_PUBLIC // development hooks (devhooks.h, included by Keys.h)
 
   protected:
     Keys buttonsDriver;

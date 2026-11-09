@@ -130,12 +130,19 @@ void cFileManager::copySongTracks(char* currentProjectPath,
         }
     }
 
-    destPattern->track[0].length =
-      std::max(srcPattern->track[0].length, destPattern->track[0].length);
+    uint8_t destBitmaskIdx = destPaternIdx - 1;
+    bool isDestPatternEmpty =
+      !status || (mtProject.values.allPatternsBitmask[destBitmaskIdx] == 0 &&
+                  mtProject.values.allPatternsBitmaskMidi[destBitmaskIdx] == 0);
 
-    if (tracksNum == kAllTracks)
+    if (tracksNum == kAllTracks || isDestPatternEmpty)
     {
         destPattern->track[0].length = srcPattern->track[0].length;
+    }
+    else
+    {
+        destPattern->track[0].length =
+          std::max(srcPattern->track[0].length, destPattern->track[0].length);
     }
 
     sequencer.updateTrackLengths(destPattern);

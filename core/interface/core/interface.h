@@ -5,6 +5,7 @@
 #include "core/interfaceDefs.h"
 #include "core/modulesBase.h"
 #include "elapsedMillis.h"
+#include "devhooks.h"
 #include <stdint.h>
 
 #include "mtHardware.h"
@@ -53,6 +54,7 @@ class Interface
     void toggleActiveModule(uint8_t state);
     bool isSongScreenActive();
     bool isPatternScreenActive();
+    DEVHOOK_INTERFACE_MEMBERS // development hooks (devhooks.h)
     bool isPerformanceModeScreenActive();
     bool isMasterScreenActive();
     bool isInstrumentParamsScreenActive();
@@ -61,6 +63,8 @@ class Interface
     void handleCardSlotAction(bool state);
     void handlePowerButtonAction(uint8_t state);
     void handleFileTransferMode(uint8_t state);
+    // Enters or leaves USB storage mode without the UI; returns the resulting state.
+    bool setFileTransferMode(bool enable);
 
     void refreshInterfaceControlsColors();
 

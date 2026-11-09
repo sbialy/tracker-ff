@@ -4,10 +4,10 @@
 //     synth-open/open_synth.cpp synth-open/open_cold.cpp synth-open/open_patchio.cpp synth-open/engine_{acd,fat,vap,wtfm}.cpp synth-open/ot/audio/engines/{acd,fat,vap,wtfm}.cpp \
 //     synth-open/ot/audio/{governor,cpu_meter}.cpp \
 //     -o /tmp/smoke && /tmp/smoke
-// Optional OpenTracker oracle (ref/opentracker, not in the repository): add -DOT_ORACLE -I ref/opentracker/src/core
-// ref/opentracker/src/core/formats/patch_pb.cpp to the line above.
+// Optional OpenTracker oracle (an OpenTracker checkout OT, not in the repository): add -DOT_ORACLE -I $OT/src/core
+// $OT/src/core/formats/patch_pb.cpp to the line above.
 // Checks: ACD metadata (29 params, 6 sections), note on -> pitch/amplitude, 2 voices, steal, release to silence, macro CC,
-// then one note per engine of the picked set (engine_list.h, e.g. ACD FAT VAP WTFM PERC CHIP JU6 PHZ): metadata counts, output finite and non-silent, fails with exit 1 otherwise.
+// then one note per engine of the picked set (engine_list.h, e.g. ACD FAT VAP WTFM PERC CHIP JU6): metadata counts, output finite and non-silent, fails with exit 1 otherwise.
 // PERC also gets one hit per drum (kick, tom, snare, hats, cymbal, perc) and the checks of its one voice kit.
 // Then the voice pool and the governor: 6 notes over 3 slots sound at most 4 voices (the oldest are stolen), budget 8 and the
 // per-instrument cap, a simulated overload (block cycles) makes the governor cut with hold-off, calm blocks restore one voice
@@ -34,20 +34,13 @@
 #include <new>
 #include <string>
 #include <vector>
-#ifdef SYNTH_ENGINE_PHZ
-#include "phz/phz.h"
-#endif
 namespace polysynth {
 std::unique_ptr<InstrumentType> createMidiOut();
-// One factory per engine picked with -DSYNTH_ENGINE_<NAME> (synth-open/engine_list.h), as core/synth/registry.cpp
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, ...) std::unique_ptr<InstrumentType> FACTORY();
-#include "engine_list.h"
-#undef SYNTH_ENGINE
+// The run time engine list (the engines picked with -DSYNTH_ENGINE_<NAME>, no plugins here) and the missing placeholders,
+// as core/synth/registry.cpp
 void InstrumentTypeRegistry::registerInstrumentTypes(InstrumentTypeRegistry& r, const Synth::Allocator&) {
     r.addInstrumentType(int(InstrumentTypeId::kMidiOut), createMidiOut());
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, ...) r.addInstrumentType(int(TYPE_ID), FACTORY());
-#include "engine_list.h"
-#undef SYNTH_ENGINE
+    open::registerEngines(r);
 }
 }
 using namespace polysynth;
@@ -119,6 +112,41 @@ static size_t gShortHeap = 0;
 void* operator new(size_t n, const std::nothrow_t&) noexcept { return gShortHeap && n > gShortHeap ? nullptr : std::malloc(n); }
 void* operator new[](size_t n, const std::nothrow_t&) noexcept { return gShortHeap && n > gShortHeap ? nullptr : std::malloc(n); }
 int main() {
+#ifdef SMOKE_PLUGIN_ENGINE
+  // A plugin engine as plug_synth.cpp adds it before the synth starts: ACD's definition and engine under JU6's numbers (stored 7,
+  // type and .patch engine 0x81), shown by its name (builtin -1)
+  static open::EngineDef plugDef = open::kAcdDef;
+  plugDef.name = "JU6";
+  plugDef.typeId = 0x81;
+  plugDef.inst = open::kAcdDef.engine();
+  static open::EngineDef dupDef = plugDef;
+  const bool addOk = open::engineListAdd(&plugDef, 7, 0x81);
+  const bool dupStored = open::engineListAdd(&dupDef, 0, 0x90);    // ACD's stored number
+  dupDef.typeId = 0x91;
+  const bool dupPatch = open::engineListAdd(&dupDef, 30, 0x81);    // JU6's .patch id
+  // A library engine that is not installed yet: listed by its manifest numbers (PHZ's, stored 8, 0x82) with a placeholder
+  // definition, no parameters and no engine, attached later
+  static open::EngineDef libDef = {};
+  libDef.name = "PHZ";
+  libDef.typeId = 0x82;
+  libDef.volumeParam = -1;
+  libDef.maxVoices = open::kMaxVoicesPerInstrument;
+  const bool libOk = open::engineListAdd(&libDef, 8, 0x82);
+  // A library of 100 engines that are not installed (no fixed library size): stored 140..239, type 0x1000 + i, .patch
+  // id 0x200 + i, added in reverse (the list sorts by number), placeholder definitions as plug_synth.cpp synthBoot makes them
+  constexpr int kBig = 100;
+  static open::EngineDef bigDef[kBig] = {};
+  static char bigName[kBig][9];
+  int bigAdded = 0;
+  for (int i = kBig - 1; i >= 0; i--) {
+    snprintf(bigName[i], sizeof(bigName[i]), "BIG%03d", i);
+    bigDef[i].name = bigName[i]; bigDef[i].typeId = 0x1000 + i; bigDef[i].volumeParam = -1; bigDef[i].maxVoices = open::kMaxVoicesPerInstrument;
+    bigAdded += open::engineListAdd(&bigDef[i], 140 + i, 0x200 + i);
+  }
+  static open::EngineDef oddDef = libDef;
+  oddDef.typeId = 0x1F00;
+  const bool oddRefused = !open::engineListAdd(&oddDef, 256, 0x1F00) && !open::engineListAdd(&oddDef, 6, 0x1F00);   // not plugin numbers
+#endif
   auto synth = Synth::createSynth([](size_t){return nullptr;});
   auto store = synth->createPatchStore(Synth::FileSystemId::kPatches, true);
   const int kLead = open::firstEngineTypeId();   // the first engine of this build (ACD unless left out)
@@ -361,9 +389,12 @@ int main() {
     }
 #ifndef SYNTH_ENGINE_HANDTYPE
     // Hand-Type (stored 15, type id and .patch engine 0x87) is in the source tree but not in the release set: a project or a
-    // patch from a build that has it must be as harmless as any other absent engine
+    // patch from a build that has it is in the "missing" state (open_engine.h missingDef: one placeholder for every
+    // plugin engine number, type open::kMissingTypeId): no parameters or engine, silent, its patch files never read into it or
+    // written over
     {
       const InstrumentTypeId kHand = static_cast<InstrumentTypeId>(0x87);
+      const int kMiss = open::kMissingTypeId;
       auto src = ps->createPatch(kLead); open::PatchData pd; static_cast<open::OpenPatch&>(*src).exportData(pd);
       pd.engine = 0x87; uint8_t pbuf[4096]; const size_t pn = open::encodePatch(pd, pbuf, sizeof(pbuf));
       bool refused = pn > 0, untouched = true;
@@ -372,13 +403,62 @@ int main() {
         mp->files[std::string(open::engineDefForType(int(kd.id))->name) + "/hand.patch"].assign(pbuf, pbuf + pn);
         refused = refused && !ps->loadPatch("hand", *t, true); untouched = untouched && *t->getParamValue(0) == b0;
       }
-      auto hp = ps->createPatch(int(kHand));
-      check(refused && untouched && open::typeForEngineId(0x87) == -1 && open::engineDefForType(int(kHand)) == nullptr,
-            "Hand-Type is not in this build: its .patch is refused by every engine and its ids are unknown");
-      check(hp && hp->getMetadata().instrumentTypeId == kLead && ps->listPatchesByType(int(kHand)).empty() && !ws->loadPatch("0", *hp, true),
-            "a Hand-Type part falls back to an Init patch of the first engine, lists nothing and loads nothing");
+      const open::EngineDef* hd = open::missingDef(15);
+      check(refused && untouched && open::typeForEngineId(0x87) == kMiss && hd && !open::engineOf(hd) && hd->paramCount == 0 &&
+              hd->typeId == kMiss && open::engineDefForType(kMiss) == hd && open::typeForStored(15) == kMiss &&
+              open::engineUiForStored(15) == -1 && !open::engineDefForType(int(kHand)) && std::string(open::missingName(15)) == "#15",
+            "Hand-Type is not in this build: its .patch is refused by every engine, stored 15 is the missing placeholder (\"#15\" unnamed)");
+      check(open::engineNameRemember(15, "HANDTYPE") && !open::engineNameRemember(15, "HANDTYPE") && std::string(open::missingName(15)) == "HANDTYPE" &&
+              std::string(open::missingName(1)).empty(),
+            "a remembered name (plug_synth.cpp /Plugins/names.txt) names the missing number, a number that is not missing has none");
+      auto hp = ps->createPatch(kMiss);
+      mw->files["0.patch"].assign(pbuf, pbuf + pn);
+      const auto before = mw->files["0.patch"];
+      check(hp && hp->getMetadata().instrumentTypeId == kMiss && hp->getMetadata().params.empty() && ps->listPatchesByType(kMiss).empty() &&
+              ws->loadPatch("0", *hp, true) && ws->savePatch("0", *hp) && mw->files["0.patch"] == before && !mw->files.count("0.patch.tmp"),
+            "a Hand-Type part is the placeholder: no parameters, its Workspace file loads as done and is never written over");
+#ifdef SMOKE_PLUGIN_ENGINE
+      const int nList = nKinds + 2 + kBig;   // the attached plugin engine, the library engine that is not installed, the big library
+#else
+      const int nList = nKinds;
+#endif
+      check(open::engineCount() == nList && open::engineUiForStored(open::engineAt(nList - 1).stored) == nList - 1 &&
+              open::engineAt(0).builtin == 0, "the engine list is the built-in set (and the two plugin engines), by stored number");
     }
 #endif
+    // ANY plugin engine number is kept, no list. Stored 99 with .patch engine 0xC7 is in no table of this firmware (a
+    // future engine): the part keeps its number (Synth::validateSynthPartSettings accepts it), shows "Missing: #99" or the remembered
+    // name, plays nothing, and its slot files round-trip byte for byte (load, save, the backup an engine change makes, its restore)
+    {
+      const int kMiss = open::kMissingTypeId;
+      const open::EngineDef* xd = open::missingDef(99);
+      check(xd && !open::engineOf(xd) && open::typeForStored(99) == kMiss && open::engineUiForStored(99) == -1 &&
+              std::string(open::missingName(99)) == "#99" && open::typeForEngineId(0xC7) == kMiss,
+            "stored 99 / engine 0xC7 (in no list): the missing placeholder, \"Missing: #99\"");
+      check(!open::missingDef(5) && open::typeForStored(5) == -1 && !open::missingDef(300) && open::typeForStored(300) == -1 &&
+              !open::missingDef(-1) && open::typeForEngineId(0x7F) == -1,
+            "outside the plugin numbers (Polyend's 0 to 6 this build lacks, over 255, negative): no placeholder, the part takes the defaults");
+      auto src = ps->createPatch(kLead); open::PatchData pd; static_cast<open::OpenPatch&>(*src).exportData(pd);
+      pd.engine = 0xC7; uint8_t pbuf[4096]; const size_t pn = open::encodePatch(pd, pbuf, sizeof(pbuf));
+      const std::vector<uint8_t> file0(pbuf, pbuf + pn);
+      const std::vector<uint8_t> file3 = file0;   // slot 3
+      mw->files["1.patch"] = file0; mw->files["1-3.patch"] = file3; mw->files.erase("1-b.patch");
+      auto xp = ws->createPatch(kMiss);
+      bool same = xp && xp->getMetadata().params.empty() && ws->loadPatch("1", *xp, true) && ws->savePatch("1", *xp) &&
+                  ws->loadPatch("1-3", *xp, true) && ws->savePatch("1-3", *xp);
+      open::patchBankSetLive(1, xp.get()); open::patchBankPreload(1, *xp, *ws);
+      same = same && !open::patchBankApply(1, 3);   // no parameters: nothing to apply, nothing written
+      // the part changes to a built-in engine: slot 0 of the missing engine is backed up first (as for any engine), then restored
+      const bool backedUp = open::patchBackupSave(1, *xp, *ws) == open::Backup::kSaved && mw->files["1-b.patch"] == file0;
+      open::patchBankSetLive(1, nullptr);
+      auto lead = ws->createPatch(kLead); ws->savePatch("1", *lead);
+      auto back = ws->createPatch(kMiss);
+      const bool restored = open::patchBackupRestore(1, *back, *ws) && mw->files["1.patch"] == file0;
+      check(same && mw->files["1.patch"] == file0 && mw->files["1-3.patch"] == file3 && !mw->files.count("1.patch.tmp"),
+            "stored 99: its slot files load as done and are never written over (byte for byte)");
+      check(backedUp && restored, "stored 99: an engine change backs its slot 0 up and switching back restores the same bytes");
+      mw->files.erase("1.patch"); mw->files.erase("1-3.patch"); mw->files.erase("1-b.patch");
+    }
     // workspace store: flat N.patch, as Synth::savePatchToWorkspace / loadPatchFromWorkspace use it
     auto w0 = ws->createPatch(kLead); const float w0v = float(w0->getMetadata().params[0].maxValue); w0->setParamValue(0, w0v, Patch::ParamChangeSource::kKnob);
     check(ws->savePatch("0", *w0) && mw->files.count("0.patch") == 1, "workspace store writes Workspace/0.patch (no type folder)");
@@ -1376,80 +1456,6 @@ int main() {
     check(std::isfinite(pk) && pk < 1e-4f, "JU6 released: voices and chorus tail end in silence");
   }
 #endif
-#ifdef SYNTH_ENGINE_PHZ
-  // ---- PHZ: every model x character is finite and sounds, X and Y of the phase distortion change the spectrum, the
-  // filter Off path and a filtered type both stay finite, Reset restarts the cycle
-  {
-    using namespace ot::audio::phz;
-    auto s8 = Synth::createSynth([](size_t){return nullptr;});
-    auto st8 = s8->createPatchStore(Synth::FileSystemId::kPatches, true);
-    auto p8 = std::shared_ptr<Patch>(st8->createPatch(0x82));
-    Src src8; auto i8 = s8->createInstrument(0); i8->assignPatch(p8); i8->connect(src8); i8->setVoiceCount(1); i8->setMidiChannel(0);
-    std::shared_ptr<Instrument> a8[1] = { i8 };
-    s8->setup(std::span<std::shared_ptr<Instrument>>(a8,1), {}, nullptr, []{ return tiny::optional<float>(120.0f); });
-    auto blk8 = [&]() { s8->renderAudioBuffer({AudioBufferRef(L),AudioBufferRef(R)}, std::span<AudioBufferRef>(aux), 0); return peakOf(L); };
-    auto set = [&](int id, float v) { p8->setParamValue(id, v, Patch::ParamChangeSource::kKnob); };
-    // steady, dry, one oscillator, filter Off
-    set(kMix, 0.0f); set(kDetune, 0.0f); set(kAmpA, 0.0f); set(kAmpS, 1.0f); set(kCutoff, 20000.0f); set(kFilterEnvAmt, 0.0f);
-    constexpr int kBlocks = 64;   // 8192 samples
-    const double f0 = 220.0, fs = 44117.647;
-    // Spectrum of the held note: harmonics 1..24 (Goertzel, Hann window). Returns false when not finite
-    auto spectrum = [&](double* mag, float& peak) {
-      src8.send(MidiEvent::Type::kNoteOff, 0, 57, 0); for (int b = 0; b < 300; b++) blk8();
-      src8.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 12; b++) blk8();
-      static float x[kBlocks * 128]; peak = 0;
-      for (int b = 0; b < kBlocks; b++) { blk8(); for (int i = 0; i < 128; i++) { x[b * 128 + i] = L[i]; peak = std::max(peak, std::fabs(L[i])); if (!std::isfinite(L[i])) peak = INFINITY; } }
-      const int n = kBlocks * 128;
-      for (int h = 1; h <= 24; h++) {
-        double re = 0, im = 0; const double w = 2 * M_PI * h * f0 / fs;
-        for (int i = 0; i < n; i++) { const double hann = 0.5 - 0.5 * std::cos(2 * M_PI * i / n); re += hann * x[i] * std::cos(w * i); im -= hann * x[i] * std::sin(w * i); }
-        mag[h - 1] = std::sqrt(re * re + im * im) / n * 4;
-      }
-    };
-    auto brightness = [](const double* m) { double hi = 0, all = 1e-12; for (int h = 0; h < 24; h++) { all += m[h] * m[h]; if (h >= 1) hi += m[h] * m[h]; } return hi / all; };
-    auto dist = [](const double* a, const double* b) { double d = 0; for (int h = 0; h < 24; h++) d += (a[h] - b[h]) * (a[h] - b[h]); return std::sqrt(d); };
-    double ref[24], m[24]; float pk;
-    bool allOk = true;
-    for (int model = 0; model <= 5; model++) {
-      for (int ch : { 0, 1, 2, 3, 6, 8 }) {
-        set(kModel, float(model)); set(kChar1, float(ch)); set(kX1, 0.7f); set(kY1, 0.4f); set(kShape1, 0.6f);
-        spectrum(m, pk);
-        const bool ok = std::isfinite(pk) && pk > 0.05f && pk < 1.5f;
-        if (!ok) { printf("  PHZ model %d character %d: peak %g FAIL\n", model, ch, pk); allOk = false; }
-      }
-    }
-    check(allOk, "PHZ: all 6 models x 6 characters finite, non-silent, peak below 1.5");
-    // X changes the spectrum: OG Saw from sine (X 0) to saw (X 1)
-    set(kModel, 0.0f); set(kChar1, 0.0f); set(kShape1, 0.0f); set(kY1, 0.5f);
-    set(kX1, 0.0f); spectrum(ref, pk); const double bSine = brightness(ref);
-    set(kX1, 0.9f); spectrum(m, pk); const double bSaw = brightness(m);
-    printf("  PHZ OG Saw: brightness X=0 %.4f, X=0.9 %.4f, spectrum distance %.3f\n", bSine, bSaw, dist(ref, m));
-    check(bSine < 0.01 && bSaw > 0.15 && dist(ref, m) > 0.1, "PHZ: X moves OG Saw from a sine to a bright saw");
-    // Y changes the spectrum for the models it is meant for
-    for (int model : { 0, 4 }) {
-      set(kModel, float(model)); set(kX1, 0.35f);
-      set(kY1, 0.5f); spectrum(ref, pk);
-      set(kY1, 0.9f); spectrum(m, pk);
-      printf("  PHZ model %d: Y 0.5 -> 0.9 spectrum distance %.3f\n", model, dist(ref, m));
-      check(dist(ref, m) > 0.03, model == 0 ? "PHZ OG Saw: Y changes the spectrum" : "PHZ Linear: Y changes the spectrum");
-    }
-    // Shape moves along the Character row
-    set(kModel, 0.0f); set(kX1, 0.5f); set(kY1, 0.5f); set(kChar1, 6.0f);
-    set(kShape1, 0.0f); spectrum(ref, pk); set(kShape1, 1.0f); spectrum(m, pk);
-    check(dist(ref, m) > 0.05, "PHZ: Shape changes the spectrum (Add 5)");
-    // Filtered type and Reset: finite, quieter than the unfiltered note, and two notes with Reset On are identical
-    set(kShape1, 0.0f); set(kChar1, 0.0f); set(kX1, 0.8f); set(kCutoff, 800.0f); set(kResonance, 0.6f); set(kFilterType, 1.0f);
-    spectrum(m, pk); check(std::isfinite(pk) && pk > 0.01f, "PHZ: LP OB 24 dB at 800 Hz sounds and is finite");
-    set(kCutoff, 20000.0f); set(kReset1, 1.0f); set(kAmpD, 0.0f);
-    spectrum(ref, pk); spectrum(m, pk);
-    check(dist(ref, m) < 1e-3, "PHZ: Reset On starts every note on the same phase");
-    // Model and Character names reach the editor as text
-    const auto& md8 = p8->getMetadata();
-    check(md8.params[kModel].valueFormatter(*p8, 5.0f) == "Hermite FM" && md8.params[kChar2].valueFormatter(*p8, 8.0f) == "Add 11" && md8.params[kX1].valueFormatter(*p8, 0.25f) == "0.25",
-          "PHZ: value text for Model, Character and XMod");
-    src8.send(MidiEvent::Type::kNoteOff, 0, 57, 0);
-  }
-#endif
   // ---- ids: the canonical stored numbers and the .patch engine numbers of the picked engines are unique and map back
   {
     struct Row { const char* name; int stored; int type; int patchEngine; } rows[] = {
@@ -1529,10 +1535,10 @@ int main() {
       if (ids[i].stored == ids[j].stored || ids[i].typeId == ids[j].typeId || ids[i].patchId == ids[j].patchId || !strcmp(ids[i].name, ids[j].name)) {
         printf("  clash: %s / %s\n", ids[i].name, ids[j].name); uniq = false; }
     check(uniq, "engine names, stored numbers, type ids and .patch ids are unique");
-    // the numbers the poly-editor stores (patches saved by the editor load on the device): pinned
+    // the numbers the browser editor stores (patches saved by the editor load on the device): pinned
     static const struct { const char* name; int stored, patchId; } kPin[] = {
       {"ACD",0,1},{"FAT",1,2},{"VAP",2,4},{"WTFM",3,5},{"PERC",4,6},{"CHIP",6,8},{"JU6",7,0x81},{"PHZ",8,0x82},{"FM4",9,0x80},{"DTYPE",10,0xA2},
-      {"CSTYPE",11,0x83},{"ATYPE",12,0x84},{"TTYPE",13,0x85},{"8TYPE",14,0x86},{"HANDTYPE",15,0x87},{"BTYPE",16,0x88},{"ARCTYPE",17,0x89} };
+      {"CSTYPE",11,0x83},{"ATYPE",12,0x84},{"TTYPE",13,0x85},{"8TYPE",14,0x86},{"HANDTYPE",15,0x87},{"BTYPE",16,0x88},{"ARCTYPE",17,0x89},{"PLK",18,0x8A} };
     bool pinned = true, roundTrip = true;
     for (const auto& id : ids) {
       bool found = false;
@@ -1540,7 +1546,7 @@ int main() {
       pinned = pinned && found;
       roundTrip = roundTrip && open::engineIdForType(id.typeId) == id.patchId && open::typeForEngineId(id.patchId) == id.typeId;
     }
-    check(pinned, "stored numbers, .patch ids and OpenTracker type ids match the poly-editor table (D-Type 0xA2, PHZ 0x82)");
+    check(pinned, "stored numbers, .patch ids and OpenTracker type ids match the browser editor table (D-Type 0xA2, PHZ 0x82)");
     check(roundTrip, ".patch engine id <-> type id round trips for every engine");
 
     // One note on a fresh synth with the default patch, one parameter changed. out = 40 blocks of L then R.
@@ -1666,6 +1672,449 @@ int main() {
     iI->setVoiceCount(0);
     check(open::partIdle(0), "Voices set to 0: idle");
   }
+  // ---- synth automation (synth-open/open_mod.h, .patch field 64): codec, block rate math, the render hook, gates, Patch FX, identity
+  {
+    using open::ModSlot; using open::ModType; using open::ModKind; using open::PatchData;
+    auto sameSlot = [](const ModSlot& a, const ModSlot& b) {
+      return a.type == b.type && a.kind == b.kind && a.index == b.index && a.nth == b.nth && a.amount == b.amount && a.shape == b.shape &&
+             a.speed == b.speed && a.attack == b.attack && a.decay == b.decay && a.sustain == b.sustain && a.release == b.release &&
+             std::strcmp(a.name, b.name) == 0; };
+    // top level field list of an encoded file: {field, offset, size}
+    struct FieldAt { uint32_t f; size_t at, n; };
+    auto fields = [](const uint8_t* p, size_t n) { std::vector<FieldAt> out; size_t i = 0;
+      auto var = [&](uint64_t& v) { v = 0; for (int s = 0; i < n; s += 7) { const uint8_t b = p[i++]; v |= uint64_t(b & 0x7F) << s; if (!(b & 0x80)) return true; } return false; };
+      while (i < n) { const size_t at = i; uint64_t t, v; if (!var(t)) break; const int wt = int(t & 7);
+        if (wt == 0) var(v); else if (wt == 1) i += 8; else if (wt == 5) i += 4; else { var(v); i += size_t(v); }
+        out.push_back({ uint32_t(t >> 3), at, i - at }); } return out; };
+    auto encode = [](const PatchData& d) { std::vector<uint8_t> b(open::kPatchFileMax); b.resize(open::encodePatch(d, b.data(), b.size())); return b; };
+    auto initData = [&](int typeId) { auto p = store->createPatch(typeId); auto d = std::make_unique<PatchData>(); static_cast<open::OpenPatch&>(*p).exportData(*d); return d; };
+    const open::EngineDef* leadDef = open::engineDefForType(kLead);
+
+    // codec
+    {
+      auto d = initData(kLead);
+      const auto plain = encode(*d);
+      bool no64 = !plain.empty(); for (const auto& f : fields(plain.data(), plain.size())) no64 = no64 && f.f != open::kModField;
+      check(no64, "automation: a patch with every slot Off has no field 64");
+      ModSlot a[4];
+      a[0].type = ModType::kLfo; a[0].kind = ModKind::kParam; a[0].index = 9; std::strcpy(a[0].name, "Cutoff"); a[0].nth = 0; a[0].amount = -37; a[0].shape = 4; a[0].speed = 28;
+      a[1].type = ModType::kEnv; a[1].kind = ModKind::kMacro; a[1].index = 5; a[1].amount = 100; a[1].attack = 10000; a[1].decay = 0; a[1].sustain = 100; a[1].release = 1300;
+      a[2].type = ModType::kEnv; a[2].kind = ModKind::kParam; a[2].index = 63; std::strcpy(a[2].name, "Attack"); a[2].nth = 2; a[2].amount = -100; a[2].attack = 0; a[2].decay = 990; a[2].sustain = 0; a[2].release = 0;
+      a[3].type = ModType::kLfo; a[3].kind = ModKind::kParam; a[3].index = 0; std::strcpy(a[3].name, "Osc Shape"); a[3].amount = 1; a[3].shape = 0; a[3].speed = 0;
+      for (int s = 0; s < 4; s++) d->mod[s] = a[s];
+      const auto full = encode(*d);
+      auto back = std::make_unique<PatchData>();
+      bool rt = !full.empty() && open::decodePatch(full.data(), full.size(), *back);
+      for (int s = 0; s < 4; s++) rt = rt && sameSlot(back->mod[s], a[s]);
+      check(rt, "automation codec: 4 slots, every field, round trip");
+      size_t block = 0; bool last64 = false; std::vector<FieldAt> ff = fields(full.data(), full.size());
+      for (size_t k = 0; k < ff.size(); k++) if (ff[k].f == open::kModField) { block = ff[k].n; last64 = k + 1 == ff.size(); }
+      check(block > 0 && last64 && full[ff.back().at] == 0x82 && full[ff.back().at + 1] == 0x04, "automation codec: field 64 (tag 82 04) after Extra, the last field");
+      // an Off slot between two active ones is an empty slot, trailing Off slots are not written
+      auto d2 = initData(kLead); d2->mod[0] = a[0]; d2->mod[2] = a[1];
+      const auto mid = encode(*d2); auto b2 = std::make_unique<PatchData>();
+      check(open::decodePatch(mid.data(), mid.size(), *b2) && sameSlot(b2->mod[0], a[0]) && b2->mod[1].type == ModType::kOff && sameSlot(b2->mod[2], a[1]) &&
+              b2->mod[3].type == ModType::kOff, "automation codec: an Off slot in the middle stays Off, the slots keep their places");
+      // worst case: 4 envelopes, 20 character names, every number at its top
+      auto dw = initData(kLead);
+      for (int s = 0; s < 4; s++) { ModSlot& m = dw->mod[s]; m.type = ModType::kEnv; m.kind = ModKind::kParam; m.index = open::kMaxParams - 1; std::memset(m.name, 'W', open::kModNameMax); m.name[open::kModNameMax] = 0;
+        m.nth = 255; m.amount = -100; m.shape = 4; m.speed = 28; m.attack = m.decay = m.release = 10000; m.sustain = 100; }
+      const auto worst = encode(*dw);
+      size_t wblock = 0; for (const auto& f : fields(worst.data(), worst.size())) if (f.f == open::kModField) wblock = f.n;
+      printf("  automation: worst field 64 = %zu B (kModBlockMax %zu), 4 slot example = %zu B\n", wblock, open::kModBlockMax, block);
+      check(!worst.empty() && wblock > 0 && wblock <= open::kModBlockMax, "automation codec: the worst block fits kModBlockMax");
+      check(open::kModField == 64 && open::kModField > 11 && open::kModField != 16, "automation codec: field 64 collides with nothing (1..11, 16)");
+      // an old reader keeps the block raw: worst block plus the largest raw part of the fixtures stays under kRawMax
+      size_t rawMax = 0;
+      for (const char* fx : { SMOKE_FIXTURES "/ot-test-07/0.patch", SMOKE_FIXTURES "/ot-test-07/0-1.patch", SMOKE_FIXTURES "/ot-test-07/0-2.patch", SMOKE_FIXTURES "/ot-test-07/0-3.patch" }) {
+        FILE* fp = std::fopen(fx, "rb"); if (!fp) { check(false, "automation: fixture file opens"); continue; }
+        std::vector<uint8_t> fb(open::kPatchFileMax); fb.resize(std::fread(fb.data(), 1, fb.size(), fp)); std::fclose(fp);
+        auto fd = std::make_unique<PatchData>(); const bool dec = open::decodePatch(fb.data(), fb.size(), *fd); rawMax = std::max<size_t>(rawMax, fd->extra.len);
+        check(dec && !open::modAnyOn(fd->mod) && encode(*fd) == fb, "automation: a fixture file without automation re-encodes byte identical");
+      }
+      printf("  automation: largest raw part of the fixtures %zu B, worst block %zu B, kRawMax %zu B\n", rawMax, wblock, open::kRawMax);
+      check(wblock + rawMax + 64 <= open::kRawMax, "automation codec: an old reader's raw budget holds the worst block, the names and room for field 16");
+      // version 2: kept raw, written back as it was, automation Off
+      std::vector<uint8_t> v2 = plain; const uint8_t blk2[] = { 0x82, 0x04, 0x06, 0x08, 0x02, 0x12, 0x02, 0x08, 0x01 };
+      v2.insert(v2.end(), blk2, blk2 + sizeof(blk2));
+      auto d3 = std::make_unique<PatchData>();
+      check(open::decodePatch(v2.data(), v2.size(), *d3) && !open::modAnyOn(d3->mod) && encode(*d3) == v2, "automation codec: a version 2 block is kept raw and written back byte identical");
+      // the raw version 2 block gives way when this image's automation is set
+      d3->mod[0] = a[0]; const auto v2own = encode(*d3); int n64 = 0; for (const auto& f : fields(v2own.data(), v2own.size())) n64 += f.f == open::kModField;
+      check(n64 == 1, "automation codec: own automation replaces a raw block of another version (one field 64)");
+      // malformed inside its length: dropped, the file still loads
+      for (const auto& bad64 : { std::vector<uint8_t>{ 0x82, 0x04, 0x05, 0x08, 0x01, 0x12, 0x05, 0x08 }, std::vector<uint8_t>{ 0x82, 0x04, 0x04, 0xFF, 0xFF, 0xFF, 0xFF } }) {
+        std::vector<uint8_t> g = plain; g.insert(g.end(), bad64.begin(), bad64.end());
+        auto dg = std::make_unique<PatchData>();
+        check(open::decodePatch(g.data(), g.size(), *dg) && !open::modAnyOn(dg->mod) && dg->nParams == d->nParams, "automation codec: a truncated or garbage block loads with automation Off");
+      }
+      // an image without automation (field 64 unknown) keeps it raw and writes it back identical
+      open::gModDecodeOff = true;
+      auto d4 = std::make_unique<PatchData>();
+      check(open::decodePatch(full.data(), full.size(), *d4) && !open::modAnyOn(d4->mod) && d4->extra.len >= block && encode(*d4) == full,
+            "automation codec: an older image keeps field 64 raw and re-encodes the file byte identical");
+      open::gModDecodeOff = false;
+    }
+
+    // block rate math
+    {
+      bool inRange = true;
+      for (int sh = 0; sh < open::kLfoShapes; sh++) for (int k = 0; k <= 1000; k++) { const float v = open::modShape(sh, k / 1000.0f * 0.9999f, 0.3f); inRange = inRange && v >= -1.0f && v <= 1.0f; }
+      check(inRange, "automation: every LFO shape stays in -1..1");
+      bool period = true;
+      for (float bpm : { 60.0f, 120.0f, 200.0f }) for (int sp : { 6, 10, 14, 20 }) {
+        ModSlot c; c.type = ModType::kLfo; c.shape = 1; c.speed = uint8_t(sp); c.dest = 0; c.amount = 100;
+        open::ModState st; open::modReset(st, 0); int b = 1;
+        for (; b < 100000; b++) { const float before = st.phase; open::modStep(c, st, bpm); if (st.phase < before) break; }
+        const float want = 15000.0f / bpm * open::kModRate[sp] / open::kModBlockMs;
+        period = period && std::fabs(float(b) - want) <= 1.0f;
+        if (std::fabs(float(b) - want) > 1.0f) printf("  LFO period at %.0f BPM speed %d: %d blocks, want %.2f\n", bpm, sp, b, want);
+      }
+      check(period, "automation: LFO period in blocks = 15000 / bpm * rate / 2.9013 ms within one block (60, 120, 200 BPM)");
+      ModSlot rc; rc.type = ModType::kLfo; rc.shape = 4; rc.speed = 28; rc.dest = 0; rc.amount = 100;
+      open::ModState r1, r2; open::modReset(r1, 2); open::modReset(r2, 2); bool rep = true; float prevOut = 0; int changes = 0;
+      for (int b = 0; b < 400; b++) { open::modStep(rc, r1, 120); open::modStep(rc, r2, 120); rep = rep && r1.out == r2.out; changes += b && r1.out != prevOut; prevOut = r1.out; }
+      check(rep && changes > 50, "automation: Random is repeatable after a reset and steps at every wrap");
+      // envelope
+      ModSlot e; e.type = ModType::kEnv; e.dest = 0; e.amount = 100; e.attack = 100; e.decay = 100; e.sustain = 50; e.release = 100;
+      open::ModState es; open::modReset(es, 0); open::modSync(e, es); open::modNoteOn(e, es, true); int toTop = 1;
+      for (; toTop < 1000; toTop++) { open::modStep(e, es, 120); if (es.level >= 1.0f) break; }
+      check(std::abs(toTop - 35) <= 1, "automation: a 100 ms attack reaches 1 in 35 blocks (+-1)");
+      for (int b = 0; b < 200; b++) open::modStep(e, es, 120);
+      check(es.stage == open::EnvStage::kSustain && std::fabs(es.out - 0.5f) < 1e-6f, "automation: decay ends on the sustain level and holds");
+      open::modGateOff(e, es); int toZero = 1;
+      for (; toZero < 1000; toZero++) { open::modStep(e, es, 120); if (es.level <= 0.0f) break; }
+      check(std::abs(toZero - 35) <= 1 && es.stage == open::EnvStage::kIdle, "automation: release from the sustain level takes the Release time");
+      open::modNoteOn(e, es, true); for (int b = 0; b < 10; b++) open::modStep(e, es, 120);
+      const float midLevel = es.level; open::modGateOff(e, es); open::modStep(e, es, 120);
+      int relBlocks = 1; for (; relBlocks < 1000 && es.level > 0.0f; relBlocks++) open::modStep(e, es, 120);
+      check(midLevel > 0.2f && midLevel < 0.4f && std::abs(relBlocks - 35) <= 1, "automation: release from a level below the peak also takes the Release time");
+      open::modNoteOn(e, es, true); for (int b = 0; b < 40; b++) open::modStep(e, es, 120); open::modGateOff(e, es);
+      for (int b = 0; b < 10; b++) open::modStep(e, es, 120);
+      const float relLevel = es.level; open::modNoteOn(e, es, false); open::modStep(e, es, 120);
+      check(relLevel > 0.1f && es.level > relLevel && es.level < relLevel + 0.05f && es.stage == open::EnvStage::kAttack, "automation: a retrigger restarts the attack from the current level");
+      ModSlot z = e; z.attack = 0; z.decay = 0; z.release = 0;
+      open::ModState zs; open::modReset(zs, 0); open::modSync(z, zs); open::modNoteOn(z, zs, true);
+      open::modStep(z, zs, 120); const bool a0 = zs.level == 1.0f; open::modStep(z, zs, 120); const bool d0 = zs.level == 0.5f;
+      open::modGateOff(z, zs); open::modStep(z, zs, 120);
+      check(a0 && d0 && zs.level == 0.0f, "automation: 0 ms attack, decay and release are one block each");
+      bool law = open::modStepToTime(0) == 0 && open::modStepToTime(100) == 1000 && open::modStepToTime(190) == 10000 && open::modTimeToStep(10000) == 190;
+      for (int sp = 0; sp <= open::kModTimeSteps; sp++) law = law && open::modTimeToStep(open::modStepToTime(sp)) == sp;
+      check(law, "automation: the 190 step time law round trips 0..10000 ms");
+    }
+
+    // identity: every eligible param of every engine round trips by index, enums, switches and unused slots are never listed
+    {
+      struct EK { const char* name; InstrumentTypeId id; } eks[] = {
+#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, ...) {#NAME, TYPE_ID},
+#include "engine_list.h"
+#undef SYNTH_ENGINE
+      };
+      // the wave group of each engine, pinned (a change to a param table or to isWaveParam shows up here)
+      const std::map<std::string, int> kWavePin = { {"ACD", 3}, {"FAT", 1}, {"VAP", 4}, {"WTFM", 2}, {"PERC", 12}, {"CHIP", 3} };
+      bool byIndex = true, never = true;
+      for (const auto& k : eks) {
+        const open::EngineDef* def = open::engineDefForType(int(k.id)); if (!def) continue;
+        int16_t pick[open::kModPickMax]; const int n = open::modPicker(def, pick);
+        std::string wave; int nWave = 0;
+        while (nWave < n && pick[nWave] < open::kModPickMacro) { wave += wave.empty() ? "" : ", "; wave += def->params[pick[nWave]].name; nWave++; }
+        int eligible = 0;
+        for (int i = 0; i < def->paramCount; i++) {
+          const auto& pd = def->params[i]; const bool el = open::modEligible(pd); eligible += el;
+          bool listed = false; for (int j = 0; j < n; j++) listed = listed || pick[j] == i;
+          never = never && listed == el && (!el || (pd.fmt != open::Fmt::kEnum && pd.fmt != open::Fmt::kOnOff && pd.min != pd.max));
+          if (el) { ModSlot s; s.type = ModType::kLfo; open::modSetDest(*def, s, i); s.dest = -1; byIndex = byIndex && open::modResolve(def, s) == i; }
+        }
+        printf("  automation %-5s eligible %2d of %2d, wave group %d: %s\n", k.name, eligible, def->paramCount, nWave, wave.c_str());
+        never = never && n == eligible + open::kModMacros;
+        for (int m = 0; m < open::kModMacros; m++) never = never && pick[nWave + m] == open::kModPickMacro + m;
+        const int pinned = kWavePin.count(k.name) ? kWavePin.at(k.name) : -1;
+        if (pinned >= 0 && pinned != nWave) { printf("  %s: wave group %d, pinned %d\n", k.name, nWave, pinned); never = false; }
+      }
+      check(byIndex, "automation identity: every eligible param of every engine resolves by its index");
+      check(never, "automation identity: enums, on/off and unused (min == max) params are never listed, macros after the wave group (pinned counts)");
+      // a table a plugin update reordered: the slot follows the param by name
+      if (leadDef && leadDef->paramCount > 9) {
+        std::vector<open::ParamDef> swapped(leadDef->params, leadDef->params + leadDef->paramCount);
+        int target = -1; for (int i = 0; i < leadDef->paramCount; i++) if (open::modEligible(leadDef->params[i])) { target = i; break; }
+        int other = leadDef->paramCount - 1; while (other > target && !open::modEligible(leadDef->params[other])) other--;
+        std::swap(swapped[target], swapped[other]);
+        open::EngineDef re = *leadDef; re.params = swapped.data();
+        ModSlot s; s.type = ModType::kLfo; open::modSetDest(*leadDef, s, target);
+        check(target >= 0 && other > target && open::modResolve(&re, s) == other, "automation identity: a reordered table resolves by name");
+      }
+#ifdef SYNTH_ENGINE_WTFM
+      {
+        const open::EngineDef& w = open::kWtfmDef; int at[3] = { -1, -1, -1 }, na = 0;
+        for (int i = 0; i < w.paramCount && na < 3; i++) if (std::strcmp(w.params[i].name, "Attack") == 0) at[na++] = i;
+        bool nthOk = na == 3;
+        for (int k = 0; k < na; k++) { ModSlot s; s.type = ModType::kEnv; open::modSetDest(w, s, at[k]); nthOk = nthOk && s.nth == k; s.index = 0; nthOk = nthOk && open::modResolve(&w, s) == at[k]; }
+        check(nthOk, "automation identity: WTFM's three Attack params resolve by occurrence (nth 0, 1, 2)");
+      }
+#endif
+      ModSlot ph; ph.type = ModType::kLfo; ph.kind = ModKind::kParam; ph.index = 3; std::strcpy(ph.name, "Cutoff");
+      open::EngineDef place = {}; place.name = "X";
+      check(open::modResolve(&place, ph) == -1 && open::modResolve(nullptr, ph) == -1, "automation identity: a placeholder engine (no params) resolves nothing");
+    }
+
+#ifdef SYNTH_ENGINE_ACD
+    if (kLead == int(InstrumentTypeId::kSimpleAnalogSynth)) {
+      auto s7 = Synth::createSynth([](size_t){return nullptr;});
+      auto fs7 = std::make_unique<MemFS>(); MemFS* m7 = fs7.get();
+      s7->addFileSystem(Synth::FileSystemId::kWorkspace, std::move(fs7));
+      auto ws7 = s7->createPatchStore(Synth::FileSystemId::kWorkspace, false);
+      std::shared_ptr<Patch> p7(ws7->createPatch(kLead));
+      auto& op = static_cast<open::OpenPatch&>(*p7);
+      const open::EngineDef& acd = *op.getDef();
+      int cutoff = -1; for (int i = 0; i < acd.paramCount; i++) if (std::strcmp(acd.params[i].name, "Cutoff") == 0) cutoff = i;
+      Src src7; auto i7 = s7->createInstrument(0); i7->assignPatch(p7); i7->connect(src7); i7->setVoiceCount(4); i7->setMidiChannel(0);
+      std::shared_ptr<Instrument> a7[1] = { i7 };
+      s7->setup(std::span<std::shared_ptr<Instrument>>(a7,1), {}, nullptr, []{ return tiny::optional<float>(120.0f); });
+      auto blk7 = [&]() { s7->renderAudioBuffer({AudioBufferRef(L),AudioBufferRef(R)}, std::span<AudioBufferRef>(aux), 0); return peakOf(L); };
+      auto endOf = [&](int i) { return open::testParams(0)->end[i]; };
+      auto toIdle = [&]() { for (int b = 0; b < 3000 && !open::partIdle(0); b++) blk7(); };
+      const float rng = float(acd.params[cutoff].max - acd.params[cutoff].min);
+      // LFO on Cutoff, base in the middle so the sweep never clamps (a clamped value does not change, so serial would not move)
+      p7->setParamValue(cutoff, 10000.0f, Patch::ParamChangeSource::kKnob);
+      float raw0[open::kMaxParams]; op.getValuesRaw(raw0);
+      float base = *p7->getParamValue(cutoff);
+      ModSlot lfo; lfo.type = ModType::kLfo; lfo.shape = 2; lfo.speed = 14; lfo.amount = 40; open::modSetDest(acd, lfo, cutoff);
+      op.setModSlot(0, lfo);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100);
+      float lo = 1e9f, hi = -1e9f; uint32_t ser = 0; int bumps = 0; float pk7 = 0;
+      for (int b = 0; b < 100; b++) { pk7 = std::max(pk7, blk7()); const float v = endOf(cutoff); lo = std::min(lo, v); hi = std::max(hi, v);
+        bumps += b && open::testParams(0)->serial != ser; ser = open::testParams(0)->serial; }
+      float raw1[open::kMaxParams]; op.getValuesRaw(raw1);
+      printf("  automation LFO on ACD Cutoff: end %.0f .. %.0f Hz over 100 blocks (base %.0f), serial bumps %d of 99\n", lo, hi, base, bumps);
+      check(pk7 > 1e-3f && hi - lo > 0.4f * rng && bumps == 99, "automation hook: an LFO on Cutoff moves params.end every block, serial bumps every block");
+      check(*p7->getParamValue(cutoff) == base && std::memcmp(raw0, raw1, sizeof(float) * acd.paramCount) == 0 && *p7->getParamFinalValue(cutoff) == base,
+            "automation hook: getParamValue, getValuesRaw and the final value stay unmodulated");
+      // off: no more bumps
+      const ModSlot off; op.setModSlot(0, off); blk7(); ser = open::testParams(0)->serial; int offBumps = 0;
+      for (int b = 0; b < 50; b++) { blk7(); offBumps += open::testParams(0)->serial != ser; ser = open::testParams(0)->serial; }
+      check(offBumps == 0 && endOf(cutoff) == base, "automation hook: every slot Off, the values are the patch's and serial stays");
+      p7->setParamValue(cutoff, acd.params[cutoff].def, Patch::ParamChangeSource::kKnob); base = *p7->getParamValue(cutoff);
+      // macro destination: Macro 1 (Cutoff, 0.4) at 0, a square on it moves cutoff by 0.4 of the range in the high half
+      ModSlot mac; mac.type = ModType::kLfo; mac.shape = 3; mac.speed = 14; mac.amount = 100; open::modSetDest(acd, mac, open::kModPickMacro + 0);
+      op.setModSlot(0, mac); float mlo = 1e9f, mhi = -1e9f;
+      for (int b = 0; b < 100; b++) { blk7(); mlo = std::min(mlo, endOf(cutoff)); mhi = std::max(mhi, endOf(cutoff)); }
+      printf("  automation square on Macro 1: cutoff %.0f .. %.0f Hz\n", mlo, mhi);
+      check(mac.kind == ModKind::kMacro && mac.dest == 0 && std::fabs(mlo - base) < 1e-3f && std::fabs(mhi - std::min(base + 0.4f * rng, float(acd.params[cutoff].max))) < 1.0f,
+            "automation hook: a macro destination moves the macro's targets (square 0 .. 1 on Macro 1)");
+      // macro plus slot on one param: summed, clamped once
+      ModSlot env; env.type = ModType::kEnv; env.attack = 0; env.decay = 0; env.sustain = 100; env.amount = 30; open::modSetDest(acd, env, cutoff);
+      op.setModSlot(0, env); op.setMacroCC(0, 64);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 60, 100); for (int b = 0; b < 4; b++) blk7();
+      const float wantSum = std::clamp(base + 0.4f * (64.0f / 127.0f) * rng + 0.3f * rng, float(acd.params[cutoff].min), float(acd.params[cutoff].max));
+      const float gotSum = endOf(cutoff);
+      ModSlot big = env; big.amount = 100; op.setModSlot(0, big); for (int b = 0; b < 3; b++) blk7();
+      printf("  automation macro + slot on Cutoff: %.1f Hz (want %.1f), at 100 %% %.1f Hz\n", gotSum, wantSum, endOf(cutoff));
+      check(std::fabs(gotSum - wantSum) < 1.0f && endOf(cutoff) == float(acd.params[cutoff].max), "automation hook: macro and slot on one param add up, clamped once at the top");
+      op.setMacroCC(0, 0); op.setModSlot(0, off);
+      src7.send(MidiEvent::Type::kStop, 0, 0, 0); toIdle();
+
+      // gates: LFO phase resets only after silence, the envelope on every note, release with the last gate
+      ModSlot saw; saw.type = ModType::kLfo; saw.shape = 1; saw.speed = 6; saw.amount = 50; open::modSetDest(acd, saw, cutoff);
+      op.setModSlot(0, saw);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100);
+      const float atStart = open::testModOut(0, 0);
+      for (int b = 0; b < 20; b++) blk7();
+      const float mid = open::testModOut(0, 0);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 60, 100);
+      const float afterOverlap = open::testModOut(0, 0);
+      src7.send(MidiEvent::Type::kNoteOff, 0, 57, 0); src7.send(MidiEvent::Type::kNoteOff, 0, 60, 0);
+      toIdle();
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100);
+      const float afterIdle = open::testModOut(0, 0);
+      printf("  automation LFO gate: start %.3f, after 20 blocks %.3f, overlapping note %.3f, after silence %.3f\n", atStart, mid, afterOverlap, afterIdle);
+      check(atStart == -0.5f && mid > atStart && afterOverlap == mid && afterIdle == -0.5f, "automation gate: LFO phase resets on a note after silence only");
+      src7.send(MidiEvent::Type::kNoteOff, 0, 57, 0); toIdle();
+      ModSlot ev; ev.type = ModType::kEnv; ev.attack = 100; ev.decay = 100; ev.sustain = 50; ev.release = 200; ev.amount = 100; open::modSetDest(acd, ev, cutoff);
+      op.setModSlot(1, ev); op.setModSlot(0, off);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 200; b++) blk7();
+      const float sus = open::testModOut(0, 1);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 60, 100); blk7(); blk7();
+      const float retrig = open::testModOut(0, 1);
+      for (int b = 0; b < 200; b++) blk7();
+      src7.send(MidiEvent::Type::kNoteOff, 0, 57, 0); for (int b = 0; b < 5; b++) blk7();
+      const float oneHeld = open::testModOut(0, 1);
+      src7.send(MidiEvent::Type::kNoteOff, 0, 60, 0); for (int b = 0; b < 5; b++) blk7();
+      const float released = open::testModOut(0, 1);
+      printf("  automation envelope gate: sustain %.3f, retrigger %.3f, one note held %.3f, released %.3f\n", sus, retrig, oneHeld, released);
+      check(sus == 0.5f && retrig > sus && oneHeld == 0.5f && released < 0.5f, "automation gate: envelope restarts on every note, release when the last gate is released");
+      toIdle();
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 200; b++) blk7();
+      src7.send(MidiEvent::Type::kStop, 0, 0, 0); for (int b = 0; b < 5; b++) blk7();
+      const float stopped = open::testModOut(0, 1);
+      src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 200; b++) blk7();
+      src7.send(MidiEvent::Type::kControlChange, 0, MidiEvent::Data::ControlChange::kAllNotesOffCC, 0); for (int b = 0; b < 5; b++) blk7();
+      check(stopped < 0.5f && open::testModOut(0, 1) < 0.5f, "automation gate: Stop and All Notes Off (releaseAll) release the envelope");
+      toIdle();
+
+      // Patch FX: the FX copies another slot's values, the block stays and keeps modulating. A slot select (importData) replaces it.
+      {
+        m7->files.clear();
+        op.setModSlot(1, off); op.setModSlot(0, lfo);
+        ws7->savePatch("0", *p7);
+        auto other = ws7->createPatch(kLead); other->setParamValue(cutoff, float(acd.params[cutoff].min), Patch::ParamChangeSource::kKnob);
+        ModSlot oe = ev; oe.amount = -20; static_cast<open::OpenPatch&>(*other).setModSlot(2, oe);
+        ws7->savePatch("0-1", *other);
+        open::patchBankSetLive(0, p7.get()); open::patchBankToSlotZero(0); open::patchBankPreload(0, *p7, *ws7);
+        src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 10; b++) blk7();
+        const bool fxOn = open::patchBankApply(0, 1);
+        float flo = 1e9f, fhi = -1e9f; for (int b = 0; b < 100; b++) { blk7(); flo = std::min(flo, endOf(cutoff)); fhi = std::max(fhi, endOf(cutoff)); }
+        check(fxOn && sameSlot(op.modSlot(0), lfo) && op.modSlot(2).type == ModType::kOff && fhi - flo > 0.3f * rng && flo < base,
+              "automation Patch FX: another slot's values play, the open slot's automation keeps running over them");
+        open::patchBankApply(0, 0);
+        const uint8_t serBefore = op.modSerial();
+        const bool selOk = open::patchBankSelect(0, 1, *p7, *ws7) == open::SlotSelect::kLoaded;
+        blk7();
+        check(selOk && op.modSerial() != serBefore && op.modSlot(0).type == ModType::kOff && op.modSlot(2).type == ModType::kEnv && op.modSlot(2).amount == -20 &&
+                open::testModOut(0, 0) == 0.0f, "automation Patch FX: a slot select brings that slot file's automation and restarts the modulators");
+        open::patchBankSelect(0, 0, *p7, *ws7);
+        check(sameSlot(op.modSlot(0), lfo), "automation Patch FX: back on slot 0 its automation is there again");
+        src7.send(MidiEvent::Type::kStop, 0, 0, 0); toIdle();
+        open::patchBankSetLive(0, nullptr);
+      }
+
+      // unresolved destination: kept, drives nothing, written back byte identical
+      {
+        auto d = initData(kLead); ModSlot u; u.type = ModType::kLfo; u.kind = ModKind::kParam; u.index = 3; std::strcpy(u.name, "Gone Param"); u.amount = 80; u.speed = 20;
+        d->mod[1] = u; const auto bytes = encode(*d);
+        auto dd = std::make_unique<PatchData>(); open::decodePatch(bytes.data(), bytes.size(), *dd);
+        op.importData(*dd);
+        src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); blk7(); const uint32_t s0 = open::testParams(0)->serial; for (int b = 0; b < 30; b++) blk7();
+        auto out = std::make_unique<PatchData>(); op.exportData(*out);
+        check(op.modSlot(1).dest == -1 && op.modSlot(1).type == ModType::kLfo && open::testParams(0)->serial == s0 && encode(*out) == bytes,
+              "automation identity: a missing name stays unresolved, modulates nothing and is written back byte identical");
+        src7.send(MidiEvent::Type::kStop, 0, 0, 0); toIdle();
+      }
+
+      // slot 0 backup of an engine change: the block comes back with the backup, a fresh patch is still initPatchData (no block)
+      {
+        m7->files.clear();
+        auto live = ws7->createPatch(kLead); static_cast<open::OpenPatch&>(*live).setModSlot(3, ev);
+        open::patchBankSetLive(0, live.get()); open::patchBankToSlotZero(0); open::patchBankPreload(0, *live, *ws7);
+        ws7->savePatch("0", *live);
+        const bool saved = open::patchBackupSave(0, *live, *ws7) == open::Backup::kSaved;
+        auto fresh = ws7->createPatch(kLead);
+        auto fd = std::make_unique<PatchData>(); static_cast<open::OpenPatch&>(*fresh).exportData(*fd);
+        auto idd = std::make_unique<PatchData>(); open::initPatchData(*leadDef, *idd);
+        const bool initSame = encode(*fd) == encode(*idd) && !open::modAnyOn(fd->mod);
+        ws7->savePatch("0", *fresh);
+        const bool restored = open::patchBackupRestore(0, *fresh, *ws7);
+        check(saved && initSame && restored && sameSlot(static_cast<open::OpenPatch&>(*fresh).modSlot(3), ev),
+              "automation backup: an untouched patch equals initPatchData, slot 0 with a block is backed up and restored with it");
+        open::patchBankSetLive(0, nullptr);
+      }
+    }
+#endif
+  }
   printf(bad ? "SMOKE TEST FAILED\n" : "voice pool, governor, patch files and pitch bend OK\n");
+#ifdef SMOKE_PLUGIN_ENGINE
+  {
+    const int ui = open::engineUiForStored(7);
+    const bool placed = ui > 0 && open::engineAt(ui).builtin == -1 && open::engineAt(ui).def == &plugDef &&
+                        open::engineAt(ui - 1).stored < 7 && (ui + 1 >= open::engineCount() || open::engineAt(ui + 1).stored > 7);
+    check(addOk && !dupStored && !dupPatch, "plugin engine: added, a second one with a taken stored number or .patch id is refused");
+    check(placed && !open::missingDef(7) && open::typeForStored(7) == 0x81, "plugin engine: sits by its stored number, not missing");
+    check(!open::engineListAdd(&dupDef, 31, 0x92), "plugin engine: nothing is added once the synth started");
+    auto sp = Synth::createSynth([](size_t){return nullptr;});
+    auto pst = sp->createPatchStore(Synth::FileSystemId::kPatches, true);
+    auto pj = pst->createPatch(0x81);
+    open::PatchData pd;
+    static_cast<open::OpenPatch&>(*pj).exportData(pd);
+    uint8_t pb[4096];
+    const size_t pn = open::encodePatch(pd, pb, sizeof(pb));
+    open::PatchData back;
+    check(pj->getMetadata().instrumentTypeId == 0x81 && int(pj->getMetadata().params.size()) == plugDef.paramCount && pd.engine == 0x81 &&
+            pn && open::decodePatch(pb, pn, back) && open::typeForEngineId(back.engine) == 0x81 && open::engineIdForType(0x81) == 0x81,
+          "plugin engine: its patch carries engine 0x81 and reads back as the plugin's type");
+
+    // The 100 engine library (picker order, registry, names), 40 missing numbers with remembered names, names.txt round trip
+    {
+      const int ui0 = open::engineUiForStored(140);
+      bool order = bigAdded == kBig && ui0 > 0 && open::engineAt(ui0 - 1).stored < 140;
+      for (int i = 0; i < kBig; i++)
+        order = order && open::engineUiForStored(140 + i) == ui0 + i && open::engineAt(ui0 + i).def == &bigDef[i] &&
+                open::engineAt(ui0 + i).builtin == -1 && open::typeForStored(140 + i) == 0x1000 + i && open::engineIdForType(0x1000 + i) == 0x200 + i &&
+                open::typeForEngineId(0x200 + i) == 0x1000 + i && !open::missingDef(140 + i);
+      for (int ui = 1; ui < open::engineCount(); ui++) order = order && open::engineAt(ui - 1).stored < open::engineAt(ui).stored;
+      check(order && oddRefused, "100 library engines: listed by stored number in the picker order, numbers outside 7..255 refused");
+      bool reg = true;
+      for (int i : {0, 39, 40, 99}) {
+        auto bp = pst->createPatch(0x1000 + i);
+        reg = reg && bp && bp->getMetadata().instrumentTypeId == 0x1000 + i && bp->getMetadata().params.empty() &&
+              sp->getInstrumentName(0x1000 + i) == bigName[i];
+      }
+      check(reg, "100 library engines: every one has its registry entry (name, Init patch of its type), no heap map entry needed");
+      bool missing = true;
+      for (int st = 100; st < 140; st++) {
+        char nm[9]; snprintf(nm, sizeof(nm), "MIS%03d", st);
+        missing = missing && open::missingDef(st) && open::engineNameRemember(st, nm) && std::string(open::missingName(st)) == nm;
+      }
+      check(missing, "40 missing numbers (100..139): each the placeholder, each named by its remembered name (no name limit)");
+      // names.txt: every number 7..255 known, written, read back line by line (plug_synth.cpp namesRead), nothing new learned
+      for (int st = 7; st <= 255; st++) {
+        char nm[9]; snprintf(nm, sizeof(nm), "N%03d", st);
+        if (st < 100 || st >= 140) open::engineNameRemember(st, nm);
+      }
+      static char txt[8192];
+      const int len = open::engineNamesText(txt, int(sizeof(txt)));
+      int lines = 0; bool same = len > 0 && len < int(sizeof(txt)) - 1;
+      for (int i = 0; i < len;) {
+        int e = i; while (e < len && txt[e] != '\n' && txt[e] != '\r') e++;
+        const std::string line(txt + i, size_t(e - i));
+        if (!line.empty()) {
+          char* q = nullptr; const long st = strtol(line.c_str(), &q, 10); while (*q == ' ') q++;
+          same = same && !open::engineNameRemember(int(st), q);
+          lines++;
+        }
+        i = e + 1;
+      }
+      check(same && lines == 249 && std::string(open::missingName(120)) == "MIS120" && std::string(open::missingName(99)) == "N099",
+            "names.txt with all 249 plugin numbers: written and read back, every line known (nothing learned), nothing refused");
+    }
+
+    // A listed engine that is not installed, then attached; a plugin engine detached while a part plays it
+    const int lui = open::engineUiForStored(8);
+    check(libOk && lui >= 0 && open::engineAt(lui).def == &libDef && !open::engineOf(&libDef) && !open::missingDef(8),
+          "library engine: listed before it is installed, no engine yet");
+    auto pl = pst->createPatch(0x82);
+    check(pl && pl->getMetadata().params.empty() && !open::patchStale(*pl), "library engine not attached: a patch without parameters, not stale");
+    {
+      // automation on a part whose plugin is not attached: the slot is kept as read (no params to resolve against) and written back
+      auto pdm = std::make_unique<open::PatchData>(); open::ModSlot u; u.type = open::ModType::kEnv; u.index = 12; std::strcpy(u.name, "Shape 1"); u.nth = 1; u.amount = -40;
+      pdm->mod[2] = u; auto& plo = static_cast<open::OpenPatch&>(*pl); plo.importData(*pdm);
+      auto pdo = std::make_unique<open::PatchData>(); plo.exportData(*pdo); const open::ModSlot& g = pdo->mod[2];
+      check(plo.modSlot(2).dest == -1 && g.type == u.type && g.index == u.index && g.nth == u.nth && g.amount == u.amount && std::strcmp(g.name, u.name) == 0,
+            "automation: a placeholder engine (plugin not attached) keeps the slot untouched");
+    }
+    libDef = open::kAcdDef;   // what plug_synth.cpp attach() fills in
+    libDef.name = "PHZ";
+    libDef.typeId = 0x82;
+    libDef.inst = open::kAcdDef.engine();
+    check(open::patchStale(*pl) && !open::patchStale(*pst->createPatch(0x82)),
+          "attached: the patch made without it is stale (Synth::setInstrumentType makes it again), a new one is not");
+    std::shared_ptr<Patch> pg(pst->createPatch(0x81));
+    Src srcG; auto iG = sp->createInstrument(0); iG->assignPatch(pg); iG->connect(srcG); iG->setVoiceCount(1); iG->setMidiChannel(0);
+    std::shared_ptr<Instrument> aG[1] = { iG };
+    sp->setup(std::span<std::shared_ptr<Instrument>>(aG,1), {}, nullptr, []{ return tiny::optional<float>(120.0f); });
+    float GL[kAudioBufferSize], GR[kAudioBufferSize];
+    std::array<AudioBufferRef, 2> gaux = { AudioBufferRef(GL), AudioBufferRef(GR) };
+    auto blkG = [&]() { sp->renderAudioBuffer({AudioBufferRef(GL),AudioBufferRef(GR)}, std::span<AudioBufferRef>(gaux), 0);
+                        float m = 0; for (float v : GL) m = std::max(m, std::fabs(v)); return m; };
+    srcG.send(MidiEvent::Type::kNoteOn, 0, 57, 100);
+    float pkG = 0; for (int b = 0; b < 20; b++) pkG = std::max(pkG, blkG());
+    ot::audio::ISynthEngine* const was = plugDef.inst;
+    plugDef.inst = nullptr;     // plug_synth.cpp detach(): the adapter goes first ...
+    open::engineGone(&plugDef); // ... and the parts on it let go
+    float afterG = 0; for (int b = 0; b < 4; b++) afterG = std::max(afterG, blkG());
+    srcG.send(MidiEvent::Type::kNoteOn, 0, 60, 100);
+    for (int b = 0; b < 4; b++) afterG = std::max(afterG, blkG());
+    check(pkG > 1e-3f && afterG == 0.0f && open::partIdle(0), "engineGone: a part playing the engine is cut and stays silent, even for new notes");
+    plugDef.inst = was;
+  }
+#endif
   return bad ? 1 : 0;
 }

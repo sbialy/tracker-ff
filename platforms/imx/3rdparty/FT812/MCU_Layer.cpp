@@ -220,6 +220,11 @@ uint8_t MCU_SPIReadWrite(uint8_t DataToWrite)
     return spiBus->transferByte(DataToWrite);
 }
 
+void MCU_SPIWrite32(uint32_t DataToWrite)
+{
+    spiBus->transfer4Bytes(DataToWrite);
+}
+
 void MCU_Delay_3us(void)
 {
     delayMicroseconds(3);

@@ -76,28 +76,47 @@ void cMtPadsBacklight::startBlink(uint8_t gamma_pwm, uint8_t n)
 
 void cMtPadsBacklight::stopBlink(uint8_t n)
 {
-    blinkLayer[n] = 0;
-    setFrontLayer(0, blinkLayer[n], n);
-    blinkCounter--;
+    if (blinkLayer[n] != 0)
+    {
+        blinkLayer[n] = 0;
+        setFrontLayer(0, 0, n);
+        if (blinkCounter > 0)
+            blinkCounter--;
+    }
 }
 
 void cMtPadsBacklight::clearGlobalPads(uint8_t front, uint8_t back, uint8_t blink)
 {
-    if (front)
+    if (front && back)
     {
         for (uint8_t i = 0; i < 48; i++)
         {
-            setFrontLayer(0, 0, i);
-            frontLayer[i] = 0;
+            if (frontLayer[i] != 0 || backLayer[i] != 0)
+            {
+                frontLayer[i] = 0;
+                backLayer[i] = 0;
+                leds->setLed(i, 0, 0);
+            }
         }
     }
-
-    if (back)
+    else if (front)
     {
         for (uint8_t i = 0; i < 48; i++)
         {
-            setBackLayer(0, 0, i);
-            backLayer[i] = 0;
+            if (frontLayer[i] != 0)
+            {
+                setFrontLayer(0, 0, i);
+            }
+        }
+    }
+    else if (back)
+    {
+        for (uint8_t i = 0; i < 48; i++)
+        {
+            if (backLayer[i] != 0)
+            {
+                setBackLayer(0, 0, i);
+            }
         }
     }
     if (blink)

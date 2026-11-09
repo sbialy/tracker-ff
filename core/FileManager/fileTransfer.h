@@ -67,6 +67,17 @@ class cFileTransfer
                                    int16_t* memoryAddress,
                                    uint32_t targetSampleRate);
 
+    uint8_t convertWaveToInstrumentFile(FileManagerOperation::SampleLoadData* sampleImportData,
+                                        const char* destFile,
+                                        uint32_t destFileOffset,
+                                        uint32_t targetSampleRate);
+
+    uint8_t copyRawDataBetweenFiles(const char* srcFile,
+                                    uint32_t srcOffset,
+                                    const char* destFile,
+                                    uint32_t destOffset,
+                                    uint32_t sizeBytes);
+
     // load dla nowych instrumentow
     uint8_t loadInstrumentRawSampleDataToMemory(const char* file,
                                                 uint32_t fileOffset,
@@ -131,6 +142,15 @@ class cFileTransfer
     uint8_t* srcDataBuff;
 
     uint8_t conversionEnabled;
+    uint8_t channelPass = 0;
+    uint8_t* batchBufLBase = nullptr;
+    uint8_t* batchBufRBase = nullptr;
+    uint8_t* batchBufL = nullptr;
+    uint8_t* batchBufR = nullptr;
+    uint32_t batchCapacity = 0;
+    uint32_t batchFilled = 0;
+    uint32_t batchWriteOffset = 0;
+    uint32_t channelBytesFlushed = 0;
     bool conversionInPlace;
 
     ConversionConfig conversionConfig;

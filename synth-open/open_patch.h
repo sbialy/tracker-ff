@@ -5,6 +5,7 @@
 #pragma once
 
 #include "open_engine.h"
+#include "open_mod.h"
 #include "open_patchdata.h"
 
 #include "PolySynth/FileSystem.h"
@@ -54,8 +55,22 @@ class OpenPatch final : public Patch
     // Shim internal: macro CC (0..127) written by the instrument from MIDI
     void setMacroCC(int macro, uint8_t cc) { macroCC[macro] = cc; }
 
-    // Values with macros M1..M6 applied (additive, scaled by the param range, clamped). Render path.
-    void effective(float* out) const;
+    // Values with macros M1..M6 applied (additive, scaled by the param range, clamped). Render path. `modOut` (kModSlots values, the
+    // instrument's automation outputs of this block) adds the slots on top: a macro slot moves its macro, a param slot adds
+    // out * range to the param, every hit param is clamped once. nullptr: no automation (the editor's final value).
+    void effective(float* out, const float* modOut = nullptr) const;
+
+    // Synth automation (open_mod.h). The slots belong to the patch (its .patch field 64), never to a Patch FX row: the FX swaps values
+    // only. A setter needs audio interrupts disabled by the caller. modSerial changes on every import, so the instrument restarts its
+    // modulators when another file comes in.
+    const ModSlot& modSlot(int s) const { return mod[s]; }
+    void setModSlot(int s, const ModSlot& v)
+    {
+        mod[s] = v;
+        modOn = modAnyOn(mod);
+    }
+    uint8_t modSerial() const { return modSer; }
+    bool modActive() const { return modOn; }
 
     // Gain slope of Macro 7 (velocity) on the Volume param: gain = vol * (1 + k * (vel - 1))
     float velocityAmount() const
@@ -115,6 +130,9 @@ class OpenPatch final : public Patch
     int count = 0;
     float values[kMaxParams] = {};
     uint8_t macroCC[kMacroCount] = {};
+    ModSlot mod[kModSlots];
+    uint8_t modSer = 0;
+    bool modOn = false;                  // some slot is not Off (the render path skips the automation when not)
     PatchExtra extra;                    // raw .patch fields kept for the round trip
 };
 

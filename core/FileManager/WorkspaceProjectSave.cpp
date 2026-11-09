@@ -1,4 +1,7 @@
 #include "WorkspaceProjectSave.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
@@ -130,6 +133,14 @@ void WorkspaceProjectSave::saveProjectToWorkspaceFinish()
     newFileManager.getSynth()->saveDirtyWorkspacePatches();
 #endif
 #endif
+#ifdef FEATURE_PLUG_HOST
+    if (!plug::projectSave(cWorkspacePath)) // the sidecar of the master insert plugins (removed when no slot is used)
+    {
+        mtProject.values.projectNotSavedFlag |= 1; // the Workspace lacks the current plugin settings: as the patches above
+        stopOperationWithError(fmSaveError);
+        return;
+    }
+#endif
 
     if (newFileManager.getStatus() == fmSavingProjectToProjects) // przejdz do kopiowania projektu
     {
@@ -185,6 +196,8 @@ bool WorkspaceProjectSave::saveProjectToWorkspace(bool forceSaveAll)
         // workspace napewo sie rozni od zawartosci Projects
         mtProject.values.projectNotSavedFlag |= 1;
     }
+
+    LOG("workspace save");
 
     operationStep = WorkspaceProjectSaveStep::initStep;
     newFileManager.setStatus(fmSavingProjectToWorkspace);

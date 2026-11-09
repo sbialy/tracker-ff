@@ -600,6 +600,13 @@ enum SaturationType
     kDirtAsym,
     kDirtCrush,
 #endif
+#ifdef FEATURE_SAT_SOFTKNEE
+    // Soft Knee (synth-open/sat_softknee.h): value 10 in every build, after the five Dirt values 5..9 of FF builds, so no
+    // project of any build reads it as something else. Stock firmware loads it as Hard Clip (fProjEdit.cpp). Without
+    // FEATURE_FF_DIRT the values 5..9 are holes: the audio engine plays them as Hard Clip, plug_host.cpp turns a project
+    // saved with one into Inserts with Insert 1 = Dirt.
+    kSoftKnee = 10,
+#endif
     kSaturationTypeEnd
 };
 
@@ -624,6 +631,10 @@ struct strInstrument
     } sample;
 
     char name[4];
+
+    static constexpr char kStreamPrefMagic = 'S';
+    bool isStreamPreferred() const { return name[3] == kStreamPrefMagic; }
+    void setStreamPreferred(bool streamed) { name[3] = streamed ? kStreamPrefMagic : 0; }
 
     uint8_t playMode;
     uint16_t startPoint;

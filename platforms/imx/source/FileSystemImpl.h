@@ -14,6 +14,7 @@ class FileSystemImpl final : public FileSystem
   public:
     virtual bool isSdCardInserted() override;
     virtual void setMountEventCallback(CardStateChangeCallback funct) override;
+    virtual bool remount() override;
 
     virtual bool exists(const char* path) override;
     virtual bool rename(const char* oldPath, const char* newPath) override;

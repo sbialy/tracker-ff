@@ -36,11 +36,18 @@ const uint8_t gamma255[256] = {
 
 };
 
+static uint8_t s_sentLedBits[18];
+static uint8_t s_sentLedPWM[144];
+static bool s_sentValid = false;
+static uint8_t s_repairCounter = 0;
+static uint8_t s_repairReg = 0;
+
 mtLED::mtLED()
 {
     memset(ledState, 0, 144);
     memset(ledBits, 0, 18);
     memset(ledPWM, 0, 144);
+    s_sentValid = false;
 }
 
 void mtLED::begin(void (*resetFunc)(void), uint8_t addr)
@@ -48,6 +55,7 @@ void mtLED::begin(void (*resetFunc)(void), uint8_t addr)
     _i2caddr = addr;
     _frame = 0;
     resetTransmissionFunc = resetFunc;
+    s_sentValid = false;
 
     // shutdown
     writeRegister8(ISSI_BANK_FUNCTIONREG, ISSI_REG_SHUTDOWN, 0x00);
@@ -74,7 +82,23 @@ uint8_t mtLED::update_all_leds()
 {
     if (leds_need_update)
     {
-        checkAndRepair();
+        if (s_sentValid && memcmp(ledBits, s_sentLedBits, sizeof(ledBits)) == 0 &&
+            memcmp(ledPWM, s_sentLedPWM, sizeof(ledPWM)) == 0)
+        {
+            leds_need_update = 0;
+            return 0;
+        }
+
+        if (++s_repairCounter >= 16)
+        {
+            s_repairCounter = 0;
+            checkAndRepairReg(s_repairReg);
+            s_repairReg++;
+            if (s_repairReg == 0x07)
+                s_repairReg++;
+            if (s_repairReg > 0x0D)
+                s_repairReg = 0;
+        }
 
         if (!i2cBusControllerNXP2.startTransmission(_i2caddr))
             return 1;
@@ -84,6 +108,7 @@ uint8_t mtLED::update_all_leds()
         I2cBusControllerImpl2::OperationResult status = i2cBusControllerNXP2.finishTransmission();
         if (status == I2cBusControllerImpl2::OperationResult::kError)
         {
+            s_sentValid = false;
             isDeadResetCheck();
             return 1;
         }
@@ -107,6 +132,9 @@ uint8_t mtLED::update_all_leds()
         }
 
         i2cBusControllerNXP2.sendTransmission();
+        memcpy(s_sentLedBits, ledBits, sizeof(ledBits));
+        memcpy(s_sentLedPWM, ledPWM, sizeof(ledPWM));
+        s_sentValid = true;
         leds_need_update = 0;
 
         return 1;
@@ -121,29 +149,38 @@ void mtLED::update_pads()
 
 void mtLED::setLED(uint8_t num, uint8_t state, uint8_t gamma_pwm)
 {
-
     if (gamma_pwm > 31)
         gamma_pwm = 31;
 
     num += 4 * (num / 12); // special for tracker 12 x 4 grid
 
-    ledPWM[num] = gamma32[gamma_pwm];
+    uint8_t newPwm = gamma32[gamma_pwm];
+    uint8_t bitIdx = num / 8;
+    uint8_t bitMask = (uint8_t)(1u << (num % 8));
+    uint8_t newBits = state ? (uint8_t)(ledBits[bitIdx] | bitMask)
+                            : (uint8_t)(ledBits[bitIdx] & ~bitMask);
 
-    if (state)
-        ledBits[num / 8] |= (1 << num % 8);
-    else
-        ledBits[num / 8] &= ~(1 << num % 8);
-    leds_need_update = 1;
+    if (ledPWM[num] != newPwm || ledBits[bitIdx] != newBits)
+    {
+        ledPWM[num] = newPwm;
+        ledBits[bitIdx] = newBits;
+        leds_need_update = 1;
+    }
 }
 
 void mtLED::setLEDpwm(uint8_t num, uint8_t state, uint8_t pwm)
 {
-    ledPWM[num] = pwm;
-    if (state)
-        ledBits[num / 8] |= (1 << num % 8);
-    else
-        ledBits[num / 8] &= ~(1 << num % 8);
-    leds_need_update = 1;
+    uint8_t bitIdx = num / 8;
+    uint8_t bitMask = (uint8_t)(1u << (num % 8));
+    uint8_t newBits = state ? (uint8_t)(ledBits[bitIdx] | bitMask)
+                            : (uint8_t)(ledBits[bitIdx] & ~bitMask);
+
+    if (ledPWM[num] != pwm || ledBits[bitIdx] != newBits)
+    {
+        ledPWM[num] = pwm;
+        ledBits[bitIdx] = newBits;
+        leds_need_update = 1;
+    }
 }
 
 void mtLED::clearAllPadsLED()

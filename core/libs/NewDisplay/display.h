@@ -1,6 +1,7 @@
 #ifndef LIBS_NEWDISPLAY_DISPLAY_H_
 #define LIBS_NEWDISPLAY_DISPLAY_H_
 
+#include "devhooks.h"
 #include <stdint.h>
 #include <typeinfo>
 
@@ -126,6 +127,7 @@ class cDisplay
 
     void scheduleScreenShot(int timeSec);
     void doScreenShot();
+    DEVHOOK_DISPLAY_MEMBERS // development hooks (devhooks.h): the screenshot in steps and the shown control texts
 
     void hideAllControls();
 

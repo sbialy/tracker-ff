@@ -1,6 +1,6 @@
 # Runs bench_dirt.elf (run_bench.sh with KEEP_DIR set) in the Unicorn Cortex-M4F for <preset> and <blocks> blocks and writes the test block
-# the source repeats (in.bin) and the last block the sink got (out.bin), for `dirt_render --check`: the ARM asm (vcvt Q31 clamp, mid-rise
-# quantiser, ssat) against the plain float code of the host render. Run with python -I.
+# the source repeats (in.bin) and the last block the sink got (out.bin), for `dirt_render --check`: the ARM asm (vcvt Q31 clamp, mid-tread
+# quantiser (qadd), ssat) against the plain float code of the host render. Run with python -I.
 #   check_arm.py <elf> <toolchain-prefix> <preset 1..5> <blocks> <in.bin> <out.bin>
 import subprocess, sys
 from unicorn import UC_ARCH_ARM, UC_MODE_THUMB, Uc

@@ -3,6 +3,7 @@
 #include "fsl_sd.h"
 #include <stdio.h>
 #include <string.h>
+#include <new>
 
 #include "SD.h"
 #include "ctype.h"
@@ -480,7 +481,12 @@ bool SdDir::close()
 
 uint16_t SdDir::countFilesInSubDirectory(const char* dir_name, enListFileFilter filter)
 {
-    char* const path = new char[strlen(dir_name) + strlen(dir_path) + 2];
+    // operator new is a plain malloc and returns null on a short heap: count 0 then, the caller lists the folder plain
+    char* const path = new (std::nothrow) char[strlen(dir_name) + strlen(dir_path) + 2];
+    if (path == nullptr)
+    {
+        return 0;
+    }
     FRESULT result;
     DIR dir;
     FILINFO file_info;
@@ -700,6 +706,7 @@ uint16_t SdDir::createFilesList(uint8_t start_line,
     }
 
     uint16_t memory_used = 0;
+    bool allocFailed = false; // a short heap ends the list early, entries below n are complete
     FILINFO fno;
     FRESULT error;
     SdFile local_file;
@@ -708,7 +715,7 @@ uint16_t SdDir::createFilesList(uint8_t start_line,
 
     while (1)
     {
-        if (n >= list_length)
+        if (n >= list_length || allocFailed)
             break;
         if (memory_used > max_used_memory - 255)
             break;
@@ -743,7 +750,11 @@ uint16_t SdDir::createFilesList(uint8_t start_line,
         else
             len += 1;
 
-        list[n] = new char[len];
+        list[n] = new (std::nothrow) char[len];
+        if (list[n] == nullptr)
+        {
+            break;
+        }
         memory_used += len;
 
         if (fno.fattrib & AM_DIR) // folder
@@ -755,16 +766,23 @@ uint16_t SdDir::createFilesList(uint8_t start_line,
             if (max_files_in_subdir != 0 && files_count > max_files_in_subdir)
             {
                 uint16_t offset = 0;
+                const uint16_t plainLen = len; // the length list[n] holds now, the counter was raised by this one
                 len += 4 + 2 * 5;
 
                 while (files_count > 0 && n < list_length - 1)
                 {
+                    char* const part = new (std::nothrow) char[len];
+                    if (part == nullptr)
+                    {
+                        allocFailed = true;
+                        break;
+                    }
                     if (list[n] != nullptr)
                     {
                         delete list[n];
-                        memory_used -= len;
+                        memory_used -= plainLen;
                     }
-                    list[n] = new char[len];
+                    list[n] = part;
                     memory_used += len;
                     snprintf(list[n],
                              len,
@@ -881,7 +899,11 @@ uint16_t SdDir::createInstrumentsList(char** list, uint8_t list_length, uint32_t
         }
 
         int len = nameLen - (p - fno.fname) - 4;
-        list[idx1] = new char[len + 1];
+        list[idx1] = new (std::nothrow) char[len + 1];
+        if (list[idx1] == nullptr)
+        {
+            break;
+        }
         strncpy(list[idx1], p, len);
         list[idx1][len] = 0;
 

@@ -222,6 +222,19 @@ class cSampleImporter : public ModuleBase
     uint32_t importSampleSamplesCount = 0;
     uint32_t importMemoryFree = 0;
     uint8_t importIsLoFi = 0;
+    uint8_t importForceStream = 0;
+
+    enum class enSampleLoadMode : uint8_t
+    {
+        kRam = 0,
+        kAuto = 1,
+        kStream = 2,
+    };
+    enSampleLoadMode sampleLoadMode = enSampleLoadMode::kRam;
+
+    void updateMemoryButtonLabel();
+    void handleMemoryModeOrToggle();
+    bool calcImportIsEnoughMemoryStream();
 
     uint16_t playProgressValue = 0;
     uint16_t playProgressInSpectrum = 0; // 0 - 600
@@ -236,15 +249,16 @@ class cSampleImporter : public ModuleBase
     uint8_t playInProgressFlag = 0;
     uint8_t importApplyNormalButtonLastStyle = 255;
     uint8_t importApplyLoFiButtonLastStyle = 255;
+    uint8_t importApplyStreamButtonLastStyle = 255;
 
     strZoomParams zoom;
     strSpectrumParams params;
 
     uint8_t selectedImportPlace;
 
-    char startPointValueText[8];
-    char endPointValueText[8];
-    char playTimeValueText[8];
+    char startPointValueText[12]; // "1234.567s" and the NUL
+    char endPointValueText[12];  // same width as the start label
+    char playTimeValueText[12];
     char previewVolumeText[12];
 
     void calcPlayProgressValue();

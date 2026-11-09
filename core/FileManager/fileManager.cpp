@@ -157,8 +157,46 @@ uint8_t cFileManager::getProgress()
 // forceSaveAll - jak narazie nigdzie nie uzywane force=true
 bool cFileManager::saveProjectToWorkspace(bool forceSaveAll)
 {
+    if (workspaceSaveSuspended)
+    {
+        // The change flags stay set, so the save happens after the suspension.
+        return false;
+    }
+
     changesFlags.save_asap = 0;
     return workspaceProjectSave.saveProjectToWorkspace(forceSaveAll);
+}
+
+bool cFileManager::flushWorkspaceSave()
+{
+    bool autosaving =
+      currentOperation == fmSaveWorkspaceProject && status == fmSavingProjectToWorkspace;
+
+    if (currentOperation != fmNoOperation && !autosaving)
+    {
+        return false;
+    }
+
+    // An autosave already under way may have passed the newest changes, so
+    // it is followed by one more save.
+    for (int pass = 0; pass < 2; pass++)
+    {
+        if (currentOperation == fmNoOperation && !saveProjectToWorkspace())
+        {
+            break;
+        }
+        while (currentOperation == fmSaveWorkspaceProject)
+        {
+            update();
+        }
+    }
+
+    return true;
+}
+
+void cFileManager::setWorkspaceSaveSuspended(bool suspended)
+{
+    workspaceSaveSuspended = suspended;
 }
 
 bool cFileManager::openProjectFromWorkspace()
@@ -180,7 +218,8 @@ bool cFileManager::importSamplesToProject(uint8_t fileFrom,
                                           uint8_t instrumentSlot,
                                           uint16_t dataFrom,
                                           uint16_t dataTo,
-                                          bool isLofi)
+                                          bool isLofi,
+                                          FileManagerOperation::SampleLoadMode loadMode)
 {
     stopAutosave();
 
@@ -191,7 +230,8 @@ bool cFileManager::importSamplesToProject(uint8_t fileFrom,
       dataFrom,
       dataTo,
       isLofi,
-      stereoSampleMode ? FileManagerOperation::kLeftAndRight : FileManagerOperation::kLeft);
+      stereoSampleMode ? FileManagerOperation::kLeftAndRight : FileManagerOperation::kLeft,
+      loadMode);
 }
 
 bool cFileManager::importSampleToProject(char* filePath, char* fileName, uint8_t instrumentSlot)
@@ -370,9 +410,8 @@ void cFileManager::moveToPrevOperationStep()
 
 void cFileManager::stopOperationWithError(uint8_t error)
 {
+    LOGEF("FM err op %d step %d e %d", currentOperation, currentOperationStep, error);
 #ifdef FILEMANAGER_DEBUGLOG
-    LOGF("File manager error (%d)(%d)(%d)", currentOperation, currentOperationStep, error);
-
     debugLog.setMaxLineCount(3);
     snprintf(errorText,
              100,
@@ -699,6 +738,21 @@ bool cFileManager::getPtiFileDataOffset(const char* path, uint32_t& dataOffsetOu
     return true;
 }
 
+#ifdef FEATURE_SYNTH_OPEN
+#include <cr_section_macros.h>
+// The project instruments folder path and the file list of resolveProjectInstrumentPtiPath off the stack: as locals they
+// gave it a 512 B frame on the main loop's deepest chain (project load, then demoteRamInstrumentToStream, then here), and
+// MK66 leaves only about 8,440 B between SP and the heap with the audio interrupt taking up to 6.4 KB of that (see
+// libs/NewDisplay/mainLoopScratch.h). Safe as statics: every caller is main-loop file manager or UI code (project load
+// and save checks, sample load, sample import, memory mode), none is reachable from an interrupt, and the function calls
+// only snprintf, FileSystem exists and createInstrumentsList and delete[], none of which can call it again, so it never
+// nests. Its own buffers, not the main-loop scratch, because project open and save can hold that scratch around it.
+// Byte data only read and written by the CPU (FatFs copies the path), so any alignment does. NOINIT: no static
+// constructor may touch the SDRAM before it is up, and the function sets both before use.
+__NOINIT(EXTERNAL_RAM) static char s_resolvePtiDir[PATCH_SIZE];
+__NOINIT(EXTERNAL_RAM) static char* s_resolvePtiList[kSampleInstrumentsCount];
+#endif
+
 bool cFileManager::resolveProjectInstrumentPtiPath(int idx, char* outPath, size_t maxLen)
 {
     if (idx < 0 || idx >= kSampleInstrumentsCount)
@@ -738,9 +792,15 @@ bool cFileManager::resolveProjectInstrumentPtiPath(int idx, char* outPath, size_
         }
     }
 
+#ifdef FEATURE_SYNTH_OPEN
+    char* const projectInstrumentPath = s_resolvePtiDir;
+    constexpr size_t kInstrumentPathSize = sizeof(s_resolvePtiDir);
+#else
     char projectInstrumentPath[PATCH_SIZE];
+    constexpr size_t kInstrumentPathSize = sizeof(projectInstrumentPath);
+#endif
     snprintf(projectInstrumentPath,
-             sizeof(projectInstrumentPath),
+             kInstrumentPathSize,
              cProjectsInstrumentsPathFormat,
              currentProjectPatch,
              currentProjectName);
@@ -750,7 +810,15 @@ bool cFileManager::resolveProjectInstrumentPtiPath(int idx, char* outPath, size_
         return false;
     }
 
+#ifdef FEATURE_SYNTH_OPEN
+    char** const list = s_resolvePtiList;
+    for (int i = 0; i < kSampleInstrumentsCount; i++)
+    {
+        list[i] = nullptr;
+    }
+#else
     char* list[kSampleInstrumentsCount] = { nullptr };
+#endif
     uint32_t sizeOut = 0;
     int found = fileSystem->createInstrumentsList(
       projectInstrumentPath, list, kSampleInstrumentsCount, &sizeOut);

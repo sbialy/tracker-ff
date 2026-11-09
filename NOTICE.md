@@ -23,6 +23,7 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Location**: `platforms/mk66/3rdparty/teensy_core/`, `platforms/mk66/3rdparty/Audio/`, `core/libs/Audio/`
 * **License**: MIT / PJRC Permissive License
 * **Copyright**: Copyright (c) 2014-2018 Paul Stoffregen, PJRC.COM, LLC.
+* **Exception**: ten files of the Arduino core in `platforms/mk66/3rdparty/teensy_core/` are GNU Lesser General Public License 2.1 (David A. Mellis and the Arduino team, the license notice is in each file header): `Client.h`, `Printable.h`, `Server.h`, `Stream.cpp`, `Stream.h`, `WCharacter.h`, `WMath.cpp`, `WString.cpp`, `WString.h` and `wiring_private.h`. They are compiled with the core but none of their code is linked into the firmware image (the image has no `String` or `Stream` symbol).
 
 ## 5. Liberation Sans Fonts (UI Bitmap Font Source)
 * **Location**: `core/libs/fonts/LiberationSans-*_L4.{h,cpp}` (4-bit `L4` antialiased glyph bitmaps)
@@ -57,21 +58,30 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Note**: the three header-only DSP kits `synth-open/ot/audio/{chip_dsp,fm_dsp,va_dsp}.h` also come from the `v3_fixes` line (commit 789d55a4c5e8, Apache-2.0, provenance line at the top, otherwise unmodified). They are included by the OpenTracker 3.x module engines of item 11 and compile to nothing on their own.
 * **Note**: `synth-open/ot/audio/dsp.h` also keeps its embedded notice for the PJRC Teensy Audio Library (MIT, Copyright (c) 2014-2017 Paul Stoffregen, PJRC.COM, LLC).
 
-## 11. opentracker-synths (the OpenTracker 3.x module engines for the `SYNTH_OPEN=1` build, optional)
-* **Location**: `synth-open/ot-synths/<module>/<module>.{cpp,h}` for the ten modules `ju6` (JU6), `fm4` (FM4), `dtype` (D-Type), `cstype` (CS-Type), `atype` (A-Type), `ttype` (T-Type drums), `eight` (8-Type), `hand` (Hand-Type), `btype` (B-Type) and `arc` (Arc-Type). The Hand-Type source is in the tree but is not part of the release image. Each file is unmodified apart from a two line provenance notice at the top. `synth-open/engine_<name>.cpp` carries the parameter ranges, labels, value formats, enum names and sections of the module's descriptor (`modules/<name>/src/<name>_desc.cpp`), marked in its header. The default macros and the edit curves in those files are this project's own choice. The module wrappers (`*_module.cpp`) and the descriptors themselves are not compiled.
+## 11. opentracker-synths (the OpenTracker 3.x module engines, shipped as plugins)
+* **Location**: since 1.2.0 the source is in the public repository tracker-engines-os (https://github.com/sbialy/tracker-engines-os, `src/synth-open/ot-synths/<module>/<module>.{cpp,h}`), which ships these notices with every plugin it builds. This repository keeps the engines' identity (`synth-open/engine_list.h`, `engines/engines.json`). Files: for the ten modules `ju6` (JU6), `fm4` (FM4), `dtype` (D-Type), `cstype` (CS-Type), `atype` (A-Type), `ttype` (T-Type drums), `eight` (8-Type), `hand` (Hand-Type), `btype` (B-Type) and `arc` (Arc-Type). Each file is unmodified apart from a two line provenance notice at the top. `synth-open/engine_<name>.cpp` carries the parameter ranges, labels, value formats, enum names and sections of the module's descriptor (`modules/<name>/src/<name>_desc.cpp`), marked in its header. The default macros and the edit curves in those files are this project's own choice. The module wrappers (`*_module.cpp`) and the descriptors themselves are not compiled.
 * **Source**: https://github.com/opentracker-fw/opentracker-synths (commit eb150a5f741b, `modules/<name>`)
 * **License**: MIT, Copyright (c) 2026 Marcin Spoczynski, text in `licenses/LICENSE-OpenTracker-synths-MIT.txt`. The repository states it contains no Polyend code.
-* **Note**: each engine is compiled only when its name is in `SYNTH_ENGINES` (`JU6 FM4 DTYPE CSTYPE ATYPE TTYPE 8TYPE HANDTYPE BTYPE ARCTYPE`). They need the 3.x `synth_engine.h` and `bbd_chorus.h` from item 10 and, for FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type and Arc-Type, the DSP headers `chip_dsp.h`, `fm_dsp.h` and `va_dsp.h` from item 10 (Apache-2.0).
-* **Note**: D-Type's OpenTracker engine id (0x82) is the id of this project's own PHZ engine, so D-Type is keyed 0xA2 in the picker and in `.patch` files, the same as the poly-editor stores it (the engine code itself is unchanged).
+* **Note**: none of them is built into the firmware image any more, they ship as `.plg` plugins. They need the 3.x `synth_engine.h` and `bbd_chorus.h` from item 10 and, for FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type and Arc-Type, the DSP headers `chip_dsp.h`, `fm_dsp.h` and `va_dsp.h` from item 10 (Apache-2.0).
+* **Note**: D-Type's OpenTracker engine id (0x82) is the id of this project's own PHZ engine, so D-Type is keyed 0xA2 in the picker and in `.patch` files, the same as the browser editor stores it (the engine code itself is unchanged).
 
 ## 12. Polyend Chiptune (CHIP engine for the `SYNTH_OPEN=1` build, optional)
 * **Location**: `core/synth/engines/ChiptuneSynthVoice.cpp` is Polyend's own open Chiptune voice from this repository (the repository licence applies, see LICENSE). The only change is a small block of hooks marked `FEATURE_SYNTH_OPEN` (parameter switch, bend, reset, create) that `synth-open/engine_chip.cpp` calls. Its parameter table follows the same file.
 * **Note**: compiled only when `CHIP` is in `SYNTH_ENGINES`. Nothing here uses `libPolySynth.a` or `libPolyDSP.a`.
 
-## 13. PHZ (clean-room phase distortion engine for the `SYNTH_OPEN=1` build, optional)
-* **Location**: `synth-open/phz/phz.{cpp,h}` and `synth-open/engine_phz.cpp`, `synth-open/tools/phz_render.*`, `synth-open/tools/phz_cycles/`.
-* **Source**: written for this project from the public Polyend Synth manual (SYN2 p.76-80). Nothing of Polyend's closed code or binaries was read. The block rate voice skeleton and the filter stages are adapted from OpenTracker's VAP engine (item 10, Apache-2.0), the header of `phz.cpp` says so. No Mutable Instruments Plaits code is used.
-* **Note**: compiled only when `PHZ` is in `SYNTH_ENGINES`. The PHZ icons are Polyend's (already in `core/libs/images`).
+## 13. PHZ (clean-room phase distortion engine, source in the private repository tracker-engines)
+* **Location**: the source is not in this repository any more. It lives in the private repository `tracker-engines` (`src/synth-open/phz/`). This repository keeps the engine's public identity (stored number, type id and name in `synth-open/engine_list.h` and `engines/engines.json`) and loads the built plugin from the SD card like any other engine plugin. The PHZ icons are Polyend's (already in `core/libs/images`).
+* **Source**: written for this project from the public Polyend Synth manual (SYN2 p.76-80). Nothing of Polyend's closed code or binaries was read. The block rate voice skeleton and the filter stages are adapted from OpenTracker's VAP engine (item 10, Apache-2.0), the header of `phz.cpp` says so. No Mutable Instruments Plaits code is used. The published `phz.plg`, `phz.plgi` and `phz.wasm` ship with a notice that keeps this attribution and the Apache-2.0 text. The PHZ source and binaries are proprietary freeware (free use with the Polyend Tracker and tracker-ff, unmodified redistribution, all rights reserved), the terms are in `LICENSE.md` of the private repository `tracker-engines`. Earlier tracker-ff releases (up to 1.1.0) contain the PHZ source in this repository under the MIT licence, that history and licence stay.
+* **Note**: the engine is no longer built here, so `PHZ` is not accepted in `SYNTH_ENGINES`.
+
+## 13a. PLK (clean-room Karplus-Strong plucked string engine, source in the private repository tracker-engines)
+* **Location**: the source is not in this repository. It lives in the private repository `tracker-engines` (`src/synth-open/pluck/`). This repository keeps only the public identity of the engine (stored number 18, type id 0x8A, name).
+* **Source**: written for this project from the published Karplus-Strong algorithm (Karplus and Strong, CMJ 1983) and its extensions (Jaffe and Smith, CMJ 1983). No third-party code was read or adapted. Only the `ISynthEngine` interface (item 10, Apache-2.0) is shared, and the headers of the PLK source keep that attribution. The published `pluck.plg`, `pluck.plgi` and `pluck.wasm` ship with our notice. The PLK source and binaries are proprietary freeware, the terms are in `LICENSE.md` of the private repository `tracker-engines`.
+* **Note**: the engine is no longer built here. It borrows the VAP list icons.
+
+## 13b. Console and Tube (original master inserts, source in the private repository tracker-effects)
+* **Location**: the source is not in this repository. It lives in the private repository `tracker-effects`. This repository keeps only the public identity of the two inserts (plugin ids `ff.console` and `ff.tube`).
+* **Source**: written for this project, no third-party code. The published `console.plg`, `tube.plg` and their `.wasm` files are proprietary freeware (free use with the Polyend Tracker and tracker-ff, unmodified redistribution, all rights reserved), the terms are in `LICENSE.md` of the private repository `tracker-effects`. The plugin runtime built into them stays MIT.
 
 ## 14. Mutable Instruments Polyverb sources (reverb code from Mutable Instruments Clouds and Rings)
 * **Location**: `core/libs/Audio/Polyverb/{reverb,fx_engine,util,cosine_oscillator}.h`
@@ -87,10 +97,41 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Location**: `util/3rdparty/{fmt,nanopb,tiny,constexpr-string}/`, each with its own license file
 * **License**: fmt: MIT (Copyright (c) 2012 - present, Victor Zverovich). nanopb: zlib license (Copyright (c) 2011 Petteri Aimonen). tiny (optional): Boost Software License 1.0. constexpr-string: MIT (Copyright (c) 2019 Marek Bogusovsky). The `boost`, `catch2`, `googletest` and `googlemock` copies there are not included by any firmware source (checked with git grep), so they are not in the image.
 
+## 16a. Toolchain runtime libraries (linked into the image)
+* **What**: the C library newlib-nano (`libc_nano.a`, `libm.a`), `libgcc.a` and `libstdc++_nano.a` of the Arm GNU Toolchain 12.3.rel1.
+* **License**: newlib is under BSD-style and similar permissive licenses (the list is in `COPYING.NEWLIB` of the toolchain). libgcc and libstdc++ are GPL-3.0 with the GCC Runtime Library Exception 3.1, which allows linking them into a program under any license. None of this asks for source of the firmware.
+
 ## 17. opentracker-fx (the DIRT master insert for the `SYNTH_OPEN=1` build, FF_DIRT=1)
 * **Location**: `synth-open/ff_dirt.{h,cpp}` and `synth-open/ff_dirt_ctl.cpp`, with the host render and cycle bench in `synth-open/tools/dirt_render.*` and `synth-open/tools/dirt_cycles/`.
 * **Source**: https://github.com/opentracker-fw/opentracker-fx (commit 6e5a7da, `modules/dirt/src/dirt.cpp`). A rewrite, not a copy: the shaper maths, the mid-rise quantiser, the sample and hold, the tone low-pass and the make-up gain follow the original, the audio path (int16 blocks), the fixed preset table and the block loop are this project's own. The headers carry the notice.
 * **License**: MIT, Copyright (c) 2026 Marcin Spoczynski, text in `licenses/LICENSE-OpenTracker-fx-MIT.txt`. The repository states it contains no Polyend code.
+* **Plugins** (`PLUG_HOST=1`, shipped as separate `.plg` files, not in the image): since 1.2.0 the master insert plugins Tape, Lo-Fi (its ladder weights are `kLadderErr` of OpenTracker's `chip_dsp.h`, Apache-2.0, item 10), BBD, Phaser and the Dirt wrapper (`fx_dirt_plug.cpp`, around the DIRT port above, whose three files the repository vendors) are built in the public repository tracker-effects-os (https://github.com/sbialy/tracker-effects-os), which ships their notices (`src/synth-open/plug/fx/NOTICE.md` there) with every release file. The plugin SDK in `synth-open/plug/` is MIT (`synth-open/plug/LICENSE`).
+
+## 18. OpenTracker mix effects as sample editor plugins (`editor-fx-sdk/effects/ot_*.c`, optional)
+* **Location**: `editor-fx-sdk/effects/ot_tape.c`, `ot_lofi.c`, `ot_dirt.c`, `ot_dub_echo.c`, `ot_bbd_chorus.c` and `ot_reverb.c`, the shared header `editor-fx-sdk/ot_common.h` and the host test tools in `editor-fx-sdk/tools/`. They build to `.ptfx` files that are loaded from the SD card, nothing here is linked into the firmware.
+* **Source (Tape, Lo-Fi, Dirt, Dub Echo)**: the TAPE, LOFI, DIRT and ECHO modules of https://github.com/opentracker-fw/opentracker-fx (commit 6e5a7da). **License**: MIT, Copyright (c) 2026 Marcin Spoczynski, text in `editor-fx-sdk/LICENSE-opentracker-fx-MIT`. The repository states it contains no Polyend code. Each port is rewritten in C and says so in its header (mono, no tempo sync, no block ramps, changes listed per file).
+* **Source (BBD Chorus)**: `audio/bbd_chorus.h` of OpenTracker 3.x (https://github.com/sandlbn/polyend-tracker-re, branch `v3_fixes`, commit 789d55a4c5e8), the DSP of the BBDC module of opentracker-fx. **License**: Apache-2.0, text in `licenses/LICENSE-OpenTracker-Apache-2.0.txt`. The upstream file carries no copyright line of its own. The port is translated to C and marked as modified in its header (Apache-2.0 section 4b).
+* **Source (Lo-Fi ladder weights)**: the six values of `kLadderErr` in OpenTracker's `chip_dsp.h` (same repository and commit as above, Apache-2.0). No other `chip_dsp.h` or `va_dsp.h` code is used, the filter coefficients come from the host's `tanf` and `powf`.
+* **Source (Reverb)**: Polyverb, `core/libs/Audio/Polyverb/` of this repository (`reverb.h`, `fx_engine.h`, `cosine_oscillator.h`, `util.h`), itself Emilie Gillet's reverb from Mutable Instruments Clouds. **License**: MIT, Copyright 2014 Emilie Gillet, adapted for Polyverb by Wojciech Jakóbczyk (the adaptation falls under the repository licence, see LICENSE). The full MIT text of the Gillet header is kept in `ot_reverb.c`. The port is rewritten in C and marked as modified in its header.
+* **Note**: the plugins have only been run in a host harness (`make ptfx-check`) and not on a device.
+
+## 19. Add to Empty Slot (Sample Loader, community contribution)
+* **Location**: `core/interface/sampleImporter/fSampleImport.cpp`, `gSampleImport.cpp` and `sampleImporter.h`.
+* **Source**: https://github.com/JordanDuncan/tracker-ce (branch `add-to-empty-slot`, commit 3627767, upstream pull request 58 of polyend/tracker-ce). Cherry-picked with the original author kept. The only change is an explicit `<optional>` include in `sampleImporter.h`.
+* **Author**: Jordan Duncan.
+* **License**: MIT. Contributed to the Polyend Tracker Community Edition under the contribution terms of `CONTRIBUTING.md`, so the repository `LICENSE` applies (MIT with the Wholesale Commercial Clone Restriction for the complete application).
+
+## 20. Per-track MIDI-in (Config > MIDI Track 1 to 8 in channel, community contribution)
+* **Location**: `core/interface/configEditor/configMenu.cpp`, `configMenuDefs.h`, `core/source/mtConfig.cpp`, `mtMidi.cpp`, `mtSequencer.cpp`, `mtSequencer.h` and `mtStructs.h`.
+* **Source**: https://github.com/scott-lepore/tracker-ce (branch `pr/per-track-midi-in`, commit 00d1b68, upstream pull request 51 of polyend/tracker-ce). Cherry-picked with the original author kept, no changes to the code.
+* **Author**: Scott Lepore.
+* **License**: MIT. Contributed under the contribution terms of `CONTRIBUTING.md`, so the repository `LICENSE` applies (MIT with the Wholesale Commercial Clone Restriction for the complete application).
+
+## 21. Transient Shaper (sample editor plugin, `editor-fx-sdk/effects/transient_shaper.c`, optional)
+* **Location**: `editor-fx-sdk/effects/transient_shaper.c`. It builds to a `.ptfx` file that is loaded from the SD card, nothing here is linked into the firmware.
+* **Source**: https://github.com/emanlapponi/tracker-ce (branch `feature/transient-shaper`, commits b170f11 to 95fbe30, upstream pull request 48 of polyend/tracker-ce). Squashed to the final file with the original author kept.
+* **Author**: Emanuele Lapponi.
+* **License**: MIT. Contributed under the contribution terms of `CONTRIBUTING.md`. The `editor-fx-sdk/` folder is MIT under Part 1 of `LICENSE`.
 
 ## Release packages
 

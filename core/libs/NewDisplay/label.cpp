@@ -323,14 +323,22 @@ void cLabel::update()
 
         for (uint8_t i = 0; i < labelBitmapsCount; i++)
         {
+#ifdef FEATURE_PLUG_HOST
+            // a stock bitmap or a synth plugin engine's card logo (synth-open/plug_logo.h)
+            const strBitmap* const bm = data->bitmaps[i].bitmapIndex > 0 ? bitmapAt(data->bitmaps[i].bitmapIndex) : nullptr;
+            if (bm != nullptr)
+#define LABEL_BMP (*bm)
+#else
             if (data->bitmaps[i].bitmapIndex > 0 &&
                 data->bitmaps[i].bitmapIndex < displayBitmapsCount)
+#define LABEL_BMP bitmaps[data->bitmaps[i].bitmapIndex]
+#endif
             {
 
-                API_CMD_SETBITMAP(bitmaps[data->bitmaps[i].bitmapIndex].address,
-                                  bitmaps[data->bitmaps[i].bitmapIndex].format,
-                                  bitmaps[data->bitmaps[i].bitmapIndex].width,
-                                  bitmaps[data->bitmaps[i].bitmapIndex].height);
+                API_CMD_SETBITMAP(LABEL_BMP.address,
+                                  LABEL_BMP.format,
+                                  LABEL_BMP.width,
+                                  LABEL_BMP.height);
 
                 /*				API_BITMAP_HANDLE(0);
                                 API_BITMAP_LAYOUT(	bitmaps[data->bitmaps[i].bitmapIndex].format,
@@ -346,8 +354,9 @@ void cLabel::update()
 
                 API_BEGIN(BITMAPS);
                 API_VERTEX2F(data->bitmaps[i].xValue -
-                               (bitmaps[data->bitmaps[i].bitmapIndex].width / 2),
+                               (LABEL_BMP.width / 2),
                              data->bitmaps[i].yValue);
+#undef LABEL_BMP
                 API_END();
             }
         }

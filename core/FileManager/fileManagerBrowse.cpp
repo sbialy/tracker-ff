@@ -191,7 +191,7 @@ void cFileManager::browseCurrentLocation()
 
 void cFileManager::listOnlyFolderNames()
 {
-    uint8_t allFoldersNum;
+    int allFoldersNum; // int: createFilesList returns kListError (-1), a uint8_t turns it into 255
     uint8_t parentFolder = explorerDirLevel == 0 ? 0 : 1;
     FileSystem::enListFileFilter folderSizeFilter = FileSystem::enListFileFilter_all;
 
@@ -212,6 +212,19 @@ void cFileManager::listOnlyFolderNames()
                                                 0,
                                                 list_length_max - 1,
                                                 folderSizeFilter);
+
+    if (allFoldersNum == FileSystem::kListError) // the folder cannot be opened: show it empty, as listOnlyWavFromActualPath does
+    {
+        for (int i = 0; i < list_length_max; i++)
+        {
+            if (explorerList[i] != nullptr)
+            {
+                delete explorerList[i];
+                explorerList[i] = nullptr;
+            }
+        }
+        allFoldersNum = parentFolder;
+    }
 
     explorerFolderCount = allFoldersNum - parentFolder;
 
@@ -247,7 +260,7 @@ void cFileManager::listOnlyWavFromActualPath()
 
     if (listWavStage == 0) // stage 0
     {
-        uint8_t filesFound =
+        int filesFound =
           fileSystem->createFilesList(explorerCurrentPath,
                                       0,
                                       explorerList + explorerListLength,
@@ -403,7 +416,7 @@ void cFileManager::goUpInActualPath()
 void cFileManager::browseFirmwaresLocation()
 {
 
-    uint8_t locationFileCount = fileSystem->createFilesList(
+    int locationFileCount = fileSystem->createFilesList(
       "Firmware", 0, firmwaresList, list_length_max, 6000, fileSystem->enListFileFilter_firmware);
 
     if (locationFileCount == fileSystem->kListError)
@@ -448,7 +461,7 @@ void cFileManager::browseGamesLocation()
         fileSystem->mkdir(0, cGamesPath);
     }
 
-    uint8_t gamesfoundCount = fileSystem->createFilesList(
+    int gamesfoundCount = fileSystem->createFilesList(
       cGamesPath, 0, projectsList, list_length_max, 3000, FileSystem::enListFileFilter_game);
 
     if (gamesfoundCount == FileSystem::kListError)
@@ -461,22 +474,17 @@ void cFileManager::browseGamesLocation()
               projectsList + gamesfoundCount,
               [](char* a, char* b) { return compareStrings(a, b); });
 
-    char lowCase[50];
-    // usuwanie koncówek .nes
+    // usuwanie koncówek .nes: cut at the first ".nes" in any case, scanned in place (names run to 255 characters,
+    // the old 50 byte lower-case copy was overrun by a longer one)
     for (uint8_t i = 0; i < gamesfoundCount; i++)
     {
-        strcpy(lowCase, projectsList[i]);
-        for (uint16_t a = 0; a < 50; a++)
+        for (char* p = projectsList[i]; *p != 0; p++)
         {
-            lowCase[a] = tolower(lowCase[a]);
-            if (lowCase[a] == 0)
+            if (p[0] == '.' && tolower(p[1]) == 'n' && tolower(p[2]) == 'e' && tolower(p[3]) == 's')
+            {
+                *p = 0;
                 break;
-        }
-
-        char* nes = strstr(lowCase, ".nes\0");
-        if (nes != nullptr)
-        {
-            *(projectsList[i] + (nes - lowCase)) = 0;
+            }
         }
     }
 

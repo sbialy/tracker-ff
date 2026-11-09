@@ -55,6 +55,19 @@ static void freeSdFile(SdFile* f)
     }
 }
 
+static int countOpenSdFiles()
+{
+    int count = 0;
+    for (size_t i = 0; i < kSdFilePoolSize; ++i)
+    {
+        if (s_sdFilePoolUsed[i])
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
 void FileSystemImpl::update()
 {
 #ifdef TEST_FILESYSTEM
@@ -153,6 +166,28 @@ bool FileSystemImpl::initSdDriver()
     }
 
     return true;
+}
+
+bool FileSystemImpl::remount()
+{
+    // An ejected card was unmounted and its host shut down already. The card
+    // is asked directly because this can be called from the ejection callback,
+    // where lastCardInsertState still says it is in.
+    if (!cardInitializedSuccessfully || !SD_IsCardPresent(&g_sd))
+    {
+        return false;
+    }
+
+    if (int openFiles = countOpenSdFiles(); openFiles > 0)
+    {
+        LOGF("SD card remount with %d open file(s), now invalid.", openFiles);
+    }
+
+    // Mounting initializes the card again, which must not cut off a read that
+    // sample streaming still has in flight.
+    waitAsyncRead();
+
+    return f_mount(&g_fileSystem, driverNumberBuffer, 1U) == FR_OK;
 }
 
 void FileSystemImpl::deinitSdDriver()

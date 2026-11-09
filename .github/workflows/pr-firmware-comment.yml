@@ -83,18 +83,20 @@ jobs:
             }
 
             const fwUrl = `https://nightly.link/${owner}/${repo}/actions/runs/${runId}/polyend-tracker-ce-firmware.zip`;
+            const fxUrl = `https://nightly.link/${owner}/${repo}/actions/runs/${runId}/polyend-tracker-ce-effects.zip`;
             const marker = '<!-- polyend-tracker-ce-pr-firmware -->';
 
             const body = [
               marker,
-              '### Polyend Tracker CE Test Firmware',
+              '### Polyend Tracker CE Test Firmware & Sample Editor Effects',
               '',
-              'This pull request passed all build checks. You can download and test the built firmware for **Original Tracker**, **Tracker+**, and **Tracker Mini** (`Build: ' + shortSha + '`) directly using the link below (no GitHub account required):',
+              'This pull request passed all build checks. You can download and test the built firmware for **Original Tracker**, **Tracker+**, and **Tracker Mini** (`Build: ' + shortSha + '`) and the `.ptfx` Sample Editor plugins directly using the links below (no GitHub account required):',
               '',
-              `**[Download Firmware (.zip)](${fwUrl})**`,
+              `* **[Download Firmware (.zip)](${fwUrl})**`,
+              `* **[Download Sample Editor Effects (.zip)](${fxUrl})**`,
               '',
               '<details>',
-              '<summary><b>How to Flash This Firmware on Your Tracker</b></summary>',
+              '<summary><b>How to Install & Flash on Your Tracker</b></summary>',
               '',
               '### 1. Flashing the Firmware (`.ptf`)',
               `1. Download and unzip **[polyend-tracker-ce-firmware.zip](${fwUrl})**.`,
@@ -105,7 +107,11 @@ jobs:
               '3. Insert the microSD card into your Tracker, navigate to **Config → Firmware → Firmware update**, select the `.ptf` file, and confirm.',
               `4. Once rebooted, you can verify you are running this PR build under **Config → Firmware** (\`Build: ${shortSha}\`).`,
               '',
-              '### 2. Emergency Recovery (Just in Case)',
+              '### 2. Installing Sample Editor Effects (`.ptfx`)',
+              `1. Download and unzip **[polyend-tracker-ce-effects.zip](${fxUrl})**.`,
+              '2. Copy the **`Effects/`** folder to the root directory of your Tracker\'s microSD card so your `.ptfx` plugins are located at **`/Effects/*.ptfx`**.',
+              '',
+              '### 3. Emergency Recovery (Just in Case)',
               'The Tracker\'s bootloader is hardware-isolated from the firmware. If a test build ever fails to boot:',
               '1. Place a known-good, stable `.ptf` firmware file inside the **`/Firmware/`** folder on your microSD card (ideally as the only `.ptf` file in that folder).',
               '2. Insert the microSD card and power on your Tracker.',

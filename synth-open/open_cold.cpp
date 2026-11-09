@@ -42,6 +42,7 @@
 namespace polysynth
 {
 using open::EngineDef;
+using open::EngineRef;
 using open::ParamDef;
 using open::kVelocityMacro;
 
@@ -111,9 +112,7 @@ std::string formatValue(const ParamDef& d, float v)
             break;
         }
 #endif
-#ifdef SYNTH_ENGINE_PHZ
         case open::Fmt::kUnit: snprintf(buf, sizeof(buf), "%.2f", v); break;
-#endif
         case open::Fmt::kPan:
         {
             const int p = int(std::lround(v * 100.0f));
@@ -172,9 +171,8 @@ namespace
 
 // ----------------------------------------------------------------- registry
 
-std::unique_ptr<InstrumentType> createFromDef(const EngineDef& def)
+void fillFromDef(InstrumentType* type, const EngineDef& def)
 {
-    auto type = std::make_unique<InstrumentType>();
     type->name = def.name;
     type->createMetadata = [&def](Patch&, Patch::Metadata& metadata)
     {
@@ -195,12 +193,14 @@ std::unique_ptr<InstrumentType> createFromDef(const EngineDef& def)
             p.editCurve = static_cast<Meta::Param::Curve>(d.curve);
             p.valueFormatter = [&d](const Patch&, float v) { return formatValue(d, v); };
         }
+        metadata.layoutFlat.sections.reserve(def.sectionCount); // exact sizes: no doubling steps that leave holes in the heap
         for (int s = 0; s < def.sectionCount; s++)
         {
             const auto& sd = def.sections[s];
             Meta::EditorLayout::EditorSection section;
             section.name = sd.name;
             section.shortName = sd.shortName;
+            section.elements.reserve(sd.count);
             for (int e = 0; e < sd.count; e++)
             {
                 section.elements.push_back(
@@ -236,6 +236,12 @@ std::unique_ptr<InstrumentType> createFromDef(const EngineDef& def)
         };
     };
     type->createVoice = [](int) -> std::unique_ptr<InstrumentVoice> { return nullptr; };
+}
+
+std::unique_ptr<InstrumentType> createFromDef(const EngineDef& def)
+{
+    auto type = std::make_unique<InstrumentType>();
+    fillFromDef(type.get(), def);
     return type;
 }
 
@@ -252,37 +258,281 @@ std::unique_ptr<InstrumentType> createUnavailable(const char* name)
 
 } // namespace
 
-const EngineDef* open::engineDefForType(int typeId)
+// ----------------------------------------------------------------- engine list (built in + installed plugins)
+namespace
 {
-    static const EngineDef* const kDefs[] = {
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, ...) &DEF,
+struct Builtin
+{
+    const EngineDef* def;
+    int16_t stored;
+    int16_t patchEngine;
+};
+constexpr Builtin kBuiltin[] = {
+#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, PATCH_ENGINE, ...) { &open::DEF, STORED, PATCH_ENGINE },
 #include "engine_list.h"
 #undef SYNTH_ENGINE
-    };
-    for (const EngineDef* def : kDefs)
+};
+constexpr int kBuiltinCount = int(sizeof(kBuiltin) / sizeof(kBuiltin[0]));
+// The plugin engines of the list (plug_synth.cpp synthBoot, installed or not): each has its own stored number, so the stored number space
+// bounds them (249), nothing else. Their tables are in the SDRAM: about 0.1 KB each here (list entries, registry entry, name).
+constexpr int kPlugMax = open::kPlugStoredLast - open::kPlugStoredFirst + 1;
+// Any plugin engine number (open::kPlugStoredFirst..kPlugStoredLast) that is not in the list is "missing": one placeholder for all
+// of them (type open::kMissingTypeId), the project keeps the number, the name comes from the names this firmware has seen.
+// 0 to 6 are Polyend's (always built in when they exist in this firmware family), DIRT (5) never had an open engine.
+// Remembered plugin engine names, one per stored number (name[0] 0: none). Every number has its place, so none is ever refused.
+struct EngineName
+{
+    char name[9];
+};
+static_assert(std::is_trivially_default_constructible_v<EngineName>, "OPEN_EXTERNAL_RAM: no static constructor may touch the SDRAM");
+OPEN_EXTERNAL_RAM EngineName gNames[kPlugMax];
+bool gNamesClear; // gNames was zeroed (the SDRAM holds garbage until then)
+
+void namesClear()
+{
+    if (!gNamesClear)
     {
-        if (def->typeId == typeId)
+        std::memset(gNames, 0, sizeof(gNames));
+        gNamesClear = true;
+    }
+}
+
+static_assert(std::is_trivially_default_constructible_v<EngineRef>, "OPEN_EXTERNAL_RAM: no static constructor may touch the SDRAM");
+OPEN_EXTERNAL_RAM EngineRef gPlug[kPlugMax]; // by stored number (engineListAdd keeps them in order)
+int gPlugCount;
+OPEN_EXTERNAL_RAM EngineRef gList[kBuiltinCount + kPlugMax];
+int gCount; // 0 until the list is built (first use)
+EngineDef gMissing = {};
+// The registry entries of the plugin engines (getInstrumentType), made by registerEngines in place, never destroyed: in the SDRAM, so a
+// big library takes no internal heap (a std::map node and two blocks each would)
+struct TypeSlot
+{
+    alignas(InstrumentType) unsigned char bytes[sizeof(InstrumentType)];
+};
+static_assert(std::is_trivially_default_constructible_v<TypeSlot>, "OPEN_EXTERNAL_RAM: no static constructor may touch the SDRAM");
+OPEN_EXTERNAL_RAM TypeSlot gPlugType[kPlugMax];
+int gPlugTypes; // gPlugType[0..gPlugTypes) are made, for gPlug[0..gPlugTypes)
+
+// built in and plugin engines by stored number (both ascend already): a merge
+void buildList()
+{
+    int b = 0, p = 0;
+    while (gCount < kBuiltinCount + gPlugCount)
+    {
+        if (b < kBuiltinCount && (p >= gPlugCount || kBuiltin[b].stored < gPlug[p].stored))
         {
-            return def;
+            gList[gCount] = { kBuiltin[b].def, kBuiltin[b].stored, kBuiltin[b].patchEngine, int8_t(b) };
+            b++;
+        }
+        else
+        {
+            gList[gCount] = gPlug[p++];
+        }
+        gCount++;
+    }
+    gMissing.name = "Missing";
+    gMissing.typeId = open::kMissingTypeId;
+    gMissing.volumeParam = -1;
+    gMissing.maxVoices = open::kMaxVoicesPerInstrument; // never clamps the part's voice count
+}
+
+inline void ensureList()
+{
+    if (!gCount)
+    {
+        buildList();
+    }
+}
+} // namespace
+
+bool open::engineListAdd(const EngineDef* def, int stored, int patchEngine)
+{
+    if (gCount || gPlugCount >= kPlugMax || stored < kPlugStoredFirst || stored > kPlugStoredLast)
+    {
+        return false; // the list is in use (the synth started), full, or not a plugin number (each has its own, so 249 never fill up)
+    }
+    for (int i = 0; i < kBuiltinCount + gPlugCount; i++) // its numbers must be its own
+    {
+        const bool bi = i < kBuiltinCount;
+        const EngineRef& r = gPlug[bi ? 0 : i - kBuiltinCount];
+        const int st = bi ? kBuiltin[i].stored : r.stored;
+        const int pe = bi ? kBuiltin[i].patchEngine : r.patchEngine;
+        const int ty = bi ? kBuiltin[i].def->typeId : r.def->typeId;
+        if (st == stored || ty == def->typeId || pe == patchEngine || def->typeId == open::kMissingTypeId)
+        {
+            return false;
         }
     }
-    return nullptr;
+    int at = gPlugCount++; // in order of stored numbers (buildList merges)
+    for (; at > 0 && gPlug[at - 1].stored > stored; at--)
+    {
+        gPlug[at] = gPlug[at - 1];
+    }
+    gPlug[at] = { def, stored, patchEngine, -1 };
+    return true;
+}
+
+int open::engineCount()
+{
+    ensureList();
+    return gCount;
+}
+
+const EngineRef& open::engineAt(int ui)
+{
+    ensureList();
+    return gList[ui >= 0 && ui < gCount ? ui : 0];
+}
+
+int open::engineUiForStored(int stored)
+{
+    ensureList();
+    for (int i = 0; i < gCount; i++)
+    {
+        if (gList[i].stored == stored)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+const EngineDef* open::missingDef(int stored)
+{
+    return stored >= kPlugStoredFirst && stored <= kPlugStoredLast && engineUiForStored(stored) < 0 ? &gMissing : nullptr;
+}
+
+const char* open::missingName(int stored)
+{
+    if (!missingDef(stored))
+    {
+        return "";
+    }
+    namesClear();
+    if (gNames[stored - kPlugStoredFirst].name[0])
+    {
+        return gNames[stored - kPlugStoredFirst].name;
+    }
+    static char num[8];
+    snprintf(num, sizeof(num), "#%d", stored);
+    return num;
+}
+
+bool open::engineNameRemember(int stored, const char* name)
+{
+    if (stored < kPlugStoredFirst || stored > kPlugStoredLast || !name || !name[0])
+    {
+        return false;
+    }
+    namesClear();
+    EngineName& n = gNames[stored - kPlugStoredFirst];
+    if (std::strncmp(n.name, name, 8) == 0)
+    {
+        return false;
+    }
+    snprintf(n.name, sizeof(n.name), "%.8s", name);
+    return true;
+}
+
+int open::engineNamesText(char* buf, int cap)
+{
+    namesClear();
+    int len = 0;
+    for (int i = 0; i < kPlugMax && len < cap; i++)
+    {
+        if (gNames[i].name[0])
+        {
+            len += snprintf(buf + len, size_t(cap - len), "%d %s\r\n", i + kPlugStoredFirst, gNames[i].name);
+        }
+    }
+    return len < cap ? len : cap - 1;
+}
+
+int open::typeForStored(int stored)
+{
+    const int ui = engineUiForStored(stored);
+    return ui >= 0 ? gList[ui].def->typeId : (missingDef(stored) ? kMissingTypeId : -1);
+}
+
+const EngineDef* open::engineDefForType(int typeId)
+{
+    ensureList();
+    for (int i = 0; i < gCount; i++)
+    {
+        if (gList[i].def->typeId == typeId)
+        {
+            return gList[i].def;
+        }
+    }
+    return typeId == kMissingTypeId ? &gMissing : nullptr;
 }
 
 int open::firstEngineTypeId()
 {
-    static const int kFirst[] = {
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, ...) static_cast<int>(TYPE_ID),
-#include "engine_list.h"
-#undef SYNTH_ENGINE
-    };
-    return kFirst[0];
+    return engineAt(0).def->typeId;
+}
+
+int open::engineIdForType(int typeId)
+{
+    ensureList();
+    for (int i = 0; i < gCount; i++)
+    {
+        if (gList[i].def->typeId == typeId)
+        {
+            return gList[i].patchEngine;
+        }
+    }
+    return typeId == kMissingTypeId ? kMissingTypeId : 0; // the placeholder's own number (its files are never written)
+}
+
+int open::typeForEngineId(int engine)
+{
+    ensureList();
+    for (int i = 0; i < gCount; i++)
+    {
+        if (gList[i].patchEngine == engine)
+        {
+            return gList[i].def->typeId;
+        }
+    }
+    // a plugin engine id this build has not got: the missing placeholder's (a part on it keeps its slot 0 backup on an engine change)
+    return engine >= kPlugPatchFirst && engine <= kPlugPatchLast ? kMissingTypeId : -1;
+}
+
+// Every engine of the list and every missing placeholder into the registry (InstrumentTypeRegistry::registerInstrumentTypes)
+void open::registerEngines(InstrumentTypeRegistry& registry)
+{
+    ensureList();
+    for (int i = 0; i < gCount; i++)
+    {
+        if (gList[i].builtin >= 0)
+        {
+            registry.addInstrumentType(gList[i].def->typeId, createFromDef(*gList[i].def));
+        }
+    }
+    for (; gPlugTypes < gPlugCount; gPlugTypes++) // the plugin engines: in place, once (getInstrumentType finds them)
+    {
+        fillFromDef(new (gPlugType[gPlugTypes].bytes) InstrumentType(), *gPlug[gPlugTypes].def);
+    }
+    registry.addInstrumentType(kMissingTypeId, createFromDef(gMissing));
 }
 
 std::shared_ptr<const InstrumentType> InstrumentTypeRegistry::getInstrumentType(int typeId) const
 {
     auto it = instrumentTypes.find(typeId);
-    return it == instrumentTypes.end() ? nullptr : it->second;
+    if (it != instrumentTypes.end())
+    {
+        return it->second;
+    }
+    for (int i = 0; i < gPlugTypes; i++)
+    {
+        if (gPlug[i].def->typeId == typeId)
+        {   // owns nothing (aliasing constructor, no control block): the entry lives as long as the firmware runs
+            return std::shared_ptr<const InstrumentType>(std::shared_ptr<const InstrumentType>(),
+                                                         reinterpret_cast<const InstrumentType*>(gPlugType[i].bytes));
+        }
+    }
+    return nullptr;
 }
 
 void InstrumentTypeRegistry::addInstrumentType(int typeId,
@@ -292,11 +542,6 @@ void InstrumentTypeRegistry::addInstrumentType(int typeId,
 }
 
 std::unique_ptr<InstrumentType> createMidiOut() { return createUnavailable("MIDI"); }
-// One registry factory per engine picked at build time (engine_list.h)
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, ...) \
-    std::unique_ptr<InstrumentType> FACTORY() { return createFromDef(open::DEF); }
-#include "engine_list.h"
-#undef SYNTH_ENGINE
 
 namespace open
 {
@@ -544,6 +789,10 @@ void OpenPatch::exportData(PatchData& d) const
         }
         dst.count = int8_t(n);
     }
+    for (int i = 0; i < kModSlots; i++)
+    {
+        d.mod[i] = mod[i]; // the stored identity, so an unresolved destination is written back as it was read
+    }
     d.extra = extra;
 }
 
@@ -632,7 +881,50 @@ void OpenPatch::importData(const PatchData& d)
             }
         }
     }
+    // Automation: range checks, then each destination is looked up in this engine's table (open_mod.h modResolve). A param found under
+    // another index (a plugin update moved it) follows the param. The slot state of the instrument starts over (serial).
+    for (int i = 0; i < kModSlots; i++)
+    {
+        ModSlot m = d.mod[i];
+        modSanitize(m);
+        m.dest = modResolve(def, m);
+        if (m.dest >= 0 && m.kind == ModKind::kParam)
+        {
+            m.index = m.dest;
+        }
+        mod[i] = m;
+    }
+    modOn = modAnyOn(mod);
+    modSer++;
     extra = d.extra;
+}
+
+// ------------------------------------------------------------- automation (editor access)
+
+const ModSlot& modSlotOf(const Patch& p, int s)
+{
+    return static_cast<const OpenPatch&>(p).modSlot(s);
+}
+
+void modSlotSet(Patch& p, int s, const ModSlot& v)
+{
+    static_cast<OpenPatch&>(p).setModSlot(s, v);
+}
+
+const EngineDef* modEngineOf(const Patch& p)
+{
+    return static_cast<const OpenPatch&>(p).getDef();
+}
+
+const char* modDestName(const Patch& p, int code)
+{
+    const auto& op = static_cast<const OpenPatch&>(p);
+    if (code >= kModPickMacro && code < kModPickMacro + kModMacros)
+    {
+        return op.getMetadata().macros[code - kModPickMacro].displayName.c_str();
+    }
+    const EngineDef* d = op.getDef();
+    return d && code >= 0 && code < d->paramCount && d->params[code].name ? d->params[code].name : "";
 }
 
 // ------------------------------------------------------------- patch store
@@ -756,6 +1048,10 @@ class OpenPatchStore final : public PatchStore
         {
             return false;
         }
+        if (!open::engineOf(def))
+        {
+            return true; // a missing engine: nothing to load into a patch without parameters, the file stays as it is
+        }
         ScratchLease sc;
         if (!sc || readPatchFile(def, op.typeId(), name, sc.buf(), sc.data()) != FileRead::kOk)
         {
@@ -788,6 +1084,10 @@ class OpenPatchStore final : public PatchStore
         if (!fs || !def)
         {
             return false;
+        }
+        if (!open::engineOf(def))
+        {
+            return true; // a missing engine: its file already holds the patch, never overwrite it with an empty one
         }
         constexpr size_t kCap = 4096; // every file this writes is at most 4 KB
         static_assert(kCap <= sizeof(PatchScratch::file));
@@ -1517,6 +1817,13 @@ bool patchBankApply(int part, int slot)
     }
     p->setValuesRaw(b.vals + size_t(slot) * n);
     return true;
+}
+
+bool patchStale(const Patch& patch)
+{
+    const OpenPatch* op = static_cast<const OpenPatch*>(&patch);   // every patch of the shim is one (no RTTI on the device)
+    const EngineDef* d = op ? op->getDef() : nullptr;
+    return d && engineOf(d) && op->paramCount() != d->paramCount;
 }
 
 } // namespace open

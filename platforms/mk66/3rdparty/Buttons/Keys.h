@@ -1,6 +1,7 @@
 #ifndef __KEYS_H__
 #define __KEYS_H__
 
+#include "devhooks.h"
 #include <stdint.h>
 
 //-------- CONFIG --------------------------
@@ -60,6 +61,8 @@ class Keys
 
     uint8_t keyInt = 0;
 
+    DEVHOOK_KEYS_PUBLIC // development hooks (devhooks.h): the injected key queue
+
   private:
     I2cBusController* i2cBusController;
 
@@ -79,6 +82,8 @@ class Keys
     uint8_t buttonPush[BUTTON_MAX] = { 0 };
     uint32_t holdTimeMs[BUTTON_MAX];
     uint8_t holdFactor[BUTTON_MAX] = { 0 };
+
+    DEVHOOK_KEYS_PRIVATE
 
     uint8_t getKeyEvent();
     uint8_t getKeyEventCount();

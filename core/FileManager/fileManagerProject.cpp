@@ -15,6 +15,12 @@
 
 #include <string.h>
 
+#ifdef FEATURE_SYNTH_OPEN
+#include "mainLoopScratch.h"
+#include <new>
+#include <type_traits>
+#endif
+
 __NOINIT(EXTERNAL_RAM)
 static strRecentFile externalRamRecentProjectsList;
 
@@ -25,7 +31,16 @@ static strRecentFile externalRamRecentProjectsList;
 void cFileManager::saveProjectFileToWorkspace()
 {
     // sprawdza czy zaktualizowac patternBitmask
+#ifdef FEATURE_SYNTH_OPEN
+    // The 2.3 KB file image off the stack (mainLoopScratch.h): main loop only, the struct fill and saveMemoryToFile
+    // reach no other scratch user. Constructed in place, so the member defaults apply as they did for the local.
+    static_assert(std::is_trivially_destructible<strProjectFile>::value &&
+                    sizeof(strProjectFile) <= kMainLoopScratchSize,
+                  "the project file image must fit the main-loop scratch");
+    strProjectFile& fileManagerProjectBuffer = *new (g_mainLoopScratch) strProjectFile;
+#else
     strProjectFile fileManagerProjectBuffer;
+#endif
 
     if (writeProjectFileToFileStruct(&mtProject, &fileManagerProjectBuffer))
     {

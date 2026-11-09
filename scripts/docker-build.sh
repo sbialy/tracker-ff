@@ -6,7 +6,7 @@
 #   copy  repo copied into the container filesystem first (no mount I/O cost, host tree untouched)
 #   runs  number of clean builds, default 1 (prints wall time per run and the -j used)
 #
-# env: IMAGE (default poly-build-arm64), DOCKER (default docker)
+# env: IMAGE (default tracker-ff-build-arm64), DOCKER (default docker)
 set -euo pipefail
 
 mode="${1:-bind}"
@@ -14,7 +14,7 @@ runs="${2:-1}"
 case "$mode" in bind|copy) ;; *) echo "mode must be bind or copy" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-image="${IMAGE:-poly-build-arm64}"
+image="${IMAGE:-tracker-ff-build-arm64}"
 docker="${DOCKER:-docker}"
 
 "$docker" build --platform linux/arm64 -t "$image" -f "$repo/docker/Dockerfile" "$repo/docker"

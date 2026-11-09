@@ -11,6 +11,12 @@
 #include "mtAudioEngine.h"
 #include "util_math.h"
 #include "util_string.h"
+#include "polyrequire.h"
+#ifdef FEATURE_PLUG_HOST
+#include "core/interface.h"
+#include "elapsedMillis.h"
+#include "plug_host.h"
+#endif
 
 extern uint8_t externalRamScratchBuff[];
 static_assert(kMaxFilesListLength * (kMaxFileNameLen + 1) + kMaxFilesListLength * sizeof(char**) <=
@@ -22,19 +28,76 @@ static const uint16_t framesPlacesSynth[1][4] = {
 };
 
 #ifdef FEATURE_SYNTH_OPEN
-// SYNTH_OPEN (MK66): the engines picked at build time, in the order of Synth::kSynthTypes (engine_list.h)
-const char* const synthModelNames[Synth::kSynthTypes.size()] = {
-#define SYNTH_ENGINE(NAME, ...) #NAME,
-#include "engine_list.h"
-#undef SYNTH_ENGINE
-};
-
-static const int synthModelListImages[Synth::kSynthTypes.size()] = {
+// SYNTH_OPEN (MK66): the run time engine list (synth-open/open_engine.h). The built-in engines show their list icon
+// (engine_list.h order, EngineRef::builtin), a plugin engine its name: NewList draws the text of an entry without an image.
+static const int synthBuiltinListImages[] = {
 #define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, PATCH_ENGINE, MINI_ICON, ICON) \
     enDisplayBitmaps::MINI_ICON,
 #include "engine_list.h"
 #undef SYNTH_ENGINE
 };
+// Every engine of the list: a project stores the engine as one byte, so the list never holds more than 256 (built in and plugin engines
+// have numbers of their own). SDRAM, filled when the picker opens (fillSynthModelList), so a long plugin library takes no internal RAM.
+constexpr int kSynthModelsMax = 256;
+__NOINIT(EXTERNAL_RAM) static int synthModelListImages[kSynthModelsMax];
+__NOINIT(EXTERNAL_RAM) static char* synthModelListNames[kSynthModelsMax];
+
+// The list icon of model ui. A plugin engine shows its card logo (a .plgi sidecar or a .plg trailer, synth-open/plug_logo.h, in a
+// RAM_G cache, synthModelLogos) or, without one, -1: its name.
+static int synthModelListImage(int ui)
+{
+    const polysynth::open::EngineRef& m = polysynth::open::engineAt(ui);
+#ifdef FEATURE_PLUG_HOST
+    return m.builtin >= 0 ? synthBuiltinListImages[m.builtin] : plug::synthLogoBitmap(m.def, false);
+#else
+    return m.builtin >= 0 ? synthBuiltinListImages[m.builtin] : -1;
+#endif
+}
+
+#ifdef FEATURE_PLUG_HOST
+// The rows the picker can show around model ui (7 on screen, ui anywhere among them) get their card logo into RAM_G before the list is
+// drawn there: a card read only for an image that is not cached, never while the display list is built.
+static void synthModelLogos(int ui)
+{
+    constexpr int kAround = 7;
+    const polysynth::open::EngineDef* defs[2 * kAround + 1];
+    const int n = Synth::synthTypeCount();
+    int m = 0;
+    for (int d = 0; d <= kAround; d++)
+    {   // nearest first
+        if (ui + d < n && polysynth::open::engineAt(ui + d).builtin < 0) defs[m++] = polysynth::open::engineAt(ui + d).def;
+        if (d && ui - d >= 0 && polysynth::open::engineAt(ui - d).builtin < 0) defs[m++] = polysynth::open::engineAt(ui - d).def;
+    }
+    plug::synthLogoPrefetch(defs, m);
+}
+#else
+static void synthModelLogos(int) {}
+#endif
+
+static int fillSynthModelList()
+{
+    const int n = std::min(Synth::synthTypeCount(), kSynthModelsMax);
+    for (int i = 0; i < n; i++)
+    {
+        synthModelListImages[i] = synthModelListImage(i);
+        synthModelListNames[i] = const_cast<char*>(polysynth::open::engineAt(i).def->name);
+    }
+    return n;
+}
+
+// A part whose engine is a plugin that is not installed: the patch browser, the patch editor and the slots stay closed (there
+// are no parameters, and the files must stay as they are until the plugin is back)
+static bool synthPartMissing(int part)
+{
+    if (!Synth::storedIsMissing(mtProject.values.synthPart[part].synthType))
+    {
+        return false;
+    }
+    static char text[32];
+    snprintf(text, sizeof(text), "%s not installed", Synth::storedName(mtProject.values.synthPart[part].synthType));
+    mtPopups.show(0, text);
+    return true;
+}
 #else
 const char* const synthModelNames[Synth::kSynthTypes.size()] = {
     "ACD", "FAT", "VAP", "WTFM", "PERC", "DIRT", "CHIP",
@@ -282,6 +345,12 @@ static void functSynthActionButtons(uint8_t button)
 
 static void functSynthLoad()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    if (synthPartMissing(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX))
+    {
+        return;
+    }
+#endif
     IE->browsePatchList();
     IE->showSynthPatchBrowser();
 
@@ -429,6 +498,12 @@ static void functSynthLoadMiniMiddle(uint8_t state)
 
 static void functSynthEditPatch()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    if (synthPartMissing(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX))
+    {
+        return;
+    }
+#endif
     sequencer.stopManualNotes();
 #ifdef FEATURE_SYNTH_OPEN
     IE->getSynth()->restorePatchFx(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX);
@@ -439,16 +514,63 @@ static void functSynthEditPatch()
     IE->setSynthPatchEditorScreenFunct();
 }
 
+#ifdef FEATURE_PLUG_HOST
+// The model list over plugin engines that are not installed: stepping onto one only moves the list, the engine is
+// installed and picked once the list rests there for kModelRestMs (synthModelTick), so scrolling past engines writes no flash.
+namespace
+{
+constexpr uint32_t kModelRestMs = 500;
+struct PendingModel
+{
+    int part = -1;
+    int ui = -1;
+};
+PendingModel s_pendModel;
+bool s_applyModel; // synthModelTick applies the pending one: no new wait
+elapsedMillis s_pendTimer;
+} // namespace
+
+// Main loop (Tracker.cpp, after plug::tick)
+void synthModelTick()
+{
+    if (s_pendModel.ui < 0 || s_pendTimer < kModelRestMs)
+    {
+        return;
+    }
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    const PendingModel p = s_pendModel;
+    s_pendModel = {};
+    if (part != p.part || IE->mode != mtInstEditModeSynth || !mtInterface.isInstrumentParamsScreenActive())
+    {
+        return; // the screen or the part changed while the list moved: nothing is picked
+    }
+    const int cur = std::max(Synth::storedToUi(mtProject.values.synthPart[part].synthType), 0);
+    s_applyModel = true;
+    IE->changeSynthModel(int16_t(p.ui - cur));
+    s_applyModel = false;
+}
+#endif
+
 void cInstrumentEditor::changeSynthModel(int16_t value)
 {
     int syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
     assert(syntPartIdx >= 0 && syntPartIdx < kSynthInstrumentsCount);
 
+#ifdef FEATURE_SYNTH_OPEN
+    int modelMaxValue = Synth::synthTypeCount() - 1;
+#else
     int modelMaxValue = (Synth::kSynthTypes.size() - 1);
+#endif
 
     // The project stores the engine's canonical number, the list on screen is the engines of this build
     int32_t previousSynthType = mtProject.values.synthPart[syntPartIdx].synthType;
+#ifdef FEATURE_PLUG_HOST
+    const int currentUi = std::max(Synth::storedToUi(previousSynthType), 0);
+    // while the list waits on an engine that is not installed, the next step goes on from there
+    const int previousUi = !s_applyModel && s_pendModel.part == syntPartIdx && s_pendModel.ui >= 0 ? s_pendModel.ui : currentUi;
+#else
     const int previousUi = std::max(Synth::storedToUi(previousSynthType), 0);
+#endif
     int newUi;
 
     if (IE->rollListOver && previousUi + value > modelMaxValue)
@@ -459,6 +581,28 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     {
         newUi = clamp<int>(previousUi + value, 0, modelMaxValue);
     }
+#ifdef FEATURE_PLUG_HOST
+    {
+        const int t = static_cast<int>(Synth::synthTypeAt(newUi));
+        if (!s_applyModel && newUi != currentUi && plug::synthIsPlugin(t) && !plug::synthLoaded(t))
+        {   // not installed: the list shows it, synthModelTick installs and picks it when the list rests
+            s_pendModel = { syntPartIdx, newUi };
+            s_pendTimer = 0;
+            synthModelLogos(newUi);
+            display.setControlValue(modelListControl, newUi);
+            display.refreshControl(modelListControl);
+            return;
+        }
+        if (!s_applyModel)
+        {
+            s_pendModel = {}; // back on the current one, or on an engine that is there: no wait
+            if (newUi == currentUi)
+            {
+                showSynthModel(syntPartIdx);
+            }
+        }
+    }
+#endif
     mtProject.values.synthPart[syntPartIdx].synthType = Synth::uiToStored(newUi);
 
     if (previousSynthType == mtProject.values.synthPart[syntPartIdx].synthType)
@@ -480,7 +624,11 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
         return;
     }
 #endif
+#ifdef FEATURE_SYNTH_OPEN
+    synth->setInstrumentType(syntPartIdx, Synth::synthTypeAt(newUi));
+#else
     synth->setInstrumentType(syntPartIdx, Synth::kSynthTypes.at(newUi));
+#endif
 
     changeSynthPolyphony(0);
 
@@ -506,6 +654,10 @@ void cInstrumentEditor::changeSynthSlot(int16_t value)
     const int syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
     assert(syntPartIdx >= 0 && syntPartIdx < kSynthInstrumentsCount);
 
+    if (synthPartMissing(syntPartIdx))
+    {
+        return;
+    }
     const int step = value < 0 ? -1 : 1;
     const int from = synth->getPatchSlot(syntPartIdx);
     SlotSelect result = SlotSelect::kSame;
@@ -627,7 +779,9 @@ void cInstrumentEditor::setSynthGain(int synthPartIdx, float value, bool show)
 
 void cInstrumentEditor::changeSynthReverbSend(int16_t value)
 {
-    uint8_t synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    // int, not uint8_t: -1 (not a synth instrument) must not wrap to 255 and index synthPart[]
+    const int synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    POLY_REQUIRE(synthPartIdx >= 0 && synthPartIdx < kSynthParts);
     SynthPartSettings& synthPart = mtProject.values.synthPart[synthPartIdx];
 
     synthPart.reverbSend = clamp<float>(synthPart.reverbSend + value, 0.0f, 100.0f);
@@ -637,7 +791,9 @@ void cInstrumentEditor::changeSynthReverbSend(int16_t value)
 
 void cInstrumentEditor::changeSynthDelaySend(int16_t value)
 {
-    uint8_t synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    // int, not uint8_t: -1 (not a synth instrument) must not wrap to 255 and index synthPart[]
+    const int synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    POLY_REQUIRE(synthPartIdx >= 0 && synthPartIdx < kSynthParts);
     SynthPartSettings& synthPart = mtProject.values.synthPart[synthPartIdx];
     synthPart.delaySend = clamp<float>(synthPart.delaySend + value, 0.0f, 100.0f);
 
@@ -676,7 +832,9 @@ void cInstrumentEditor::setSynthDelaySend(int synthPartIdx, float value, bool sh
 
 void cInstrumentEditor::setDefaultSynthReverb()
 {
-    uint8_t synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    // int, not uint8_t: -1 (not a synth instrument) must not wrap to 255 and index synthPart[]
+    const int synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    POLY_REQUIRE(synthPartIdx >= 0 && synthPartIdx < kSynthParts);
     SynthPartSettings& synthPart = mtProject.values.synthPart[synthPartIdx];
 
     synthPart.reverbSend = Synth::kSendDefaultValue;
@@ -686,7 +844,9 @@ void cInstrumentEditor::setDefaultSynthReverb()
 
 void cInstrumentEditor::setDefaultSynthDelay()
 {
-    uint8_t synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    // int, not uint8_t: -1 (not a synth instrument) must not wrap to 255 and index synthPart[]
+    const int synthPartIdx = instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
+    POLY_REQUIRE(synthPartIdx >= 0 && synthPartIdx < kSynthParts);
     SynthPartSettings& synthPart = mtProject.values.synthPart[synthPartIdx];
 
     synthPart.delaySend = Synth::kSendDefaultValue;
@@ -696,7 +856,11 @@ void cInstrumentEditor::setDefaultSynthDelay()
 
 [[maybe_unused]] void cInstrumentEditor::setDefaultSynthModel()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    int modelMaxValue = Synth::synthTypeCount() - 1;
+#else
     int modelMaxValue = (Synth::kSynthTypes.size() - 1);
+#endif
     changeSynthModel(-modelMaxValue);
 }
 
@@ -958,10 +1122,18 @@ void cInstrumentEditor::showSynthParamsScreen()
     display.setControlSize(noteLabel, 170, 30);
 
     modelListData.start = std::max(Synth::storedToUi(mtProject.values.synthPart[syntPartIdx].synthType), 0);
+#ifdef FEATURE_SYNTH_OPEN
+    synthModelLogos(modelListData.start);
+    modelListData.length = fillSynthModelList();
+    modelListData.linesCount = std::min<uint16_t>(modelListData.length, 7);
+    modelListData.rowHeight = 50;
+    modelListData.params = synthModelListNames;
+#else
     modelListData.length = Synth::kSynthTypes.size();
     modelListData.linesCount = std::min<uint16_t>(Synth::kSynthTypes.size(), 7);
     modelListData.rowHeight = 50;
     modelListData.params = nullptr;
+#endif
     modelListData.imageIds = synthModelListImages;
     modelListData.scrollText = true;
 
@@ -1046,6 +1218,9 @@ void cInstrumentEditor::showSynthParamsScreen()
 
 void cInstrumentEditor::showSynthModel(uint8_t synthPart)
 {
+#ifdef FEATURE_SYNTH_OPEN
+    synthModelLogos(std::max(Synth::storedToUi(mtProject.values.synthPart[synthPart].synthType), 0));
+#endif
     display.setControlValue(
       modelListControl,
       std::max(Synth::storedToUi(mtProject.values.synthPart[synthPart].synthType), 0));
@@ -1128,6 +1303,13 @@ void cInstrumentEditor::showSynthPatchName(uint8_t synthPart)
 {
     polystrncpy(
       synthPatchNameText, synth->getPatchName(synthPart).c_str(), sizeof(synthPatchNameText));
+#ifdef FEATURE_SYNTH_OPEN
+    if (Synth::storedIsMissing(mtProject.values.synthPart[synthPart].synthType))
+    {   // the engine is a plugin that is not installed: say which (the project keeps the part, the patch name stays saved)
+        snprintf(synthPatchNameText, sizeof(synthPatchNameText), "Missing: %s",
+                 Synth::storedName(mtProject.values.synthPart[synthPart].synthType));
+    }
+#endif
     display.setControlText(noteLabel, synthPatchPanelLabel(synthPart));
     display.setControlText2(noteLabel, synthPatchNameText);
     display.setControlShow(noteLabel);

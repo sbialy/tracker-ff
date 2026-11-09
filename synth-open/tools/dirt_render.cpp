@@ -144,13 +144,27 @@ static int checks(const std::vector<int16_t>& inL, const std::vector<int16_t>& i
         printf("check %-10s full scale square then silence, finite state: %s (hold %.4f lp %.5f dc %.5f)\n", kPresets[pi].name,
                fin ? "ok" : "FAIL", st.hold[0], st.lp[0], st.dc[0]);
         bad += !fin;
-        // 3. zero in, zero out (the quantiser has its half step, so only the presets without one)
+        // 3. zero in, zero out (the quantiser is mid-tread: it has a level at 0)
         st.reset();
         memset(sl, 0, sizeof(sl)); memset(sr, 0, sizeof(sr));
         process(c, st, sl, sr, 1.0f, 1.0f);
         int nz = 0; for (int i = 0; i < kBlock; i++) nz += sl[i] != 0 || sr[i] != 0;
-        printf("check %-10s silence in: %d non zero samples out%s\n", kPresets[pi].name, nz, c.quant ? " (mid-rise quantiser half step)" : "");
-        if (!c.quant && nz) bad++;
+        printf("check %-10s silence in: %d non zero samples out\n", kPresets[pi].name, nz);
+        if (nz) bad++;
+        // 3b. zero in, exact zero out for every Bits setting 4..16 (mid-tread), through a few blocks and a state that held sound first
+        for (int bits = 4; bits <= 16; bits++)
+        {
+            Preset q = kPresets[pi]; q.bits = bits;
+            Coef qc; makeCoef(qc, q); State qs; qs.reset();
+            int z = 0;
+            for (int blk = 0; blk < 3; blk++)
+            {
+                memset(sl, 0, sizeof(sl)); memset(sr, 0, sizeof(sr));
+                process(qc, qs, sl, sr, 1.0f, 1.0f);
+                for (int i = 0; i < kBlock; i++) z += sl[i] != 0 || sr[i] != 0;
+            }
+            if (z) { printf("check %-10s Bits %d: zero in, %d non zero samples out FAIL\n", kPresets[pi].name, bits, z); bad++; }
+        }
     }
     return bad;
 }

@@ -1,0 +1,15 @@
+# the SDK headers the engine plugins compile against (tracker-engines-os and tracker-engines vendor them), root relative, sorted. Kept by hand since the engine sources left (it was engines/closure.py --write)
+synth-open/engine_list.h
+synth-open/open_engine.h
+synth-open/ot/audio/audio_tables.h
+synth-open/ot/audio/bbd_chorus.h
+synth-open/ot/audio/chip_dsp.h
+synth-open/ot/audio/dsp.h
+synth-open/ot/audio/fm_dsp.h
+synth-open/ot/audio/synth_engine.h
+synth-open/ot/audio/va_dsp.h
+synth-open/ot/fastrun.h
+synth-open/ot/model/synth_patch.h
+synth-open/plug/plug_abi.h
+synth-open/plug/synth_plug.h
+synth/include/PolySynth/config.h

@@ -1,4 +1,7 @@
 #include "WorkspaceProjectLoad.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
@@ -11,6 +14,12 @@
 #include "log.h"
 
 #include <cstring>
+#include <new>
+
+#ifdef FEATURE_SYNTH_OPEN
+#include "mainLoopScratch.h"
+#include <type_traits>
+#endif
 
 void WorkspaceProjectLoad::update()
 {
@@ -179,6 +188,9 @@ void WorkspaceProjectLoad::loadProjectFromWorkspaceFinish()
 #endif
 
     newFileManager.loadProjectValues();
+#ifdef FEATURE_PLUG_HOST
+    plug::projectLoaded(cWorkspacePath); // the master insert plugins of the sidecar (none without one, as stock)
+#endif
 
     if (newFileManager.needImportModFileAfterNewProject())
     {
@@ -222,7 +234,22 @@ bool WorkspaceProjectLoad::openProjectFromWorkspace()
 //=================================================================================================
 void WorkspaceProjectLoad::loadProjectFileFromWorkspace()
 {
-    strProjectFile* fileManagerProjectBuffer = new strProjectFile{};
+#ifdef FEATURE_SYNTH_OPEN
+    // The 2.3 KB file image in the main-loop scratch, as ProjectOpen::loadProjectFileFromSd does: no heap, so no null
+    // to fault on. Main loop only, loadFileToMemory and loadProjectFileFormFileStruct reach no other scratch user.
+    static_assert(std::is_trivially_destructible<strProjectFile>::value &&
+                    sizeof(strProjectFile) <= kMainLoopScratchSize,
+                  "the project file image must fit the main-loop scratch");
+    strProjectFile* fileManagerProjectBuffer = new (g_mainLoopScratch) strProjectFile;
+#else
+    // operator new is a plain malloc on the MK66 and returns null on a short heap
+    strProjectFile* fileManagerProjectBuffer = new (std::nothrow) strProjectFile{};
+    if (fileManagerProjectBuffer == nullptr)
+    {
+        stopOperationWithError(fmLoadError);
+        return;
+    }
+#endif
 
     uint8_t loadStatus = fileTransfer.loadFileToMemory(cProjectFileNameInWorkspace,
                                                        (uint8_t*)fileManagerProjectBuffer,
@@ -252,7 +279,9 @@ void WorkspaceProjectLoad::loadProjectFileFromWorkspace()
         stopOperationWithError(fmLoadError);
     }
 
+#ifndef FEATURE_SYNTH_OPEN
     delete fileManagerProjectBuffer;
+#endif
 }
 
 //=================================================================================================

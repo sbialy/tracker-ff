@@ -1,7 +1,11 @@
 #include "Platform.h"
 #include "Profiler.h"
 #include "TrackerImpl.h"
+#include "devhooks.h"
 #include "mtWavetableEnvelopes.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 #include "core/interface.h"
 #include "elapsedMillis.h"
 #include "fileManager.h"
@@ -118,6 +122,10 @@ void TrackerImpl::init(Platform* platform)
     platform->setPowerButtonCallback(onPowerButtonChange);
     platform->getFileSystem()->setMountEventCallback(onSDCardSlotChange);
 
+#ifdef FEATURE_PLUG_HOST
+    // the synth engine plugins: installed into the FlexNVM bank and added to the engine list before the synth starts
+    plug::synthBoot(platform->getFileSystem());
+#endif
 #ifdef FEATURE_SYNTH
     synth.init(platform, [this]() { return sequencer.getCurrentTempo(); });
 
@@ -152,6 +160,21 @@ void TrackerImpl::init(Platform* platform)
 #endif
 
     interfaceGlobals.devMode = platform->getFileSystem()->exists("/.develop");
+#ifdef FEATURE_PLUG_HOST
+    plug::boot(platform);
+#endif
+
+    DEVHOOK_TRACKER_INIT(platform, interfaceGlobals.devMode);
+
+#if defined(PLATFORM_IMX) && defined(ENABLE_DEV_CONSOLE)
+    if (interfaceGlobals.devMode)
+    {
+        // The serial port carries the log and the development console.
+        Usb* usb = platform->getUsb();
+        usb->setClassState(Usb::ClassType::kSerial, true);
+        usb->reset();
+    }
+#endif
 }
 
 void TrackerImpl::update()
@@ -169,8 +192,13 @@ void TrackerImpl::update()
     sliceDetector.update();
     newFileManager.update();
     mtInterface.update();
+#ifdef FEATURE_PLUG_HOST
+    plug::tick();
+    synthModelTick(); // SynthEditor.cpp: the model list rested on a plugin engine that is not installed
+#endif
     engine.updateSdStream();
     sequencer.update();
+    DEVHOOK_TRACKER_UPDATE();
 }
 
 void TrackerImpl::updateAudioBuffers(void* left, void* right, int length)

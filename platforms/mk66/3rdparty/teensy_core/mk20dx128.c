@@ -29,6 +29,7 @@
  */
 
 #include "kinetis.h"
+#include "devhooks.h"
 #include <errno.h>
 
 
@@ -72,6 +73,8 @@ void _init_Teensyduino_internal_(void) __attribute__((noinline));
 void __libc_init_array(void);
 
 
+#include DEVHOOK_DEFS(fault_isr) // development hooks (devhooks.h): a console image with REBOOT_ON_FAULT records the fault
+#ifndef DEVHOOK_FAULT_ISR
 void fault_isr(void)
 {
 #if 0
@@ -143,6 +146,7 @@ void unused_isr(void)
 {
 	fault_isr();
 }
+#endif /* DEVHOOK_FAULT_ISR */
 
 void nmi_isr(void)		__attribute__ ((weak, alias("unused_isr")));
 void hard_fault_isr(void)	__attribute__ ((weak, alias("fault_isr")));

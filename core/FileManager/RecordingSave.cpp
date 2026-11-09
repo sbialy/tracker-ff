@@ -7,6 +7,8 @@
 #include "fileTransfer.h"
 #include "mtStructs.h"
 #include "polyassert.h"
+#include "polyrequire.h"
+#include <new>
 
 static char recordedFileName[SAMPLE_NAME_SIZE + 1];
 
@@ -104,8 +106,16 @@ bool RecordingSave::updateSave()
         }
         else if (sdCardFileSaveContext.soundAddress.size() == 2)
         {
-            int16_t* const interleavedBuffer = new int16_t[blockSize / sizeof(int16_t)];
-            assert(interleavedBuffer != nullptr);
+            int16_t* const interleavedBuffer =
+              new (std::nothrow) int16_t[blockSize / sizeof(int16_t)];
+            if (interleavedBuffer == nullptr)
+            {
+                // short heap: close the file (the wav is incomplete) and fail the save, nothing writes through null
+                fileSystem->closeFile(sdCardFileSaveContext.file, false);
+                sdCardFileSaveContext.isActive = false;
+                stopOperationWithError(fmSaveRecordedError);
+                return true;
+            }
             int16_t* destAddress = interleavedBuffer;
             int16_t* sourceLeft = (int16_t*)&sdCardFileSaveContext
                                     .soundAddress[0][sdCardFileSaveContext.savedSoundData];
@@ -170,6 +180,7 @@ void RecordingSave::prepareInstrumentStruct(int idx, char* name)
     {
         newFileManager.setDefaultActiveInstrument(&mtProject.instrument[idx]);
     }
+    mtProject.instrument[idx].setStreamPreferred(false);
 
     mtProject.instrument[idx].sample.length = recorder.getLength();
     strncpy(mtProject.instrument[idx].sample.file_name, name, SAMPLE_NAME_SIZE);

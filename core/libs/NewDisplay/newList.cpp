@@ -577,16 +577,39 @@ void NewList::drawImagesList(int x1, int x2, int y, int rowH)
 
         int idx = data->imageIds[dataIdx];
 
+#ifdef FEATURE_SYNTH_OPEN
+        // no bitmap for this entry (a synth plugin engine in the model list): its text, centred in the row
+        if (idx < 0 && data->params != nullptr && data->params[dataIdx] != nullptr)
+        {
+            API_CMD_TEXT(x1 + (x2 - x1) / 2, y + (rowH * rowIdx), font->handle, OPT_CENTER, data->params[dataIdx]);
+            continue;
+        }
+#endif
+#ifdef FEATURE_PLUG_HOST
+        // a stock bitmap or a synth plugin engine's card logo (plug_logo.h), its name while the logo is not in RAM_G
+        const strBitmap* const bm = bitmapAt(idx);
+        if (bm == nullptr)
+        {
+            if (idx >= kPlugLogoFirst && data->params != nullptr && data->params[dataIdx] != nullptr)
+            {
+                API_CMD_TEXT(x1 + (x2 - x1) / 2, y + (rowH * rowIdx), font->handle, OPT_CENTER, data->params[dataIdx]);
+            }
+            continue;
+        }
+#define LIST_BMP (*bm)
+#else
         if (idx >= displayBitmapsCount)
         {
             continue;
         }
+#define LIST_BMP bitmaps[idx]
+#endif
 
-        int imgPosX = x1 + ((x2 - x1) / 2) - (bitmaps[idx].width / 2);
-        int imgPosY = y + (rowH * rowIdx) - (bitmaps[idx].height / 2);
+        int imgPosX = x1 + ((x2 - x1) / 2) - (LIST_BMP.width / 2);
+        int imgPosY = y + (rowH * rowIdx) - (LIST_BMP.height / 2);
 
-        API_BITMAP_SOURCE(bitmaps[idx].address);
-        API_BITMAP_LAYOUT(bitmaps[idx].format, bitmaps[idx].linestride, bitmaps[idx].height);
+        API_BITMAP_SOURCE(LIST_BMP.address);
+        API_BITMAP_LAYOUT(LIST_BMP.format, LIST_BMP.linestride, LIST_BMP.height);
 
         // if (style & controlStyleTransformImg && data->imgScaleTransform > 0)
         // {
@@ -601,7 +624,8 @@ void NewList::drawImagesList(int x1, int x2, int y, int rowH)
         //     API_BITMAP_TRANSFORM_E(data->imgScaleTransform);
         // }
 
-        API_BITMAP_SIZE(NEAREST, BORDER, BORDER, bitmaps[idx].width, bitmaps[idx].height);
+        API_BITMAP_SIZE(NEAREST, BORDER, BORDER, LIST_BMP.width, LIST_BMP.height);
+#undef LIST_BMP
 
         API_BEGIN(BITMAPS);
         API_VERTEX2F(imgPosX, imgPosY);

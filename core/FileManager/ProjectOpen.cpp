@@ -1,4 +1,7 @@
 #include "ProjectOpen.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
@@ -15,6 +18,12 @@
 #endif
 
 #include <cstring>
+
+#ifdef FEATURE_SYNTH_OPEN
+#include "mainLoopScratch.h"
+#include <new>
+#include <type_traits>
+#endif
 
 void ProjectOpen::update()
 {
@@ -156,7 +165,17 @@ void ProjectOpen::openProjectInit()
 void ProjectOpen::loadProjectFileFromSd()
 {
     char projectFilePath[PATCH_SIZE];
+#ifdef FEATURE_SYNTH_OPEN
+    // The 2.3 KB file image off the stack (mainLoopScratch.h): main loop only, loadFileToMemory and
+    // loadProjectFileFormFileStruct reach no other scratch user (the old version recovery has its own buffer).
+    // Constructed in place: a file shorter than the struct keeps the member defaults past its end, as the local did.
+    static_assert(std::is_trivially_destructible<strProjectFile>::value &&
+                    sizeof(strProjectFile) <= kMainLoopScratchSize,
+                  "the project file image must fit the main-loop scratch");
+    strProjectFile& fileManagerProjectBuffer = *new (g_mainLoopScratch) strProjectFile;
+#else
     strProjectFile fileManagerProjectBuffer;
+#endif
     volatile int pathSize = sizeof(projectFilePath);
 
     snprintf(projectFilePath,
@@ -368,7 +387,15 @@ void ProjectOpen::openProjectFinish()
     // Workspace has (open_bankcopy.h retries the copy once). There is no popup for a failed copy: this runs in the file manager step
     // and the load that follows owns the status. The audio engine restarts only at the end of that load.
     polysynth::open::openProjectAfterBankCopy(
-      [&]() { return newFileManager.getSynth()->copyWorkspacePatches(srcFilePath, cWorkspacePath, true); },
+      [&]()
+      {
+#ifdef FEATURE_PLUG_HOST
+          // the plugin sidecar follows the project (removed when it has none). A failed copy does not decide the open either:
+          // the project loads with empty inserts and its own sidecar is kept (no save writes over it)
+          plug::sidecarOpen(srcFilePath, cWorkspacePath);
+#endif
+          return newFileManager.getSynth()->copyWorkspacePatches(srcFilePath, cWorkspacePath, true);
+      },
       []()
       {
           newFileManager.setStatus(fmIdle);
@@ -412,6 +439,8 @@ bool ProjectOpen::openProject(char* path, char* name)
     {
         return false;
     }
+
+    LOGEF("open %s/%s", path, name);
 
     newFileManager.addCurrentProjectToRecentList();
 

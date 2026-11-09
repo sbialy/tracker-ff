@@ -21,6 +21,10 @@
 #ifdef FEATURE_SYNTH
 #include "Synth.h"
 #endif
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#include "plug_ui.h"
+#endif
 
 cMasterParams masterParams;
 static cMasterParams* MP = &masterParams;
@@ -141,6 +145,9 @@ static elapsedMillis refreshTimer;
 
 void cMasterParams::update()
 {
+#ifdef FEATURE_PLUG_HOST
+    plugUiUpdate(platform->getTimer()->millis());
+#endif
 
     if (displayType == displayMode::mixer && !keyboardManager.getState())
     {
@@ -504,6 +511,13 @@ static void functEncoder(int16_t value)
         return;
     }
 
+#ifdef FEATURE_PLUG_HOST
+    if (plugUiActive())
+    {
+        plugUiEncoder(value);
+        return;
+    }
+#endif
     if (MP->isDelayScreen)
     {
         switch (MP->selectedPlaceDelay)
@@ -575,6 +589,13 @@ static void functLeft()
         return;
     }
 
+#ifdef FEATURE_PLUG_HOST
+    if (plugUiActive())
+    {
+        plugUiArrow(0);
+        return;
+    }
+#endif
     if (MP->isDelayScreen)
     {
         if (MP->selectedPlaceDelay > 0)
@@ -639,6 +660,13 @@ static void functRight()
         return;
     }
 
+#ifdef FEATURE_PLUG_HOST
+    if (plugUiActive())
+    {
+        plugUiArrow(1);
+        return;
+    }
+#endif
     if (MP->isDelayScreen)
     {
         if (MP->selectedPlaceDelay < MP->frameData.placesCount - 1)
@@ -743,6 +771,13 @@ static void functUp()
         return;
     }
 
+#ifdef FEATURE_PLUG_HOST
+    if (plugUiActive())
+    {
+        plugUiArrow(2);
+        return;
+    }
+#endif
     if (MP->isDelayScreen)
     {
         switch (MP->selectedPlaceDelay)
@@ -847,6 +882,13 @@ static void functDown()
         return;
     }
 
+#ifdef FEATURE_PLUG_HOST
+    if (plugUiActive())
+    {
+        plugUiArrow(3);
+        return;
+    }
+#endif
     if (MP->isDelayScreen)
     {
         switch (MP->selectedPlaceDelay)
@@ -952,6 +994,13 @@ static void functDelete()
         return;
     }
 
+#ifdef FEATURE_PLUG_HOST
+    if (plugUiActive())
+    {
+        plugUiDelete();
+        return;
+    }
+#endif
     if (MP->isDelayScreen)
     {
         switch (MP->selectedPlaceDelay)
@@ -1062,8 +1111,19 @@ static void functSwitchToEqualizerScreen()
 
 static void functSelectSaturation()
 {
+#ifdef FEATURE_PLUG_HOST
+    if (plugUiShiftHeld())
+    {   // Shift + Saturation: the Master Inserts page (the two plugin slots and their parameters)
+        plugUiOpen();
+        return;
+    }
+#endif
     if (MP->selectedPlace == 5)
     {
+#ifdef FEATURE_PLUG_HOST
+        // the list runs on into the master insert plugins (insert 1), then wraps
+        plugUiSatSet(plugUiSatPos() < plugUiSatCount() - 1 ? plugUiSatPos() + 1 : (int)SaturationType::kSaturationMin);
+#else
         if ((int)mtProject.values.saturationType < (int)SaturationType::kSaturationTypeEnd - 1)
         {
             mtProject.values.saturationType++;
@@ -1076,6 +1136,7 @@ static void functSelectSaturation()
         engine.setSaturationType((SaturationType)mtProject.values.saturationType);
 
         newFileManager.setProjectStructChanged();
+#endif
 
         MP->showSaturationType();
     }
@@ -1119,6 +1180,14 @@ void cMasterParams::switchScreen()
 {
     selectedPlace = 0;
 
+#ifdef FEATURE_PLUG_HOST
+    if (plugUiActive())
+    {   // the Inserts page is the last stop of the cycle, the next press wraps to the first Master page
+        switchToMaster();
+        return;
+    }
+#endif
+
     if (displayType == displayMode::masterValues)
     {
         switchToMixer();
@@ -1134,7 +1203,17 @@ void cMasterParams::switchScreen()
         else if (isEqualizerScreen)
             switchToEqualizerScreen();
         else
+        {
+#ifdef FEATURE_PLUG_HOST
+            if (plugUiInCycle())
+            {   // last stop: the Inserts page, built on top of the Master values screen
+                switchToMaster();
+                plugUiOpen();
+                return;
+            }
+#endif
             switchToMaster();
+        }
     }
     else if (displayType == cMasterParams::displayMode::mixer)
     {
@@ -1170,6 +1249,9 @@ void cMasterParams::returnToScreen()
 }
 void cMasterParams::switchToMaster()
 {
+#ifdef FEATURE_PLUG_HOST
+    plugUiLeave();
+#endif
     ip->clearButtonsRange(interfaceButton0, interfaceButton7);
     ip->clearButton(interfaceButtonShift);
 
@@ -1194,6 +1276,9 @@ void cMasterParams::switchToMaster()
 }
 void cMasterParams::switchToMixer()
 {
+#ifdef FEATURE_PLUG_HOST
+    plugUiLeave();
+#endif
     ip->clearButtonsRange(interfaceButton0, interfaceButton7);
 
     ip->setButtonObj(interfaceButton0, functSoloMuteTrack);
@@ -1224,6 +1309,9 @@ void cMasterParams::switchToMixer()
 
 void cMasterParams::switchToMixerDelayReverb()
 {
+#ifdef FEATURE_PLUG_HOST
+    plugUiLeave();
+#endif
     ip->clearButtonsRange(interfaceButton0, interfaceButton7);
     ip->clearButton(interfaceButtonRec);
 
@@ -2298,6 +2386,11 @@ void changeLimiterSidechain(int16_t value)
 
 void changeSaturationType(int16_t value)
 {
+#ifdef FEATURE_PLUG_HOST
+    plugUiSatSet(plugUiSatPos() + value);
+    MP->showSaturationType();
+    return;
+#endif
     mtProject.values.saturationType = clamp<int>((int)mtProject.values.saturationType + (int)value,
                                                  (int)SaturationType::kSaturationMin,
                                                  (int)SaturationType::kSaturationTypeEnd - 1);
@@ -2361,6 +2454,11 @@ void setDefaultMasterVolume()
 
 void setDefaultSaturationType()
 {
+#ifdef FEATURE_PLUG_HOST
+    plugUiSatSet(SaturationType::kSoftClip);
+    MP->showSaturationType();
+    return;
+#endif
     mtProject.values.saturationType = SaturationType::kSoftClip;
 
     engine.setSaturationType((SaturationType)mtProject.values.saturationType);

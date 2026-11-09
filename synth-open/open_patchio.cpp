@@ -8,7 +8,11 @@
 //
 // Layout (field numbers): 1 engine, 6 repeated ParamValue{1: fixed32 value}, 7 four names,
 // 8 eight Macro{1 name, 2 bipolar, 3 target_count, 4 six Target{1 param, 2 fixed32 amount}},
-// 9 Extra (constant block, regenerated), anything else (2-5, 10, 11, 16, ...) kept raw in file order.
+// 9 Extra (constant block, regenerated), 64 synth automation (version 1, below), anything else (2-5, 10, 11, 16, ...) kept raw
+// in file order. Field 64 is this firmware's own: {1 version, 2 repeated Slot{1 type, 2 kind, 3 index, 4 name, 5 nth, 6 amount (sint32),
+// 7 shape, 8 speed, 9 attack ms, 10 decay ms, 11 sustain %, 12 release ms}}, varints, zero omitted, an Off slot is empty, trailing Off
+// slots are not written, the whole field is left out when every slot is Off. A version above 1 is kept raw (a later image's block), a
+// malformed block is dropped (automation Off, the sound still loads). Ranges are checked at import (open_cold.cpp).
 // Built at -Os (cold code).
 #include "open_patchdata.h"
 
@@ -16,6 +20,7 @@
 
 #include "model/synth_patch.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -199,6 +204,125 @@ bool decodeMacro(Reader r, PatchMacroData& m)
     return true;
 }
 
+// A slot as the file has it: every field absent is zero (not the editor's defaults)
+ModSlot modZero()
+{
+    ModSlot z;
+    z.shape = 0;
+    z.speed = 0;
+    z.index = 0;
+    z.amount = 0;
+    z.sustain = 0;
+    z.attack = 0;
+    z.decay = 0;
+    z.release = 0;
+    return z;
+}
+
+// 1: decoded into out, 0: malformed (dropped), 2: another version (the caller keeps the bytes raw)
+int decodeMod(Reader r, ModSlot* out)
+{
+    ModSlot tmp[kModSlots];
+    int n = 0;
+    uint64_t version = 0;
+    uint32_t f;
+    uint8_t wt;
+    while (r.p < r.end)
+    {
+        Reader s;
+        uint64_t v;
+        if (!r.tag(f, wt))
+        {
+            return 0;
+        }
+        if (f == 1 && wt == 0)
+        {
+            if (!r.varint(version))
+            {
+                return 0;
+            }
+        }
+        else if (f == 2 && wt == 2)
+        {
+            if (!r.len(s))
+            {
+                return 0;
+            }
+            if (n >= kModSlots)
+            {
+                continue; // more slots than this image has: the first ones
+            }
+            ModSlot m = modZero();
+            while (s.p < s.end)
+            {
+                if (!s.tag(f, wt))
+                {
+                    return 0;
+                }
+                if (f == 4 && wt == 2)
+                {
+                    Reader t;
+                    if (!s.len(t))
+                    {
+                        return 0;
+                    }
+                    const int len = std::min<int>(int(t.end - t.p), kModNameMax);
+                    std::memcpy(m.name, t.p, len);
+                    m.name[len] = 0;
+                    continue;
+                }
+                if (wt != 0)
+                {
+                    if (!s.skip(wt))
+                    {
+                        return 0;
+                    }
+                    continue;
+                }
+                if (!s.varint(v))
+                {
+                    return 0;
+                }
+                const uint32_t c = uint32_t(std::min<uint64_t>(v, 0xFFFFu)); // every field but the amount is small
+                switch (f)
+                {
+                    case 1: m.type = ModType(std::min<uint32_t>(c, 0xFF)); break;
+                    case 2: m.kind = ModKind(std::min<uint32_t>(c, 0xFF)); break;
+                    case 3: m.index = int16_t(std::min<uint32_t>(c, 0x7FFF)); break;
+                    case 5: m.nth = uint8_t(std::min<uint32_t>(c, 0xFF)); break;
+                    case 6:
+                    {
+                        const int64_t a = int64_t(v >> 1) ^ -int64_t(v & 1); // zigzag
+                        m.amount = int8_t(std::clamp<int64_t>(a, -kModAmountMax, kModAmountMax));
+                        break;
+                    }
+                    case 7: m.shape = uint8_t(std::min<uint32_t>(c, 0xFF)); break;
+                    case 8: m.speed = uint8_t(std::min<uint32_t>(c, 0xFF)); break;
+                    case 9: m.attack = uint16_t(c); break;
+                    case 10: m.decay = uint16_t(c); break;
+                    case 11: m.sustain = uint8_t(std::min<uint32_t>(c, 0xFF)); break;
+                    case 12: m.release = uint16_t(c); break;
+                    default: break; // a later field of this version: skipped
+                }
+            }
+            tmp[n++] = m;
+        }
+        else if (!r.skip(wt))
+        {
+            return 0;
+        }
+    }
+    if (version != 1)
+    {
+        return 2;
+    }
+    for (int i = 0; i < kModSlots; i++)
+    {
+        out[i] = i < n ? tmp[i] : ModSlot{};
+    }
+    return 1;
+}
+
 struct Writer
 {
     uint8_t* p;
@@ -263,47 +387,84 @@ void writeExtra(Writer& w)
     }
 }
 
-} // namespace
-
-namespace
+void writeMod(Writer& w, const ModSlot* mod)
 {
-struct IdPair
-{
-    int typeId;
-    int engine;
-};
-// Field 1 of a .patch file for each engine picked at build time (engine_list.h): Polyend's InstrumentTypeId for the
-// Polyend engines, OpenTracker's engine id for the others
-const IdPair kIds[] = {
-#define SYNTH_ENGINE(NAME, STORED, TYPE_ID, FACTORY, DEF, PATCH_ENGINE, ...) { int(TYPE_ID), PATCH_ENGINE },
-#include "engine_list.h"
-#undef SYNTH_ENGINE
-};
-} // namespace
-
-int engineIdForType(int typeId)
-{
-    for (const auto& i : kIds)
+    int last = -1;
+    for (int i = 0; i < kModSlots; i++)
     {
-        if (i.typeId == typeId)
+        if (mod[i].type != ModType::kOff)
         {
-            return i.engine;
+            last = i;
         }
     }
-    return 0;
+    if (last < 0)
+    {
+        return;
+    }
+    uint8_t buf[kModBlockMax];
+    Writer b{ buf, buf + sizeof(buf) };
+    b.tag(1, 0);
+    b.byte(1);
+    for (int i = 0; i <= last; i++)
+    {
+        const ModSlot& m = mod[i];
+        uint8_t sb[64];
+        Writer s{ sb, sb + sizeof(sb) };
+        if (m.type != ModType::kOff)
+        {
+            auto put = [&](uint32_t field, uint32_t v)
+            {
+                if (v)
+                {
+                    s.tag(field, 0);
+                    s.varint(v);
+                }
+            };
+            put(1, uint32_t(m.type));
+            put(2, uint32_t(m.kind));
+            put(3, uint32_t(std::max<int>(m.index, 0)));
+            const size_t n = strnlen(m.name, kModNameMax);
+            if (n)
+            {
+                s.tag(4, 2);
+                s.varint(n);
+                s.bytes(m.name, n);
+            }
+            put(5, m.nth);
+            put(6, uint32_t((int32_t(m.amount) << 1) ^ (int32_t(m.amount) >> 31))); // zigzag
+            put(7, m.shape);
+            put(8, m.speed);
+            put(9, m.attack);
+            put(10, m.decay);
+            put(11, m.sustain);
+            put(12, m.release);
+        }
+        b.ok = b.ok && s.ok;
+        b.sub(2, s, sb);
+    }
+    w.ok = w.ok && b.ok;
+    w.sub(kModField, b, buf);
 }
 
-int typeForEngineId(int engine)
+} // namespace
+
+#ifdef OPEN_HOST_TEST
+bool gModDecodeOff = false;
+#endif
+
+bool modAnyOn(const ModSlot* slots)
 {
-    for (const auto& i : kIds)
+    for (int i = 0; i < kModSlots; i++)
     {
-        if (i.engine == engine)
+        if (slots[i].type != ModType::kOff)
         {
-            return i.typeId;
+            return true;
         }
     }
-    return -1;
+    return false;
 }
+
+// engineIdForType and typeForEngineId: open_cold.cpp, from the engine list (built in and installed plugin engines)
 
 bool decodePatch(const uint8_t* data, size_t len, PatchData& out)
 {
@@ -381,6 +542,32 @@ bool decodePatch(const uint8_t* data, size_t len, PatchData& out)
             {
                 continue; // Extra: contents ignored, regenerated on save
             }
+#ifdef OPEN_HOST_TEST
+            if (f == kModField && wt == 2 && !gModDecodeOff)
+#else
+            if (f == kModField && wt == 2)
+#endif
+            {
+                Reader whole{ start, r.p };
+                Reader body{}; // set by len(), or the parse is refused below, never read uninitialised
+                if (!whole.tag(f, wt) || !whole.len(body))
+                {
+                    return false; // cannot happen (whole is the span just parsed), but do not decode a half set Reader
+                }
+                const int got = decodeMod(body, out.mod);
+                if (got == 0)
+                {
+                    for (ModSlot& m : out.mod)
+                    {
+                        m = ModSlot{}; // malformed: automation Off, the rest of the file still loads
+                    }
+                }
+                if (got != 2)
+                {
+                    continue;
+                }
+                // another version: kept raw, as an image without automation keeps it
+            }
             const size_t n = size_t(r.p - start);
             if (out.extra.len + n > kRawMax)
             {
@@ -399,6 +586,8 @@ size_t encodePatch(const PatchData& p, uint8_t* out, size_t cap)
 {
     Writer w{ out, out + cap };
     size_t pos = 0;
+    // A raw field 64 (a later version's block) gives way to the automation of this patch when it has some
+    const bool ownMod = modAnyOn(p.mod);
     // Raw fields go in file order ahead of the first known field with a higher number.
     auto flush = [&](uint32_t below)
     {
@@ -416,7 +605,10 @@ size_t encodePatch(const PatchData& p, uint8_t* out, size_t cap)
             {
                 return;
             }
-            w.bytes(p.extra.bytes + pos, size_t(r.p - (p.extra.bytes + pos)));
+            if (!(ownMod && f == kModField))
+            {
+                w.bytes(p.extra.bytes + pos, size_t(r.p - (p.extra.bytes + pos)));
+            }
             pos = size_t(r.p - p.extra.bytes);
         }
     };
@@ -494,6 +686,8 @@ size_t encodePatch(const PatchData& p, uint8_t* out, size_t cap)
 
     flush(9);
     writeExtra(w);
+    flush(kModField);
+    writeMod(w, p.mod);
     flush(0xFFFFFFFFu);
     return w.ok && pos == p.extra.len ? size_t(w.p - out) : 0;
 }

@@ -7,11 +7,11 @@
 # mixers that already carry one playing sample track. Scenarios (SC): 0 = Voices 0, 1 = Voices 1 and nothing sounding, 2 = no synth objects.
 # EXTRA_FLAGS=-DBENCH_GAIN_DB=0.0f runs the parts at 0 dB (Synth::kGainDefault is -9 dB, 0 dB takes the cheaper reuseUnmodifiedMono path).
 # base = the code before the idle skip, skip = with open::partIdle (-DIDLE_SKIP). Needs the pinned toolchain in agt/10.3 and a python with
-# unicorn + capstone:  python3 -m venv /tmp/phzvenv && /tmp/phzvenv/bin/pip install unicorn capstone    (PYTHON=/tmp/phzvenv/bin/python)
+# unicorn + capstone:  python3 -m venv $VENV && $VENV/bin/pip install unicorn capstone    (PYTHON=$VENV/bin/python)
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 HERE=$ROOT/synth-open/tools/idle_cycles
-PY=${PYTHON:-/tmp/phzvenv/bin/python}
+PY=${PYTHON:-python3}
 TC=$ROOT/agt/10.3/bin/arm-none-eabi
 OUT=${TMPDIR:-/tmp}/idle_cycles_$$
 mkdir -p "$OUT"

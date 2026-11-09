@@ -2,6 +2,10 @@
 #include "TrackerImpl.h"
 #include "display.h"
 
+#ifdef FEATURE_SYNTH_OPEN
+#include "mainLoopScratch.h"
+#endif
+
 static const uint8_t bytesPerPixel = 4;
 static const uint32_t bmpWidth = 800;
 static const uint32_t bmpHeight = 480;
@@ -78,7 +82,13 @@ void cDisplay::doScreenShot()
     fileSystem->writeFile(fileHeader, fileHeaderSize, bmpHandle);
     fileSystem->writeFile(infoHeader, infoHeaderSize, bmpHandle);
 
+#ifdef FEATURE_SYNTH_OPEN
+    // Row buffer off the stack (mainLoopScratch.h): nothing below re-enters update(), refreshControl() only queues.
+    uint8_t* const buf = g_mainLoopScratch;
+    static_assert(kMainLoopScratchSize >= 3200, "screenshot rows must fit the main-loop scratch");
+#else
     uint8_t buf[3200];
+#endif
     uint16_t readstep = 0;
 
     displayDriver->beginCoProList();
@@ -131,3 +141,5 @@ void cDisplay::scheduleScreenShot(int timeSec)
     screenShotscheduled = true;
     screenShotTimer = timer->millis() + timeSec * 1000;
 }
+
+#include DEVHOOK_DEFS(display) // development hooks (devhooks.h): cDisplay::devShot*, devNextText

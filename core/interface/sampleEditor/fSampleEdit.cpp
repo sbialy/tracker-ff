@@ -678,11 +678,25 @@ void cSampleEditor::noteOffHandle(uint8_t channel,
 bool cSampleEditor::isCurrentSampleStereo()
 {
 #ifdef PLATFORM_IMX
-    if (currentEffectIdx == editorEffectModular &&
-        (sampleEditorModular.getFlags() & PTFX_FLAG_CONVERT_TO_MONO) &&
-        confirmedDataIsChanged)
+    if (confirmedDataIsChanged && currentEffect != nullptr)
     {
-        return false;
+        if (currentEffectIdx == editorEffectModular &&
+            (sampleEditorModular.getFlags() & PTFX_FLAG_CONVERT_TO_MONO))
+        {
+            return false;
+        }
+
+        if (!newFileManager.isInstrumentStereo(mtProject.values.lastUsedInstrument))
+        {
+            const int16_t* left  = currentEffect->getAddresToPolyphonicPlay(mtEffect::Channel::kLeft);
+            const int16_t* right = currentEffect->getAddresToPolyphonicPlay(mtEffect::Channel::kRight);
+            uint32_t       len   = currentEffect->getLengthToPolyphonicPlay();
+            if (left != nullptr && right != nullptr && left != right && len > 0 &&
+                memcmp(left, right, len * sizeof(int16_t)) != 0)
+            {
+                return true;
+            }
+        }
     }
 #endif
     return newFileManager.isInstrumentStereo(mtProject.values.lastUsedInstrument);

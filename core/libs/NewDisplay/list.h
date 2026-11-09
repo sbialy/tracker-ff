@@ -48,22 +48,23 @@ class cList : public cDisplayControl
     virtual void setColors(const uint32_t* colors);
     virtual void setData(void* data);
 
-    uint16_t textStyle;
+    // default member initializers, see NewList (newListControl.h)
+    uint16_t textStyle = 0;
 
-    strList* list;
+    strList* list = nullptr;
 
-    int16_t listPosition;
+    int16_t listPosition = 0;
 
-    uint16_t barPos;
-    uint16_t textListPos;
+    uint16_t barPos = 0;
+    uint16_t textListPos = 0;
 
-    uint8_t disableBar;
+    uint8_t disableBar = 0;
 
     int8_t listAnimationStep = 0;
 
-    uint32_t textScrollTime;
-    uint32_t textScrollTimeStart;
-    uint8_t textScrollItem;
+    uint32_t textScrollTime = 0;
+    uint32_t textScrollTimeStart = 0;
+    uint8_t textScrollItem = 0;
 };
 
 #endif

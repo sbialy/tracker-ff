@@ -1,0 +1,230 @@
+{
+ "_comment": "The public identity of every plugin module tracker-ff 1.2.0 ships, and the repository that builds it. No module source is in this repository: the synth engines are built in tracker-engines-os (public, the OpenTracker 3.x module engines) and tracker-engines (private, our own engines), the master inserts in tracker-effects-os (public, the OpenTracker fx ports) and tracker-effects (private, our own inserts). engines/external.lock.json pins a release of each repository (tag, commit, sha256 of every published file), engines/check_modules.py verify-external checks the published files against the rows here. Engine rows: id = file name (<id>.plg, <id>.plgi, <id>.wasm, <id>.json), name = the descriptor name (engine_list.h), stored, patch, type = the numbers of the engine (plug_abi.h PLUG_SYNTH_MANIFEST, engine_list.h), version = the .plg header version, logo = the card logo text. Insert rows: plug_id and version of the .plg header. visibility and repo: where the source lives (repos lists them). licence: what the published files carry, the module repository ships the texts. A module repository must not change these numbers: a new engine gets its row here (and its engine_list.h entry) first. optional: a row with an optional group is only built, checked and shipped when the group is switched on (--with GROUP). No row has one in 1.2.0. The firmware image does not change: a plugin engine brings its own stored, patch and type numbers, the host takes any free ones (engine_list.h lists the built-in engines only, and is a pinned SDK header).",
+ "set_version": "1.2.0",
+ "repos": {
+  "tracker-engines-os": {
+   "visibility": "public",
+   "kind": "synth",
+   "lock_set": "engines-os"
+  },
+  "poly-engines": {
+   "visibility": "private",
+   "kind": "synth",
+   "lock_set": "engines"
+  },
+  "tracker-effects-os": {
+   "visibility": "public",
+   "kind": "master",
+   "lock_set": "effects-os"
+  },
+  "poly-effects": {
+   "visibility": "private",
+   "kind": "master",
+   "lock_set": "effects"
+  }
+ },
+ "engines": [
+  {
+   "id": "ju6",
+   "name": "JU6",
+   "stored": 7,
+   "patch": 129,
+   "type": 129,
+   "version": "1.0.0",
+   "logo": "JU6",
+   "visibility": "public",
+   "repo": "tracker-engines-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "fm4",
+   "name": "FM4",
+   "stored": 9,
+   "patch": 128,
+   "type": 128,
+   "version": "1.0.0",
+   "logo": "FM4",
+   "visibility": "public",
+   "repo": "tracker-engines-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "btype",
+   "name": "BTYPE",
+   "stored": 16,
+   "patch": 136,
+   "type": 136,
+   "version": "1.0.0",
+   "logo": "B-TYPE",
+   "visibility": "public",
+   "repo": "tracker-engines-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "phz",
+   "name": "PHZ",
+   "stored": 8,
+   "patch": 130,
+   "type": 130,
+   "version": "1.0.0",
+   "logo": "PHZ",
+   "visibility": "private",
+   "repo": "poly-engines",
+   "licence": "Proprietary freeware, Apache-2.0 and MIT parts"
+  },
+  {
+   "id": "dtype",
+   "name": "DTYPE",
+   "stored": 10,
+   "patch": 162,
+   "type": 162,
+   "version": "1.0.0",
+   "logo": "D-TYPE",
+   "visibility": "public",
+   "repo": "tracker-engines-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "cstype",
+   "name": "CSTYPE",
+   "stored": 11,
+   "patch": 131,
+   "type": 131,
+   "version": "1.0.0",
+   "logo": "CS-TYPE",
+   "visibility": "public",
+   "repo": "tracker-engines-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "atype",
+   "name": "ATYPE",
+   "stored": 12,
+   "patch": 132,
+   "type": 132,
+   "version": "1.0.0",
+   "logo": "A-TYPE",
+   "visibility": "public",
+   "repo": "tracker-engines-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "ttype",
+   "name": "TTYPE",
+   "stored": 13,
+   "patch": 133,
+   "type": 133,
+   "version": "1.0.0",
+   "logo": "T-TYPE",
+   "visibility": "public",
+   "repo": "tracker-engines-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "eight",
+   "name": "8TYPE",
+   "stored": 14,
+   "patch": 134,
+   "type": 134,
+   "version": "1.0.0",
+   "logo": "8-TYPE",
+   "visibility": "public",
+   "repo": "tracker-engines-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "hand",
+   "name": "HANDTYPE",
+   "stored": 15,
+   "patch": 135,
+   "type": 135,
+   "version": "1.0.0",
+   "logo": "HAND-TYPE",
+   "visibility": "public",
+   "repo": "tracker-engines-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "arc",
+   "name": "ARCTYPE",
+   "stored": 17,
+   "patch": 137,
+   "type": 137,
+   "version": "1.0.0",
+   "logo": "ARC-TYPE",
+   "visibility": "public",
+   "repo": "tracker-engines-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "pluck",
+   "name": "PLK",
+   "stored": 18,
+   "patch": 138,
+   "type": 138,
+   "version": "1.0.0",
+   "logo": "PLUCK",
+   "visibility": "private",
+   "repo": "poly-engines",
+   "licence": "Proprietary freeware, Apache-2.0 and MIT parts"
+  }
+ ],
+ "inserts": [
+  {
+   "id": "dirt",
+   "plug_id": "ff.dirt",
+   "version": "1.0.0",
+   "visibility": "public",
+   "repo": "tracker-effects-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "tape",
+   "plug_id": "org.opentracker.fx.tape",
+   "version": "1.0.0",
+   "visibility": "public",
+   "repo": "tracker-effects-os",
+   "licence": "MIT"
+  },
+  {
+   "id": "lofi",
+   "plug_id": "org.opentracker.fx.lofi",
+   "version": "1.0.0",
+   "visibility": "public",
+   "repo": "tracker-effects-os",
+   "licence": "MIT and Apache-2.0"
+  },
+  {
+   "id": "bbd",
+   "plug_id": "org.opentracker.fx.bbd",
+   "version": "1.0.0",
+   "visibility": "public",
+   "repo": "tracker-effects-os",
+   "licence": "MIT and Apache-2.0"
+  },
+  {
+   "id": "phaser",
+   "plug_id": "org.opentracker.fx.phaser",
+   "version": "1.0.0",
+   "visibility": "public",
+   "repo": "tracker-effects-os",
+   "licence": "MIT and Apache-2.0"
+  },
+  {
+   "id": "console",
+   "plug_id": "ff.console",
+   "version": "1.0.0",
+   "visibility": "private",
+   "repo": "poly-effects",
+   "licence": "Proprietary freeware, MIT parts"
+  },
+  {
+   "id": "tube",
+   "plug_id": "ff.tube",
+   "version": "1.0.0",
+   "visibility": "private",
+   "repo": "poly-effects",
+   "licence": "Proprietary freeware, MIT parts"
+  }
+ ]
+}

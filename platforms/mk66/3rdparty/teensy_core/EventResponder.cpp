@@ -33,6 +33,11 @@
 
 #include <Arduino.h>
 #include "EventResponder.h"
+#include "devhooks.h"
+#include DEVHOOK_DEFS(systick_isr) // development hooks (devhooks.h): a console image watches the main loop from here
+#ifndef DEVHOOK_SYSTICK_ISR
+#define DEVHOOK_SYSTICK_ISR systick_isr
+#endif
 
 EventResponder * EventResponder::firstYield = nullptr;
 EventResponder * EventResponder::lastYield = nullptr;
@@ -335,7 +340,7 @@ void MillisTimer::runFromTimer()
 // with libraries using mid-to-high priority interrupts.
 
 extern "C" volatile uint32_t systick_millis_count;
-void systick_isr(void)
+void DEVHOOK_SYSTICK_ISR(void)
 {
 	systick_millis_count++;
 	MillisTimer::runFromTimer();

@@ -93,10 +93,7 @@ void EVE_Write32(uint32_t ftData32)
 {
     // Send four bytes of data after previously sending address. Ignore return values as this is an
     // SPI write only.
-    MCU_SPIReadWrite((uint8_t)(ftData32));       // Send low byte of data
-    MCU_SPIReadWrite((uint8_t)(ftData32 >> 8));  //
-    MCU_SPIReadWrite((uint8_t)(ftData32 >> 16)); //
-    MCU_SPIReadWrite((uint8_t)(ftData32 >> 24)); // Send high byte of data
+    MCU_SPIWrite32(ftData32);
 }
 
 // ------------------------ Send a 16-bit data value --------------------------
@@ -294,6 +291,8 @@ uint16_t EVE_IncCMDOffset(uint16_t currentOffset, uint16_t commandSize)
 }
 
 // ------ Wait for co-processor read and write pointers to be equal ------------
+static uint32_t s_lastCmdWritePointer = 0;
+
 uint8_t EVE_WaitCmdFifoEmpty(void)
 {
     uint32_t ReadPointer, WritePointer;
@@ -305,6 +304,7 @@ uint8_t EVE_WaitCmdFifoEmpty(void)
     } while ((WritePointer != ReadPointer) &&
              (ReadPointer != 0xFFF)); // Wait until the two registers match
 
+    s_lastCmdWritePointer = WritePointer;
     if (ReadPointer == 0xFFF)
         return 0xFF; // Return 0xFF if an error occurred
     else
@@ -330,6 +330,7 @@ uint8_t EVE_IsCmdFifoEmpty(void)
         EVE_MemWrite32(REG_CMD_WRITE, 0);
         EVE_MemWrite32(REG_CPURESET, 0);
 
+        s_lastCmdWritePointer = 0;
         return 1;
         // cmdOffset = 0;
     }
@@ -337,6 +338,7 @@ uint8_t EVE_IsCmdFifoEmpty(void)
     if (WritePointer == ReadPointer)
     {
         error_counter = 0;
+        s_lastCmdWritePointer = WritePointer;
         return 1;
     }
     else
@@ -348,11 +350,7 @@ uint8_t EVE_IsCmdFifoEmpty(void)
 // ------ Get current value of the FIFO write pointer REG_CMD_WRITE ------------
 uint32_t EVE_GetCurrentWritePointer(void)
 {
-    uint32_t WritePointer;
-
-    WritePointer = EVE_MemRead32(REG_CMD_WRITE); // Read the graphics processor write pointer
-
-    return WritePointer; // New starting point will be first location after the last command
+    return s_lastCmdWritePointer;
 }
 
 // ------------ Check how much free space is available in CMD FIFO -------------

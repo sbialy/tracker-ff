@@ -108,9 +108,13 @@ uint8_t Keys::getKeyEventCount()
     return (count & 0x0F);
 }
 
+#include DEVHOOK_DEFS(keys) // development hooks (devhooks.h): Keys::inject
+
 uint8_t Keys::update()
 {
     uint8_t result = 0;
+
+    DEVHOOK_KEYS_POLL();
     // keyInt = 1; // debug i2c errors
     if (keyInt)
     {

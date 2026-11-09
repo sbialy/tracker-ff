@@ -1806,8 +1806,15 @@ status_t SD_WaitAsyncRead(sd_card_t *card)
 
 bool SD_IsAsyncBusy(sd_card_t *card)
 {
-    (void)card;
-    return SDMMCHOST_IsAsyncBusy();
+    if (SDMMCHOST_IsAsyncBusy())
+    {
+        return true;
+    }
+    if ((card != NULL) && (card->host != NULL) && SDMMCHOST_IsCardBusy(card->host))
+    {
+        return true;
+    }
+    return false;
 }
 
 status_t SD_WriteBlocks(sd_card_t *card, const uint8_t *buffer, uint32_t startBlock, uint32_t blockCount)

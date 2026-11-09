@@ -6,6 +6,9 @@
 #include "util_math.h"
 #include <cmath>
 #include <masterParams/masterParams.h>
+#ifdef FEATURE_PLUG_HOST
+#include "plug_ui.h"
+#endif
 
 static const uint16_t framesPlaces[8][4] = {
     { 0 + 1, 31, 800 / 8 - 3, 391 },
@@ -30,6 +33,19 @@ const char* const saturationListTexts[kSaturationTypeEnd] = { "Hard Clip",
                                                              "Dirt Fold",
                                                              "Dirt Asym",
                                                              "Dirt Crush"
+#endif
+#if defined(FEATURE_SAT_SOFTKNEE) && !defined(FEATURE_FF_DIRT)
+                                                             // 5..9, the Dirt values of FF builds: never listed (plug_ui.cpp)
+                                                             ,
+                                                             "Hard Clip",
+                                                             "Hard Clip",
+                                                             "Hard Clip",
+                                                             "Hard Clip",
+                                                             "Hard Clip"
+#endif
+#ifdef FEATURE_SAT_SOFTKNEE
+                                                             ,
+                                                             "Soft Knee"
 #endif
 };
 
@@ -255,6 +271,9 @@ void cMasterParams::initDisplayControls()
     saturationListProperties.data = &saturationListData;
     saturationListProperties.colors = nullptr;
     saturationList = display.createControl<cList>(&saturationListProperties);
+#ifdef FEATURE_PLUG_HOST
+    plugUiInitControls(); // the Master Inserts page's two extra list columns, the page starts closed
+#endif
 }
 
 void cMasterParams::showMasterScreen()
@@ -274,7 +293,11 @@ void cMasterParams::showMasterScreen()
     }
 
     titleBar->show();
+#ifdef FEATURE_PLUG_HOST
+    titleBar->setTitle(plugUiCycleTitle(0));
+#else
     titleBar->setTitle("Master 1/3");
+#endif
 
     display.setControlText(label[0], "Volume");
     display.setControlText(label[1], "Reverb");
@@ -1195,6 +1218,16 @@ void cMasterParams::showVolume()
 
 void cMasterParams::showSaturationType()
 {
+#ifdef FEATURE_PLUG_HOST
+    // built-in entries plus the master insert plugins (synth-open/plug_ui.cpp)
+    plugUiSatList(&saturationListData);
+    display.setControlValue(saturationList, plugUiSatPos());
+    display.refreshControl(saturationList);
+
+    display.setControlText2(label[5], plugUiSatText());
+    display.refreshControl(label[5]);
+    return;
+#endif
     display.setControlValue(saturationList, mtProject.values.saturationType);
     display.refreshControl(saturationList);
 
@@ -1363,7 +1396,9 @@ void cMasterParams::showMixerScreen()
     display.setControlHide(saturationList);
 
     titleBar->show();
-#ifdef FEATURE_SYNTH
+#ifdef FEATURE_PLUG_HOST
+    titleBar->setTitle(plugUiCycleTitle(1));
+#elif defined(FEATURE_SYNTH)
     titleBar->setTitle("Sample Track Mixer 2/3");
 #else
     titleBar->setTitle("Track Mixer 2/3");
@@ -1432,7 +1467,11 @@ void cMasterParams::showMixerDelayReverbScreen()
     display.setControlHide(saturationList);
 
     titleBar->show();
+#ifdef FEATURE_PLUG_HOST
+    titleBar->setTitle(plugUiCycleTitle(2));
+#else
     titleBar->setTitle("Global Mixer 3/3");
+#endif
 
     char* mixerLabelFormat = (char*)"%s";
 
