@@ -54,6 +54,7 @@ void EveModel::getImgProps(uint32_t& addr, uint32_t& w, uint32_t& h)
 
 void EveModel::writeDataRAMG(const uint8_t* d, uint32_t n, uint32_t dst)
 {
+    HostFaultSuspend keep;
     if (dst + n > kRamG) { errors_++; log_ += "writeDataRAMG out of range\n"; return; }
     memcpy(&ramg_[dst], d, n);
 }
@@ -64,10 +65,15 @@ void EveModel::readDataRAMG(uint8_t* d, uint32_t n, uint32_t src)
     memcpy(d, &ramg_[src], n);
 }
 
-void EveModel::WriteData32(uint32_t w) { in_.push_back(w); }
+void EveModel::WriteData32(uint32_t w)
+{
+    HostFaultSuspend keep;
+    in_.push_back(w);
+}
 
 uint8_t EveModel::sendString(const char* s, uint32_t length)
 {
+    HostFaultSuspend keep;
     // like the firmware's API_SendString: a length past the end of the string is clamped to it
     const uint32_t have = uint32_t(strlen(s));
     if (!length || length > have) length = have;
@@ -111,6 +117,7 @@ static int nargs(uint32_t id)
 
 void EveModel::run()
 {
+    HostFaultSuspend keep;
     while (inPos_ < in_.size())
     {
         const uint32_t w = in_[inPos_];

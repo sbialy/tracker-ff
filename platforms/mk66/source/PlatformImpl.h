@@ -26,6 +26,8 @@ class PlatformImpl final : public Platform
   public:
     virtual void setPowerMode(bool mode) override;
     virtual void resetMCU() override;
+    virtual void setPowerOffGuard(bool armed) override;
+    virtual void kickPowerOffGuard() override;
     virtual void runBootloader(char* fileName) override;
     virtual void setPowerButtonCallback(PowerButtonCallback) override;
     virtual bool getPowerButtonState() override;
@@ -60,6 +62,8 @@ class PlatformImpl final : public Platform
         return true;
     }
     uint8_t readStartState();
+    bool configValid();
+    bool powerOffGuardArmed() const;
     void saveStartState(uint8_t state);
     PowerButtonCallback getPowerButtonCallback();
 

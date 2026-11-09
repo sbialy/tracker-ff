@@ -20,6 +20,13 @@
 #include <string>
 #include <vector>
 
+// host_fault.cpp: while one exists, no allocation is failed (the model's own buffers are simulator, not firmware, memory)
+struct HostFaultSuspend
+{
+    HostFaultSuspend();
+    ~HostFaultSuspend();
+};
+
 class EveModel : public DisplayDriver
 {
   public:

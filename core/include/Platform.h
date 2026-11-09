@@ -34,6 +34,12 @@ class Platform
 
     virtual void setPowerMode(bool mode) = 0;
     virtual void resetMCU() = 0;
+    // Stall guard of the power-off sequence (PowerOffGuard.h): armed when the sequence starts, kicked on every main loop pass of it,
+    // disarmed when it is aborted or right before the sleep. The MK66 checks it from SysTick and the fault handler and, when the
+    // kicks stop for a while (main loop blocked in a call, a fault), resets the MCU into the off state. A disarmed guard never acts.
+    // Default: nothing.
+    virtual void setPowerOffGuard(bool armed) { (void)armed; }
+    virtual void kickPowerOffGuard() {}
     virtual void runBootloader(char* fileName) = 0;
     virtual void setPowerButtonCallback(PowerButtonCallback) = 0;
     virtual bool getPowerButtonState() = 0;

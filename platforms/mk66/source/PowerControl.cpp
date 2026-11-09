@@ -1,5 +1,6 @@
 #include "PowerControl.h"
 #include "PlatformImpl.h"
+#include "PowerOffGuard.h"
 #include "config.h"
 #include "core_pins.h"
 #include "pinout.h"
@@ -8,15 +9,41 @@
 
 bool powerButtonLastState;
 
+bool takePowerOffMarker(); // PlatformImpl.cpp
+
 void checkPowerState(PlatformImpl* platformImpl)
 {
     TactSwitchInit();
 
     if (START_STATE_SAVE)
     {
-        if (platformImpl->readStartState() == 0)
+        power_off_guard::StartInputs in;
+        in.startStateSave = START_STATE_SAVE;
+#ifdef ENABLE_DEV_CONSOLE
+        in.consoleBuild = true;
+#else
+        in.consoleBuild = false;
+#endif
+        in.offMarker = takePowerOffMarker();
+#ifndef TRACKER_MINI
+        in.watchdogReset = (RCM_SRS0 & RCM_SRS0_WDOG) != 0;
+#else
+        in.watchdogReset = false;
+#endif
+        in.configValid = platformImpl->configValid();
+        in.startState = platformImpl->readStartState();
+
+        if (power_off_guard::decideStart(in) == power_off_guard::Start::kOff)
         {
-            platformImpl->setPowerMode(false);
+#ifndef TRACKER_MINI
+            // A reset into the off state (the power-off guard, any reset after the power off) can leave the display controller
+            // running the last frame. Hold the FT812 in power down (PD#, PTD11, as FT812_Init drives it). The next start cycles
+            // PD# in FT812_Init. Harmless after a power up.
+            GPIOD_PCOR = 1u << 11;
+            GPIOD_PDDR |= 1u << 11;
+            PORTD_PCR11 = PORT_PCR_MUX(1);
+#endif
+            platformImpl->setPowerMode(false); // writes the start state 0: a flag a console image left (1) is cleared here
             while (1)
             {
                 TactSwitchRead(platformImpl);
@@ -25,7 +52,7 @@ void checkPowerState(PlatformImpl* platformImpl)
         }
         else
         {
-            platformImpl->saveStartState(0);
+            platformImpl->saveStartState(0); // also clears a start state 1 a console image or the bootloader hand-off left
         }
     }
 }

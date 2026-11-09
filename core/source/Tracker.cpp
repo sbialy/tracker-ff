@@ -192,6 +192,10 @@ void TrackerImpl::update()
     sliceDetector.update();
     newFileManager.update();
     mtInterface.update();
+    if (lowPower.getLowPowerState() == shutdownStateSleep)
+    {
+        return; // the shutdown ended in this pass (interrupts off, SDRAM unpowered on the original)
+    }
 #ifdef FEATURE_PLUG_HOST
     plug::tick();
     synthModelTick(); // SynthEditor.cpp: the model list rested on a plugin engine that is not installed

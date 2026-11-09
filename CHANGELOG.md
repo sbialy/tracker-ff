@@ -33,6 +33,7 @@ Version 1.2.0 of the tracker-ff firmware for the original Tracker. The Tracker+ 
 5. The CHIP engine no longer overloads the audio interrupt with many voices.
 6. Changing the engine of a synth part, loading a project, saving a recording, listing a folder and opening the value list of a synth parameter no longer write through a null pointer when the heap is short. Large synth blocks come from the external memory and a failed allocation ends the action with an error.
 7. The synth patch editor refuses a parameter or macro index outside the patch.
+8. Power off always switches the Tracker off. Before, it could hang at the end with the screen on and every key dead. The wait for a running card operation is now bounded, a short heap no longer faults while the shutdown bar is created and a software deadline switches the Tracker off if the sequence stalls.
 
 ---
 

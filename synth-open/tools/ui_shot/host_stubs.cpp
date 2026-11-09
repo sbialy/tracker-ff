@@ -1,4 +1,5 @@
 // Link stubs for what the MK66 platform and the Teensy runtime provide on the device. NOT firmware.
+#include "eve_model.h"
 #include "Profiler.h"
 #include "host_platform.h"
 #include "plug_host.h"
@@ -28,6 +29,7 @@ int16_t sin_q15(int16_t value) { return int16_t(lrintf(sinf(float(uint16_t(value
 // ---- FatFs f_stat, used by core/synth/FileSystemAdapter.cpp on a path relative to the card root
 extern "C" unsigned f_stat(const char* path, void*)
 {
+    HostFaultSuspend keep;   // the device's FatFs f_stat does not allocate
     struct stat st;
     std::string p = path ? path : "";
     while (!p.empty() && p[0] == '/') p.erase(0, 1);
