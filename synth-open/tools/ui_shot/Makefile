@@ -79,6 +79,11 @@ all: $(OUT)/ui_shot
 
 $(OUT)/ui_shot: $(OBJS)
 	$(CXX) -o $@ $(OBJS) $(LDFLAGS) -lz
+	@# the symbols of the host's own objects, and the symbol table of the link with a host/firmware flag per function: host_heapmodel.cpp
+	@# (UISHOT_HEAP=device) serves the host's own allocations from the system heap, uncounted
+	@nm -U -j $(filter $(OBJ)/host/%.o $(OBJ)/devtools/host/%.o $(OBJ)/plat/%.o,$(OBJS)) 2>/dev/null | grep -v ':$$' | sed 's/^_//' | sort -u > $(OUT)/host_syms.txt
+	@python3 -I $(HERE)/host_symtab.py $@ $(OUT)/host_syms.txt > $(OUT)/host_symtab.txt
+	@# host_heapmodel.o needs the arena allocator of the firmware (new_arena.h) when this tree has it
 
 $(GEN)/.stamp: $(HERE)/gen_overlay.py
 	touch $@
@@ -121,6 +126,7 @@ $(OBJ)/devtools/host/%.o: $(DEVTOOLS_HOST_DIR)/%.cpp $(GEN)/.stamp
 $(OBJ)/plat/Keys.o: $(ROOT)/platforms/mk66/3rdparty/Buttons/Keys.cpp $(GEN)/.stamp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -I$(DEVTOOLS_HOST_STUBS) -I$(ROOT)/platforms/mk66/3rdparty/I2C -MMD -MP -c $< -o $@
+$(OBJ)/host/host_heapmodel.o: CXXFLAGS += -I$(ROOT)/platforms/mk66/3rdparty/teensy_core
 $(OBJ)/host/%.o: $(HERE)/%.cpp $(GEN)/.stamp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
