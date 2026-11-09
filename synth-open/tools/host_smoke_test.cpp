@@ -1951,7 +1951,9 @@ int main() {
       check(stopped < 0.5f && open::testModOut(0, 1) < 0.5f, "automation gate: Stop and All Notes Off (releaseAll) release the envelope");
       toIdle();
 
-      // Patch FX: the FX copies another slot's values, the block stays and keeps modulating. A slot select (importData) replaces it.
+      // Patch FX (fix/ptfx-automation): the FX makes the live patch read the other slot's macros and automation along with its values (a row of
+      // SlotCfg, one pointer). The open slot's own data (what the editor shows, what a save writes) is never touched. A slot select (importData)
+      // loads the file and ends the FX state.
       {
         m7->files.clear();
         op.setModSlot(1, off); op.setModSlot(0, lfo);
@@ -1961,20 +1963,132 @@ int main() {
         ws7->savePatch("0-1", *other);
         open::patchBankSetLive(0, p7.get()); open::patchBankToSlotZero(0); open::patchBankPreload(0, *p7, *ws7);
         src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 10; b++) blk7();
+        check(&op.live() == op.ownCfg() && op.live().mod[0].type == ModType::kLfo && op.live().modOn, "automation Patch FX: before the FX the live config is the patch's own");
+        const uint8_t serFx = op.modSerial();
         const bool fxOn = open::patchBankApply(0, 1);
-        float flo = 1e9f, fhi = -1e9f; for (int b = 0; b < 100; b++) { blk7(); flo = std::min(flo, endOf(cutoff)); fhi = std::max(fhi, endOf(cutoff)); }
-        check(fxOn && sameSlot(op.modSlot(0), lfo) && op.modSlot(2).type == ModType::kOff && fhi - flo > 0.3f * rng && flo < base,
-              "automation Patch FX: another slot's values play, the open slot's automation keeps running over them");
-        open::patchBankApply(0, 0);
+        for (int b = 0; b < 200; b++) blk7();
+        open::SlotCfg lc; op.liveCfg(lc);
+        check(fxOn && &op.live() != op.ownCfg() && lc.mod[0].type == ModType::kOff && lc.mod[2].type == ModType::kEnv && lc.mod[2].amount == -20 && lc.modOn &&
+                op.modSerial() == serFx, "automation Patch FX: slot 1's automation is live, the modulators are not restarted (modSerial stays)");
+        check(sameSlot(op.modSlot(0), lfo) && op.modSlot(2).type == ModType::kOff && op.ownCfg()->mod[0].type == ModType::kLfo && op.ownCfg()->mod[2].type == ModType::kOff,
+              "automation Patch FX: the open slot's own automation (editor, save) is untouched while the FX plays another slot");
+        const float o0 = open::testModOut(0, 0), o2 = open::testModOut(0, 2);
+        check(o0 == 0.0f && o2 < -0.09f && o2 > -0.11f, "automation Patch FX: the output follows the new slot, the LFO slot that is Off reads 0, the envelope that began under the held note sits at sustain x -20 %");
+        open::patchBankApply(0, 0); blk7();
+        check(&op.live() == op.ownCfg() && open::testModOut(0, 2) == 0.0f, "automation Patch FX: back on the open slot the live config is the patch's own and the envelope slot that is Off again reads 0");
+        for (int b = 0; b < 20; b++) blk7();
+        check(open::testModOut(0, 0) != 0.0f, "automation Patch FX: the LFO slot that was Off starts when its slot is back");
+        open::patchBankApply(0, 1); for (int b = 0; b < 3; b++) blk7();
         const uint8_t serBefore = op.modSerial();
+        open::patchBankApply(0, 0);
         const bool selOk = open::patchBankSelect(0, 1, *p7, *ws7) == open::SlotSelect::kLoaded;
         blk7();
-        check(selOk && op.modSerial() != serBefore && op.modSlot(0).type == ModType::kOff && op.modSlot(2).type == ModType::kEnv && op.modSlot(2).amount == -20 &&
+        check(selOk && op.modSerial() != serBefore && &op.live() == op.ownCfg() && op.modSlot(0).type == ModType::kOff && op.modSlot(2).type == ModType::kEnv && op.modSlot(2).amount == -20 &&
                 open::testModOut(0, 0) == 0.0f, "automation Patch FX: a slot select brings that slot file's automation and restarts the modulators");
         open::patchBankSelect(0, 0, *p7, *ws7);
         check(sameSlot(op.modSlot(0), lfo), "automation Patch FX: back on slot 0 its automation is there again");
         src7.send(MidiEvent::Type::kStop, 0, 0, 0); toIdle();
         open::patchBankSetLive(0, nullptr);
+      }
+
+      // Patch FX state policy: a modulator whose slot has the same type before and after the change goes on (LFO phase, envelope stage and level),
+      // a slot whose type changes starts new, a slot that goes Off is cleared. An envelope that starts under a held note attacks at once. The gate
+      // stays with the part: a release after the change releases the envelope of the new slot.
+      {
+        m7->files.clear();
+        ModSlot lfoA; lfoA.type = ModType::kLfo; lfoA.shape = 2; lfoA.speed = 14; lfoA.amount = 50; open::modSetDest(acd, lfoA, cutoff);
+        ModSlot lfoB = lfoA; lfoB.amount = 80;
+        ModSlot envA; envA.type = ModType::kEnv; envA.attack = 100; envA.decay = 100; envA.sustain = 50; envA.release = 200; envA.amount = 100; open::modSetDest(acd, envA, cutoff);
+        ModSlot envB = envA; envB.sustain = 80; envB.amount = 60;
+        std::shared_ptr<Patch> pa(ws7->createPatch(kLead)); std::shared_ptr<Patch> pb(ws7->createPatch(kLead));
+        auto& oa = static_cast<open::OpenPatch&>(*pa); auto& ob = static_cast<open::OpenPatch&>(*pb);
+        oa.setModSlot(0, lfoA); oa.setModSlot(1, envA); oa.setModSlot(3, lfoA);
+        ob.setModSlot(0, lfoB); ob.setModSlot(1, envB); ob.setModSlot(2, envB);
+        ws7->savePatch("0", *pa); ws7->savePatch("0-1", *pb);
+        i7->assignPatch(pa);
+        open::patchBankSetLive(0, pa.get()); open::patchBankToSlotZero(0); open::patchBankPreload(0, *pa, *ws7);
+        src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 100; b++) blk7();
+        const float lfoBefore = open::testModOut(0, 0) / 0.5f;       // triangle value -1..1
+        const float envBefore = open::testModOut(0, 1);              // sustain 50 % x 100 %
+        check(std::fabs(envBefore - 0.5f) < 1e-6f && open::testModOut(0, 2) == 0.0f && open::testModOut(0, 3) != 0.0f, "automation state policy: set-up, envelope at its sustain, slot 2 Off, slot 3 running");
+        open::patchBankApply(0, 1); blk7();
+        const float lfoAfter = open::testModOut(0, 0) / 0.8f;
+        const float envAfter = open::testModOut(0, 1);               // new sustain 80 % x 60 %: the stage is kept, the level is the new sustain at once
+        const float newEnv = open::testModOut(0, 2);                 // Off -> envelope under a held note
+        check(std::fabs(lfoAfter - lfoBefore) < 0.12f && lfoAfter != 0.0f, "automation state policy: LFO to LFO keeps its phase (the triangle goes on, one block of slope, not back to 0)");
+        check(std::fabs(envAfter - 0.48f) < 1e-5f, "automation state policy: envelope to envelope keeps its stage (sustain of the new slot at once, no attack from 0)");
+        check(newEnv > 0.0f && newEnv < 0.05f && open::testModOut(0, 3) == 0.0f, "automation state policy: Off to envelope attacks under the held note, LFO to Off is cleared");
+        for (int b = 0; b < 40; b++) blk7();
+        check(open::testModOut(0, 2) > 0.3f, "automation state policy: the new envelope goes on up (no stuck envelope)");
+        const float env2Held = open::testModOut(0, 2);
+        src7.send(MidiEvent::Type::kNoteOff, 0, 57, 0); for (int b = 0; b < 5; b++) blk7();
+        check(open::testModOut(0, 1) < envAfter && open::testModOut(0, 2) < env2Held, "automation state policy: the release of the last note releases the envelopes of the live config");
+        toIdle();
+        // the same slot twice in a row is no change
+        open::patchBankApply(0, 0);
+        src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); for (int b = 0; b < 100; b++) blk7();
+        const uint8_t cs = oa.cfgSerial();
+        open::patchBankApply(0, 1); blk7(); const uint8_t cs1 = oa.cfgSerial(); const float v1 = open::testModOut(0, 1);
+        open::patchBankApply(0, 1); blk7();
+        check(cs1 != cs && oa.cfgSerial() == cs1 && std::fabs(v1 - 0.48f) < 1e-5f && open::testModOut(0, 1) == v1, "automation state policy: the same slot on two steps in a row changes nothing");
+        open::patchBankApply(0, 0); const uint8_t cs2 = oa.cfgSerial(); open::patchBankApply(0, 0);
+        check(oa.cfgSerial() == cs2 && &oa.live() == oa.ownCfg(), "automation state policy: the open slot twice in a row changes nothing either");
+        src7.send(MidiEvent::Type::kStop, 0, 0, 0); toIdle();
+        // an engine change or a project load retires the bank: the live config is the patch's own again
+        open::patchBankApply(0, 1);
+        open::patchBankPreload(0, *pa, *ws7);
+        check(&oa.live() == oa.ownCfg(), "automation Patch FX: a new bank (preload) takes the patch back to its own config");
+        open::patchBankSetLive(0, nullptr);
+        i7->assignPatch(p7);
+      }
+
+      // Patch FX and macros: targets, amounts and the bipolar flag come with the slot, the macro position goes to the resting place of its flag, an
+      // edit while the FX plays another slot lands on the open slot and takes the values back
+      {
+        m7->files.clear();
+        std::shared_ptr<Patch> pa(ws7->createPatch(kLead)); std::shared_ptr<Patch> pb(ws7->createPatch(kLead));
+        auto& oa = static_cast<open::OpenPatch&>(*pa); auto& ob = static_cast<open::OpenPatch&>(*pb);
+        pb->setMacroBipolar(0, true); pb->setMacroModifierAmount(0, 0, -0.5f); pb->setParamValue(cutoff, float(acd.params[cutoff].min), Patch::ParamChangeSource::kKnob);
+        ws7->savePatch("0", *pa); ws7->savePatch("0-1", *pb);
+        i7->assignPatch(pa);
+        open::patchBankSetLive(0, pa.get()); open::patchBankToSlotZero(0); open::patchBankPreload(0, *pa, *ws7);
+        const float aAmount = pa->getMetadata().macros[0].modifiers[0].amount;
+        float restA = *pa->getMacroValue(0);
+        src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100); blk7();
+        const bool on = open::patchBankApply(0, 1); blk7();
+        check(on && oa.live().macro[0].bipolar == 1 && oa.live().macro[0].count >= 1 && oa.live().macro[0].amount[0] == -0.5f && oa.ownCfg()->macro[0].bipolar == 0 &&
+                pa->getMetadata().macros[0].modifiers[0].amount == aAmount && !pa->getMetadata().macros[0].bipolar,
+              "macros Patch FX: slot 1's macro (bipolar, other amount) is live, the open slot's metadata and own config are not touched");
+        check(*pa->getMacroValue(0) != restA && oa.live().macro[0].bipolar == 1,
+              "macros Patch FX: the macro position went to the centre of the bipolar macro");
+        check(std::fabs(endOf(cutoff) - float(acd.params[cutoff].min)) < 1e-3f, "macros Patch FX: at the centre the bipolar macro adds nothing, the value is slot 1's");
+        oa.setMacroCC(0, 127); blk7();
+        check(endOf(cutoff) < float(acd.params[cutoff].min) + 1.0f, "macros Patch FX: a full turn adds slot 1's amount (negative: stays at the lower end of the range)");
+        oa.setMacroCC(0, 63);
+        open::patchBankApply(0, 0); blk7();
+        check(&oa.live() == oa.ownCfg() && *pa->getMacroValue(0) == restA, "macros Patch FX: back on the open slot the macro is on its resting place of the open slot's flag");
+        // edit while the FX plays slot 1
+        open::patchBankApply(0, 1); blk7();
+        float vals[open::kMaxParams]; oa.getValuesRaw(vals);
+        const bool fxVals = vals[cutoff] == float(acd.params[cutoff].min);
+        pa->setMacroModifierAmount(0, 0, 0.25f);
+        oa.getValuesRaw(vals);
+        check(fxVals && &oa.live() == oa.ownCfg() && oa.live().macro[0].amount[0] == 0.25f && vals[cutoff] == acd.params[cutoff].def,
+              "macros Patch FX: a macro edit during the FX lands on the open slot and brings the open slot's values and config back");
+        open::patchBankApply(0, 1); blk7();
+        oa.setModSlot(2, lfo);
+        check(&oa.live() == oa.ownCfg() && oa.live().mod[2].type == ModType::kLfo && oa.ownCfg() == &oa.live(), "macros Patch FX: an automation edit during the FX lands on the open slot and takes the FX off");
+        // the bank row of the open slot follows a save (publish): the FX to another slot and back keeps working
+        open::patchBankApply(0, 1);
+        pb->setMacroBipolar(0, false);
+        // config of a file is what an import makes of it, for every slot of a stress like set
+        auto dd = std::make_unique<PatchData>(); ob.exportData(*dd);
+        open::SlotCfg row; oa.cfgFromData(*dd, row);
+        ob.importData(*dd);
+        check(std::memcmp(&row, ob.ownCfg(), sizeof(row)) == 0, "macros Patch FX: the bank row of a file equals the own config an import of the file makes (macros, destinations, flags)");
+        src7.send(MidiEvent::Type::kStop, 0, 0, 0); toIdle();
+        open::patchBankSetLive(0, nullptr);
+        i7->assignPatch(p7);
       }
 
       // unresolved destination: kept, drives nothing, written back byte identical
