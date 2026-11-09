@@ -73,6 +73,28 @@ static void functSynthInit();
 static void functSynthInitConfirm();
 static void functSynthInitCancel();
 
+// The value list of the parameter or macro line on screen, replaced on every selection. On the MK66 operator new is malloc and returns
+// null on a full heap, so the nothrow form is the one whose result the compiler keeps checking. false: nothing is allocated (both
+// pointers null) and the caller shows the line without the list.
+static bool newValueList(char*& text, char**& names, int length, int stringLen)
+{
+    delete[] text;
+    delete[] names;
+    text = new (std::nothrow) char[length * stringLen];
+    names = new (std::nothrow) char*[length];
+
+    if (text != nullptr && names != nullptr)
+    {
+        return true;
+    }
+
+    delete[] text;
+    delete[] names;
+    text = nullptr;
+    names = nullptr;
+    return false;
+}
+
 void cInstrumentEditor::cleanPatchEditorResources()
 {
     if (sectionNamesBufor != nullptr)
@@ -875,7 +897,7 @@ void cInstrumentEditor::changeSynthMacroName()
 
     int macroIdx = sectionIds[sectionListPos];
 
-    if (macroIdx < 0 && macroIdx >= std::ssize(metadata.macros))
+    if (macroIdx < 0 || macroIdx >= std::ssize(metadata.macros))
     {
         return;
     }
@@ -1643,7 +1665,7 @@ void cInstrumentEditor::showSynthPatchSectionParamValue(bool refreshList)
     const auto& metadata = patch.getMetadata();
 
     int paramIdx = sectionParamsIds[paramListPos];
-    if (paramIdx < 0 && paramIdx >= std::ssize(metadata.params))
+    if (paramIdx < 0 || paramIdx >= std::ssize(metadata.params))
     {
         display.setControlHide(barControl[7]);
         display.setControlHide(modelListControl);
@@ -1655,22 +1677,11 @@ void cInstrumentEditor::showSynthPatchSectionParamValue(bool refreshList)
 
     if (refreshList)
     {
-        if (param.isEnum && param.minValue == 0)
+        // an enum shows its values as a list, a full heap leaves it on the bar like any other parameter
+        if (param.isEnum && param.minValue == 0 &&
+            newValueList(paramValueListTextBuff, paramValueListNames, param.maxValue + 1, kMaxSynthListStringLen))
         {
-            if (paramValueListTextBuff != nullptr)
-            {
-                delete[] paramValueListTextBuff;
-            }
-
-            if (paramValueListNames != nullptr)
-            {
-                delete[] paramValueListNames;
-            }
-
             int length = param.maxValue + 1;
-
-            paramValueListTextBuff = new char[length * kMaxSynthListStringLen];
-            paramValueListNames = new char*[length];
 
             auto formatter = param.valueFormatter;
 
@@ -1785,7 +1796,7 @@ void cInstrumentEditor::showSynthPatchMacroParamValue(bool refreshList)
     const auto& metadata = patch.getMetadata();
 
     int macroIdx = sectionIds[sectionListPos];
-    if (macroIdx < 0 && macroIdx >= std::ssize(metadata.macros))
+    if (macroIdx < 0 || macroIdx >= std::ssize(metadata.macros))
     {
         display.setControlHide(barControl[7]);
         display.setControlHide(modelListControl);
@@ -1823,22 +1834,13 @@ void cInstrumentEditor::showSynthPatchMacroParamValue(bool refreshList)
 
                 paramValueMode = kList;
             }
-            else if (paramListPos % 2 == 0) // param
+            else if (paramListPos % 2 == 0 &&
+                     newValueList(paramValueListTextBuff,
+                                  paramValueListNames,
+                                  patch.getMetadata().params.size() + 1,
+                                  kMaxSynthListStringLen)) // param, no list on a full heap
             {
-                if (paramValueListTextBuff != nullptr)
-                {
-                    delete[] paramValueListTextBuff;
-                }
-
-                if (paramValueListNames != nullptr)
-                {
-                    delete[] paramValueListNames;
-                }
-
                 int length = patch.getMetadata().params.size() + 1;
-
-                paramValueListTextBuff = new char[length * kMaxSynthListStringLen];
-                paramValueListNames = new char*[length];
 
                 for (int idx = 0; idx < length; idx++)
                 {
