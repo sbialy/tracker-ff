@@ -6,6 +6,7 @@
 // engine interface (synth-open/ot). Nothing here is derived from libPolySynth/libPolyDSP.
 #include "open_patch.h"
 #include "devhooks.h"
+#include <malloc.h>
 #include "open_load.h"
 #include "open_fileops.h"
 
@@ -182,17 +183,11 @@ void fillFromDef(InstrumentType* type, const EngineDef& def)
         metadata.outputChannels = Meta::OutputChannels::kMono;
         metadata.maxVoices = def.maxVoices;
         DEVHOOK_TRACE(0x4D31, reinterpret_cast<uintptr_t>(&def), def.typeId, def.paramCount);
-        DEVHOOK_TRACE(0x4D32, reinterpret_cast<uintptr_t>(def.params), metadata.params.size(), metadata.params.capacity());
         metadata.params.resize(def.paramCount);
-        DEVHOOK_TRACE(0x4D33, reinterpret_cast<uintptr_t>(metadata.params.data()), metadata.params.size(), metadata.params.capacity());
         for (int i = 0; i < def.paramCount; i++)
         {
             const ParamDef& d = def.params[i];
             auto& p = metadata.params[i];
-            if (i == 0 || i == def.paramCount - 1)
-            {
-                DEVHOOK_TRACE(0x4D34, i, reinterpret_cast<uintptr_t>(d.name), reinterpret_cast<uintptr_t>(&p));
-            }
             p.displayName = d.name;
             p.defaultValue = d.def;
             p.minValue = d.min;
@@ -212,12 +207,9 @@ void fillFromDef(InstrumentType* type, const EngineDef& def)
                 section.elements.push_back(
                   { Meta::EditorLayout::EditorElement::Type::kParam, sd.ids[e] });
             }
-            DEVHOOK_TRACE(0x4D35, s, reinterpret_cast<uintptr_t>(metadata.layoutFlat.sections.data()),
-                          (metadata.layoutFlat.sections.size() << 16) | metadata.layoutFlat.sections.capacity());
             metadata.layoutFlat.sections.push_back(std::move(section));
-            DEVHOOK_TRACE(0x4D36, s, reinterpret_cast<uintptr_t>(metadata.layoutFlat.sections.data()),
-                          (metadata.layoutFlat.sections.size() << 16) | metadata.layoutFlat.sections.capacity());
         }
+        DEVHOOK_TRACE(0x4D37, def.typeId, metadata.layoutFlat.sections.size(), 0);
         metadata.initDefaultMacros = [&def](std::vector<Meta::Macro>& macros)
         {
             for (int m = 0; m < def.macroCount && m < int(kUserMacroCount); m++)
@@ -601,6 +593,7 @@ void* OpenPatch::operator new(size_t n)
 
 void OpenPatch::operator delete(void* p) noexcept
 {
+    DEVHOOK_TRACE(0x4F44, reinterpret_cast<uintptr_t>(p), 0, 0);
     const auto* b = static_cast<const unsigned char*>(p);
     if (b >= reinterpret_cast<const unsigned char*>(gPatchPool) && b < reinterpret_cast<const unsigned char*>(gPatchPool + kPatchPoolSize))
     {
@@ -617,6 +610,8 @@ OpenPatch::OpenPatch(int typeId, const InstrumentType* type)
         int used = 0;
         for (int i = 0; i < kPatchPoolSize; i++) used += gPatchPoolUsed[i] ? 1 : 0;
         DEVHOOK_TRACE(0x4F50, reinterpret_cast<uintptr_t>(this), typeId, used);
+        const struct mallinfo mi = mallinfo();
+        DEVHOOK_TRACE(0x4F51, mi.arena, mi.uordblks, mi.fordblks);
     }
     metadata.instrumentTypeId = typeId;
     if (type && type->createMetadata)
