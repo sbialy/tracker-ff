@@ -31,11 +31,11 @@ _gen := $(shell python3 -I $(HERE)/gen_overlay.py $(ROOT) $(GEN) $(EXT) 2>&1)
 $(if $(_gen),$(error gen_overlay: $(_gen)))
 
 # overlay sources (gen_shim.sh) replace their originals
-OVERLAY_SRCS := plug_synth.cpp mtAudioEngine.cpp mtFileManagerOldVersionRecovery.cpp Tracker.cpp mtConfig.cpp fSampleRec.cpp effect_polyverb.cpp plug_host.cpp open_cold.cpp textBox.cpp
+OVERLAY_SRCS := plug_synth.cpp mtAudioEngine.cpp mtFileManagerOldVersionRecovery.cpp Tracker.cpp mtConfig.cpp fSampleRec.cpp effect_polyverb.cpp plug_host.cpp open_cold.cpp open_synth.cpp textBox.cpp
 CORE_DIRS := source libs interface effector FileManager Exporter AudioEngine synth
 CORE_CPP  := $(foreach d,$(CORE_DIRS),$(shell cd $(CORE) && find $(d) -name '*.cpp'))
 CORE_CPP  := $(filter-out $(foreach o,$(OVERLAY_SRCS),%/$(o)),$(CORE_CPP))
-SO_OVERLAY := $(filter plug_host.cpp plug_synth.cpp open_cold.cpp,$(OVERLAY_SRCS))
+SO_OVERLAY := $(filter plug_host.cpp plug_synth.cpp open_cold.cpp open_synth.cpp,$(OVERLAY_SRCS))
 CORE_CPP  := $(filter-out $(foreach e,$(filter-out $(SYNTH_ENGINES_SEL),$(SYNTH_ENGINES_ALL)),$(SYNTH_ENGINE_CORE_SRCS_$(e))),$(CORE_CPP))
 CORE_C    := $(shell cd $(CORE) && find libs -name '*.c')
 SO_CPP    := $(filter-out $(SO_OVERLAY),$(filter-out engine_%.cpp,$(notdir $(wildcard $(SO)/*.cpp)))) $(addprefix ot/audio/,$(notdir $(wildcard $(SO)/ot/audio/*.cpp))) $(SYNTH_ENGINE_SRCS)

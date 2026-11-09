@@ -219,6 +219,7 @@ class HFileSystem : public FileSystem
     std::string abs(const char* p) const
     {
         std::string s = p ? p : "";
+        for (char& c : s) if (c == '\\') c = '/';   // FatFs takes '\\' as a separator (IsSeparator): the bank copy and the Synth file paths use it
         while (!s.empty() && s[0] == '/') s.erase(0, 1);
         return s_root + "/" + s;
     }

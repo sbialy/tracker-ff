@@ -30,6 +30,7 @@ extern "C" unsigned f_stat(const char* path, void*)
 {
     struct stat st;
     std::string p = path ? path : "";
+    for (char& c : p) if (c == '\\') c = '/';   // FatFs takes '\\' as a separator too (IsSeparator), the firmware's paths use it (bank copy)
     while (!p.empty() && p[0] == '/') p.erase(0, 1);
     extern std::string g_sdRootForStat;
     return stat((g_sdRootForStat + "/" + p).c_str(), &st) == 0 ? 0u : 4u;
