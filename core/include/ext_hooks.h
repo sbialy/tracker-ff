@@ -6,21 +6,11 @@
 // each hook is one load and one compare. A module is linked against this exact image (the image id in its header must match).
 // Plain C and C++ (platforms/mk66/3rdparty/teensy_core/mk20dx128.c includes it).
 
-#include <stdint.h>
+#include "ext_abi.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef struct
-{
-    void (*update)(void);                  // main loop, end of TrackerImpl::update
-    void (*tick)(uint32_t* frame);         // SysTick (priority 32), the stacked frame of what it interrupted
-    void (*usbSof)(void);                  // USB interrupt, every start of frame once configured
-    void (*usbLineCoding)(uint32_t baud);  // USB interrupt, CDC SET_LINE_CODING
-    int (*spinExpired)(uint32_t site);     // a bounded FT812 wait gave up: 1 = stop waiting
-    void (*coprocReset)(void);             // after spinExpired: the FT812 co-processor reset
-    void (*fault)(uint32_t* frame);        // fault handler, before the stock code (records and resets, never returns)
-} ext_hooks_t;
 extern ext_hooks_t ext_hooks;
 extern volatile uint32_t ext_site[2];
 void ext_boot(void* platform, int develop);   // synth-open/ext_module.cpp
@@ -29,6 +19,8 @@ void ext_update(void);                         // main loop: the crash marker, t
 }
 #endif
 
+// SysTick and the fault handler stay stock (ext_systick_isr.inc, ext_fault_isr.inc are empty): the module puts its own handlers
+// into the RAM vector table.
 #define DEVHOOK_DEFS(name) DEVHOOK_STR(ext_##name.inc)
 
 #define DEVHOOK_TRACKER_INIT(platform, develop) ext_boot(platform, develop)
@@ -38,8 +30,17 @@ void ext_update(void);                         // main loop: the crash marker, t
         ext_update();                                                                                                          \
     } while (0)
 
-#define DEVHOOK_LOG(msg, fallback) fallback
-#define DEVHOOK_LOGV(format, args, fallback) fallback
+// LOGE is compiled in (core/source/log.h): the text goes to the module, nowhere without one (never the serial port)
+#define DEVHOOK_LOG(msg, fallback)                                                                                             \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        if (ext_hooks.log) ext_hooks.log(msg);                                                                                 \
+    } while (0)
+#define DEVHOOK_LOGV(format, args, fallback)                                                                                   \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        if (ext_hooks.logv) ext_hooks.logv(format, args);                                                                      \
+    } while (0)
 
 // the injected key queue and encoder turns stay in the image (inert while empty), the module calls inject()
 #define DEVHOOK_KEYS_PUBLIC                                                                                                    \
@@ -115,7 +116,7 @@ void ext_update(void);                         // main loop: the crash marker, t
     {                                                                                                                          \
         onExpire;                                                                                                              \
     }
-// spike only: the public call sites still name the console function, a real change gives them DEVHOOK_COPROC_RESET()
+// the public call sites still name the console function, hook set 5 gives them DEVHOOK_COPROC_RESET()
 #define usbtest_coproc_reset()                                                                                                 \
     do                                                                                                                         \
     {                                                                                                                          \

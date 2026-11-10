@@ -1,50 +1,123 @@
-// Extension module loader (FEATURE_EXT_HOOKS, MK66 spike). In develop mode (/.develop at the card root) the boot loads
-// /Plugins/Ext/module.plg: a plugin file (plug_abi.h) of kind PLUG_KIND_EXT, linked at a fixed run address against this exact
-// image. header.reserved[0] is the CRC-32 of this image's flash (text and the .data load image, [0, _etext + .data)), reserved[1]
-// the run address it was linked for. Anything wrong (no file, a damaged file, another image, a crash during the last load, Shift
-// at power on) leaves every hook null and the boot goes on as a normal image.
+// Extension module loader (FEATURE_EXT_HOOKS, MK66). In develop mode (/.develop at the card root) the boot loads
+// /Plugins/Ext/module.plg into an SDRAM slot and calls its entry, which fills ext_hooks. The rules (order of the checks, the crash
+// marker, the status line) are ext_loader.h, shared with the host test tools/ext_loader_test.cpp. Anything wrong leaves every
+// hook null and the boot goes on as a normal image.
 #if defined(FEATURE_EXT_HOOKS) && defined(FEATURE_PLUG_HOST)
 
 #include "devhooks.h"
+#include "ext_loader.h"
 #include "plug_host.h"
 
 #include "FileSystemAdapter.h"
 #include "Platform.h"
+
+#ifndef UI_SHOT_HOST
+#include "display.h"
+#endif
 
 #include <string.h>
 
 extern "C" {
 ext_hooks_t ext_hooks;
 volatile uint32_t ext_site[2];
+#ifndef UI_SHOT_HOST
 extern uint32_t _etext, _sdata, _edata;   // mk66fx1m0.ld
+extern void (*_VectorsRam[])(void);
+void ext_keep_platform(void);   // platforms/mk66/source/util.cpp
+extern const uint8_t ext_modulesCount asm("_ZN9Interface12modulesCountE");   // Interface::modulesCount (private)
+#endif
 }
 
 namespace
 {
-constexpr uint32_t PLUG_KIND_EXT = 6;
-constexpr uint32_t kExtBytes = 48 * 1024;   // text and rw of the module, SDRAM (free past the statics, no sample memory)
-constexpr const char* kPath = "/Plugins/Ext/module.plg";
-constexpr const char* kMarker = "/Plugins/.ext-loading";   // a crash between the load and kMarkerMs of clean running
-constexpr uint32_t kMarkerMs = 3000;
-__attribute__((section(".noinit.$RAM4.ext"), aligned(16))) uint8_t s_ext[kExtBytes];
+// text, data and bss of the module, then its reset surviving tail (ext_abi.h). SDRAM past the statics, the startup never clears it.
+#ifndef UI_SHOT_HOST
+__attribute__((section(".noinit.$RAM4.ext"), aligned(16)))
+#endif
+uint8_t s_ext[EXT_SLOT_BYTES];
 
 FileSystem* s_fs;
 Timer* s_timer;
-uint32_t now() { return s_timer ? s_timer->millis() : 0; }
 uint32_t s_markerMs;
 bool s_markerSet;
+uint32_t now() { return s_timer ? s_timer->millis() : 0; }
 
+// ext_loader.h's file operations on the card
+struct CardFs
+{
+    FileSystem* fs;
+    FileSystem::FileHandle f = nullptr;
+    bool exists(const char* p) { return fs->exists(p); }
+    bool remove(const char* p) { return fs->remove(p); }
+    bool writeText(const char* p, const char* t, int n) { return plug::writeText(p, t, n); }
+    bool open(const char* p)
+    {
+        auto [ok, h] = fs->openFile(p, FileSystem::FileOpenMode::kRead);
+        f = h;
+        return ok;
+    }
+    bool read(uint8_t* dst, uint32_t n)
+    {
+        while (n)
+        {
+            const uint32_t chunk = n > 256 ? 256 : n;   // through FatFs' own sector buffer
+            if (fs->readFile(dst, chunk, f) != int32_t(chunk)) return false;
+            dst += chunk;
+            n -= chunk;
+        }
+        return true;
+    }
+    void close() { fs->closeFile(f); }
+};
+
+#ifndef UI_SHOT_HOST
+// CRC-32 of this image as the bootloader programmed it: [0, _etext) and the .data load image right after (AT(_etext)).
+// About 1 MB through the bitwise CRC, once per develop boot with a module whose file CRC is good.
 uint32_t imageCrc()
 {
     const uint32_t text = uint32_t(&_etext);
     const uint8_t* flash;
     asm("mov %0, #0" : "=r"(flash));   // address 0 (the vector table), not a null the compiler may assume away
-    uint32_t c = plug::crc32(0, flash, text);
-    return plug::crc32(c, reinterpret_cast<const uint8_t*>(text), uint32_t(&_edata) - uint32_t(&_sdata));
+    return plug::crc32(0, flash, text + (uint32_t(&_edata) - uint32_t(&_sdata)));
 }
 
-// the module's entry: fills hooks, 0 = ok. api is this image's PLUG_ABI word, as for every plugin
-typedef int32_t (*ext_entry_fn)(ext_hooks_t* hooks, uint32_t abi, uint32_t develop);
+// Firmware functions only the module calls (gc-sections drops them from an image without the console): referenced here so the
+// image keeps them, the module links against them (ld --just-symbols). Never called. The SD card and vector table ones are in
+// ext_keep_platform (the core build has no platform headers).
+volatile uint32_t s_keepSink;
+__attribute__((noinline, used)) void keepForModule()
+{
+    s_keepSink = display.isIdle() + ext_modulesCount;
+    ext_keep_platform();
+}
+
+bool enter(const plug_file_header& h)
+{
+    asm volatile("" ::"r"(&keepForModule));
+    *reinterpret_cast<volatile uint32_t*>(0x4000D000) = 0;   // system MPU: let the core fetch from SDRAM (plug::load does the same)
+    plug::syncCode();
+    void (*saved[5])(void) = {_VectorsRam[3], _VectorsRam[4], _VectorsRam[5], _VectorsRam[6], _VectorsRam[15]};
+    ext_hooks_t hk;
+    memset(&hk, 0, sizeof(hk));
+    hk.struct_size = sizeof(hk);
+    const ext_entry_fn entry = reinterpret_cast<ext_entry_fn>((uintptr_t(s_ext) + h.entry_offset) | 1u);
+    const bool ok = entry(&hk, EXT_ABI_VERSION, 1) == 0;
+    asm volatile("cpsid i" ::: "memory");
+    if (ok)
+        ext_hooks = hk;
+    else
+    {   // a refusing module leaves the stock handlers
+        for (int i = 0; i < 4; i++) _VectorsRam[3 + i] = saved[i];
+        _VectorsRam[15] = saved[4];
+    }
+    asm volatile("cpsie i" ::: "memory");
+    return ok;
+}
+#else
+// ui_shot: the rules run, no module code (the host cannot run Arm code). The image id is 0, so a card module is refused.
+uint32_t imageCrc() { return 0; }
+bool enter(const plug_file_header&) { return false; }
+#endif
 }   // namespace
 
 extern "C" void ext_boot(void* platformPtr, int develop)
@@ -52,45 +125,21 @@ extern "C" void ext_boot(void* platformPtr, int develop)
     memset(&ext_hooks, 0, sizeof(ext_hooks));
     if (!develop) return;
     Platform* platform = static_cast<Platform*>(platformPtr);
-    FileSystem* fs = platform->getFileSystem();
-    s_fs = fs;
+    s_fs = platform->getFileSystem();
     s_timer = platform->getTimer();
-    if (fs->exists(kMarker))
-    {   // the module crashed while starting last time: not this session
-        fs->remove(kMarker);
-        return;
-    }
-    if (plugUiShiftHeld()) return;
-    plug::Place pl;
-    pl.textDst = s_ext;
-    pl.textLen = kExtBytes;
-    pl.textRun = uintptr_t(s_ext);
-    pl.run = false;
-    plug::Loaded out;
-    if (plug::load(fs, kPath, pl, PLUG_KIND_EXT, out) != plug::kOk) return;
-    if (out.hdr.reserved[1] != uint32_t(uintptr_t(s_ext)) || out.hdr.reserved[0] != imageCrc()) return;
-    plug::writeText(kMarker, "ext", 3);
-    s_markerSet = true;
+    CardFs card{s_fs};
+    const ext::Slot slot{s_ext, EXT_LOAD_BYTES, uintptr_t(s_ext)};
+    const bool loaded = ext::boot(card, true, slot, imageCrc, enter) == ext::Status::kLoaded;
     s_markerMs = now();
-    *reinterpret_cast<volatile uint32_t*>(0x4000D000) = 0;   // system MPU: fetch from SDRAM
-    plug::syncCode();
-    ext_hooks_t h;
-    memset(&h, 0, sizeof(h));
-    const ext_entry_fn entry = reinterpret_cast<ext_entry_fn>((uintptr_t(s_ext) + out.hdr.entry_offset) | 1u);
-    if (entry(&h, (PLUG_ABI_MAJOR << 16) | PLUG_ABI_MINOR, 1) == 0)
-    {
-        asm volatile("cpsid i" ::: "memory");
-        ext_hooks = h;
-        asm volatile("cpsie i" ::: "memory");
-    }
+    s_markerSet = loaded;
 }
 
 extern "C" void ext_update(void)
 {
-    if (s_markerSet && now() - s_markerMs >= kMarkerMs)
+    if (s_markerSet)
     {
-        s_fs->remove(kMarker);
-        s_markerSet = false;
+        CardFs card{s_fs};
+        if (ext::markerExpired(card, s_markerMs, now())) s_markerSet = false;
     }
     if (ext_hooks.update) ext_hooks.update();
 }
