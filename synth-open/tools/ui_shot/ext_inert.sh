@@ -51,7 +51,10 @@ if [ -n "$MOD" ]; then
   run crashed "$X" 1 1 1
   same crashed ref-develop; r=$?; s=$(status crashed); case $s in "skipped: the module crashed the last boot"*) ;; *) r=1;; esac
   [ -e "$O/crashed/sd/Plugins/Ext/.loading" ] && r=1
-  verdict crashed $r "marker of a crashed boot: module skipped, marker removed, same screens, status \"$s\""
+  # the boot that skips writes the crash report (ext_loader.h crashReport): the host slot tail holds no fault record
+  grep -q "^fault record: none" "$O/crashed/sd/Plugins/Ext/crash.txt" 2>/dev/null || r=1
+  [ -e "$O/refused/sd/Plugins/Ext/crash.txt" ] && r=1
+  verdict crashed $r "marker of a crashed boot: module skipped, marker removed, crash.txt written, same screens, status \"$s\""
 fi
 echo "RESULT: $([ $rc = 0 ] && echo GREEN || echo RED)"
 exit $rc
