@@ -8,11 +8,13 @@
 # Ends with "RESULT: GREEN" (exit 0) or "RESULT: RED (n failing)". PNGs of the interesting states go to PNG_DIR when it is given.
 #
 #   synth-open/tools/ui_shot/synth_order_sim.sh [PNG_DIR]
+#   CHIP_PLUGIN_SRC  engine_chip.cpp of tracker-engines-os (CHIP is chip.plg since 1.3.0): builds ui_shot with the CHIP host twin, which lists CHIP
+#                    at stored 6 and installs it when the list rests on it. Without it the checks that move to CHIP fail
 #   PLG_DIR   folder with the .plg and .plgi of the synth plugins (default: the newest of ~/prj/poly/build/cpu-adopt, plugin-synth)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BUILD="$ROOT/build/ui-shot"
+BUILD="$ROOT/build/ui-shot${CHIP_PLUGIN_SRC:+-chipplg}"   # CHIP is a plugin engine: its host twin (CHIP_PLUGIN_SRC, as in ui_shot.sh) lists it at stored 6
 BIN="$BUILD/ui_shot"
 PNG_DIR="${1:-}"
 [ -n "$PNG_DIR" ] && mkdir -p "$PNG_DIR"
@@ -120,7 +122,8 @@ case "$START" in
 esac
 case ",$L4," in *,FAT,*) fail "FAT hidden and not in use: not listed" "$L4" ;; *) pass "FAT hidden and not in use: not listed" ;; esac
 # picking another engine leaves the hidden one in the list until the screen is shown again, then it is gone
-run "$sd" "$SYNTH; tap Down; wait 800; tap Pattern; wait 300; $SYNTH; $P"
+# CHIP is a plugin engine: a pick of it waits for the rest of the list (kModelRestMs, 1 s) before it installs and is stored
+run "$sd" "$SYNTH; tap Down; wait 2500; tap Pattern; wait 300; $SYNTH; $P"
 L4b="$(list_of 1)"
 case ",$L4b," in *,WTFM,*) fail "after leaving WTFM and coming back it is hidden again" "$L4b" ;; *) pass "after leaving WTFM and coming back it is hidden again" ;; esac
 expect "the part now plays the engine it was moved to" "CHIP" "$(part_engine 1 0)"
@@ -208,25 +211,25 @@ echo "### scenario 9: reorder, the engine picked in the new order is stored by i
 sd="$WORK/s9"; stage "$sd"
 printf 'CHIP\r\nPERC\r\nACD\r\n' >"$sd/Plugins/synth-order.txt"
 sdd="$WORK/s9d"; stage "$sdd"
-# row 0 of the ordered list is CHIP, row 1 PERC, row 2 ACD. In the default order they are rows 5, 4 and 0
+# row 0 of the ordered list is CHIP (a plugin engine since 1.3.0: the pick waits for the rest), row 1 PERC, row 2 ACD. In the default order they are rows 5, 4 and 0
 run "$sd" "$SYNTH; enc -100; wait 300; $P; wait 300; tap Down 0; $P"
 expect "ordered list, first row" "CHIP" "$(list_of 1 | cut -d, -f1)"
 for pair in "0 5 CHIP" "1 4 PERC" "2 0 ACD"; do
     set -- $pair
-    run "$sd" "$SYNTH; enc -100; wait 400; tap Down $1; wait 900; $P"
+    run "$sd" "$SYNTH; enc -100; wait 400; tap Down $1; wait 2500; $P"
     ordered_eng="$(part_engine 1 0)"; ordered_st="$(part_stored 1 0)"
-    run "$sdd" "$SYNTH; enc -100; wait 400; tap Down $2; wait 900; $P"
+    run "$sdd" "$SYNTH; enc -100; wait 400; tap Down $2; wait 2500; $P"
     expect "row $1 of the ordered list and row $2 of the default list are $3" "$3 $3" "$ordered_eng $(part_engine 1 0)"
     expect "$3 is stored by the same number with and without an order file" "$(part_stored 1 0)" "$ordered_st"
 done
-run "$sd" "$SYNTH; enc -100; wait 400; tap Down 0; wait 900; $(shot s9-ordered); $P"
+run "$sd" "$SYNTH; enc -100; wait 400; tap Down 0; wait 2500; $(shot s9-ordered); $P"
 
 echo "### scenario 10: no /Plugins folder on the card (no plugin engines)"
 sd="$WORK/s10"; stage "$sd"; rm -rf "$sd/Plugins"
 run "$sd" "$SYNTH; $P; tap Up; wait 500; $P; hold Shift; tap F1; unhold Shift; wait 400; tap Delete; wait 500; $P; $(shot s10-no-plugins-folder)"
-expect "the built in engines are listed" "ACD,FAT,VAP,WTFM,PERC,CHIP" "$(list_of 1)"
+expect "the built in engines are listed" "ACD,FAT,VAP,WTFM,PERC" "$(list_of 1)"
 expect "an arrow wraps in a short list too" "2" "$(cursor_of 2)"
-expect "the edit mode still works and hides in memory (WTFM at the cursor is the part's engine)" "6" "$(echo "$(list_of 3)" | tr ',' '\n' | wc -l | tr -d ' ')"
+expect "the edit mode still works and hides in memory (WTFM at the cursor is the part's engine)" "5" "$(echo "$(list_of 3)" | tr ',' '\n' | wc -l | tr -d ' ')"
 # (the host card creates the folder on the first write, the unit's FAT does not: there the save says "Order not saved")
 
 echo
