@@ -122,12 +122,12 @@ header platforms/mk66/3rdparty/Audio/input_i2s.h            LICENSE-PJRC-AudioLi
 
 # Where to find the source of this build
 rev="${PKG_REV:-$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
-# The words of the README that depend on the optional groups (none on: the 1.2.0 text, 12 plugin engines)
-nplug=12; nword=twelve; ntotal=18; freeware="PHZ, PLK, Console and Tube"
+# The words of the README that depend on the optional groups (none on: 13 plugin engines, CHIP among them since 1.3.0)
+nplug=13; nword=thirteen; ntotal=18; freeware="PHZ, PLK, Console and Tube"
 nofactory="Factory patches are not part of this package."; patchesline=""
 for g in ${groups[@]+"${groups[@]}"}; do
   case "$g" in
-    formflux) nplug=$((nplug + 2)); nword=fourteen; ntotal=$((ntotal + 2)); freeware="PHZ, PLK, FORM, FLUX, Console and Tube"
+    formflux) nplug=$((nplug + 2)); nword=fifteen; ntotal=$((ntotal + 2)); freeware="PHZ, PLK, FORM, FLUX, Console and Tube"
               nofactory="Factory patches are not part of this package, except the 11 presets of FORM and FLUX."
               patchesline="
 Patches/ (the FORM and FLUX presets) goes to /Patches/ on the card, next to the folders of your own patches." ;;
@@ -140,7 +140,7 @@ plugnotes=""
 if [ -n "$card" ]; then
 cat > "$dest/README-RELEASE.txt" <<EOF
 tracker-ff  ($name)
-Unofficial community firmware for the original Polyend Tracker (MK66), a fork of Polyend's Tracker Community Edition with $ntotal open synth engines (6 built in, $nplug plugins).
+Unofficial community firmware for the original Polyend Tracker (MK66), a fork of Polyend's Tracker Community Edition with $ntotal open synth engines (5 built in, $nplug plugins).
 Not affiliated with, endorsed by or supported by Polyend. Free, non-commercial.
 Built from commit $rev of https://github.com/sbialy/tracker-ff (fork of https://github.com/polyend/tracker-ce).
 

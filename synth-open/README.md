@@ -6,31 +6,32 @@ The shim is built only with `make original SYNTH_OPEN=1`. It replaces the closed
 
 What 1.2.0 has:
 
-- Synth engines chosen at build time (see "Engine picker") plus synth plugins at run time. The PLUGS configuration has six built in (ACD, FAT, VAP, WTFM, PERC, CHIP) and a library of twelve plugins in `/Plugins/Synth/` (JU6, PHZ, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type, Arc-Type, PLK). ACD, FAT, VAP and WTFM are the Polyend engines as OpenTracker re-implements them. PERC is OpenTracker's drum engine, CHIP is Polyend's own open Chiptune voice, PHZ (phase distortion) and PLK (Karplus-Strong) are our own, the rest are OpenTracker 3.x modules. Other built-in sets still build, for example the 16 engine 1.1.0 image. MIDI registers by name only and Shaping has no engine.
+- Synth engines chosen at build time (see "Engine picker") plus synth plugins at run time. The PLUGS configuration has five built in (ACD, FAT, VAP, WTFM, PERC) and a library of thirteen plugins in `/Plugins/Synth/` (JU6, PHZ, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type, Arc-Type, PLK, CHIP). ACD, FAT, VAP and WTFM are the Polyend engines as OpenTracker re-implements them. PERC is OpenTracker's drum engine, CHIP is Polyend's own open Chiptune voice, PHZ (phase distortion) and PLK (Karplus-Strong) are our own, the rest are OpenTracker 3.x modules. Other built-in sets still build, for example the 16 engine 1.1.0 image. MIDI registers by name only and Shaping has no engine.
 - Up to 4 voices per instrument, a shared voice pool and OpenTracker's governor.
 - `.patch` files that load and save from the SD card, a bank of 16 patch slots per synth part with the Patch step FX (see "Patch files"), and pitch bend.
 - Master insert plugins (`/Plugins/Master/`, two slots on the master bus, seven inserts with the release, Dirt among them), see `plug/README.md`.
-- A flash trim (`TRIM=1`). It made the 16 built-in engines of 1.1.0 fit the original's flash, the PLUGS configuration uses it with six built-in engines and the rest as plugins.
+- A flash trim (`TRIM=1`). It made the 16 built-in engines of 1.1.0 fit the original's flash, the PLUGS configuration uses it with five built-in engines and the rest as plugins.
 - A set of audio CPU optimisations that remove work the stock firmware does for silence.
 
 ## Card plugin engines (PLUG_HOST builds)
 
-The PLUG_HOST image (`make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP"`, PTF tag PLUGS)
-builds in only the six stock-named engines. Every custom engine is a card plugin in `/Plugins/Synth/` (`plug/README.md`, Synth
-engine plugins): `ju6 fm4 btype phz dtype cstype atype ttype eight hand arc pluck` (`.plg` plus a `.plgi` logo each). They
+The PLUG_HOST image (`make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 SYNTH_ENGINES="ACD FAT VAP WTFM PERC"`, PTF tag PLUGS)
+builds in only the five stock-named engines. Every other engine is a card plugin in `/Plugins/Synth/` (`plug/README.md`, Synth
+engine plugins): `ju6 fm4 btype phz dtype cstype atype ttype eight hand arc pluck chip` (`.plg` plus a `.plgi` logo each). They
 keep their stored numbers and patch ids (JU6 7, PHZ 8, FM4 9, D-Type 10, CS-Type 11, A-Type 12, T-Type 13, 8-Type 14,
 Hand-Type 15, B-Type 16, Arc-Type 17, PLK 18), so old projects, patches and slot files open on the plugin. A part whose
-plugin is not installed shows `Missing: <name>` (`open_cold.cpp`, any stored number 7 to 255, the name from `/Plugins/names.txt` or `#<number>`). Every plugin rendered bit identical to
+plugin is not installed shows `Missing: <name>` (`open_cold.cpp`, any stored number 6 to 255, the name from `/Plugins/names.txt` or `#<number>`). Every plugin rendered bit identical to
 the built-in engine (the render compare, both scenarios, run before the engine sources moved to poly-engines-os). Moving the seven that were still built in (PHZ D-Type
 CS-Type A-Type T-Type 8-Type Arc-Type) frees 88,884 B: the image ends at 0xE535C instead of 0xFAEB8 (same tree, flag flipped).
+CHIP followed in 1.3.0 and is now an installable engine too (`chip.plg`, stored 6, patch id 8, the numbers it had when it was built in). Moving it frees 15,180 B of flash. The sound is bit identical to the built-in voice (the render compare, ten scenarios). A project or a `.patch` that uses CHIP on a card without `chip.plg` shows `Missing: CHIP`.
 
-All twelve are in the model list from boot, installed or not. The FlexNVM bank (30 sectors of 4 KB) is a cache of the card:
+All thirteen are in the model list from boot, installed or not. The FlexNVM bank (30 sectors of 4 KB) is a cache of the card:
 an engine is installed when a part needs it (model list after a 500 ms rest, project load) and the least recently used engines
 that no part plays make room (`plug/README.md`, Library and cache). A Tracker has 3 synth parts (`kSynthInstrumentsCount` in
 `mtStructs.h`), each with one engine, and Patch FX slots keep the part's engine, so at most 3 engines play at once, 4 while one
-part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set, 12.3.rel1): the twelve need 44 whole sectors, 7 to 8 stay resident, the 3
-biggest plus the one being picked need 18 (73,728 of 122,880 B). Engine rw and bss: 2,976 B of the 3,072 B SRAM pool for all twelve (the worst 3 at once
-need 1,928 B, the pool stays at all twelve so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
+part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set, 12.3.rel1): the thirteen need 50 whole sectors (173,428 B packed), the 3
+biggest plus the one being picked need 20 (81,920 of 122,880 B, 23 with FORM and FLUX in the library). Engine rw and bss: 7,176 B of the 7,680 B SRAM pool for all thirteen (CHIP alone 4,200 B: its 12 voice objects; the worst 3 at once
+need 6,016 B, the pool stays at all thirteen so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
 work arena (`plug_work.h`, a block per attached engine, given back when another engine needs the room and no part plays it, so the
 limit is the engines in use at once: worst 3 of 1.2.0 + formflux 15,000 B, all four hungry ones 15,512 B), no engine takes internal heap.
 RAM_G logos: a cache of 32 list and 2 editor images (`plug_logo.h`), every listed plugin shows its logo. CPU: FlexNVM runs code at flash speed (device bench run 3), the plugin executes the same
@@ -55,7 +56,7 @@ chain stays in the stock build), checked over all 131 sections of the 18 engines
 | `open_engine.h` | `EngineDef`: parameter table, editor sections, default macros and the hosted `ISynthEngine`. A new engine is one `EngineDef` plus its engine source |
 | `engines.mk` `engine_list.h` | The engine picker: names, sources and default set (`engines.mk`, read by the top Makefile and `core/makefile`) and one X-macro entry per engine (`engine_list.h`: registry factory, `Synth::kSynthTypes`, editor name and icon, `.patch` engine id, stored project number) |
 | `engine_<name>.cpp` | One `EngineDef` per engine (parameter table, sections, default macros, value text). `engine_acd.cpp` also holds the enum name tables shared by all engines |
-| `engine_chip.cpp` | CHIP: also the `ISynthEngine` adapter that hosts `core/synth/engines/ChiptuneSynthVoice.cpp` |
+| `engine_chip.cpp` | (moved to poly-engines-os with CHIP, which is `chip.plg` since 1.3.0: the `ISynthEngine` adapter that hosts `core/synth/engines/ChiptuneSynthVoice.cpp`) |
 | `ot/` | Copies from OpenTracker (commit 927b1516385e, Apache-2.0): `audio/engines/{acd,fat,vap,wtfm,perc}.{h,cpp}`, `audio/dsp.h`, `audio/synth_engine.h`, `audio/audio_tables.h`, `audio/{governor,cpu_meter}.{h,cpp}`, `model/synth_patch.h`, `fastrun.h`, plus the 3.x headers the module engines need. Unmodified apart from a provenance line at the top (Apache section 4b) |
 | (module repositories) | The plugin engines and inserts are not in this repository: poly-engines-os and poly-effects-os (public), poly-engines and poly-effects (private). `engines/README.md` |
 | `ff_dirt.h` `ff_dirt.cpp` `ff_dirt_ctl.cpp` | The live Dirt master bus insert (FF_DIRT, see "Dirt master insert"): per block DSP at `-O2 -ffp-contract=off`, the preset table, coefficients and the `AudioEffectDirt` audio object at `-Os` |
@@ -519,12 +520,12 @@ make package-release SYNTH_OPEN=1 TRIM=1
 
 The 1.2.0 release compiler is Arm GNU Toolchain 12.3.rel1 (`TOOLCHAIN=/path/to/agt/12.3.rel1/bin/arm-none-eabi-`). `SYNTH_OPEN_VER` in `version.mk` is 1.2.0, so the images are `PolyendTracker_<TAG>_1.2.0.ptf` (AUTOF 30 chars, AUTO 29, the bootloader reads at most 31). BUILD_TAG has no dirty marker, so commit first. `make` does not track compiler flags: delete `core/build-*` and `platforms/mk66/build-trim` between variants.
 
-The release image is **AUTOF**: six built in engines (ACD FAT VAP WTFM PERC CHIP), the plugin host, the other twelve engines as card plugins, engine DSP at `-O2` (FM4 and B-Type `-O3`) with `-ffp-contract=off` on every engine and every plugin, WTFM included. The flag stops GCC from fusing a multiply and an add into a `vfma` (3 cycles on the M4F against 2 for a multiply followed by an add). It goes on the OpenTracker modules, FAT, CHIP, FM4 and B-Type (PHZ, PLK and Dirt already have it), the plugins take it from `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3`, and the render compare passes the same values to the firmware's `make -n`:
+The release image is **AUTOF**: five built in engines (ACD FAT VAP WTFM PERC), the plugin host, the other thirteen engines as card plugins, engine DSP at `-O2` (FM4 and B-Type `-O3`) with `-ffp-contract=off` on every engine and every plugin, WTFM included. The flag stops GCC from fusing a multiply and an add into a `vfma` (3 cycles on the M4F against 2 for a multiply followed by an add). It goes on the OpenTracker modules, FAT, CHIP, FM4 and B-Type (PHZ, PLK and Dirt already have it), the plugins take it from `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3`, and the render compare passes the same values to the firmware's `make -n`:
 
 ```
 E=-EACD_FAT_VAP_WTFM_PERC_CHIP
 # the release image, build/PolyendTracker_AUTOF_1.2.0.ptf
-make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTOF SYNTH_TAG=-fpc SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
+make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTOF SYNTH_TAG=-fpc SYNTH_ENGINES="ACD FAT VAP WTFM PERC" SYNTH_ENGINES_TAG=$E \
   SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
   SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off" BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
 # every plugin of the release: the four module repositories at the tags pinned in engines/external.lock.json, rebuilt from local
@@ -534,12 +535,12 @@ TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/rebuild_pinned.sh OUT autof
 
 Against the plain AUTO build the default patch differs by at most -103 dBFS on every engine except A-Type (-80 dBFS), and the all-parameters-max scenarios of Arc-Type, WTFM and Hand-Type differ far more (Arc-Type -7 dBFS, WTFM -44, Hand-Type -69), measured on the 12.3.rel1 bench dumps. The user listened to both and chose AUTOF for all engines. Its CPU saving is an emulated figure, not device calibrated.
 
-The release package (zip) is made from the image and the pinned modules (`Plugins/Synth/` with the twelve `.plg` and `.plgi`, `Plugins/Master/` with the seven inserts, `Effects/` with the `.ptfx` files, `licenses/plugins/` with the notices of the module repositories): `synth-open/tools/package_release.sh build/PolyendTracker_AUTOF_1.2.0.ptf OUT --zip --modules OUT/modules --effects PTFX_DIR` (`--card CARD_DIR` takes a ready card layout instead).
+The release package (zip) is made from the image and the pinned modules (`Plugins/Synth/` with the thirteen `.plg` and `.plgi`, `Plugins/Master/` with the seven inserts, `Effects/` with the `.ptfx` files, `licenses/plugins/` with the notices of the module repositories): `synth-open/tools/package_release.sh build/PolyendTracker_AUTOF_1.2.0.ptf OUT --zip --modules OUT/modules --effects PTFX_DIR` (`--card CARD_DIR` takes a ready card layout instead).
 
 The plain **AUTO** build stays buildable as an unpublished fallback: the same two lines without the `-ffp-contract=off` flags (engine DSP `-O2`, FM4 and B-Type `-O3`, the OpenTracker modules fused as the compiler defaults). It is not part of the release package.
 
 ```
-make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTO SYNTH_TAG=-pa SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" SYNTH_ENGINES_TAG=$E \
+make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTO SYNTH_TAG=-pa SYNTH_ENGINES="ACD FAT VAP WTFM PERC" SYNTH_ENGINES_TAG=$E \
   BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
 TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/rebuild_pinned.sh OUT fused
 ```

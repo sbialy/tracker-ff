@@ -16,7 +16,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BUILD="$ROOT/build/ui-shot"
+BUILD="$ROOT/build/ui-shot${CHIP_PLUGIN_SRC:+-chipplg}"
 OUT_DIR="${OUT_DIR:-$HOME/prj/poly/build/ui-shot}"
 BIN="$BUILD/ui_shot"
 EXTERNAL="$ROOT/engines/external.py"
@@ -55,6 +55,9 @@ p Rate=2
 p Tone=40
 p Mix=100'
 SYNTH_PAGES='instr 64; tap Params; wait 1200'
+# chip-*: the part's engine is moved to CHIP in the picker (the list runs ACD FAT VAP WTFM PERC CHIP ..., the part starts on WTFM): needs the CHIP
+# plugin twin (CHIP_PLUGIN_SRC=.../poly-engines-os/src/synth-open/engine_chip.cpp), else the part says Missing: CHIP
+CHIP_PICK='tap Down 2; wait 3500'
 
 script_for() {   # page[:state] -> commands, empty when the page does not exist (bash 3.2: no associative arrays)
     case "$1" in
@@ -80,12 +83,22 @@ script_for() {   # page[:state] -> commands, empty when the page does not exist 
         synth-edit) echo "$SYNTH_PAGES; tap F8; wait 2000" ;;
         synth-edit:filter) echo "$SYNTH_PAGES; tap F8; wait 1500; tap Right; wait 400; tap Down; wait 1200" ;;
         synth-macros) echo "$SYNTH_PAGES; tap Params; wait 1500" ;;
+        chip-engines) echo "$SYNTH_PAGES; wait 2500; $CHIP_PICK" ;;
+        chip-params) echo "$SYNTH_PAGES; wait 2500; $CHIP_PICK; tap Right; tap Right; wait 500" ;;
+        chip-edit) echo "$SYNTH_PAGES; wait 2500; $CHIP_PICK; tap F8; wait 2000" ;;
+        chip-edit:filter) echo "$SYNTH_PAGES; wait 2500; $CHIP_PICK; tap F8; wait 1500; tap Right; wait 400; tap Down; wait 1200" ;;
+        chip-macros) echo "$SYNTH_PAGES; wait 2500; $CHIP_PICK; tap Params; wait 1500" ;;
+        chip-automation) echo "$SYNTH_PAGES; wait 2500; $CHIP_PICK; tap Params; wait 800; tap Params; wait 1500" ;;
+        chip-automation:lfo) echo "$SYNTH_PAGES; wait 2500; $CHIP_PICK; tap Params; wait 800; tap Params; wait 1000; tap Right; tap Down 2; tap Right; tap Down; tap Right; wait 500; enc 2; wait 1500" ;;
         automation) echo "$SYNTH_PAGES; tap Params; wait 800; tap Params; wait 1500" ;;
         automation:lfo) echo "$SYNTH_PAGES; tap Params; wait 800; tap Params; wait 1000; tap Right; tap Down 2; tap Right; tap Down; tap Right; wait 500; enc 2; wait 1500" ;;
         *) echo "" ;;
     esac
 }
 ALL_PAGES="pattern master master:inserts song config performance sample-play sample-load instrument inserts:empty inserts:running inserts:bbd inserts:dirt2 inserts:safe inserts:safe-mixed inserts:many inserts:many-end engines engines:library synth-params synth-edit synth-edit:filter synth-macros automation automation:lfo"
+
+# CHIP is a plugin: its pages need the native twin (CHIP_PLUGIN_SRC), they are part of "all" only then
+[ -z "${CHIP_PLUGIN_SRC:-}" ] || ALL_PAGES="$ALL_PAGES chip-engines chip-params chip-edit chip-edit:filter chip-macros chip-automation chip-automation:lfo"
 
 # the private modules: the twin sources of Console and Tube at the pinned tag, the published files of all four. Anything missing is skipped
 # with a note, the pages then show those modules as missing

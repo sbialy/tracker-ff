@@ -64,9 +64,9 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Note**: none of them is built into the firmware image any more, they ship as `.plg` plugins. They need the 3.x `synth_engine.h` and `bbd_chorus.h` from item 10 and, for FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type and Arc-Type, the DSP headers `chip_dsp.h`, `fm_dsp.h` and `va_dsp.h` from item 10 (Apache-2.0).
 * **Note**: D-Type's OpenTracker engine id (0x82) is the id of this project's own PHZ engine, so D-Type is keyed 0xA2 in the picker and in `.patch` files, the same as the poly-editor stores it (the engine code itself is unchanged).
 
-## 12. Polyend Chiptune (CHIP engine for the `SYNTH_OPEN=1` build, optional)
-* **Location**: `core/synth/engines/ChiptuneSynthVoice.cpp` is Polyend's own open Chiptune voice from this repository (the repository licence applies, see LICENSE). The only change is a small block of hooks marked `FEATURE_SYNTH_OPEN` (parameter switch, bend, reset, create) that `synth-open/engine_chip.cpp` calls. Its parameter table follows the same file.
-* **Note**: compiled only when `CHIP` is in `SYNTH_ENGINES`. Nothing here uses `libPolySynth.a` or `libPolyDSP.a`.
+## 12. Polyend Chiptune (the CHIP engine, a plugin since 1.3.0)
+* **Location**: `core/synth/engines/ChiptuneSynthVoice.cpp` is Polyend's own open Chiptune voice from this repository (the repository licence applies, see LICENSE). The only change is a small block of hooks marked `FEATURE_SYNTH_OPEN` (parameter switch, bend, reset, create, construct in caller storage) that the CHIP plugin calls. The plugin `chip.plg` is built in the public module repository poly-engines-os (`engine_chip.cpp`, which follows the voice's parameter table, and a vendored copy of this file and the PolySynth headers it needs).
+* **Note**: a `SYNTH_OPEN=1` image does not compile this file (`CHIP` is not a built-in engine name). Nothing here uses `libPolySynth.a` or `libPolyDSP.a`.
 
 ## 13. PHZ (clean-room phase distortion engine, source in the private repository poly-engines)
 * **Location**: the source is not in this repository any more. It lives in the private repository `poly-engines` (`src/synth-open/phz/`). This repository keeps the engine's public identity (stored number, type id and name in `synth-open/engine_list.h` and `engines/engines.json`) and loads the built plugin from the SD card like any other engine plugin. The PHZ icons are Polyend's (already in `core/libs/images`).

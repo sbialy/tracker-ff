@@ -28,6 +28,18 @@
  },
  "engines": [
   {
+   "id": "chip",
+   "name": "CHIP",
+   "stored": 6,
+   "patch": 8,
+   "type": 8,
+   "version": "1.0.0",
+   "logo": "CHIP",
+   "visibility": "public",
+   "repo": "poly-engines-os",
+   "licence": "Polyend CE (MIT with a Wholesale Commercial Clone Restriction)"
+  },
+  {
    "id": "ju6",
    "name": "JU6",
    "stored": 7,

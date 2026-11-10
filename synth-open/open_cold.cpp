@@ -274,11 +274,11 @@ constexpr Builtin kBuiltin[] = {
 };
 constexpr int kBuiltinCount = int(sizeof(kBuiltin) / sizeof(kBuiltin[0]));
 // The plugin engines of the list (plug_synth.cpp synthBoot, installed or not): each has its own stored number, so the stored number space
-// bounds them (249), nothing else. Their tables are in the SDRAM: about 0.1 KB each here (list entries, registry entry, name).
+// bounds them (250), nothing else. Their tables are in the SDRAM: about 0.1 KB each here (list entries, registry entry, name).
 constexpr int kPlugMax = open::kPlugStoredLast - open::kPlugStoredFirst + 1;
 // Any plugin engine number (open::kPlugStoredFirst..kPlugStoredLast) that is not in the list is "missing": one placeholder for all
 // of them (type open::kMissingTypeId), the project keeps the number, the name comes from the names this firmware has seen.
-// 0 to 6 are Polyend's (always built in when they exist in this firmware family), DIRT (5) never had an open engine.
+// 0 to 4 are Polyend's (always built in when they exist in this firmware family), DIRT (5) never had an open engine, CHIP (6) is a plugin.
 // Remembered plugin engine names, one per stored number (name[0] 0: none). Every number has its place, so none is ever refused.
 struct EngineName
 {
@@ -293,6 +293,7 @@ void namesClear()
     if (!gNamesClear)
     {
         std::memset(gNames, 0, sizeof(gNames));
+        std::memcpy(gNames[6 - open::kPlugStoredFirst].name, "CHIP", 5);   // CHIP is a plugin but always was number 6: a card without chip.plg says "Missing: CHIP"
         gNamesClear = true;
     }
 }
@@ -349,7 +350,7 @@ bool open::engineListAdd(const EngineDef* def, int stored, int patchEngine)
 {
     if (gCount || gPlugCount >= kPlugMax || stored < kPlugStoredFirst || stored > kPlugStoredLast)
     {
-        return false; // the list is in use (the synth started), full, or not a plugin number (each has its own, so 249 never fill up)
+        return false; // the list is in use (the synth started), full, or not a plugin number (each has its own, so 250 never fill up)
     }
     for (int i = 0; i < kBuiltinCount + gPlugCount; i++) // its numbers must be its own
     {
@@ -496,7 +497,7 @@ int open::typeForEngineId(int engine)
         }
     }
     // a plugin engine id this build has not got: the missing placeholder's (a part on it keeps its slot 0 backup on an engine change)
-    return engine >= kPlugPatchFirst && engine <= kPlugPatchLast ? kMissingTypeId : -1;
+    return (engine >= kPlugPatchFirst && engine <= kPlugPatchLast) || engine == kPlugPatchChip ? kMissingTypeId : -1;
 }
 
 // Every engine of the list and every missing placeholder into the registry (InstrumentTypeRegistry::registerInstrumentTypes)

@@ -1,14 +1,14 @@
 # engines/ - the plugin modules of tracker-ff
 
 tracker-ff 1.2.0 is split into five repositories. This one is the firmware: the plugin host, the plugin SDK, the built-in engines
-(ACD FAT VAP WTFM PERC from OpenTracker, CHIP from Polyend's open Chiptune voice) and the `.ptfx` Sample Editor effects. It holds no
+(ACD FAT VAP WTFM PERC from OpenTracker) and the `.ptfx` Sample Editor effects. It holds no
 plugin module source. Every synth engine plugin and master insert plugin is built in a module repository, and this folder pins and
 checks what they publish.
 
 | Repository | Visibility | Lock set | Modules |
 |---|---|---|---|
 | tracker-ff (this one) | public | | host, SDK, built-in engines, `.ptfx` |
-| poly-engines-os | public | `engines-os` | the OpenTracker 3.x module engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type (`.plg`, `.plgi`, `.wasm`, `.json`) |
+| poly-engines-os | public | `engines-os` | CHIP (Polyend's open Chiptune voice, `.plg` and `.plgi` only) and the OpenTracker 3.x module engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type (`.plg`, `.plgi`, `.wasm`, `.json`) |
 | poly-engines | private | `engines` | our own engines PHZ and PLK (FORM and FLUX are in the repository, not in 1.2.0), freeware binaries only |
 | poly-effects-os | public | `effects-os` | the OpenTracker fx ports Dirt, Tape, Lo-Fi, BBD, Phaser (`.plg`, `.wasm`, `.json`) |
 | poly-effects | private | `effects` | our own inserts Console and Tube, freeware binaries only |
@@ -62,12 +62,12 @@ release zip, and only after the user has listened and approved them, so everythi
 - `rebuild_pinned.sh OUT autof all --with formflux`, `crosscheck.sh DIR all --with formflux`, `make -C engines check WITH=formflux`,
   `EXTERNAL_WITH=formflux engines/ci_external.sh`: the same tools with the group on.
 - `package_release.sh ... --modules DIR --with formflux`: `Plugins/Synth/form.plg flux.plg` (+ `.plgi`), `Patches/FORM/*.patch`,
-  `Patches/FLUX/*.patch`, and the README counts (20 engines, 14 plugins). Without `--with` the package is byte for byte what it was before.
+  `Patches/FLUX/*.patch`, and the README counts (20 engines, 15 plugins). Without `--with` the package is byte for byte what it was before.
 
 The firmware image is the same with or without them: a plugin brings its own stored, patch and type numbers, the host takes any
 free ones (`engine_list.h` lists only the built-in engines and is a pinned SDK header, so FORM and FLUX are not added there).
 A project that uses FORM or FLUX on a card without the plugin falls back to a default part, like any engine the build has never heard
-of (the "known but missing" placeholders cover stored 7 to 18 only).
+of (the "known but missing" placeholders cover stored 6 to 18 only).
 
 To ship them: build both packages again with `--with formflux` (`~/prj/poly/ref/five-repos-1.2.0.md` lists the commands), or drop
 `"optional": "formflux"` from the two rows and make the group `files` part of `set["files"]` once nobody wants the switch any more.
@@ -91,7 +91,7 @@ takes the checkout's files. The firmware stays the owner of these files: an SDK 
 
 ## What the firmware lost with the module sources
 
-- `SYNTH_ENGINES` accepts only the built-in six. A plugin engine name stops the build with a pointer here. The flash report
+- `SYNTH_ENGINES` accepts only the built-in five. A plugin engine name stops the build with a pointer here. The flash report
   (`make synth-engines`) and `tools/phz_cycles` cover the built-in engines only.
 - The render compare of each engine plugin against the same engine linked into the firmware (`synth_render_compare.sh`) is gone:
   the linked-in reference no longer exists. The engine builds keep their own render checksums (`SET.json` of poly-engines-os) and the

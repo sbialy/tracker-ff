@@ -7,7 +7,7 @@
    "visibility": "public",
    "kind": "synth",
    "tag": "v1.3.0",
-   "tag_commit": "f20ded8ad84e8acb6ea61f3c8b7c4fa7653af718",
+   "tag_commit": "d8726067751cdb388568c0f54c407175adbf10a0",
    "local_repo": "../poly-engines-os",
    "local_dirs": [
     "../poly-engines-os/build/engines-autof",
@@ -54,10 +54,12 @@
     "arc.plg": "52f929e1def1452d2610212e0218b39f585ee370a8e4dcd3aaf99743052337ae",
     "arc.plgi": "7321dc7c9244392bd7b37194a6d0a0176f95cab7ae7e9c1c50f2f50778a6e372",
     "arc.json": "6c5359258ea12efbea36aae1e7c3d077068f43017bc72c2f9e31e5e0b0076c57",
-    "arc.wasm": "8782a0dcf3a14356f967e1a78ce8ebaac06a0f5f4ce9c32ef80d6d40741a2050"
+    "arc.wasm": "8782a0dcf3a14356f967e1a78ce8ebaac06a0f5f4ce9c32ef80d6d40741a2050",
+    "chip.plg": "09db2602f01ec290eadcc935a8f092550723d90a39933466e7d9e5ae3050cfc1",
+    "chip.plgi": "211617a3e8f5f306e33ee2ec52e3fe083bb2e92240043a4e0c0ad8bddee1984d"
    },
    "notice_files": {
-    "NOTICE.md": "87c042319a3fb333bd1591b7d0d0be5e48b1ca4bf2c8a60d2dc7b1d6d21ce4a9",
+    "NOTICE.md": "5ba758753fefdff01d45ec7238805677dfc968d97a954e4c048e78c22d29e91a",
     "LICENSE-OpenTracker-synths-MIT.txt": "313016655fb017714d4735f4772a8f6761b7c2c2ccce70db070e00bfdfba9058",
     "LICENSE-OpenTracker-Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "LICENSE-tracker-ff-MIT.txt": "c922340e052e913e48e48f8827efc86833c9378380120bf85d67f8dba7056a78",

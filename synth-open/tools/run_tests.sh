@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The host test suite of a tracker-ff tree (Mac or Linux, nothing here touches a device or builds a firmware image):
-#   - run_smoke.sh in 5 variants (the six built-in engines, TRIM=1, PLUGENG=1: a run time plugin engine stand-in)
+#   - run_smoke.sh in 5 variants (the five built-in engines, TRIM=1, PLUGENG=1: a run time plugin engine stand-in)
 #   - plug/build_plugs.sh: the two worked examples of docs/plugin_sdk.md, built and run in the emulator
 #   - the plugin host unit tests (plug_*_test.cpp, sat_softknee_test.cpp), the index and logo tests against the pinned modules
 # Ends with one verdict line: "RESULT: GREEN" (exit 0) or "RESULT: RED (...)" (exit 1). Logs in OUTDIR/logs.
@@ -16,6 +16,8 @@
 #     PLUGDIR         the shipped plugins (.plg, .plgi) for the index and logo tests. Default: the pinned modules of
 #                     engines/external.lock.json, fetched into OUTDIR/modules from the local module builds (external.py fetch --from-local)
 #     NO_BUILD_PLUGS  set: skip build_plugs.sh (run_host_tests.sh)
+#     CHIP_PLUGIN_SRC engine_chip.cpp of tracker-engines-os (CHIP is chip.plg): adds smoke variants that link that engine and the Polyend
+#                     voice natively and list CHIP as a plugin engine at stored 6 (the engine tests of CHIP, all-engine loops with it)
 #     EXT_MODULE      "module.plg IMAGE_CRC RUN_ADDRESS": ext_loader_test also loads that extension module (pack_ext.py output)
 #     SMOKE_ARCH      run_smoke.sh architecture, default arm64 here (native on Apple silicon). x86_64 runs under Rosetta
 set -uo pipefail
@@ -46,15 +48,21 @@ bad=0
 
 echo "### smoke"
 {
-# Only the six built-in engines can be linked in (engines.mk), every other engine is a plugin since the five repository split.
+# Only the five built-in engines can be linked in (engines.mk), every other engine is a plugin (CHIP too since 1.3.0).
 # PLUGENG=1 adds a run time plugin engine (a 100 engine library, missing numbers, names.txt).
 for v in \
- "|ACD FAT VAP WTFM" "TRIM=1|ACD FAT VAP WTFM PERC CHIP" "TRIM=1 PLUGENG=1|ACD FAT VAP WTFM PERC CHIP" \
- "|ACD FAT VAP WTFM PERC CHIP" "PLUGENG=1|ACD FAT VAP WTFM PERC CHIP" ; do
+ "|ACD FAT VAP WTFM" "TRIM=1|ACD FAT VAP WTFM PERC" "TRIM=1 PLUGENG=1|ACD FAT VAP WTFM PERC" \
+ "|ACD FAT VAP WTFM PERC" "PLUGENG=1|ACD FAT VAP WTFM PERC" ; do
   e=${v%%|*}; s=${v#*|}
   echo "### env $e | $s"
   env $e sh synth-open/tools/run_smoke.sh "$s"; echo "### rc=$?"
-done; } > "$L/smoke.log" 2>&1
+done
+if [ -n "${CHIP_PLUGIN_SRC:-}" ]; then
+  for e in "TRIM=1" "TRIM=1 PLUGENG=1"; do
+    echo "### env $e CHIP_PLUGIN_SRC | ACD FAT VAP WTFM PERC"
+    env $e CHIP_PLUGIN_SRC="$CHIP_PLUGIN_SRC" sh synth-open/tools/run_smoke.sh "ACD FAT VAP WTFM PERC"; echo "### rc=$?"
+  done
+fi; } > "$L/smoke.log" 2>&1
 grep -c '^### rc=0' "$L/smoke.log" | sed 's/^/smoke variants rc=0: /'; grep '^### rc=' "$L/smoke.log" | grep -v 'rc=0' | sed 's/^/smoke NONZERO /'
 
 if [ -z "${NO_BUILD_PLUGS:-}" ]; then
@@ -114,6 +122,7 @@ grep -E '^### (run|rc)' "$L/plug_tests.log" | paste - -
 bad=$((bad + $(grep -h '^### rc=' "$L/smoke.log" "$L/plug_tests.log" | grep -vc '^### rc=0$')))
 nb=$(grep -c '^### rc=' "$L/plug_tests.log")
 for f in "$L"/*.build.log; do [ -s "$f" ] && grep -q 'error' "$f" && { echo "BUILD ERROR $f"; bad=$((bad+1)); }; done
-[ "$(grep -c '^### rc=0$' "$L/smoke.log")" -eq 5 ] || { echo "smoke: not 5 variants"; bad=$((bad+1)); }
+nsmoke=5; [ -z "${CHIP_PLUGIN_SRC:-}" ] || nsmoke=7
+[ "$(grep -c '^### rc=0$' "$L/smoke.log")" -eq "$nsmoke" ] || { echo "smoke: not $nsmoke variants"; bad=$((bad+1)); }
 if [ "$bad" -eq 0 ] && [ "$nb" -ge 9 ]; then echo "RESULT: GREEN"; exit 0; fi
 echo "RESULT: RED ($bad failing, $nb tests ran)"; exit 1

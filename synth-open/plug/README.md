@@ -280,13 +280,12 @@ Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sect
   5 sectors) is then about 0.1 to 0.2 s of flash commands plus the card read and two index writes. `synth.txt` logs every install
   (`ms`, `in flash commands`, commands, erases, evicted).
 
-Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the twelve need 44 whole sectors of 30 (157,136 B packed), 7 to 8 stay
-resident at once. The 3 biggest on the parts plus the one being picked need 18 sectors. Their rw needs 2,976 B of the 3,072 B pool, so the pool
-never decides what is evicted. The worst 3 at once need 1,928 B (2,048 B with the one being picked): a pool of that size would
-save 1,024 B of SRAM but then hold JU6 and three others only, and the 5th engine picked would rewrite the flash.
+Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the thirteen need 50 whole sectors of 30 (173,428 B packed). The 3 biggest on the parts plus the one being picked need 20 sectors (23 with FORM and FLUX in the library). Their rw needs 7,176 B of the 7,680 B pool (CHIP 4,200 B, JU6 1,648 B, the rest 112 to 168 B each), so the pool
+never decides what is evicted. The worst 3 at once need 6,016 B (6,136 B with the one being picked): a pool of 6,656 B would
+save 1,024 B of SRAM but then hold CHIP, JU6 and a few others only, and the 5th engine picked could rewrite the flash.
 
-The shipped synth plugins are the twelve custom engines (`engines/engines.json`, the PLUGS image builds in only ACD FAT VAP
-WTFM PERC CHIP). Ten are built here, PHZ and PLK are private modules built from the private repository `poly-engines`:
+The shipped synth plugins are the thirteen engines (`engines/engines.json`, the PLUGS image builds in only ACD FAT VAP
+WTFM PERC). Eleven are built in the public module repository (the ten OpenTracker ports and CHIP), PHZ and PLK are private modules built from the private repository `poly-engines`:
 
 | Plugin | Engine | Image B | rw + bss B | Worst block, 4 voices (instructions, scenario 1, engine DSP at `-Os` as in 1.1.0) |
 |---|---|---|---|---|
@@ -302,12 +301,13 @@ WTFM PERC CHIP). Ten are built here, PHZ and PLK are private modules built from 
 | `hand.plg` | Hand-Type | 12,392 | 120 | 47,838 (9.2 %, scenario 0) |
 | `arc.plg` | Arc-Type | 19,136 | 120 | 142,787 (27.3 %) |
 | `pluck.plg` | PLK (private) | 6,476 | 120 + 8,772 work (SDRAM) | 55,551 (10.6 %) |
+| `chip.plg` | CHIP | 13,328 | 4,192 | 251,404 (48.1 %, scenario 1 at `-O2`) |
 
 Instructions are a lower bound of cycles (the device measured 1.5 times the emulated count for Dirt), the percentage is of a
 522,240 cycle block, and the built-in engine executes the same count. The `-O2` figures are in `synth-open/README.md`, CPU at four
 voices. Image B is the code and data, the `.plg` file adds the
-header, manifest and rebase table. Together the twelve need more than the 122,880 B bank: the bank is a cache (below). Logos:
-one `.plgi` per plugin, `previews/sheet.png` shows all twelve.
+header, manifest and rebase table. Together the thirteen need more than the 122,880 B bank: the bank is a cache (below). Logos:
+one `.plgi` per plugin, `previews/sheet.png` shows all thirteen.
 
 ### Engine logos
 
@@ -326,5 +326,5 @@ comes near an engine or the patch editor opens), so every listed engine shows it
 `/Plugins/synth.txt` (`logo <file> sidecar|trailer|text err <n>`). Make a record
 with `synth-open/tools/make_plgi.py`: from a PNG (white or opaque is drawn, black or transparent is not, scaled to both
 sizes), from two PNGs, or `--text NAME` for a text logo in the stock style. `--check` tests a `.plgi` or a `.plg` trailer,
-`--selftest` round-trips the stock logos. The twelve shipped `.plgi` files are text logos (`logo` in `engines/engines.json`), `tools/plgi_sheet.py` stacks
+`--selftest` round-trips the stock logos. The thirteen shipped `.plgi` files are text logos (`logo` in `engines/engines.json`), `tools/plgi_sheet.py` stacks
 their previews into one sheet.

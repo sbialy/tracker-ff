@@ -66,11 +66,13 @@ constexpr const char* kStatusPath = "/Plugins/synth.txt";
 // "<stored> <name>" of every plugin engine this firmware has listed on this card: a project whose engine's plugin is gone later
 // shows "Missing: <name>" (open::missingName), not only the number. Written at boot when a new engine shows up.
 constexpr const char* kNamesPath = "/Plugins/names.txt";
-// rw + bss of the installed engines. JU6 1,648 B (its chorus lines), the other 11 112 to 160 B each: all 12 together 2,976 B, so
-// every engine of the library keeps its own rw range and the pool never decides what is evicted (only the flash does). The worst
-// 3 at once need 1,928 B (JU6, T-Type and one of 120 B) and the 3 plus the one being picked 2,048 B: a 2,048 B pool would save
-// 1,024 B but then hold JU6 plus three others only, and picking a 5th engine would rewrite the flash (plug_bank_test prints both).
-constexpr uint32_t kPoolBytes = 3072;
+// rw + bss of the installed engines. CHIP 4,200 B (its 12 voice objects, 276 B each, in the bss: they are hot state, SDRAM would cost
+// 20 to 30 cycles per access), JU6 1,648 B (its chorus lines), the other 11 112 to 168 B each: all 13 together 7,176 B (FORM and FLUX add
+// 224 B), so every engine of the library keeps its own rw range and the pool never decides what is evicted (only the flash does). It was
+// 3,072 B while CHIP was built in (the 12 shipped plugins needed 2,976 B). The worst 3 at once need 6,016 B (CHIP, JU6 and one of 168 B) and
+// the 3 plus the one being picked 6,184 B, so a pool of 6,656 B would still do but then hold CHIP, JU6 and a few others only, and
+// picking a 5th engine could rewrite the flash (plug_bank_test prints both). 7,680 B costs 4,608 B of SRAM heap over 3,072 B.
+constexpr uint32_t kPoolBytes = 7680;
 constexpr uint32_t kStageBytes = 32768;  // one engine's image + bss while it is rebased for the flash
 
 __attribute__((aligned(8))) uint8_t s_pool[kPoolBytes];

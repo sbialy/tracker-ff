@@ -19,7 +19,8 @@ Version 1.3.0 of the tracker-ff firmware for the original Tracker. The Tracker+ 
 
 1. **Transient Shaper.** The sample editor effect has new envelope times, and its Sustain gain is held back while a hit is rising.
 2. **Add to Empty Slot.** With files selected in the Sample Loader, Shift with the add button adds the selection and does not jump to the first empty slot. After a jump the instrument list and the memory bar refresh.
-3. **Patch FX.** `O - Patch` now applies the macros and the automation of the slot it switches to, together with its values. An LFO or envelope that sits on the same slot type in both patches keeps running, one that changes type starts new and an automation slot that is Off reads zero.
+3. **CHIP is an installable engine.** CHIP is no longer built into the image. It is `chip.plg` in `/Plugins/Synth/` like the other plugin engines, and it frees about 15 KB of flash. The sound, the parameters and the numbers are unchanged, so old projects and `.patch` files open on it as before. A part on CHIP shows `Missing: CHIP` on a card without the plugin.
+4. **Patch FX.** `O - Patch` now applies the macros and the automation of the slot it switches to, together with its values. An LFO or envelope that sits on the same slot type in both patches keeps running, one that changes type starts new and an automation slot that is Off reads zero.
 
 ### Fixed
 
