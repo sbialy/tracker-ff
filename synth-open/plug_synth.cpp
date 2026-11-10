@@ -93,6 +93,7 @@ __NOINIT(EXTERNAL_RAM) ScanStats s_sscan;
 FileSystem* s_sfs;
 int s_sn;            // library entries (the scan of /Plugins/Synth)
 bool s_safe;         // the crash marker was there at boot: no engine is attached this session
+bool s_legacyOn;     // /Plugins/nvm-legacy was there at boot
 bool s_uiUp;
 DisplayDriver* s_dd;  // the FT812 (synthLogos), the logo cache writes RAM_G through it
 LogoCache s_logo;     // the RAM_G logo slots (plug_logo.h)
@@ -105,6 +106,9 @@ static_assert(kLibMax >= polysynth::open::kPlugStoredLast - polysynth::open::kPl
 static_assert(kPlugLogoFirst <= 255, "the editor logo id fits the label's uint8_t bitmapIndex");
 int s_editorK = -1;
 extern "C" volatile uint32_t systick_millis_count;
+extern "C" volatile uint32_t ff_audio_late;      // output_i2s.cpp: audio blocks held off or written too late
+extern "C" volatile uint32_t ff_audio_gap_max;   // the longest gap between two audio blocks (DWT)
+constexpr const char* kLegacyPath = "/Plugins/nvm-legacy";   // A/B tests: flash commands the 1.2.0 way (plug_nvm.cpp)
 
 // The ISynthEngine of a library engine: every call goes to its PLUG_EXT_SYNTH function (audio context, as built in). x is null
 // while the engine is not attached: the calls do nothing (render ends the voice), nothing runs from the flash.
@@ -193,6 +197,7 @@ struct Install
     char file[kBankFileLen];
     int err, evicted, commands, erases;
     uint32_t ms, cmdMs;
+    uint32_t late, gapUs, maskUs, slices, fallbacks;   // install-crackle: what the audio saw during the install
 };
 Install s_log[8];
 int s_logN;
@@ -575,8 +580,12 @@ void status()
     for (int i = 0; i < s_logN && i < 8 && len < cap; i++)
     {
         const Install& x = s_log[(s_logN - 1 - i) % 8];
-        len += snprintf(t + len, size_t(cap - len), "install %s err %d ms %lu (in flash commands %lu) commands %d erases %d evicted %d\r\n",
-                        x.file, x.err, (unsigned long)x.ms, (unsigned long)x.cmdMs, x.commands, x.erases, x.evicted);
+        len += snprintf(t + len, size_t(cap - len),
+                        "install %s err %d ms %lu (in flash commands %lu) commands %d erases %d evicted %d"
+                        " audio late %lu gap max %lu us masked max %lu us slices %lu fallbacks %lu%s\r\n",
+                        x.file, x.err, (unsigned long)x.ms, (unsigned long)x.cmdMs, x.commands, x.erases, x.evicted,
+                        (unsigned long)x.late, (unsigned long)x.gapUs, (unsigned long)x.maskUs, (unsigned long)x.slices,
+                        (unsigned long)x.fallbacks, s_legacyOn ? " legacy" : "");
     }
     static const char* const kSrc[3] = {"text", "sidecar", "trailer"};
     for (int k = 0; k < s_sn && s_uiUp && len < cap; k++)
@@ -629,6 +638,9 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
         SdIo io;
         const uint32_t ms0 = systick_millis_count;
         const uint64_t cy0 = nvmCommandCycles();
+        nvmStatsReset();
+        const uint32_t late0 = ff_audio_late;
+        ff_audio_gap_max = 0;
         const BankInstallStatus st = bankInstall(f, io, w, rank, onEvict, uintptr_t(s_pool), kPoolBytes, s_bank, s_sec, s_itext,
                                                  int(sizeof(s_itext)), s_bankWork);
         // systick stops inside a flash command (interrupts off): the command time is counted from the DWT (90 MHz there)
@@ -641,6 +653,11 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
         l.erases = st.erases;
         l.cmdMs = cmdMs;
         l.ms = (systick_millis_count - ms0) + cmdMs;
+        l.late = ff_audio_late - late0;
+        l.gapUs = ff_audio_gap_max / 180u;
+        l.maskUs = nvmStats().maskMaxCyc / 90u;
+        l.slices = nvmStats().slices;
+        l.fallbacks = nvmStats().fallbacks + nvmStats().noAudio;
         if (st.err)
         {
             s_lib[k].err = int8_t(10 + st.err);
@@ -706,6 +723,8 @@ void synthBoot(FileSystem* fs)
     const bool hadIndex = fs->exists(kIndexPath);
     namesRead();
     if (!n && !hadIndex) return;   // no synth plugin was ever installed: nothing to do, nothing written
+    s_legacyOn = fs->exists(kLegacyPath);
+    nvmLegacy(s_legacyOn);
     s_safe = fs->exists(kMarker);  // a marker left by the last session (plug_host.cpp boot() reads it too): no engine runs
     BankWant* const w = s_bwant;
     for (int k = 0; k < n; k++)

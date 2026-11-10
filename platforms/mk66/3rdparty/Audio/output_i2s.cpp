@@ -36,6 +36,26 @@ DMAMEM static uint32_t i2s_tx_buffer[kAudioBlockSamples * 2];
 
 DMAChannel AudioOutputI2S::dma(false);
 
+// Audio block timing for the FlexNVM installer (synth-open/plug_nvm.cpp, install-crackle): it starts each erase slice right after
+// a block ends and sizes it by the last block's length. Also the measure of the install crackle: ff_audio_late counts blocks that
+// came 1.75 periods or more after the previous one (the interrupt was held off, the DMA replayed an old half) or ended with the
+// DMA already in the half they wrote. DWT cycles (180 MHz, 90 MHz while the installer is out of HSRUN).
+extern "C"
+{
+volatile uint32_t ff_audio_blocks;
+volatile uint32_t ff_audio_end_cyc;
+volatile uint32_t ff_audio_isr_cyc;
+volatile uint32_t ff_audio_gap_max;
+volatile uint32_t ff_audio_late;
+}
+namespace
+{
+volatile uint32_t* const kCyc = reinterpret_cast<volatile uint32_t*>(0xE0001004);   // DWT_CYCCNT
+// one block at 48 MHz / 1088 = 44,117.6 Hz (the MCLK below): 522,240 cycles at 180 MHz
+constexpr uint32_t kPeriodCyc = uint32_t(uint64_t(F_CPU) * kAudioBlockSamples * 1088 / 48000000ull);
+uint32_t s_lastStart;
+}
+
 void AudioOutputI2S::begin(void (*updateBuffersFunc)(void* left, void* right))
 {
     this->updateBuffersFunc = updateBuffersFunc;
@@ -71,11 +91,23 @@ void AudioOutputI2S::begin(void (*updateBuffersFunc)(void* left, void* right))
 void AudioOutputI2S::isr(void)
 {
     int16_t* dest;
-    uint32_t saddr, offset;
+    // offset was left unset on the second branch: GCC folded it to kAudioBlockSamples (the 1.2.0 image renders both halves
+    // through buffer_left + 128), now explicit so the added code cannot change it
+    uint32_t saddr, offset = kAudioBlockSamples;
+
+    const uint32_t c0 = *kCyc;
+    const uint32_t gap = c0 - s_lastStart;
+    if (s_lastStart)
+    {
+        if (gap > ff_audio_gap_max) ff_audio_gap_max = gap;
+        if (gap >= kPeriodCyc / 4 * 7) ff_audio_late = ff_audio_late + 1;
+    }
+    s_lastStart = c0 ? c0 : 1;
 
     saddr = (uint32_t)(dma.TCD->SADDR);
     dma.clearInterrupt();
-    if (saddr < (uint32_t)i2s_tx_buffer + sizeof(i2s_tx_buffer) / 2)
+    const bool dmaFirst = saddr < (uint32_t)i2s_tx_buffer + sizeof(i2s_tx_buffer) / 2;
+    if (dmaFirst)
     {
         // DMA is transmitting the first half of the buffer
         // so we must fill the second half
@@ -95,6 +127,13 @@ void AudioOutputI2S::isr(void)
     }
 
     memcpy_tointerleaveLR(dest, buffer_left + offset, buffer_right + offset);
+
+    const bool dmaFirstNow = (uint32_t)(dma.TCD->SADDR) < (uint32_t)i2s_tx_buffer + sizeof(i2s_tx_buffer) / 2;
+    if (dmaFirstNow != dmaFirst) ff_audio_late = ff_audio_late + 1;   // the DMA reached the half before it was written
+    const uint32_t c1 = *kCyc;
+    ff_audio_isr_cyc = c1 - c0;
+    ff_audio_end_cyc = c1;
+    ff_audio_blocks = ff_audio_blocks + 1;
 }
 
 // MCLK needs to be 48e6 / 1088 * 256 = 11.29411765 MHz -> 44.117647 kHz sample rate
