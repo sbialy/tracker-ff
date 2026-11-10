@@ -2,6 +2,9 @@
 #include "Profiler.h"
 #include "TrackerImpl.h"
 #include "devhooks.h"
+#ifdef FEATURE_EXT_HOOKS
+#include "features.h"
+#endif
 #include "mtWavetableEnvelopes.h"
 #ifdef FEATURE_PLUG_HOST
 #include "plug_host.h"
@@ -159,12 +162,26 @@ void TrackerImpl::init(Platform* platform)
     newFileManager.init(platform->getFileSystem(), nullptr, stereoSampleMode);
 #endif
 
+#ifdef FEATURE_EXT_HOOKS
+    plug::useFs(platform->getFileSystem()); // features read and write their files through plug::readText / writeText
+    features::boot(platform);               // Config > Features: restart mode, developer mode, USB audio, module features
+    const int develop = features::find("develop");
+    // /.develop stays an override: a card can always reach develop mode without the menu
+    interfaceGlobals.devMode = platform->getFileSystem()->exists("/.develop") || features::on(develop);
+    const bool extLoad = interfaceGlobals.devMode && (!features::on(develop) || features::value(develop, 0) != 0);
+#else
     interfaceGlobals.devMode = platform->getFileSystem()->exists("/.develop");
+#endif
+    lowPower.initRestartMode();
 #ifdef FEATURE_PLUG_HOST
     plug::boot(platform);
 #endif
 
+#ifdef FEATURE_EXT_HOOKS
+    DEVHOOK_TRACKER_INIT(platform, extLoad);
+#else
     DEVHOOK_TRACKER_INIT(platform, interfaceGlobals.devMode);
+#endif
 
 #if defined(PLATFORM_IMX) && defined(ENABLE_DEV_CONSOLE)
     if (interfaceGlobals.devMode)
@@ -202,6 +219,9 @@ void TrackerImpl::update()
 #endif
     engine.updateSdStream();
     sequencer.update();
+#ifdef FEATURE_EXT_HOOKS
+    features::tick();
+#endif
     DEVHOOK_TRACKER_UPDATE();
 }
 

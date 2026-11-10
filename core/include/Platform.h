@@ -40,6 +40,16 @@ class Platform
     // Default: nothing.
     virtual void setPowerOffGuard(bool armed) { (void)armed; }
     virtual void kickPowerOffGuard() {}
+    // Restart mode (RestartMode.h): while on, a power off that completes restarts the unit, and a stalled one (the guard above)
+    // resets into a start instead of the off state. Default: nothing (the unit goes off as usual).
+    virtual void setRestartOnPowerOff(bool on) { (void)on; }
+    // keep the start state of a power-on while the unit runs, so a power cut followed by power return starts the UI (original)
+    virtual void setStartOnPowerReturn(bool on) { (void)on; }
+    // USB audio (Config > Features, USB_AUDIO=1 images): compiled in, the function this session enumerated with (picked in usb_init
+    // from an EEPROM boot flag), and the writer of that flag for the next start. Default: not in the image.
+    virtual bool usbAudioBuilt() { return false; }
+    virtual bool usbAudioRunning() { return false; }
+    virtual void setUsbAudioBoot(bool on) { (void)on; }
     virtual void runBootloader(char* fileName) = 0;
     virtual void setPowerButtonCallback(PowerButtonCallback) = 0;
     virtual bool getPowerButtonState() = 0;

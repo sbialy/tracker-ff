@@ -3,6 +3,24 @@
 #include "usb_serial.h"
 #include "devhooks.h"
 
+#ifdef FEATURE_EXT_HOOKS
+#include "SD.h"
+#ifdef FEATURE_USB_AUDIO
+#include "usb_audio_ff.h"
+#endif
+// Kept for an extension module (synth-open/ext_module.cpp keepForModule): the image has no other caller, the module links
+// against them. Never called.
+extern "C" __attribute__((noinline, used)) void ext_keep_platform(void)
+{
+    static volatile uint32_t sink;
+    sink = SD.freeClusterCount() + SD.sectorsPerCluster();
+    attachInterruptVector(IRQ_NUMBER_t(0), nullptr);
+#ifdef FEATURE_USB_AUDIO
+    ffUsbAudioGetStats(nullptr); // the console's USB audio statistics (never called, a null pointer would fault)
+#endif
+}
+#endif
+
 // A console image (devhooks.h) sends the text to its own ring instead of the serial port
 void _debuglog(const char* msg)
 {

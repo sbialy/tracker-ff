@@ -36,6 +36,7 @@ enum
     PLUG_KIND_TRACK_FX = 3,        // mono or stereo per track insert (phase 5)
     PLUG_KIND_SYNTH = 4,           // ISynthEngine shaped voice engine (phase 3, PLUG_EXT_SYNTH)
     PLUG_KIND_OFFLINE = 5,         // sample editor effect (phase 6, what .ptfx is today)
+    PLUG_KIND_EXT = 6,             // extension module of one exact image (core/include/ext_abi.h), develop mode only
 };
 
 enum

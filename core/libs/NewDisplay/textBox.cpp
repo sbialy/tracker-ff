@@ -160,7 +160,8 @@ void cTextBox::update()
         API_END();
     }
 
-    textLength = strlen(text);
+    // a box created without a text (the Config description box) is refreshed while hidden: no strlen of a null text
+    textLength = text != nullptr ? strlen(text) : 0;
     position = text;
 
     API_COLOR(colors[0]);

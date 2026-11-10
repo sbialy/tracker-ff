@@ -21,6 +21,11 @@
 //   reset                      an MCU reset now (any cause): prints the start decision of the MK66 model
 //   stall MS                   the main loop blocked in one call for MS (time and SysTick go on, no main loop pass)
 //   resets                     print the MCU reset counters of the MK66 model
+//   restartmode                print the restart mode state (RestartMode.h) and whether its file is on the card. With the
+//                              features (EXTHOOKS=1): " cfg N", the on line of /Features/restart.cfg (-1: no file)
+//   features                   print every feature: id, on, listed, row value (EXTHOOKS=1)
+//   usbaudio                   print the USB audio model: the session's function and the EEPROM boot flag
+//   eepromret N / usbflag N    set the EEPROM Power return mirror (byte 8) or the USB audio boot flag (byte 9)
 //   fmset N                    set the file manager status to N (fileManager.h fileManagerStatus), an injection
 //   touch PATH / rm PATH       create or remove a file (absolute path), e.g. the UISHOT_FAIL_ARM file of host_fault.cpp
 //   chmod MODE PATH            chmod a path of the SD folder (octal MODE), e.g. 555 Workspace makes every Workspace save fail
@@ -34,6 +39,14 @@
 #include "mtStructs.h"
 #include "fileManager.h"
 #include "mtSleep.h"
+#if __has_include("RestartMode.h")
+#include "RestartMode.h"
+#endif
+#if defined(FEATURE_EXT_HOOKS) && __has_include("features.h")
+#include "features.h"
+#define UISHOT_HAVE_FEATURES 1
+#endif
+#include <fstream>
 
 // The sample playback screen reads editorInstrument->playMode in initDisplayControls() before start() has set the pointer. On the
 // Cortex-M a null pointer reads the flash at address 0, on the Mac it is a fault. The host seeds the pointer first, which needs the
@@ -158,6 +171,43 @@ bool command(const std::string& line)
     if (c == "eeprom") { int n = 0; is >> n; hostp::g_startState = n; return true; }
     if (c == "reset") { hostp::resetCommand(); return true; }
     if (c == "stall") { int ms = 0; is >> ms; hostp::stall(uint32_t(ms)); return true; }
+    if (c == "restartmode")
+    {
+#if __has_include("RestartMode.h")
+        struct stat st;
+        const bool file = stat((g_sdRootForStat + restart_mode::kFilePath).c_str(), &st) == 0;
+#ifdef UISHOT_HAVE_FEATURES
+        int cfg = -1;   // the on line of /Features/restart.cfg, the store of the mode in a features tree
+        std::ifstream f(g_sdRootForStat + "/Features/restart.cfg");
+        for (std::string l; f && std::getline(f, l);)
+            if (l.rfind("on ", 0) == 0) cfg = atoi(l.c_str() + 3);
+        printf("restart mode %d leaving %d platform %d file %d cfg %d\n", int(lowPower.isRestartMode()),
+               int(lowPower.isLeavingRestartMode()), int(hostp::g_restartOnPowerOff), int(file), cfg);
+#else
+        printf("restart mode %d leaving %d platform %d file %d\n", int(lowPower.isRestartMode()), int(lowPower.isLeavingRestartMode()),
+               int(hostp::g_restartOnPowerOff), int(file));
+#endif
+#else
+        printf("restart mode: not in this tree\n");
+#endif
+        return true;
+    }
+#ifdef UISHOT_HAVE_FEATURES
+    if (c == "features")
+    {
+        for (int i = 0; i < features::count(); i++)
+            printf("feature %s on %d listed %d value %s\n", features::desc(i)->id, int(features::on(i)), int(features::listed(i)),
+                   features::rowValue(i));
+        return true;
+    }
+#endif
+    if (c == "usbaudio")
+    {
+        printf("usb audio running %d flag %d\n", hostp::g_usbAudioRunning, hostp::g_usbAudioFlag);
+        return true;
+    }
+    if (c == "eepromret") { int n = 0; is >> n; hostp::g_returnMirror = n; return true; }
+    if (c == "usbflag") { int n = 0; is >> n; hostp::g_usbAudioFlag = n; return true; }
     if (c == "resets") { printf("resets %d while off %d start state %d\n", hostp::g_mcuResets, hostp::g_resetsWhileOff, hostp::g_startState); return true; }
     if (c == "fm") { printf("fm status %d op %d\n", int(newFileManager.getStatus()), int(newFileManager.getCurrentOperation())); return true; }
     if (c == "fmset") { int n = 0; is >> n; newFileManager.setStatus(uint8_t(n)); return true; }
@@ -222,6 +272,9 @@ int main(int argc, char** argv)
     // UISHOT_SHIFT_BOOT=1: Shift held while the unit powers up (the plugin host's safe mode), released once the pattern screen is up
     const bool shiftBoot = getenv("UISHOT_SHIFT_BOOT") != nullptr;
     if (shiftBoot) hostp::setHeld(29, true);
+    // UISHOT_REC_BOOT=1: Record held while the unit powers up (the restart mode, RestartMode.h), released once the pattern screen is up
+    const bool recBoot = getenv("UISHOT_REC_BOOT") != nullptr;
+    if (recBoot) hostp::setHeld(28, true);
     t->getStartDisplayFunc()(p);
     t->init(p);
     // the start sequence: config, project open, start screen, then the pattern screen
@@ -233,6 +286,7 @@ int main(int argc, char** argv)
     if (!mtInterface.isPatternScreenActive()) { fprintf(stderr, "ui_shot: the pattern screen never came up\n"); return 1; }
     samplePlayback.editorInstrument = &mtProject.instrument[0];
     if (shiftBoot) hostp::setHeld(29, false);
+    if (recBoot) hostp::setHeld(28, false);
     run(6000);   // past the plugin host's boot key window (Shift in the first seconds means safe mode)
     std::istringstream is(argv[2]);
     std::string line;

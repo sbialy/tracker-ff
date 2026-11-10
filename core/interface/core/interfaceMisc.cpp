@@ -303,7 +303,17 @@ void Interface::refreshDisplayShutdown()
     screenRefreshTimer = 0;
 
     //	sprintf(turnOffText, "Shutdown in %.1fs", (lowPower.getTimeLeft()/1000.0));
-    sprintf(turnOffText, "Shutting down");
+    // restart mode (RestartMode.h): the bar says what the end of this power off does
+    const char* text = "Shutting down";
+    if (lowPower.isLeavingRestartMode())
+    {
+        text = "Restart mode off";
+    }
+    else if (lowPower.isRestartMode())
+    {
+        text = "Restarting";
+    }
+    snprintf(turnOffText, sizeof(turnOffText), "%s", text);
 
     display.setControlValue(turnOffProgressBar, lowPower.getShutdownProgress());
     display.setControlText(turnOffProgressBar, turnOffText);

@@ -32,6 +32,7 @@ class cMenuGroup : public cMenuBase
       : cMenuBase(menuTypeGroup)
       , parentMenu(&parent)
       , childsCount(childs_count)
+      , childsCapacity(childs_count)
       , childs(new hMenuItem[childs_count])
       , childsNames(new char*[childs_count])
       , childsValues(new char*[childs_count])
@@ -52,6 +53,12 @@ class cMenuGroup : public cMenuBase
     cMenuGroup* getSelChild() { return (cMenuGroup*)childs[selectedItem]; }
 
     uint8_t getCount() { return childsCount; }
+
+    // Features (configMenu.cpp): rows filled after the start, the list value of a child group, a call when a child is entered
+    void setCount(uint8_t n) { childsCount = n < childsCapacity ? n : childsCapacity; if (selectedItem >= childsCount) selectedItem = 0; }
+    void setChild(uint8_t i, cMenuBase* child, const char* name) { if (i < childsCapacity) { childs[i] = child; childsNames[i] = (char*)name; } }
+    const char* (*childValue)(uint8_t row) = nullptr;
+    void (*onEnter)(uint8_t row) = nullptr;   // called on the child group before it shows (row = this group's selection)
 
     char** getNames() { return childsNames; }
 
@@ -78,7 +85,8 @@ class cMenuGroup : public cMenuBase
 
   private:
     cMenuGroup* parentMenu;
-    const uint8_t childsCount;
+    uint8_t childsCount;
+    const uint8_t childsCapacity;
     hMenuItem* childs;
     char** childsNames;
     char** childsValues;
@@ -197,9 +205,25 @@ class cMenuItem : public cMenuBase
 
     menu_item_t getItemType() { return itemType; }
 
+    const char* getName() { return itemName; }
+
     const void* getItemSetup() { return itemSetup; }
 
     uint8_t getValueEditState() { return valueEditState; }
+
+    // Features page: one set of rows serves every feature, re-pointed when a feature is entered
+    void rebind(const char* name, const char* desc, menu_item_t type, const void* setup)
+    {
+        itemName = name;
+        itemDesc = desc;
+        itemType = type;
+        itemSetup = setup;
+        if (!ptrValueText && (type == menuItemTypeValueU8 || type == menuTypeItemListValues))
+        {
+            ptrValueText = new char[kTempValueTextLen + 1];
+        }
+        valueEditState = 0;
+    }
 
     void resetValueEditState() { valueEditState = 0; }
 

@@ -135,6 +135,12 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Author**: Emanuele Lapponi.
 * **License**: MIT. Contributed under the contribution terms of `CONTRIBUTING.md`. The `editor-fx-sdk/` folder is MIT under Part 1 of `LICENSE`.
 
+## 23. OpenTracker USB audio (`USB_AUDIO=1` images, Config > Features > USB audio)
+* **Location**: `platforms/mk66/usbaudio/` (`UsbAudioOut.{h,cpp}`, `usb_audio_hooks.cpp`, `test/usb_audio_out_test.cpp`) and the blocks marked `FF_USB_AUDIO_TX` in `platforms/mk66/3rdparty/teensy_core/usb_desc.{h,c}`, `usb_dev.{c,h}`. Each file says what was changed (Apache-2.0 section 4b): Tracker to computer only (no OUT and no feedback endpoint), our namespace, the ring in SDRAM, the audio function switched on or off at start, a statistics hook for the development console.
+* **Source**: https://github.com/syamajala/polyend-tracker-re (commit ef7a4bbce247: `src/core/usb/usb_audio_out.{h,cpp}`, `src/hal/usb_audio.cpp`, `tests/usb_audio_out_test.cpp`, the `OPENTRACKER PATCH` audio parts of `third_party/teensy3/usb_desc.{h,c}` and `usb_dev.c`).
+* **License**: Apache License 2.0, text in `licenses/LICENSE-OpenTracker-Apache-2.0.txt` (the upstream project ships no NOTICE file). The Teensy core files they patch stay under item 4.
+* **Note**: compiled only with `USB_AUDIO=1` on the make line. Images built without it contain none of this code. With it, the audio function is off until it is switched on in Config > Features and the unit restarts.
+
 ## Release packages
 
 The `.ptf` images of the `SYNTH_OPEN=1` builds are distributed together with `LICENSE`, this file and a `licenses/` folder holding the full text of every bundled third-party license (made by `synth-open/tools/package_release.sh`). Texts that live in the repository: `licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`, `licenses/LICENSE-BSD-3-Clause-NXP.txt`, `licenses/LICENSE-LiberationFonts-OFL-1.1.txt`, `util/3rdparty/*/LICENSE*`. Texts that exist only as source headers (FastCRC, Polyverb, FatFs, PJRC Teensy core and audio library) are copied out of those headers by the packaging script, verbatim. The image links neither `libPolySynth.a` nor `libPolyDSP.a`, so `synth/lib/LICENSE-PROPRIETARY.txt` is not shipped. Factory patches and `.ptfx` plugins are not part of the package.

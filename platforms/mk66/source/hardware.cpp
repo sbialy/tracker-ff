@@ -14,6 +14,9 @@ void operatorNewArenaInit();
 #include "i2cBusControllerNXP.h"
 #include "pinout.h"
 #include "sdram.h"
+#ifdef FEATURE_USB_AUDIO
+#include "usb_audio_ff.h"
+#endif
 
 static PlatformImpl* platformImpl;
 
@@ -59,6 +62,9 @@ void initHardware(PlatformImpl* platform,
     pinMode(TrackerPinout::kExternalRamEnable, OUTPUT);
     digitalWrite(TrackerPinout::kExternalRamEnable, HIGH);
     externalRAM.init();
+#ifdef FEATURE_USB_AUDIO
+    ffUsbAudioStart(); // the USB audio ring lives in SDRAM: cleared here, before the audio block or a packet uses it
+#endif
 #ifdef FW_SDRAM_FILE_POOLS
     operatorNewArenaInit(); // new.cpp: the big blocks of operator new go to the SDRAM from here on
 #endif
