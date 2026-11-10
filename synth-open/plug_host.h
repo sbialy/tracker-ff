@@ -90,7 +90,7 @@ void nvmSliceUs(uint32_t us);   // fixed erase slice in us (0: from the last aud
 // shim's engine list from boot (TrackerImpl::init, before Synth::init), installed or not. The FlexNVM bank (plug_bank.h) is a
 // cache: an engine is installed when a part needs it (synthEnsure), the least recently used ones that no part needs make room.
 // The library holds every synth .plg the scan of /Plugins/Synth keeps (scanIndex, one per uid). A listed engine needs its own stored
-// number (open_engine.h kPlugStoredFirst..kPlugStoredLast, 7..255, one byte in a project), so at most 249 are listed (open_cold.cpp
+// number (open_engine.h kPlugStoredFirst..kPlugStoredLast, 6..255, one byte in a project), so at most 250 are listed (open_cold.cpp
 // kPlugMax), the rest of the 256 are files that cannot be (no numbers, numbers taken). Nothing else is sized by the engine count: the
 // tables of an entry are in the SDRAM (plug_synth.cpp and open_cold.cpp, about 0.36 KB each), the logos and the flash bank are caches, the work arena
 // is shared by the engines in use.

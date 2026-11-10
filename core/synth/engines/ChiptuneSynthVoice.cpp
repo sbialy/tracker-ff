@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <new>
 #include <numbers>
 
 namespace polysynth
@@ -1185,6 +1186,11 @@ class ChiptuneSynthVoice : public sdk::CustomSynthVoice<ChiptuneSynthVoice, Chip
 #ifdef FEATURE_SYNTH_OPEN
 namespace open
 {
+#ifdef __arm__
+static_assert(sizeof(ChiptuneSynthVoice) == kChipVoiceBytes && alignof(ChiptuneSynthVoice) <= 4,
+              "kChipVoiceBytes (ChiptuneSynthVoice.h) is the voice object's size");
+#endif
+InstrumentVoice* chipVoiceConstruct(void* storage) { return new (storage) ChiptuneSynthVoice(); }
 std::unique_ptr<InstrumentVoice> chipVoiceCreate() { return std::make_unique<ChiptuneSynthVoice>(); }
 void chipVoiceReset(InstrumentVoice& voice)
 {

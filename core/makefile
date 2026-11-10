@@ -37,8 +37,9 @@ CPP_SRCS 	+= $(shell find ./Exporter/ -name *.cpp)
 CPP_SRCS 	+= $(shell find ./AudioEngine/ -name *.cpp)
 CPP_SRCS 	+= $(shell find ./synth/ -name *.cpp)
 ifeq ($(SYNTH_OPEN),1)
-# Engine sources that live in core/ (Polyend's open Chiptune voice) are compiled only when their engine is picked
-CPP_SRCS 	:= $(filter-out $(addprefix ./,$(foreach e,$(filter-out $(SYNTH_ENGINES_SEL),$(SYNTH_ENGINES_ALL)),$(SYNTH_ENGINE_CORE_SRCS_$(e)))),$(CPP_SRCS))
+# Engine sources that live in core/ (Polyend's open Chiptune voice) are compiled only when their engine is picked, and CHIP is a
+# plugin (chip.plg of poly-engines-os) now, so a SYNTH_OPEN image never compiles it
+CPP_SRCS 	:= $(filter-out $(addprefix ./,$(foreach e,$(filter-out $(SYNTH_ENGINES_SEL),$(SYNTH_ENGINES_ALL) CHIP),$(SYNTH_ENGINE_CORE_SRCS_$(e)))),$(CPP_SRCS))
 endif
 C_SRCS 	 	+= $(shell find ./libs/ -name *.c)
 
@@ -71,11 +72,9 @@ SYNTH_OPT_SHIM ?=
 SYNTH_OPT_COLD ?=
 SYNTH_OPT_FAT ?= $(SYNTH_OPT_ENGINES)
 SYNTH_GUI_OBJS := $(addprefix $(OBJ_DIR)/,interface/instrumentEditor/SynthEditor.o interface/instrumentEditor/SynthPatchEditor.o interface/instrumentEditor/SynthMacros.o interface/instrumentEditor/SynthAutomation.o synth/Synth.o synth/FileSystemAdapter.o synth/MidiAdapter.o synth/registry.o)
-$(filter $(OBJ_DIR)/synth-open/ot/% $(OBJ_DIR)/synth-open/engine_chip.o,$(SYNTH_OPEN_OBJS)): EXTRA_OPT := $(SYNTH_OPT_ENGINES)
-# CHIP (the voice and its glue) has its own knob, default the engines' flag. -O2 makes a voice about 12 % cheaper (12.7 % of a
-# block instead of 14.4 %, default patch, synth-open/tools/phz_cycles/run_bench.sh -O2 CHIP) for +3.6 KB in the image
+$(filter $(OBJ_DIR)/synth-open/ot/%,$(SYNTH_OPEN_OBJS)): EXTRA_OPT := $(SYNTH_OPT_ENGINES)
+# SYNTH_OPT_CHIP is accepted and unused: CHIP is chip.plg, built in poly-engines-os with the engines' flags
 SYNTH_OPT_CHIP ?= $(SYNTH_OPT_ENGINES)
-$(OBJ_DIR)/synth/engines/ChiptuneSynthVoice.o $(OBJ_DIR)/synth-open/engine_chip.o: EXTRA_OPT := $(SYNTH_OPT_CHIP)
 # PHZ: -O2 and no fused multiply add. On the Cortex-M4F a VFMA / VMLA takes 3 cycles, a VMUL + VADD pair 2, and that is
 # worth 20 % of the voice (synth-open/tools/phz_cycles). Measured: worst case 5.8 % of a block at these flags, 7.3 % at -Os
 $(SYNTH_GUI_OBJS): EXTRA_OPT := $(SYNTH_OPT_GUI)

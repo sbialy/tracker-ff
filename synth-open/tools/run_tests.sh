@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The host test suite of a tracker-ff tree (Mac or Linux, nothing here touches a device or builds a firmware image):
-#   - run_smoke.sh in 5 variants (the six built-in engines, TRIM=1, PLUGENG=1: a run time plugin engine stand-in)
+#   - run_smoke.sh in 5 variants (the five built-in engines, TRIM=1, PLUGENG=1: a run time plugin engine stand-in)
 #   - plug/build_plugs.sh: the two worked examples of docs/plugin_sdk.md, built and run in the emulator
 #   - the plugin host unit tests (plug_*_test.cpp, sat_softknee_test.cpp), the index and logo tests against the pinned modules
 # Ends with one verdict line: "RESULT: GREEN" (exit 0) or "RESULT: RED (...)" (exit 1). Logs in OUTDIR/logs.
@@ -45,11 +45,11 @@ bad=0
 
 echo "### smoke"
 {
-# Only the six built-in engines can be linked in (engines.mk), every other engine is a plugin since the five repository split.
+# Only the five built-in engines can be linked in (engines.mk), every other engine is a plugin (CHIP too since 1.3.0).
 # PLUGENG=1 adds a run time plugin engine (a 100 engine library, missing numbers, names.txt).
 for v in \
- "|ACD FAT VAP WTFM" "TRIM=1|ACD FAT VAP WTFM PERC CHIP" "TRIM=1 PLUGENG=1|ACD FAT VAP WTFM PERC CHIP" \
- "|ACD FAT VAP WTFM PERC CHIP" "PLUGENG=1|ACD FAT VAP WTFM PERC CHIP" ; do
+ "|ACD FAT VAP WTFM" "TRIM=1|ACD FAT VAP WTFM PERC" "TRIM=1 PLUGENG=1|ACD FAT VAP WTFM PERC" \
+ "|ACD FAT VAP WTFM PERC" "PLUGENG=1|ACD FAT VAP WTFM PERC" ; do
   e=${v%%|*}; s=${v#*|}
   echo "### env $e | $s"
   env $e sh synth-open/tools/run_smoke.sh "$s"; echo "### rc=$?"

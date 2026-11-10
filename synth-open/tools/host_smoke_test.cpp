@@ -145,7 +145,7 @@ int main() {
   }
   static open::EngineDef oddDef = libDef;
   oddDef.typeId = 0x1F00;
-  const bool oddRefused = !open::engineListAdd(&oddDef, 256, 0x1F00) && !open::engineListAdd(&oddDef, 6, 0x1F00);   // not plugin numbers
+  const bool oddRefused = !open::engineListAdd(&oddDef, 256, 0x1F00) && !open::engineListAdd(&oddDef, 5, 0x1F00);   // not plugin numbers
 #endif
   auto synth = Synth::createSynth([](size_t){return nullptr;});
   auto store = synth->createPatchStore(Synth::FileSystemId::kPatches, true);
@@ -436,8 +436,13 @@ int main() {
               std::string(open::missingName(99)) == "#99" && open::typeForEngineId(0xC7) == kMiss,
             "stored 99 / engine 0xC7 (in no list): the missing placeholder, \"Missing: #99\"");
       check(!open::missingDef(5) && open::typeForStored(5) == -1 && !open::missingDef(300) && open::typeForStored(300) == -1 &&
-              !open::missingDef(-1) && open::typeForEngineId(0x7F) == -1,
-            "outside the plugin numbers (Polyend's 0 to 6 this build lacks, over 255, negative): no placeholder, the part takes the defaults");
+              !open::missingDef(-1) && open::typeForEngineId(0x7F) == -1 && open::typeForEngineId(7) == -1,
+            "outside the plugin numbers (Polyend's 0 to 5 this build lacks, over 255, negative): no placeholder, the part takes the defaults");
+      // CHIP is a plugin (chip.plg, stored 6, .patch engine 8): without it a part on CHIP and a CHIP .patch are Missing, not reset
+      check(open::missingDef(6) && !open::engineOf(open::missingDef(6)) && open::typeForStored(6) == kMiss && open::engineUiForStored(6) == -1 &&
+              std::string(open::missingName(6)) == "#6" && open::typeForEngineId(8) == kMiss && open::engineNameRemember(6, "CHIP") &&
+              std::string(open::missingName(6)) == "CHIP",
+            "stored 6 / engine 8 (CHIP, a plugin): the missing placeholder, \"Missing: CHIP\"");
       auto src = ps->createPatch(kLead); open::PatchData pd; static_cast<open::OpenPatch&>(*src).exportData(pd);
       pd.engine = 0xC7; uint8_t pbuf[4096]; const size_t pn = open::encodePatch(pd, pbuf, sizeof(pbuf));
       const std::vector<uint8_t> file0(pbuf, pbuf + pn);
@@ -2040,7 +2045,7 @@ int main() {
                 open::engineAt(ui0 + i).builtin == -1 && open::typeForStored(140 + i) == 0x1000 + i && open::engineIdForType(0x1000 + i) == 0x200 + i &&
                 open::typeForEngineId(0x200 + i) == 0x1000 + i && !open::missingDef(140 + i);
       for (int ui = 1; ui < open::engineCount(); ui++) order = order && open::engineAt(ui - 1).stored < open::engineAt(ui).stored;
-      check(order && oddRefused, "100 library engines: listed by stored number in the picker order, numbers outside 7..255 refused");
+      check(order && oddRefused, "100 library engines: listed by stored number in the picker order, numbers outside 6..255 refused");
       bool reg = true;
       for (int i : {0, 39, 40, 99}) {
         auto bp = pst->createPatch(0x1000 + i);
@@ -2054,7 +2059,7 @@ int main() {
         missing = missing && open::missingDef(st) && open::engineNameRemember(st, nm) && std::string(open::missingName(st)) == nm;
       }
       check(missing, "40 missing numbers (100..139): each the placeholder, each named by its remembered name (no name limit)");
-      // names.txt: every number 7..255 known, written, read back line by line (plug_synth.cpp namesRead), nothing new learned
+      // names.txt: every number 6..255 known, written, read back line by line (plug_synth.cpp namesRead), nothing new learned
       for (int st = 7; st <= 255; st++) {
         char nm[9]; snprintf(nm, sizeof(nm), "N%03d", st);
         if (st < 100 || st >= 140) open::engineNameRemember(st, nm);
@@ -2072,8 +2077,8 @@ int main() {
         }
         i = e + 1;
       }
-      check(same && lines == 249 && std::string(open::missingName(120)) == "MIS120" && std::string(open::missingName(99)) == "N099",
-            "names.txt with all 249 plugin numbers: written and read back, every line known (nothing learned), nothing refused");
+      check(same && lines == 250 && std::string(open::missingName(120)) == "MIS120" && std::string(open::missingName(99)) == "N099",
+            "names.txt with all 250 plugin numbers: written and read back, every line known (nothing learned), nothing refused");
     }
 
     // round E: a listed engine that is not installed, then attached; a plugin engine detached while a part plays it

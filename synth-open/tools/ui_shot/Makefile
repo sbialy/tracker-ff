@@ -22,7 +22,7 @@ SO      := $(ROOT)/synth-open
 CXX     ?= clang++
 CC      ?= clang
 
-SYNTH_ENGINES ?= ACD FAT VAP WTFM PERC CHIP
+SYNTH_ENGINES ?= ACD FAT VAP WTFM PERC
 include $(SO)/engines.mk
 SYNTH_OPEN := 1
 -include $(ROOT)/version.mk
