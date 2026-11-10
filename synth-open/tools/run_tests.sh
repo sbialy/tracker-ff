@@ -17,7 +17,9 @@
 #                     engines/external.lock.json, fetched into OUTDIR/modules from the local module builds (external.py fetch --from-local)
 #     NO_BUILD_PLUGS  set: skip build_plugs.sh (run_host_tests.sh)
 #     CHIP_PLUGIN_SRC engine_chip.cpp of tracker-engines-os (CHIP is chip.plg): adds smoke variants that link that engine and the Polyend
-#                     voice natively and list CHIP as a plugin engine at stored 6 (the engine tests of CHIP, all-engine loops with it)
+#                     voice natively and list CHIP as a plugin engine at stored 6 (the engine tests of CHIP, all-engine loops with it).
+#                     Default: the file at the pinned tag of the engines-os set (external.py source). Without a checkout of that
+#                     repository the CHIP variants are skipped and the run says so
 #     EXT_MODULE      "module.plg IMAGE_CRC RUN_ADDRESS": ext_loader_test also loads that extension module (pack_ext.py output)
 #     SMOKE_ARCH      run_smoke.sh architecture, default arm64 here (native on Apple silicon). x86_64 runs under Rosetta
 set -uo pipefail
@@ -34,6 +36,11 @@ if [ -z "${TOOLCHAIN:-}" ]; then
   fi
 fi
 export TOOLCHAIN=${TOOLCHAIN:-}
+if [ -z "${CHIP_PLUGIN_SRC:-}" ]; then
+  if python3 -I engines/external.py source engines-os "$out/src" engine_chip.cpp > "$out/chip_src.log" 2>&1; then CHIP_PLUGIN_SRC=$out/src/engine_chip.cpp
+  else echo "CHIP plugin source: not available, the CHIP smoke variants are skipped ($(tail -1 "$out/chip_src.log"))"; fi
+fi
+export CHIP_PLUGIN_SRC=${CHIP_PLUGIN_SRC:-}
 export PY=${PY:-python3}
 export SMOKE_ARCH=${SMOKE_ARCH:-arm64}
 echo "tree $wt ($(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
