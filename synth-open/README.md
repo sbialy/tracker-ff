@@ -117,6 +117,31 @@ The 18 names are ACD FAT VAP WTFM PERC CHIP JU6 PHZ FM4 DTYPE CSTYPE ATYPE TTYPE
 - Projects store an engine as its canonical number, not as the position in the list on screen, so a project keeps its engines across builds with other engine sets: ACD 0, FAT 1, VAP 2, WTFM 3, PERC 4, DIRT 5, CHIP 6, JU6 7, PHZ 8, FM4 9, DTYPE 10, CSTYPE 11, ATYPE 12, TTYPE 13, 8TYPE 14, HANDTYPE 15, BTYPE 16, ARCTYPE 17. PERC is 4 and CHIP is 6 as in the stock Tracker+ and Mini CE list. A part whose engine the build lacks (DIRT, an engine left out such as HANDTYPE in the release image) is reset to that part's defaults on load (`Synth::validateSynthPartSettings`, called from `fProjEdit.cpp` on the loaded project), with the first engine of the build when the default engine is not in it. The reset is made in the loaded project, so saving writes the default part over the original engine choice (the part's `Workspace/<N>.patch` file is not touched). Open such a project in a build that has the engine, or do not save it.
 - `.patch` engine numbers differ from the stored numbers on purpose, see "Patch files".
 
+### Order and visibility of the model list
+
+The Model list of the Synth screen is a view of the engine list. `/Plugins/synth-order.txt` says which engines it shows and in which order, and nothing in a project or a `.patch` file changes: a part still stores the stored number of its engine (`Synth::uiToStored`), only the row on screen is another one. The list is the engines that are there (the six built in ones and every `.plg` of `/Plugins/Synth`), found by name, ignoring case:
+
+```
+# comment
+CHIP
+-FAT
+JU6
+```
+
+One engine per line, top to bottom is the order on screen, a leading `-` hides it. An engine without a line (a new `.plg`) is shown after the listed ones, in the order of the engine list. A line whose engine is not on the card is ignored and kept in the file, so it is back when the plugin is. A hidden engine that any of the three synth parts plays is shown anyway, at the top. Lines that are not printable text are skipped and a file that is no text gives the default order. The list is never empty. The file is read again each time the Synth screen comes up, so a card edit needs no restart.
+
+On the unit (Synth screen, Model column selected):
+
+| Keys | Normal | Edit list (Shift + F1) |
+| :--- | :--- | :--- |
+| Up / Down | previous / next engine, wraps from the first to the last and back | cursor, wraps |
+| Encoder | as before, stops at the ends | cursor, stops at the ends |
+| Shift + Up / Down | as Up / Down | moves the engine under the cursor |
+| Delete / Insert | (Delete: none on this column) | hide / show the engine under the cursor |
+| Shift + F1, F1, Left, Right, any other button | F1 on the Model column steps to the next engine | leaves the edit mode |
+
+The edit mode shows names only, a hidden engine with the `-` it has in the file, and picks nothing. Every change is written at once (`<file>.tmp`, read back, then replace, like the plugin sidecars). A save that fails (no `/Plugins` folder) says `Order not saved` and the change holds until the screen is shown again. Logic: `synth_order.h` (host test `tools/synth_order_test.cpp`), screen: `core/interface/instrumentEditor/SynthEditor.cpp`, simulator proof: `tools/ui_shot/synth_order_sim.sh` (real UI code on the Mac, 57 checks). SDRAM use about 35 KB, image +2,864 B on AUTOF.
+
 ### PERC
 
 PERC is the Tracker+ and Mini drum synth: one slot holds a whole kit (kick, tom, snare, hats, cymbal, percussion) and up to five drums ring at once. The engine is OpenTracker's `ot/audio/engines/perc.{h,cpp}` (Apache-2.0, unmodified copies). `engine_perc.cpp` has its 84 parameters in 8 sections (Kick, Toms, Snare, Hihat, Cymbal, Percussion, Mixer, FX) and 6 default macros.

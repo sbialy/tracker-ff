@@ -945,6 +945,7 @@ White (or opaque, for a PNG with alpha) is drawn in the theme colour. Black (or 
 | `/Plugins/Synth/<name>.plgi` | you | A logo ([section 11](#11-engine-logos-plgi)) |
 | `/Plugins/host.txt` | the host, after every insert load | Index size, scan result, rejected files with error numbers, the plugin list with uid and version, each insert's state, error, text and instance address, cycles and max cycles |
 | `/Plugins/synth.txt` | the host | Library and bank counts, then one line per file with its name, stored number, state (`on card`, `installed`, `attached`, `not listed`), flash address and `err` code, the erase count of every sector, the last 8 installs (ms, flash commands, erases, evicted) and the logo source and RAM_G use |
+| `/Plugins/synth-order.txt` | you, and the unit (Synth screen, Model, Shift + F1) | Which engines the Model list shows and in which order: one engine name per line, a leading `-` hides it, `#` starts a comment. Engines it does not list are shown at the end |
 | `/Plugins/installed.txt` | the host | The index of the FlexNVM engine bank, with CRCs and erase counters. A damaged line is dropped and the engine is installed again |
 | `/Plugins/.loading` | the host | The crash marker, [section 13](#13-validation-safe-mode-and-the-crash-marker) |
 | `Patches/<NAME>/*.patch`, `<N>-<n>.patch`, `<N>.names` | the host | Synth patches ([section 7](#presets-and-patches)) |

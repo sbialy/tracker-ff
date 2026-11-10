@@ -20,6 +20,8 @@ The files of the private modules (`phz`, `pluck`, `console`, `tube`: `.plg`, `.p
 published files that must match the sha256 pins of `engines/external.lock.json`. Without it they are copied from the local build
 directories of the private repositories, and without those the pages render with the four modules missing.
 
+`synth-open/tools/ui_shot/synth_order_sim.sh [PNG_DIR]` is a behaviour test on the same binary: the order and visibility of the synth Model list (order file, hidden engines, wrap around, the edit mode, missing and new `.plg`, corrupt files). Each scenario stages its own card folder and ends with `RESULT: GREEN` or `RESULT: RED`. It uses the `put REL TEXT` and `cat REL` script commands and the `poke picker` action (`host_poke.cpp`).
+
 ## What is real and what is not
 
 Real: the display code (`core/libs/NewDisplay`, every control), all pages (`core/interface`), the synth GUI, the plugin host and its

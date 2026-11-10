@@ -28,6 +28,8 @@
 //   eepromret N / usbflag N    set the EEPROM Power return mirror (byte 8) or the USB audio boot flag (byte 9)
 //   fmset N                    set the file manager status to N (fileManager.h fileManagerStatus), an injection
 //   touch PATH / rm PATH       create or remove a file (absolute path), e.g. the UISHOT_FAIL_ARM file of host_fault.cpp
+//   put REL TEXT               write TEXT (backslash n and backslash r escapes) to REL in the SD folder, replacing the file (the order file of the model list)
+//   cat REL                    print a file of the SD folder (nothing when it is not there)
 //   chmod MODE PATH            chmod a path of the SD folder (octal MODE), e.g. 555 Workspace makes every Workspace save fail
 // Buttons: F1..F8 Params Performance File Config Master SampleLoad SamplePlay SampleEdit SampleRec Song Note Instr Vol Fx Pattern
 //          Play Copy Insert Up Delete Rec Shift Left Down Right
@@ -217,6 +219,35 @@ bool command(const std::string& line)
         is >> mode >> a;
         const std::string path = g_sdRootForStat + "/" + a;
         if (chmod(path.c_str(), mode_t(strtoul(mode.c_str(), nullptr, 8))) != 0) { fprintf(stderr, "ui_shot: chmod %s failed\n", path.c_str()); return false; }
+        return true;
+    }
+    if (c == "put" || c == "cat")
+    {
+        is >> a;
+        const std::string path = g_sdRootForStat + "/" + a;
+        if (c == "cat")
+        {
+            if (FILE* f = fopen(path.c_str(), "rb"))
+            {
+                char buf[1024];
+                size_t n;
+                while ((n = fread(buf, 1, sizeof buf, f)) > 0) fwrite(buf, 1, n, stdout);
+                fclose(f);
+            }
+            return true;
+        }
+        std::string rest, text;
+        std::getline(is, rest);
+        if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
+        for (size_t i = 0; i < rest.size(); i++)
+        {
+            if (rest[i] == '\\' && i + 1 < rest.size() && (rest[i + 1] == 'n' || rest[i + 1] == 'r')) text += rest[++i] == 'n' ? '\n' : '\r';
+            else text += rest[i];
+        }
+        FILE* f = fopen(path.c_str(), "wb");
+        if (!f) { fprintf(stderr, "ui_shot: cannot write %s\n", path.c_str()); return false; }
+        fwrite(text.data(), 1, text.size(), f);
+        fclose(f);
         return true;
     }
     if (c == "touch") { is >> a; if (FILE* f = fopen(a.c_str(), "a")) { fclose(f); return true; } fprintf(stderr, "ui_shot: cannot create %s\n", a.c_str()); return false; }

@@ -14,6 +14,8 @@
 //   status                               file manager status and current operation
 //   paramid POS VALUE                    the synth patch editor's section parameter id list at POS gets VALUE (corrupt patch metadata, a value out of range)
 //   macroid POS VALUE                    the same for the section id list, which holds the macro index on a macro section
+//   picker                               the Model list of the Synth screen as the control holds it (rows, cursor, the row texts) and the
+//                                        engine every synth part stores (synth-open/tools/ui_shot/synth_order_sim.sh)
 // The same lines run from a ui_shot script as "poke LINE" (ui_shot_main.cpp), at that point of the script.
 #include <cstdarg>
 #include <cstdio>
@@ -27,6 +29,7 @@
 #include "fileManager.h"
 #include "fileManagerDefs.h"
 #include "mtStructs.h"
+#include "Synth.h"
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -147,6 +150,22 @@ void run(const char* line)
             (int)fmSaveRecordedError,
             (int)fmSaveRecordedSoundEnd,
             (int)fmBrowseGamesEnd);
+    }
+    else if (!strcmp(cmd, "picker"))
+    {
+        const strNewListData& d = instrumentEditor.modelListData;
+        std::string rows;
+        for (int i = 0; i < d.length; i++)
+        {
+            rows += i ? "," : "";
+            rows += d.params && d.params[i] ? d.params[i] : "?";
+        }
+        out("picker rows %d cursor %d list %s", (int)d.length, (int)d.start, rows.c_str());
+        for (int p = 0; p < kSynthInstrumentsCount; p++)
+        {
+            const int st = mtProject.values.synthPart[p].synthType;
+            out("part %d stored %d engine %s", p, st, Synth::storedName(st));
+        }
     }
     else if (!strcmp(cmd, "paramid") || !strcmp(cmd, "macroid"))
     {
