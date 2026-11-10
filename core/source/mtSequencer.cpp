@@ -1,8 +1,8 @@
 #include <algorithm>
 #include <numeric>
 
-#ifdef FEATURE_SYNTH
 #include "Profiler.h"
+#ifdef FEATURE_SYNTH
 #include "Synth.h"
 #ifdef FEATURE_SYNTH_OPEN
 #include "open_load.h"
