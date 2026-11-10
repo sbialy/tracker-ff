@@ -42,6 +42,7 @@ enum class Shown
     kFailed,
     kSafe,       // not loaded: safe mode (a crash marker or Shift at power on)
     kOverCpu,    // tripped its CPU budget
+    kNoRoom,     // does not fit the shared SRAM slot beside the other insert's plugin
 };
 
 // out (at least kLabelChars + 1 bytes): a status word, the name, or a short tag and as much of the name as fits ("Safe:BBD")
@@ -58,6 +59,7 @@ inline void slotLabel(Shown st, const char* name, char* out)
         case Shown::kFailed: tag = "Fail:"; break;
         case Shown::kSafe: tag = "Safe:"; break;
         case Shown::kOverCpu: tag = "CPU:"; break;
+        case Shown::kNoRoom: tag = "Full:"; break;
         case Shown::kName: tag = ""; break;
     }
     int n = 0;

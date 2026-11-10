@@ -1,12 +1,14 @@
-// FlexNVM installer for master insert 2 (FEATURE_PLUG_HOST). See plug_host.h.
+// FlexNVM commands of the synth bank (FEATURE_PLUG_HOST, plug_bank.h). See plug_host.h.
 //
-// The text of insert 2 runs from the last two 4 KB sectors of the 128 KB data flash (0x1001E000, K66 RM 32.1 "additional code
-// store"). Device bench run 3 (PLUGD, d448039) proved this exact path: ERSSCR and PGM8 with address bit 23 set, HSRUN left
-// around every command (K66 flash cannot be erased or programmed in HSRUN, run 1), the launch and wait loop run from RAM
-// like Teensy's eeprom.c, PGM8 data with FCCOB4 as the most significant byte of each longword (plug_fccob.h, run 2), then
-// verify. Rules: only ERSSCR (0x09) and PGM8 (0x07), only the 128 KB data flash (insert 2 in [kNvmRun, kNvmRun + kNvmBytes),
-// the synth bank of plug_bank.h below it), never PGMPART, SETRAM or a program flash address, the FlexRAM EEPROM is never
-// touched. A load whose bytes are already in the flash issues no command.
+// The synth engines run from the 128 KB data flash (K66 RM 32.1 "additional code store"). Device bench run 3 (PLUGD, d448039)
+// proved this path: ERSSCR and PGM8 with address bit 23 set, HSRUN left around every command (K66 flash cannot be erased or
+// programmed in HSRUN, run 1), the launch and wait loop run from RAM like Teensy's eeprom.c, PGM8 data with FCCOB4 as the most
+// significant byte of each longword (plug_fccob.h, run 2), then verify. Rules: only ERSSCR (0x09) and PGM8 (0x07), only the
+// 128 KB data flash (the bank, kBankBytes), never PGMPART, SETRAM or a program flash address, the FlexRAM EEPROM is never
+// touched. The master inserts run from SRAM and issue no command (master insert 2 had the last two sectors before insert2-sram).
+// Since install-crackle the MCLK divider follows the core divider while HSRUN is left, and every erase waits until the audio
+// interrupt has rendered 5 blocks ahead into the output ring (eraseAhead), so the DMA plays through it. /Plugins/nvm-legacy at
+// boot selects the old path (A/B tests).
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
@@ -36,7 +38,6 @@ namespace
 //     in two but only fit between audio blocks below about 30 % audio load (measured, REPORT.md).
 // Now the MCLK divider moves with the core divider (the same 11.29 MHz in RUN), and before an erase the audio interrupt renders
 // ahead (output_i2s.cpp, an 8 block ring): with 5 blocks (14.5 ms) written the DMA plays through the erase.
-constexpr uintptr_t kNvmBase = 0x10000000u;
 constexpr uint32_t kSector = 4096;
 volatile uint8_t* const kFstat = reinterpret_cast<volatile uint8_t*>(0x40020000);
 volatile uint32_t* const kClkdiv1 = reinterpret_cast<volatile uint32_t*>(0x40048044);   // SIM_CLKDIV1
@@ -121,7 +122,7 @@ void flushCaches()
 
 bool valid(uint8_t cmd, uint32_t nvmOff)
 {
-    return (cmd == 0x09 || cmd == 0x07) && nvmOff < uint32_t(kNvmRun - kNvmBase) + kNvmBytes && !(nvmOff & 7u) &&
+    return (cmd == 0x09 || cmd == 0x07) && nvmOff < kBankBytes && !(nvmOff & 7u) &&
            !(cmd == 0x09 && (nvmOff & (kSector - 1)));
 }
 
@@ -170,13 +171,6 @@ bool ftfe(uint8_t cmd, uint32_t nvmOff, const uint8_t* data8)
     masked(c0);
     asm volatile("cpsie i" ::: "memory");
     return (after & 0xF1u) == 0x80u;   // CCIF, no ACCERR FPVIOL RDCOLERR MGSTAT0
-}
-
-bool blank(uintptr_t run, uint32_t len)
-{
-    for (uint32_t i = 0; i < len; i += 4)
-        if (*reinterpret_cast<const volatile uint32_t*>(run + i) != 0xFFFFFFFFu) return false;
-    return true;
 }
 
 // Blocks the audio interrupt renders ahead before an erase: the DMA then has 5 x 2.9 ms plus the rest of the playing block,
@@ -257,8 +251,7 @@ void nvmLegacy(bool on)
     s_legacy = on;
 }
 
-
-// The synth bank: only below insert 2's sectors
+// The synth bank: the whole data flash
 bool nvmErase(uint32_t off)
 {
     const bool ok = off < kBankBytes && eraseAhead(off);
@@ -271,32 +264,6 @@ bool nvmProgram(uint32_t off, const uint8_t* data8)
     const bool ok = off + 8 <= kBankBytes && ftfe(0x07, off, data8);
     flushCaches();
     return ok;
-}
-
-bool nvmInstall(const uint8_t* src, uintptr_t run, uint32_t len)
-{
-    if (run < kNvmRun || (run & 7u) || len > kNvmBytes || run + len > kNvmRun + kNvmBytes) return false;
-    flushCaches();
-    if (memcmp(reinterpret_cast<const void*>(run), src, len) == 0) return true;   // already there: no flash wear
-    const uint32_t off = uint32_t(run - kNvmBase);
-    {   // the erases below, counted first (installed.txt, shown in synth.txt): a cut can over-count, never miss one
-        uint32_t erases = 0;
-        for (uint32_t s = off & ~(kSector - 1); s < off + len; s += kSector)
-            if (!blank(kNvmBase + s, kSector)) erases |= 1u << ((s - uint32_t(kNvmRun - kNvmBase)) / kSector);
-        if (erases) synthNoteInsertErases(erases);
-    }
-    for (uint32_t s = off & ~(kSector - 1); s < off + len; s += kSector)
-        if (!blank(kNvmBase + s, kSector) && !eraseAhead(s)) return false;   // ERSSCR
-    flushCaches();
-    if (!blank(run, (len + 7u) & ~7u)) return false;
-    for (uint32_t i = 0; i < len; i += 8)
-    {
-        uint8_t ph[8];
-        for (uint32_t k = 0; k < 8; k++) ph[k] = i + k < len ? src[i + k] : 0xFF;
-        if (!ftfe(0x07, off + i, ph)) return false;   // PGM8
-    }
-    flushCaches();
-    return memcmp(reinterpret_cast<const void*>(run), src, len) == 0;   // verify
 }
 
 }   // namespace plug

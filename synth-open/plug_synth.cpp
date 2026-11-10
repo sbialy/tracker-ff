@@ -100,7 +100,6 @@ bool s_uiUp;
 DisplayDriver* s_dd;  // the FT812 (synthLogos), the logo cache writes RAM_G through it
 LogoCache s_logo;     // the RAM_G logo slots (plug_logo.h)
 BankOpenStatus s_open;
-bool s_insCount;     // insert 2's erases may be written to installed.txt: the bank holds what the card's index held (or the card has none)
 uint32_t s_tick;     // last use clock (LRU)
 static_assert(kLibMax >= polysynth::open::kPlugStoredLast - polysynth::open::kPlugStoredFirst + 1,
               "the library can list an engine for every plugin stored number");
@@ -580,9 +579,6 @@ void status()
                                    (unsigned long)wearSum);
     for (int s = 0; s < kBankSectors && len < cap; s++) len += snprintf(t + len, size_t(cap - len), " %lu", (unsigned long)s_bank.wear[s]);
     if (len < cap) len += snprintf(t + len, size_t(cap - len), "\r\n");
-    if (len < cap)   // master insert 2: sectors 0x1001E000 and 0x1001F000, fixed, counted only
-        len += snprintf(t + len, size_t(cap - len), "insert 2 wear (its 2 fixed sectors): %lu %lu\r\n", (unsigned long)s_bank.insWear[0],
-                        (unsigned long)s_bank.insWear[1]);
     for (int i = 0; i < s_logN && i < 8 && len < cap; i++)
     {
         const Install& x = s_log[(s_logN - 1 - i) % 8];
@@ -731,7 +727,6 @@ void synthBoot(FileSystem* fs)
     const int n = scanDir(kSynthDir, s_sidx, kLibMax, s_sscan, PLUG_KIND_SYNTH);
     s_sn = n;
     const bool hadIndex = fs->exists(kIndexPath);
-    s_insCount = !hadIndex;   // no index to replace: insert 2's first install may write one of counters (bankOpen decides when there is one)
     namesRead();
     if (!n && !hadIndex) return;   // no synth plugin was ever installed: nothing to do, nothing written
     s_legacyOn = fs->exists(kLegacyPath);
@@ -764,15 +759,7 @@ void synthBoot(FileSystem* fs)
     NvmFlash f;
     SdIo io;
     s_open = bankOpen(f, io, w, n, uintptr_t(s_pool), kPoolBytes, s_bank, s_itext, int(sizeof(s_itext)));
-    s_insCount = s_open.indexRead || !hadIndex;   // an index that could not be read is not replaced by the counters alone
     status();
-}
-
-void synthNoteInsertErases(uint32_t sectorMask)
-{
-    SdIo io;
-    bankCountInsert(io, s_bank, sectorMask, s_insCount, s_itext, int(sizeof(s_itext)));
-    status();   // synth.txt shows the new count
 }
 
 bool synthEnsure(const int* want, int nWant, const int* keep, int nKeep)

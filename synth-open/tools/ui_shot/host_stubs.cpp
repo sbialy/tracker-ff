@@ -86,7 +86,6 @@ void Profiler::resetMeasuringAudio() {}
 // ---- plug_nvm.cpp: the FlexNVM flash controller. The host has no flash, nothing is installed, plug_synth sees an empty bank
 namespace plug
 {
-bool nvmInstall(const uint8_t*, uintptr_t, uint32_t) { return true; }   // the host has no flash to program: the plugin "runs from" its staging copy
 uint32_t nvmCommands() { return 0; }
 uint64_t nvmCommandCycles() { return 0; }
 bool nvmErase(uint32_t) { return false; }
