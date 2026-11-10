@@ -19,6 +19,8 @@
 extern "C" volatile uint32_t ff_audio_blocks;
 extern "C" volatile uint32_t ff_audio_end_cyc;
 extern "C" volatile uint32_t ff_audio_isr_cyc;
+extern "C" volatile uint32_t ff_audio_lead;          // blocks written after the one the DMA plays
+extern "C" volatile uint32_t ff_audio_lead_target;   // what the audio interrupt renders ahead (1 normally)
 
 namespace plug
 {
@@ -28,18 +30,17 @@ namespace
 // Install crackle (install-crackle, ~/prj/poly/build/install-crackle/REPORT.md). Every flash command used to run with all
 // interrupts off and the core out of HSRUN, which gave two faults on the audio output:
 //  1. the I2S MCLK comes from the system clock (output_i2s.cpp MCLK_SRC 0 at 180 MHz, 180 MHz * 16 / 255), so dividing the core
-//     by two for RUN halved the MCLK, the bit clock and the codec's sample rate for as long as each command took (57 us per
-//     PGM8, 14 ms per sector erase, 3,500 PGM8 for a 28 KB engine): the sound slowed down in thousands of short bursts.
-//  2. one sector erase (14.4 ms measured, from the 1.2.0 synth.txt rows) held the audio interrupt off for five 2.9 ms blocks,
-//     so the DMA played its two halves over and over.
-// Now the MCLK divider moves with the core divider (the same 11.29 MHz in RUN), and an erase is cut into slices with the FTFE
-// erase suspend (FCNFG ERSSUSP): each slice starts right after an audio block ends, lasts what the next block can spare
-// (sliceCycles) and goes back to HSRUN with the interrupts on before the next one. Only the erase is cut: a PGM8 is short.
+//     by two for RUN halved the MCLK, the bit clock and the codec's sample rate for as long as each command took (about 57 us
+//     per PGM8, 1,000 to 3,500 of them per engine): the sound slowed down in thousands of short bursts.
+//  2. one sector erase holds every interrupt off for 6.3 to 7.4 ms (measured on the unit), two to three audio blocks, and the
+//     DMA replayed its two halves. The FlexNVM is one flash block and the engines run from it, so the audio interrupt cannot
+//     run during an erase. The FTFE erase suspend does not help: slices of 1 or 2 ms never finish an erase, 4 ms slices finish
+//     in two but only fit between audio blocks below about 30 % audio load (measured, REPORT.md).
+// Now the MCLK divider moves with the core divider (the same 11.29 MHz in RUN), and before an erase the audio interrupt renders
+// ahead (output_i2s.cpp, an 8 block ring): with 5 blocks (14.5 ms) written the DMA plays through the erase.
 constexpr uintptr_t kNvmBase = 0x10000000u;
 constexpr uint32_t kSector = 4096;
 volatile uint8_t* const kFstat = reinterpret_cast<volatile uint8_t*>(0x40020000);
-volatile uint8_t* const kFcnfg = reinterpret_cast<volatile uint8_t*>(0x40020001);
-constexpr uint8_t kErssusp = 0x10;
 volatile uint32_t* const kClkdiv1 = reinterpret_cast<volatile uint32_t*>(0x40048044);   // SIM_CLKDIV1
 volatile uint8_t* const kPmctrl = reinterpret_cast<volatile uint8_t*>(0x4007E001);      // SMC_PMCTRL
 volatile uint8_t* const kPmstat = reinterpret_cast<volatile uint8_t*>(0x4007E003);      // SMC_PMSTAT
@@ -62,22 +63,13 @@ volatile uint32_t* const kDwtCyccnt = reinterpret_cast<volatile uint32_t*>(0xE00
 NvmStats s_st;
 bool s_legacy;   // nvmLegacy: the 1.2.0 way (A/B measurements only)
 
-// Launches (or resumes) the command in FCCOB and waits for CCIF. budget: DWT cycles after which an erase is suspended (0: never).
-// Runs from RAM like Teensy's eeprom.c do_flash_cmd: nothing may be fetched from the flash while it works.
-__attribute__((section(".fastrun"), noinline, noclone)) uint8_t ramCommand(uint32_t budget)
+// Launches the command in FCCOB and waits for CCIF. Runs from RAM like Teensy's eeprom.c do_flash_cmd: nothing may be fetched
+// from the flash while it works.
+__attribute__((section(".fastrun"), noinline, noclone)) uint8_t ramCommand()
 {
     volatile uint8_t* const fstat = reinterpret_cast<volatile uint8_t*>(0x40020000);
-    volatile uint8_t* const fcnfg = reinterpret_cast<volatile uint8_t*>(0x40020001);
-    volatile uint32_t* const cyc = reinterpret_cast<volatile uint32_t*>(0xE0001004);
-    const uint32_t c0 = *cyc;
-    *fstat = 0x80u;   // clear CCIF: launch, or resume a suspended erase (ERSSUSP still set)
-    while (!(*fstat & 0x80u))
-        if (budget && *cyc - c0 >= budget)
-        {
-            *fcnfg = uint8_t(*fcnfg | kErssusp);   // suspend at the next suspend point, CCIF comes back then (or when done)
-            while (!(*fstat & 0x80u)) {}
-            break;
-        }
+    *fstat = 0x80u;   // clear CCIF: launch
+    while (!(*fstat & 0x80u)) {}
     return *fstat;
 }
 
@@ -148,14 +140,14 @@ void loadCmd(uint8_t cmd, uint32_t nvmOff, const uint8_t* data8)
         for (int i = 0; i < 8; i++) fccob(4 + i) = pgm8Fccob(data8, i);
 }
 
-// One masked window: out of HSRUN, launch or resume, back. Returns FSTAT.
-uint8_t window(uint32_t budget)
+// One masked window: out of HSRUN, launch, back. Returns FSTAT.
+uint8_t window()
 {
     Clocks c;
     leaveHsrun(c);
     asm volatile("dsb 0xf\n isb 0xf" ::: "memory");
     const uint32_t c0 = *kDwtCyccnt;
-    const uint8_t after = ramCommand(budget);
+    const uint8_t after = ramCommand();
     s_cmdCycles += *kDwtCyccnt - c0;
     backToHsrun(c);
     return after;
@@ -176,7 +168,7 @@ bool ftfe(uint8_t cmd, uint32_t nvmOff, const uint8_t* data8)
     asm volatile("cpsid i" ::: "memory");
     const uint32_t c0 = *kDwtCyccnt;
     loadCmd(cmd, nvmOff, data8);
-    const uint8_t after = window(0);
+    const uint8_t after = window();
     masked(c0);
     asm volatile("cpsie i" ::: "memory");
     return (after & 0xF1u) == 0x80u;   // CCIF, no ACCERR FPVIOL RDCOLERR MGSTAT0
@@ -199,19 +191,6 @@ bool afterBlock()
     }
 }
 
-// The slice the next block can spare, in DWT cycles at 90 MHz (RUN). The next audio interrupt waits for the slice, and must still end
-// before the DMA reaches its half 5.8 ms after the last one started: slice <= 5.8 ms - 2 x block - 0.2 ms. Taken as 5.4 ms - 2 x the
-// last block, kept within 0.3 .. 4.5 ms. s_sliceUs (nvmSliceUs, /Plugins/nvm-slice.txt) fixes it for measurements.
-uint32_t s_sliceUs;
-uint32_t sliceCycles()
-{
-    if (s_sliceUs) return s_sliceUs * 90u;
-    const uint32_t blockUs = ff_audio_isr_cyc / (kCpuHz / 1000000u);
-    const int32_t us = 5400 - int32_t(blockUs * 2);
-    const uint32_t lim = us < 300 ? 300u : (us > 4500 ? 4500u : uint32_t(us));
-    return lim * 90u;
-}
-
 bool blank(uintptr_t run, uint32_t len)
 {
     for (uint32_t i = 0; i < len; i += 4)
@@ -219,73 +198,43 @@ bool blank(uintptr_t run, uint32_t len)
     return true;
 }
 
-// ERSSCR in slices between audio blocks: launch, then resume after each block until the FTFE ends it without a suspend. While it is
-// suspended the flash reads normally, so the audio interrupt runs the engines and insert 2 from the other sectors (the one being
-// erased holds nothing attached: bankInstall detaches before it erases, insert 2 is detached while it is rewritten, plug_host.cpp apply).
-// No audio block within 8 ms, or 120 ms of erase time (the K66 sector erase is 14 ms typical, 113 ms at most): the suspended erase
-// is aborted and done again in one window, the 1.2.0 way. Same when the sector does not read blank afterwards.
-bool eraseSliced(uint32_t nvmOff)
+// Blocks the audio interrupt renders ahead before an erase: the DMA then has 5 x 2.9 ms plus the rest of the playing block,
+// against 7.4 ms of erase and one block to render after it. The ring holds 8 (output_i2s.cpp, at most 6 ahead).
+constexpr uint32_t kEraseLead = 5;
+
+// ERSSCR with the audio rendered ahead. The lead builds by one block per audio interrupt (about 15 ms at low load, longer near
+// full load); 300 ms without it, or no audio running, and the erase goes ahead anyway (counted in the stats)
+bool eraseAhead(uint32_t nvmOff)
 {
     if (!valid(0x09, nvmOff)) return false;
     if (s_legacy) return ftfe(0x09, nvmOff, nullptr);
     s_st.erases++;
-    uint64_t spent = 0;
-    bool started = false, ok = false;
-    for (int n = 0; n < 2000; n++)
+    ff_audio_lead_target = kEraseLead;
+    const uint32_t t0 = *kDwtCyccnt;
+    bool audio = true, ready = false;
+    while (*kDwtCyccnt - t0 < kCpuHz / 1000u * 300u)
     {
-        const bool audio = afterBlock();
-        if (!audio || spent > 90000ull * 120u)
+        if (!afterBlock())
         {
-            if (audio) s_st.fallbacks++;
-            else s_st.noAudio++;
-            *kFcnfg = uint8_t(*kFcnfg & ~kErssusp);   // abort a suspended erase: the next launch starts the command anew
-            ok = ftfe(0x09, nvmOff, nullptr);
-            started = false;
+            audio = false;
             break;
         }
-        asm volatile("cpsid i" ::: "memory");
-        const uint32_t m0 = *kDwtCyccnt;
-        if (!started)
+        if (ff_audio_lead >= kEraseLead)
         {
-            s_cmds++;
-            loadCmd(0x09, nvmOff, nullptr);
-            *kFcnfg = uint8_t(*kFcnfg & ~kErssusp);
-        }
-        const uint32_t c0 = *kDwtCyccnt;
-        const uint8_t after = window(sliceCycles());
-        spent += *kDwtCyccnt - c0;
-        const bool suspended = (*kFcnfg & kErssusp) != 0;
-        masked(m0);
-        asm volatile("cpsie i" ::: "memory");
-        started = true;
-        s_st.slices++;
-        if (after & 0x71u)
-        {   // ACCERR FPVIOL RDCOLERR MGSTAT0: never leave a suspended erase behind (the next launch would resume it)
-            *kFcnfg = uint8_t(*kFcnfg & ~kErssusp);
-            return false;
-        }
-        if (!suspended)
-        {
-            ok = true;
-            started = false;
+            ready = true;
             break;
         }
     }
-    if (started)
-    {   // 2,000 slices without an end: abort, one window
-        s_st.fallbacks++;
-        *kFcnfg = uint8_t(*kFcnfg & ~kErssusp);
-        ok = ftfe(0x09, nvmOff, nullptr);
-    }
-    flushCaches();
-    if (ok && !blank(kNvmBase + nvmOff, kSector))
-    {
-        s_st.fallbacks++;
-        ok = ftfe(0x09, nvmOff, nullptr);
-        flushCaches();
-    }
+    if (ready) s_st.leadOk++;
+    else if (audio) s_st.leadShort++;
+    else s_st.noAudio++;
+    const uint32_t lead = ff_audio_lead;
+    if (lead < s_st.leadMin) s_st.leadMin = lead;
+    const bool ok = ftfe(0x09, nvmOff, nullptr);
+    ff_audio_lead_target = 1;   // drains back to the normal latency
     return ok;
 }
+
 }   // namespace
 
 uint32_t nvmCommands()
@@ -306,6 +255,7 @@ const NvmStats& nvmStats()
 void nvmStatsReset()
 {
     s_st = NvmStats{};
+    s_st.leadMin = ~0u;
 }
 
 void nvmLegacy(bool on)
@@ -313,15 +263,11 @@ void nvmLegacy(bool on)
     s_legacy = on;
 }
 
-void nvmSliceUs(uint32_t us)
-{
-    s_sliceUs = us;
-}
 
 // The synth bank: only below insert 2's sectors
 bool nvmErase(uint32_t off)
 {
-    const bool ok = off < kBankBytes && eraseSliced(off);
+    const bool ok = off < kBankBytes && eraseAhead(off);
     flushCaches();
     return ok;
 }
@@ -340,7 +286,7 @@ bool nvmInstall(const uint8_t* src, uintptr_t run, uint32_t len)
     if (memcmp(reinterpret_cast<const void*>(run), src, len) == 0) return true;   // already there: no flash wear
     const uint32_t off = uint32_t(run - kNvmBase);
     for (uint32_t s = off & ~(kSector - 1); s < off + len; s += kSector)
-        if (!blank(kNvmBase + s, kSector) && !eraseSliced(s)) return false;   // ERSSCR
+        if (!blank(kNvmBase + s, kSector) && !eraseAhead(s)) return false;   // ERSSCR
     flushCaches();
     if (!blank(run, (len + 7u) & ~7u)) return false;
     for (uint32_t i = 0; i < len; i += 8)

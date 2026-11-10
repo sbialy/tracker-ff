@@ -73,12 +73,13 @@ uint64_t nvmCommandCycles();   // DWT cycles spent inside them (the core runs at
 // phrase at off. The caches are invalidated after it, so the flash reads back what it holds.
 bool nvmErase(uint32_t off);
 bool nvmProgram(uint32_t off, const uint8_t* data8);
-// How the erases went (install-crackle): an erase is cut into slices between audio blocks (FTFE erase suspend). slices: windows
-// of all erases, fallbacks: erases done again in one window (no end after 120 ms of slices, or not blank), noAudio: erases done in
-// one window because no audio block came, maskMaxCyc: the longest stretch with the interrupts off (DWT, 90 MHz inside a command)
+// How the erases went (install-crackle): before an erase the audio interrupt renders ahead (output_i2s.cpp). leadOk: erases
+// that started with the full lead, leadShort: the lead did not build in 300 ms (erased anyway), noAudio: no audio block came,
+// leadMin: the smallest lead an erase started with (blocks), maskMaxCyc: the longest stretch with the interrupts off (DWT,
+// 90 MHz inside a command)
 struct NvmStats
 {
-    uint32_t erases, slices, fallbacks, noAudio, maskMaxCyc;
+    uint32_t erases, leadOk, leadShort, noAudio, leadMin, maskMaxCyc;
 };
 const NvmStats& nvmStats();
 void nvmStatsReset();

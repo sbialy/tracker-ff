@@ -92,7 +92,6 @@ bool nvmProgram(uint32_t, const uint8_t*) { return false; }
 const NvmStats& nvmStats() { static NvmStats s{}; return s; }
 void nvmStatsReset() {}
 void nvmLegacy(bool) {}
-void nvmSliceUs(uint32_t) {}
 }   // namespace plug
 
 #if defined(FEATURE_EXT_HOOKS) && !defined(ENABLE_DEV_CONSOLE)

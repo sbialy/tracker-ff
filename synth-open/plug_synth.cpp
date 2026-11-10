@@ -197,7 +197,7 @@ struct Install
     char file[kBankFileLen];
     int err, evicted, commands, erases;
     uint32_t ms, cmdMs;
-    uint32_t late, gapUs, maskUs, slices, fallbacks;   // install-crackle: what the audio saw during the install
+    uint32_t late, gapUs, maskUs, leadOk, leadShort, leadMin;   // install-crackle: what the audio saw during the install
 };
 Install s_log[8];
 int s_logN;
@@ -582,10 +582,10 @@ void status()
         const Install& x = s_log[(s_logN - 1 - i) % 8];
         len += snprintf(t + len, size_t(cap - len),
                         "install %s err %d ms %lu (in flash commands %lu) commands %d erases %d evicted %d"
-                        " audio late %lu gap max %lu us masked max %lu us slices %lu fallbacks %lu%s\r\n",
+                        " audio late %lu gap max %lu us masked max %lu us erase lead ok %lu short %lu min %lu%s\r\n",
                         x.file, x.err, (unsigned long)x.ms, (unsigned long)x.cmdMs, x.commands, x.erases, x.evicted,
-                        (unsigned long)x.late, (unsigned long)x.gapUs, (unsigned long)x.maskUs, (unsigned long)x.slices,
-                        (unsigned long)x.fallbacks, s_legacyOn ? " legacy" : "");
+                        (unsigned long)x.late, (unsigned long)x.gapUs, (unsigned long)x.maskUs, (unsigned long)x.leadOk,
+                        (unsigned long)x.leadShort, (unsigned long)x.leadMin, s_legacyOn ? " legacy" : "");
     }
     static const char* const kSrc[3] = {"text", "sidecar", "trailer"};
     for (int k = 0; k < s_sn && s_uiUp && len < cap; k++)
@@ -656,8 +656,9 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
         l.late = ff_audio_late - late0;
         l.gapUs = ff_audio_gap_max / 180u;
         l.maskUs = nvmStats().maskMaxCyc / 90u;
-        l.slices = nvmStats().slices;
-        l.fallbacks = nvmStats().fallbacks + nvmStats().noAudio;
+        l.leadOk = nvmStats().leadOk;
+        l.leadShort = nvmStats().leadShort + nvmStats().noAudio;
+        l.leadMin = nvmStats().erases ? nvmStats().leadMin : 0;
         if (st.err)
         {
             s_lib[k].err = int8_t(10 + st.err);
@@ -725,10 +726,6 @@ void synthBoot(FileSystem* fs)
     if (!n && !hadIndex) return;   // no synth plugin was ever installed: nothing to do, nothing written
     s_legacyOn = fs->exists(kLegacyPath);
     nvmLegacy(s_legacyOn);
-    {
-        char b[16] = {};
-        nvmSliceUs(readText("/Plugins/nvm-slice.txt", b, int(sizeof(b)) - 1) > 0 ? uint32_t(strtoul(b, nullptr, 10)) : 0u);
-    }
     s_safe = fs->exists(kMarker);  // a marker left by the last session (plug_host.cpp boot() reads it too): no engine runs
     BankWant* const w = s_bwant;
     for (int k = 0; k < n; k++)
