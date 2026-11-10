@@ -405,6 +405,15 @@ int main() {
     hostBlock(8000000, 530000, false, []{});
     open::loadStats(st);
     check(st.overruns == 1 && st.peakPermille == 1014, "a 530,000 cycle block counts as an overrun, peak 1014 permille");
+    open::BlockShot w{}, o{};
+    open::loadShots(w, o);
+    check(w.cycles == 530000 && o.cycles == 530000 && o.pre == 6000, "the worst and the last overrun block are kept with their start to render time");
+    open::setAdmitPermille(2000);
+    const uint32_t hi = open::admitPermille();
+    open::setAdmitPermille(10);
+    const uint32_t lo = open::admitPermille();
+    open::setAdmitPermille(open::kAdmitPermille);
+    check(hi == 1000 && lo == 500 && open::admitPermille() == open::kAdmitPermille, "admission limit clamps to 500..1000 permille, default 950");
     open::resetOnProjectLoad();
   }
   // ---- .patch save / load (open_patchio.cpp + OpenPatchStore) on an in-memory file system

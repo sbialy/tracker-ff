@@ -91,6 +91,9 @@ __attribute__((noinline, used)) void keepForModule()
 {
     s_keepSink = display.isIdle() + ext_modulesCount;
     asm volatile("" ::"r"(&polysynth::open::loadStats));   // the console's cpu command reads the synth load counters
+    asm volatile("" ::"r"(&polysynth::open::loadShots));
+    asm volatile("" ::"r"(&polysynth::open::setAdmitPermille));
+    asm volatile("" ::"r"(&polysynth::open::admitPermille));
     ext_keep_platform();
 }
 

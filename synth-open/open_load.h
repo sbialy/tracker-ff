@@ -27,8 +27,27 @@ void reportBlockCycles(uint32_t cycles);
 // The note-ons deferred in the block before start here, first. No-op without a Synth.
 void reportBlockStart(uint32_t startCycles, uint32_t (*cycles)());
 
-// Note-on admission limit: estimated block load, permille of the block (CpuMeter::kBudgetCycles)
+// Note-on admission limit: estimated block load, permille of the block (CpuMeter::kBudgetCycles). The default, and a setter for
+// the console (cpu admit N, clamped 500..1000)
 constexpr uint32_t kAdmitPermille = 950;
+void setAdmitPermille(uint32_t permille);
+uint32_t admitPermille();
+
+// One live block as the admission saw it (cycles at 180 MHz): the worst block since the last Play and the last overrun block
+struct BlockShot
+{
+    uint32_t cycles;    // the whole block (the readout's window)
+    uint32_t pre;       // block start to the first synth part render
+    uint32_t extra;     // estimated cost of the note-ons started in it (admitted and from the queue)
+    uint32_t admitted;  // note-ons admitted in it
+    uint32_t flushed;   // note-ons from the queue started at its start
+    uint32_t deferred;  // note-ons it moved to the next block
+    uint32_t estMax;    // the largest estimate of an admission check in it (0: none)
+    uint32_t voices;    // synth voice renders in it (fading ones included)
+    uint32_t renderCyc; // their timed cycles together (engine render calls only)
+    uint32_t moving;    // synth parts whose parameters moved in it (automation, Patch FX, edits)
+};
+void loadShots(BlockShot& worst, BlockShot& lastOverrun);
 
 // Live load counters of the open synth since the last Play (resetLoadStats) or project load. Read from the main loop or the
 // console (copies of 32-bit words written by the audio interrupt).

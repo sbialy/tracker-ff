@@ -137,7 +137,7 @@ struct Voice
 
 // Note-on admission and the cost model (live blocks only, OpenSynth::admit). Cycles at 180 MHz.
 constexpr uint32_t kCyclesPerUs = 180;
-constexpr uint32_t kAdmitCycles = uint32_t(uint64_t(ot::audio::CpuMeter::kBudgetCycles) * open::kAdmitPermille / 1000u);
+constexpr uint32_t admitCyclesFor(uint32_t permille) { return uint32_t(uint64_t(ot::audio::CpuMeter::kBudgetCycles) * permille / 1000u); }
 // Seeds of the learned costs before a part played a note (device: PLK note-on about 150 us, a running voice about 32 us,
 // ref/cpu-governor.md section 3): a fresh part is judged as a PLK part until its own numbers come in
 constexpr uint32_t kSeedAttackCycles = 150 * kCyclesPerUs;
@@ -309,6 +309,7 @@ class OpenInstrument final : public Instrument
             engine->setTempo(bpmNow);
         }
         engine->prepare(scratch, params);
+        blockMoving |= params.moving;
         // PERC has no Volume: the voice gain is the note velocity (the engine divides it back out per hit)
         const bool hasVol = def->volumeParam >= 0;
         const float volMin = hasVol ? float(patch->getMetadata().params[def->volumeParam].minValue) : 0.0f;
@@ -335,7 +336,10 @@ class OpenInstrument final : public Instrument
             const bool alive = engine->render(v.v, params, g0, gInc, L, R);
             if (clk)
             {
-                learn(v, clk() - t0);
+                const uint32_t cyc = clk() - t0;
+                learn(v, cyc);
+                blockVoices++;
+                blockRenderCyc += cyc;
             }
             if (!alive || fade)
             {
@@ -380,6 +384,15 @@ class OpenInstrument final : public Instrument
         return !(n == 1 && voices[0].on && !voices[0].v.fading);
     }
     bool owns(const Voice* v) const { return v >= voices && v < voices + kMaxVoicesPerInstrument; }
+    // The block's timed voice renders, taken once per block by OpenSynth::blockDone
+    void takeBlock(uint32_t& voicesOut, uint32_t& cycOut, uint32_t& movingOut)
+    {
+        voicesOut += blockVoices;
+        cycOut += blockRenderCyc;
+        movingOut += blockMoving;
+        blockVoices = blockRenderCyc = 0;
+        blockMoving = false;
+    }
 
 #ifdef OPEN_HOST_TEST
     const ot::audio::SynthParams& testParams() const { return params; }
@@ -787,6 +800,8 @@ class OpenInstrument final : public Instrument
     float bend = 0.0f; // pitch bend in semitones, applied to every voice (SynthVoice::bend)
     uint32_t attackCyc = kSeedAttackCycles; // learned (live renders): a note-on over a running voice
     uint32_t voiceCyc = kSeedVoiceCycles;   // learned: one running voice
+    uint32_t blockVoices = 0, blockRenderCyc = 0;
+    bool blockMoving = false;
     Voice voices[kMaxVoicesPerInstrument];
 };
 
@@ -884,15 +899,19 @@ class OpenSynth final
             const uint32_t used = prevPre + prevExtra;
             const uint32_t rest = prevTotal > used ? prevTotal - used : 0;
             // the synth render starts after the sequencer: at the last block's point or later when this block's step work ran longer
-            if (std::max(now, prevPre) + rest + extra + cost <= kAdmitCycles)
+            const uint32_t est = std::max(now, prevPre) + rest + extra + cost;
+            shot.estMax = std::max(shot.estMax, est);
+            if (est <= admitCycles)
             {
                 extra += cost;
+                shot.admitted++;
                 return true;
             }
         }
         if (pendN == kPendingMax)
         {
             stats.queueFull++; // never dropped: it starts now
+            shot.admitted++;
             extra += cost;
             return true;
         }
@@ -913,6 +932,7 @@ class OpenSynth final
         }
         pend[pendN++] = Pending{&inst, note, velocity, false, c()};
         stats.deferred++;
+        shot.deferred++;
         if (++deferredNow > stats.deferMaxBlock)
         {
             stats.deferMaxBlock = deferredNow;
@@ -992,6 +1012,14 @@ class OpenSynth final
             extra += q[i].inst->attackCost() + q[i].inst->voiceCost();
             q[i].inst->startQueued(q[i].note, q[i].vel, q[i].off);
         }
+        shot.flushed = uint32_t(n);
+    }
+    void setAdmit(uint32_t permille) { admitCycles = admitCyclesFor(std::clamp<uint32_t>(permille, 500, 1000)); }
+    uint32_t admit() const { return uint32_t(uint64_t(admitCycles) * 1000u / ot::audio::CpuMeter::kBudgetCycles); }
+    void shots(open::BlockShot& w, open::BlockShot& o) const
+    {
+        w = worst;
+        o = lastOver;
     }
     void renderStarts()
     {
@@ -1003,6 +1031,7 @@ class OpenSynth final
     void resetStats()
     {
         stats = open::LoadStats{};
+        worst = lastOver = shot = open::BlockShot{};
         cutsAtReset = governor.cuts();
         govStealsAtReset = governor.steals();
         meter.reset();
@@ -1047,7 +1076,26 @@ class OpenSynth final
             prevPre = pre;
             prevExtra = extra;
             inBlock = false;
+            shot.cycles = cycles;
+            shot.pre = pre;
+            shot.extra = extra;
+            for (const auto& i : instruments)
+            {
+                if (i)
+                {
+                    static_cast<OpenInstrument&>(*i).takeBlock(shot.voices, shot.renderCyc, shot.moving);
+                }
+            }
+            if (cycles > worst.cycles)
+            {
+                worst = shot;
+            }
+            if (meter.last() >= ot::audio::CpuMeter::kOverrunPermille)
+            {
+                lastOver = shot;
+            }
         }
+        shot = open::BlockShot{};
     }
     void engineGone(const EngineDef* d)
     {
@@ -1262,6 +1310,8 @@ class OpenSynth final
     uint32_t peak = 0;
     uint32_t cutsAtReset = 0, govStealsAtReset = 0;
     open::LoadStats stats{};
+    uint32_t admitCycles = admitCyclesFor(open::kAdmitPermille);
+    open::BlockShot shot{}, worst{}, lastOver{};
 };
 
 OpenSynth* gActive = nullptr; // the one Synth of the firmware (the latest created in host tests)
@@ -1306,6 +1356,25 @@ void open::loadStats(LoadStats& s)
     else
     {
         s = LoadStats{};
+    }
+}
+void open::setAdmitPermille(uint32_t permille)
+{
+    if (gActive)
+    {
+        gActive->setAdmit(permille);
+    }
+}
+uint32_t open::admitPermille() { return gActive ? gActive->admit() : kAdmitPermille; }
+void open::loadShots(BlockShot& w, BlockShot& o)
+{
+    if (gActive)
+    {
+        gActive->shots(w, o);
+    }
+    else
+    {
+        w = o = BlockShot{};
     }
 }
 void open::resetLoadStats()
