@@ -16,6 +16,7 @@
 //   macroid POS VALUE                    the same for the section id list, which holds the macro index on a macro section
 //   picker                               the Model list of the Synth screen as the control holds it (rows, cursor, the row texts) and the
 //                                        engine every synth part stores (synth-open/tools/ui_shot/synth_order_sim.sh)
+//   popup                                the text popup the UI shows now (first line, "popup none" when hidden), for model_rest_sim.sh
 // The same lines run from a ui_shot script as "poke LINE" (ui_shot_main.cpp), at that point of the script.
 #include <cstdarg>
 #include <cstdio>
@@ -38,6 +39,7 @@
 #include <ranges>
 #include <variant>
 #define private public // host only: the poke actions reach the editor state the UI keeps private
+#include "core/interfacePopups.h"
 #include "instrumentEditor/instrumentEditor.h"
 #undef private
 
@@ -166,6 +168,13 @@ void run(const char* line)
             const int st = mtProject.values.synthPart[p].synthType;
             out("part %d stored %d engine %s", p, st, Synth::storedName(st));
         }
+    }
+    else if (!strcmp(cmd, "popup"))
+    {   // the popup on screen: globalPopupDisplayTime is non zero from show() until hide()
+        if (mtPopups.globalPopupDisplayTime && mtPopups.popupData.multiLineText && mtPopups.popupData.textLinesCount)
+            out("popup '%s'", mtPopups.popupData.multiLineText[0] ? mtPopups.popupData.multiLineText[0] : "");
+        else
+            out("popup none");
     }
     else if (!strcmp(cmd, "paramid") || !strcmp(cmd, "macroid"))
     {

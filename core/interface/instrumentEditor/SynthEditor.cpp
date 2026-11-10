@@ -817,7 +817,8 @@ struct PendingModel
     int ui = -1;
 };
 PendingModel s_pendModel;
-bool s_applyModel; // synthModelTick applies the pending one: no new wait
+bool s_applyModel;     // synthModelTick applies the pending one: no new wait
+bool s_initMsgUp;      // initCurrentPatch raised its message and nothing took it down since
 elapsedMillis s_pendTimer;
 } // namespace
 
@@ -896,6 +897,12 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
         {   // not installed: the list shows it, synthModelTick installs and picks it when the list rests
             s_pendModel = { syntPartIdx, newUi };
             s_pendTimer = 0;
+            if (s_initMsgUp)
+            {   // "Init patch loaded" of the engine change before this step is still up (2 s): it is not the message of the pick that
+                // follows the rest, so it goes now. The new one comes with the install, and a skip with short rests shows none.
+                s_initMsgUp = false;
+                mtPopups.hide();
+            }
             synthModelLogos(newPos);
             display.setControlValue(modelListControl, newPos);
             display.refreshControl(modelListControl);
@@ -1359,6 +1366,9 @@ void cInstrumentEditor::initCurrentPatch(bool backupRestored)
     newFileManager.setProjectStructChanged();
 
     mtPopups.show(0, backupRestored ? "Previous patch restored" : "Init patch loaded");
+#ifdef FEATURE_PLUG_HOST
+    s_initMsgUp = true;
+#endif
 
     IE->showSynthPatchName(syntPartIdx);
 }
