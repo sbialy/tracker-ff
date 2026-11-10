@@ -4,6 +4,30 @@ All notable changes to the **Polyend Tracker Community Edition (CE)** firmware a
 
 ---
 
+## [1.3.0] - Unreleased - tracker-ff 1.3.0 (original Tracker, MK66)
+
+Version 1.3.0 of the tracker-ff firmware for the original Tracker. The Tracker+ and the Mini are not part of it.
+
+### Added
+
+1. **Features page.** Config > Features lists the options of the firmware that have a switch of their own. Each one has a State row and a page with its settings, and the settings are kept per feature in `/Features/` on the card. Reset config clears that folder. A feature that needs a restart says so and offers Restart now.
+2. **USB audio.** Built in. With USB audio on, the unit shows up as an audio input on a computer after the next start. With it off, the unit presents only the stock USB interfaces.
+3. **Restart mode.** Power button: turn off as usual, or restart the unit at a power off. Power return: stay off, or start by itself when power comes back after a cut while the unit was on. Holding Record at start switches the mode on and Record with the power button switches it off, and the Record shortcut can be turned off on its page.
+4. **Developer mode.** A row of the Features page, listed once `/.develop` exists on the card. It shows the CPU readouts and loads an optional extension module from `/Plugins/Ext/` at start. A module that crashed is skipped at the next start and its fault record is written to `/Plugins/Ext/crash.txt`. Holding Shift in the first 4 seconds after power on starts without it.
+
+### Changed
+
+1. **Transient Shaper.** The sample editor effect has new envelope times, and its Sustain gain is held back while a hit is rising.
+2. **Add to Empty Slot.** With files selected in the Sample Loader, Shift with the add button adds the selection and does not jump to the first empty slot. After a jump the instrument list and the memory bar refresh.
+3. **Patch FX.** `O - Patch` now applies the macros and the automation of the slot it switches to, together with its values. An LFO or envelope that sits on the same slot type in both patches keeps running, one that changes type starts new and an automation slot that is Off reads zero.
+
+### Fixed
+
+1. Installing a synth plugin into the data flash no longer makes the audio crackle. The audio output renders ahead into a deeper buffer while the flash erases, and the erase works in short slices.
+2. A power off or a restart with an extension module loaded no longer ends in a lockup.
+
+---
+
 ## [1.2.0] - tracker-ff 1.2.0 (original Tracker, MK66)
 
 Version 1.2.0 of the tracker-ff firmware for the original Tracker. The Tracker+ and the Mini are not part of it.

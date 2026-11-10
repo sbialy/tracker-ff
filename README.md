@@ -1,6 +1,6 @@
 # tracker-ff
 
-Unofficial community firmware for the **original Polyend Tracker** (the MK66 model, Cortex-M4F at 180 MHz). It is a fork of Polyend's open source firmware [polyend/tracker-ce](https://github.com/polyend/tracker-ce) (Tracker Community Edition) and adds synth engines to the original Tracker. Version 1.2.0. The name FF is the max value 0xFF.
+Unofficial community firmware for the **original Polyend Tracker** (the MK66 model, Cortex-M4F at 180 MHz). It is a fork of Polyend's open source firmware [polyend/tracker-ce](https://github.com/polyend/tracker-ce) (Tracker Community Edition) and adds synth engines to the original Tracker. Version 1.3.0. The name FF is the max value 0xFF.
 
 tracker-ff is not affiliated with, endorsed by or supported by Polyend. It is free and non-commercial.
 
@@ -14,6 +14,7 @@ Upstream CE has synth engines only on the Tracker+ and the Mini, because Polyend
 - **Patch slots and the Patch FX.** Every synth part keeps a bank of 16 patches in the project. The `O - Patch` step FX switches the part to one of them at a step, so a pattern can change the sound of an instrument. Slot 0 is the stock `<N>.patch`, so stock firmware opens the song with that sound.
 - **Lower idle audio CPU.** Synth parts with nothing sounding are skipped in the audio graph, idle voices send no data, the reverb and short delay sleep when silent, mixers skip empty inputs and one reverb buffer lives in internal SRAM. The details and the bench that checks the output stays bit identical are in `synth-open/README.md`.
 - **Master insert plugins.** Two insert slots process the master bus after the track mixers and before the limiter. Seven inserts come with the release (`.plg` in `/Plugins/Master/`): Dirt, Tape, Lo-Fi, Console, Tube, BBD and Phaser. The Master button cycles Master, Track Mixer, Global Mixer and the Inserts page, where you pick the plugin of each slot and set its parameters. The settings are saved with the project. The mixer stage in front of the inserts is Hard Clip, Soft Clip or Soft Knee. The picker lists every insert on the card, up to 272.
+- **Features page.** Config > Features lists the options that need a restart or a switch of their own, each with a State row and its own page, and keeps the settings in `/Features/` on the card. **USB audio** is built in: switched on, the unit shows up as an audio input on a computer after the next start, switched off it presents only the stock USB interfaces. **Restart mode** sets what the power button does (turn off or restart) and whether the unit starts again by itself when power comes back after a cut. **Developer mode** is listed once `/.develop` exists on the card and loads an optional extension module from `/Plugins/Ext/` at start. Holding Shift in the first 4 seconds after power on starts without it. **Reset config** clears `/Features/`.
 - **Synth Automation.** Each patch has four automation slots. A slot is an LFO or an envelope and drives one engine parameter or one macro. The Params button cycles Synth Parameters, Synth Macros and Synth Automation. The automation is saved in the `.patch` file.
 - **Sample editor effects.** Fifteen `.ptfx` effects for `/Effects/`, among them Plate Reverb, Transient Shaper, Tape Saturation, Lo-Fi Chip, Dirt Drive, BBD Chorus, Dub Echo and Reverb.
 - **Workflow.** Add to Empty Slot in the Sample Loader, per-track MIDI-in for tracks 1 to 8, RAM or streaming mode per sample, and a project load that ends in the pattern editor.
@@ -28,7 +29,7 @@ The original Polyend Tracker (MK66) only. The Tracker+ and the Mini are not buil
 
 ## Flash
 
-1. Copy `PolyendTracker_FF_1.2.0.ptf` to the `/Firmware/` folder on the microSD card. Keep exactly one `.ptf` there.
+1. Copy `PolyendTracker_FF_1.3.0.ptf` to the `/Firmware/` folder on the microSD card. Keep exactly one `.ptf` there.
 2. Copy `Plugins/Synth/` to `/Plugins/Synth/` and `Plugins/Master/` to `/Plugins/Master/` on the card. Optional: copy the `.ptfx` files to `/Effects/`. The release zip holds all of it.
 3. On the Tracker open **Config > Firmware > Firmware update**, pick the file and confirm.
 
@@ -39,10 +40,11 @@ Do not rename the file. The original's bootloader lists only names that start wi
 You need `make`, `python3` and the Arm GNU Toolchain 12.3.rel1 (the release compiler, in `./agt/12.3.rel1/` or pass `TOOLCHAIN=/path/to/arm-none-eabi-`). Build only the original, `make all` also builds the Tracker+ and the Mini.
 
 ```bash
-# the release image, build/PolyendTracker_FF_1.2.0.ptf
+# the release image, build/PolyendTracker_FF_1.3.0.ptf
 make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 SYNTH_ENGINES="ACD FAT VAP WTFM PERC CHIP" \
   SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
-  SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off"
+  SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off" \
+  USB_AUDIO=1 CUSTOM_DEFINES="-DFEATURE_EXT_HOOKS"
 ```
 
 The plugins are not built from this tree. They come from the module repositories pinned in `engines/external.lock.json`, see [`engines/README.md`](engines/README.md). `synth-open/tools/package_release.sh` puts the image, the plugins, the licenses and a checksum list into a folder and a zip.
