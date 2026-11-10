@@ -50,7 +50,7 @@ repository in `build/modules/<set>/` (every repository has its own `NOTICE.md`; 
 
 ## FORM and FLUX: an optional group, off in the 1.2.0 package
 
-FORM (stored 19, patch and type 0x8B) and FLUX (stored 20, 0x8C) are in `poly-engines` `engines-v1.2.0`. They ship only as plugins in the
+FORM (stored 19, patch and type 0x8B) and FLUX (stored 20, 0x8C) are in `poly-engines` `engines-v1.3.0`. They ship only as plugins in the
 release zip, and only after the user has listened and approved them, so everything about them is behind one switch, the group
 `formflux`:
 
