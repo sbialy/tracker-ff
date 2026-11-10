@@ -142,6 +142,11 @@ if [ "$MODE" = fixed ] && [ "$FEAT" = 1 ]; then
     "^resets 1 while off 0 start state 1" "^exit 0"
   runp pr-feature-off 'feature 1\non 0\nbutton 0\nreturn 1\n' "pad 2;wait 300;resets;reset" "^resets 0 while off 0 start state 0" \
     "^mcu reset \(reset\): start off" "^exit 0"
+  # the R130 white screen report (ref/r130-poweroff.md): the feature on with Power button Turn off, the settings of the user's card.
+  # The sequence ends in the sleep with no reset and start state 0. What follows the sleep on the unit (interrupts, the off start
+  # display) is Arm only: poweroff_emu.py (poly-devtools firmware/module) runs it on the image
+  runp pr-turnoff 'feature 1\non 1\nbutton 0\nreturn 0\nreckey 1\n' "pad 2;wait 300;power hold 5000;power release;wait 10000;resets" \
+    "power hold: off 1 " "^resets 0 while off 0 start state 0" "^exit 0"
   # the page switches it off live: the next cut stays off
   runp pr-page-off "$ON" "tap Config;wait 800;tap Down 4;wait 300;tap F8;wait 500;tap F8;wait 500;tap Down 2;wait 300;tap F8;wait 300;tap Up;wait 200;tap F8;wait 1500;resets;reset" \
     "^resets 0 while off 0 start state 0" "^mcu reset \(reset\): start off" "^exit 0"
