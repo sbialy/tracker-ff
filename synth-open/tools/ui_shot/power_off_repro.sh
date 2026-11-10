@@ -62,37 +62,88 @@ runr() {  # name sd env script ere...
   for e in "$@"; do echo "$r" | grep -qE "$e" || { v=FAIL; rc=1; miss="$miss [$e]"; }; done
   echo "$v $name:$miss $(echo "$r" | grep -E '^(restart mode|mcu|resets|exit)' | tr '\n' ' ')"
 }
+# st MODE LEAVING PLATFORM STORE: the restart mode line. A features build (EXTHOOKS=1, restartmode prints " cfg N") keeps the mode in
+# /Features/restart.cfg: STORE 1 is its line "on 1", STORE 0 is "on 0" or no file yet, and /.autorestart must never be on the card
+# (an older image's marker is migrated and removed). Other builds check /.autorestart as before.
+FEAT=0
+if [ "$MODE" = fixed ]; then rm -rf $O/sd-probe; $U $O/sd-probe "restartmode" 2>&1 | grep -q " cfg " && FEAT=1; fi
+st() {
+  if [ $FEAT = 1 ]; then
+    if [ "$4" = 1 ]; then echo "^restart mode $1 leaving $2 platform $3 file 0 cfg 1"; else echo "^restart mode $1 leaving $2 platform $3 file 0 cfg (0|-1)"; fi
+  else echo "^restart mode $1 leaving $2 platform $3 file $4"; fi
+}
 if [ "$MODE" = fixed ] && [ -f "$(dirname "$0")/../../../core/include/RestartMode.h" ]; then
+  echo "restart mode store: $([ $FEAT = 1 ] && echo /Features/restart.cfg || echo /.autorestart)"
   rm -rf $O/sd-rm-a $O/sd-rm-b
   # no file: a power off stays off (the 79a0b37 behaviour), Record after the start window does not enter the mode
   runr rm-none a "" "restartmode;pad 2;wait 300;power hold 5000;power release;wait 10000;resets;restartmode" \
-    "^restart mode 0 leaving 0 platform 0 file 0" "power hold: off 1 " "^resets 0 while off 0" "^exit 0"
-  runr rm-late-rec a "" "hold Rec;wait 500;unhold Rec;restartmode" "^restart mode 0 leaving 0 platform 0 file 0" "^exit 0"
+    "$(st 0 0 0 0)" "power hold: off 1 " "^resets 0 while off 0" "^exit 0"
+  runr rm-late-rec a "" "hold Rec;wait 500;unhold Rec;restartmode" "$(st 0 0 0 0)" "^exit 0"
   # Record held through the start: the file is created, the mode is on
-  runr rm-enter a "UISHOT_REC_BOOT=1" "restartmode" "^restart mode 1 leaving 0 platform 1 file 1" "^exit 0"
+  runr rm-enter a "UISHOT_REC_BOOT=1" "restartmode" "$(st 1 0 1 1)" "^exit 0"
   # file present at start: the mode is on, a completed power off restarts (start state 1, the reset of a power-on), file kept
-  runr rm-restart a "" "restartmode;pad 2;wait 300;power hold 5000;resets;restartmode" "^restart mode 1 leaving 0 platform 1 file 1" \
+  runr rm-restart a "" "restartmode;pad 2;wait 300;power hold 5000;resets;restartmode" "$(st 1 0 1 1)" \
     "^mcu reset \(restart\): start RUN" "power hold: off 1 after 1500 ms" "^resets 1 while off 0" "^exit 0"
   # an aborted power off: no reset, the mode stays
   runr rm-abort a "" "pad 2;wait 300;power hold 500;power release;wait 10000;resets;restartmode" \
-    "^resets 0 while off 0" "^restart mode 1 leaving 0 platform 1 file 1" "^exit 0"
+    "^resets 0 while off 0" "$(st 1 0 1 1)" "^exit 0"
   # a stalled power off in the mode: the guard resets into a start (restart marker)
   runr rm-stall a "" "pad 2;wait 300;power press;stall 5000;resets" "^mcu reset \(guard restart\): start RUN" "^resets 1 while off 0" "^exit 0"
   # Record pressed during the bar, then released before the power button: aborted, the mode stays
   runr rm-leave-cancel a "" "pad 2;wait 300;power press;hold Rec;wait 300;unhold Rec;power release;wait 10000;resets;restartmode" \
-    "^resets 0 while off 0" "^restart mode 1 leaving 0 platform 1 file 1" "^exit 0"
+    "^resets 0 while off 0" "$(st 1 0 1 1)" "^exit 0"
   # Record + power during a stall: leaving, so the guard resets into off, the file stays (the delete runs at the end of the bar)
   runr rm-leave-stall a "" "pad 2;wait 300;power press;hold Rec;stall 5000;resets;restartmode" "^mcu reset \(guard\): start off" \
-    "^restart mode 1 leaving 1 platform 0 file 1" "^exit 0"
+    "$(st 1 1 0 1)" "^exit 0"
   # Record held first, then power: the file is deleted, the unit goes off, no reset
   runr rm-leave a "" "pad 2;wait 300;hold Rec;power hold 5000;power release;wait 10000;resets;restartmode" \
-    "power hold: off 1 after 1500 ms" "^resets 0 while off 0" "^restart mode 0 leaving 0 platform 0 file 0" "^exit 0"
+    "power hold: off 1 after 1500 ms" "^resets 0 while off 0" "$(st 0 0 0 0)" "^exit 0"
   # the next start is a normal one
-  runr rm-after a "" "restartmode;pad 2;wait 300;power hold 5000;resets" "^restart mode 0 leaving 0 platform 0 file 0" \
+  runr rm-after a "" "restartmode;pad 2;wait 300;power hold 5000;resets" "$(st 0 0 0 0)" \
     "power hold: off 1 " "^resets 0 while off 0" "^exit 0"
   # the other order: power first, Record during the bar
-  runr rm-enter2 b "UISHOT_REC_BOOT=1" "restartmode" "^restart mode 1 leaving 0 platform 1 file 1" "^exit 0"
+  runr rm-enter2 b "UISHOT_REC_BOOT=1" "restartmode" "$(st 1 0 1 1)" "^exit 0"
   runr rm-leave2 b "" "pad 2;wait 300;power press;wait 200;hold Rec;wait 5000;resets;restartmode" \
-    "^resets 0 while off 0" "^restart mode 0 leaving 0 platform 0 file 0" "^exit 0"
+    "^resets 0 while off 0" "$(st 0 0 0 0)" "^exit 0"
+  # features build only: the marker of an older image switches the feature on once and is removed (decision D2)
+  if [ $FEAT = 1 ]; then
+    rm -rf $O/sd-rm-m; mkdir -p $O/sd-rm-m; : > $O/sd-rm-m/.autorestart
+    runr rm-migrate m "" "restartmode;pad 2;wait 300;power hold 5000;resets" "$(st 1 0 1 1)" "^mcu reset \(restart\): start RUN" "^exit 0"
+    runr rm-migrate-next m "" "restartmode" "$(st 1 0 1 1)" "^exit 0"
+    # the Record shortcut switched off: Record held at start does not enter the mode
+    rm -rf $O/sd-rm-k; mkdir -p $O/sd-rm-k/Features; printf 'feature 1\non 0\nbutton 1\nreturn 0\nreckey 0\n' > $O/sd-rm-k/Features/restart.cfg
+    runr rm-reckey-off k "UISHOT_REC_BOOT=1" "restartmode" "$(st 0 0 0 0)" "^exit 0"
+    # and on, with the mode on: Record + power leaves it, the file says off
+    printf 'feature 1\non 1\nbutton 1\nreturn 0\nreckey 0\n' > $O/sd-rm-k/Features/restart.cfg
+    runr rm-reckey-off-leave k "" "pad 2;wait 300;hold Rec;power hold 5000;resets;restartmode" "^mcu reset \(restart\): start RUN" "$(st 1 0 1 1)" "^exit 0"
+  fi
+fi
+# power return (restart mode feature, Power return Start, ref/features-design.md section 5): features build only. "reset" is the
+# model's power cut (the next power-up keeps nothing but the EEPROM bytes), the start decision is printed.
+runp() {  # name restart.cfg script ere...
+  local name=$1 cfg=$2 script=$3; shift 3
+  rm -rf $O/sd-pr-$name; mkdir -p $O/sd-pr-$name/Features; printf "$cfg" > $O/sd-pr-$name/Features/restart.cfg
+  local r; r=$(timeout 300 $U $O/sd-pr-$name "$script" 2>&1; echo "exit $?")
+  local v=PASS miss=""
+  for e in "$@"; do echo "$r" | grep -qE "$e" || { v=FAIL; rc=1; miss="$miss [$e]"; }; done
+  echo "$v $name:$miss $(echo "$r" | grep -E '^(restart mode|mcu|resets|exit)' | tr '\n' ' ')"
+}
+if [ "$MODE" = fixed ] && [ "$FEAT" = 1 ]; then
+  ON='feature 1\non 1\nbutton 0\nreturn 1\nreckey 1\n'
+  runp pr-cut "$ON" "pad 2;wait 300;resets;reset;resets" "^resets 0 while off 0 start state 1" "^mcu reset \(reset\): start RUN" \
+    "^resets 1 while off 0 start state 1" "^exit 0"
+  runp pr-off "$ON" "pad 2;wait 300;power hold 5000;power release;wait 3000;resets;reset" "power hold: off 1 " \
+    "^resets 0 while off 0 start state 0" "^mcu reset \(reset\): start off" "^exit 0"
+  runp pr-stay 'feature 1\non 1\nbutton 0\nreturn 0\n' "pad 2;wait 300;resets;reset" "^resets 0 while off 0 start state 0" \
+    "^mcu reset \(reset\): start off" "^exit 0"
+  runp pr-cancel "$ON" "pad 2;wait 300;power hold 500;power release;wait 3000;resets;reset" "^resets 0 while off 0 start state 1" \
+    "^mcu reset \(reset\): start RUN" "^exit 0"
+  runp pr-restart 'feature 1\non 1\nbutton 1\nreturn 1\n' "pad 2;wait 300;power hold 5000;resets" "^mcu reset \(restart\): start RUN" \
+    "^resets 1 while off 0 start state 1" "^exit 0"
+  runp pr-feature-off 'feature 1\non 0\nbutton 0\nreturn 1\n' "pad 2;wait 300;resets;reset" "^resets 0 while off 0 start state 0" \
+    "^mcu reset \(reset\): start off" "^exit 0"
+  # the page switches it off live: the next cut stays off
+  runp pr-page-off "$ON" "tap Config;wait 800;tap Down 4;wait 300;tap F8;wait 500;tap F8;wait 500;tap Down 2;wait 300;tap F8;wait 300;tap Up;wait 200;tap F8;wait 1500;resets;reset" \
+    "^resets 0 while off 0 start state 0" "^mcu reset \(reset\): start off" "^exit 0"
 fi
 exit $rc
