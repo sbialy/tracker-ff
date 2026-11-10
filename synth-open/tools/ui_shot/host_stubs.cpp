@@ -37,6 +37,7 @@ extern "C" unsigned f_stat(const char* path, void*)
     HostFaultSuspend keep;   // the device's FatFs f_stat does not allocate
     struct stat st;
     std::string p = path ? path : "";
+    for (char& c : p) if (c == '\\') c = '/';   // FatFs takes '\\' as a separator too (IsSeparator), the firmware's paths use it (bank copy)
     while (!p.empty() && p[0] == '/') p.erase(0, 1);
     extern std::string g_sdRootForStat;
     return stat((g_sdRootForStat + "/" + p).c_str(), &st) == 0 ? 0u : 4u;
@@ -45,7 +46,8 @@ extern "C" unsigned f_stat(const char* path, void*)
 // ---- Profiler.cpp (stack watermark and CPU meter of the device)
 Profiler* Profiler::instance = nullptr;
 void Profiler::init() {}
-size_t Profiler::freeRamBytes() { return 40000; }
+long hostHeapFreeBytes();   // host_heapmodel.cpp: free bytes of the device heap model, -1 when it is off
+size_t Profiler::freeRamBytes() { const long f = hostHeapFreeBytes(); return f >= 0 ? size_t(f) : 40000; }
 size_t Profiler::maxStackBytes() { return 3000; }
 // The host has no audio interrupt. The development console's cpu command (CONSOLE=1) gets fixed numbers, UISHOT_FAKE_CPU=avg,max (us) changes them
 // (that is how the runner's threshold check is exercised without a device)

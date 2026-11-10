@@ -14,6 +14,8 @@ STACKMODEL ?=
 # EXTHOOKS=1: the runtime extension hooks of the one image (FEATURE_EXT_HOOKS, synth-open/ext_module.cpp): the loader rules run in
 # develop mode, the host never enters a module (its image id is 0, a card module is refused), every hook stays null
 EXTHOOKS ?=
+# MCU_NULL=1: the display controls (core/libs/NewDisplay) read a null text as the MCU does (address 0 is readable flash there), host_mcunull.h
+MCU_NULL ?=
 OUT     ?= $(ROOT)/build/ui-shot$(if $(filter 1,$(CONSOLE)),-console)$(if $(SAN),-san)$(if $(STACKMODEL),-stack)$(if $(filter 1,$(EXTHOOKS)),-ext)
 OBJ     := $(OUT)/obj
 GEN     := $(OUT)/gen
@@ -32,11 +34,11 @@ _gen := $(shell python3 -I $(HERE)/gen_overlay.py $(ROOT) $(GEN) $(EXT) 2>&1)
 $(if $(_gen),$(error gen_overlay: $(_gen)))
 
 # overlay sources (gen_shim.sh) replace their originals
-OVERLAY_SRCS := plug_synth.cpp mtAudioEngine.cpp mtFileManagerOldVersionRecovery.cpp Tracker.cpp mtConfig.cpp fSampleRec.cpp effect_polyverb.cpp plug_host.cpp open_cold.cpp textBox.cpp
+OVERLAY_SRCS := plug_synth.cpp mtAudioEngine.cpp mtFileManagerOldVersionRecovery.cpp Tracker.cpp mtConfig.cpp fSampleRec.cpp effect_polyverb.cpp plug_host.cpp open_cold.cpp open_synth.cpp textBox.cpp
 CORE_DIRS := source libs interface effector FileManager Exporter AudioEngine synth
 CORE_CPP  := $(foreach d,$(CORE_DIRS),$(shell cd $(CORE) && find $(d) -name '*.cpp'))
 CORE_CPP  := $(filter-out $(foreach o,$(OVERLAY_SRCS),%/$(o)),$(CORE_CPP))
-SO_OVERLAY := $(filter plug_host.cpp plug_synth.cpp open_cold.cpp,$(OVERLAY_SRCS))
+SO_OVERLAY := $(filter plug_host.cpp plug_synth.cpp open_cold.cpp open_synth.cpp,$(OVERLAY_SRCS))
 CORE_CPP  := $(filter-out $(foreach e,$(filter-out $(SYNTH_ENGINES_SEL),$(SYNTH_ENGINES_ALL)),$(SYNTH_ENGINE_CORE_SRCS_$(e))),$(CORE_CPP))
 CORE_C    := $(shell cd $(CORE) && find libs -name '*.c')
 SO_CPP    := $(filter-out $(SO_OVERLAY),$(filter-out engine_%.cpp,$(notdir $(wildcard $(SO)/*.cpp)))) $(addprefix ot/audio/,$(notdir $(wildcard $(SO)/ot/audio/*.cpp))) $(SYNTH_ENGINE_SRCS)
@@ -80,8 +82,16 @@ CFLAGS   := $(SANFLAGS) $(OPT) -g -fno-strict-aliasing $(WARN) $(INC) $(DEFS)
 
 all: $(OUT)/ui_shot
 
+$(OBJ)/core/libs/NewDisplay/%.o: CXXFLAGS += $(if $(MCU_NULL),-include $(HERE)/host_mcunull.h)
+$(OBJ)/gen/textBox.cpp.o: CXXFLAGS += $(if $(MCU_NULL),-include $(HERE)/host_mcunull.h)   # overlay copy of a NewDisplay control
+
 $(OUT)/ui_shot: $(OBJS)
 	$(CXX) -o $@ $(OBJS) $(LDFLAGS) -lz
+	@# the symbols of the host's own objects, and the symbol table of the link with a host/firmware flag per function: host_heapmodel.cpp
+	@# (UISHOT_HEAP=device) serves the host's own allocations from the system heap, uncounted
+	@nm -U -j $(filter $(OBJ)/host/%.o $(OBJ)/devtools/host/%.o $(OBJ)/plat/%.o,$(OBJS)) 2>/dev/null | grep -v ':$$' | sed 's/^_//' | sort -u > $(OUT)/host_syms.txt
+	@python3 -I $(HERE)/host_symtab.py $@ $(OUT)/host_syms.txt > $(OUT)/host_symtab.txt
+	@# host_heapmodel.o needs the arena allocator of the firmware (new_arena.h) when this tree has it
 
 $(GEN)/.stamp: $(HERE)/gen_overlay.py
 	touch $@
@@ -124,6 +134,7 @@ $(OBJ)/devtools/host/%.o: $(DEVTOOLS_HOST_DIR)/%.cpp $(GEN)/.stamp
 $(OBJ)/plat/Keys.o: $(ROOT)/platforms/mk66/3rdparty/Buttons/Keys.cpp $(GEN)/.stamp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -I$(DEVTOOLS_HOST_STUBS) -I$(ROOT)/platforms/mk66/3rdparty/I2C -MMD -MP -c $< -o $@
+$(OBJ)/host/host_heapmodel.o: CXXFLAGS += -I$(ROOT)/platforms/mk66/3rdparty/teensy_core
 $(OBJ)/host/%.o: $(HERE)/%.cpp $(GEN)/.stamp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@

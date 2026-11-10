@@ -131,6 +131,13 @@ SOURCES = {
     'synth-open/plug_synth.cpp': [(re.compile(r'if \(!s_lib\[k\]\.attached && !loadEngine\(k, want, nWant, keep, nKeep\)\) ok = false;'), 'if (!s_lib[k].attached) ok = false;')],
     # same-directory quote include of plug_abi.h would pick the original: a copy, found through GEN/inc
     'synth-open/plug/fx_dirt_plug.cpp': [],
+    # the three test accessors of host_smoke_test.cpp (OpenInstrument::testParams/testModOut, OpenSynth::instrumentAt, open::testParams/testModOut): they
+    # only read, the stress test (poly-devtools host_stress.cpp) reads the engine's block params and the automation outputs through them. Not
+    # OPEN_HOST_TEST itself, that also removes the audio lock of the patch code
+    'synth-open/open_synth.cpp': [
+        (re.compile(r'#ifdef OPEN_HOST_TEST\n(const ot::audio::SynthParams\* open::testParams)'),
+         'namespace open { const ot::audio::SynthParams* testParams(int part); float testModOut(int part, int slot); }\n#ifdef OPEN_HOST_TEST\n\\1'),
+        (re.compile(r'#ifdef OPEN_HOST_TEST'), '#if 1 /* ui_shot: read only test accessors */')],
     'core/libs/NewDisplay/textBox.cpp': [(re.compile(r'char\* (enter_pos|space_pos) = strchr'), r'const char* \1 = strchr')],
 }
 for p, rules in SOURCES.items():

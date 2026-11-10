@@ -70,11 +70,12 @@ void open::OpenPatch::effective(float* out, const float* modOut) const
     float add[kMaxParams] = {};
     bool hit[kMaxParams] = {};
     float macroMod[open::kModMacros] = {};
-    if (modOut && modOn)
+    const open::SlotCfg& live = *cfg; // the open slot's macros and automation, or those of the slot the Patch FX has on
+    if (modOut && live.modOn)
     {
         for (int s = 0; s < open::kModSlots; s++)
         {
-            const open::ModSlot& c = mod[s];
+            const open::ModRun& c = live.mod[s];
             if (c.type == open::ModType::kOff || c.dest < 0)
             {
                 continue;
@@ -93,22 +94,19 @@ void open::OpenPatch::effective(float* out, const float* modOut) const
     }
     for (int m = 0; m < int(kUserMacroCount); m++)
     {
-        const auto& macro = metadata.macros[m];
+        const open::MacroRun& macro = live.macro[m];
         const float cc = float(macroCC[m]);
         float mv = macro.bipolar ? (cc - 63.0f) * (1.0f / 64.0f) : cc * (1.0f / 127.0f);
         if (m < open::kModMacros && macroMod[m] != 0.0f)
         {
             mv = std::clamp(mv + macroMod[m], macro.bipolar ? -1.0f : 0.0f, 1.0f); // as far as the knob goes
         }
-        for (const auto& mod : macro.modifiers)
+        for (int t = 0; t < macro.count; t++) // the targets that name a parameter of this engine (SlotCfg is built with that filter)
         {
-            if (!mod.paramId.has_value() || *mod.paramId < 0 || *mod.paramId >= count)
-            {
-                continue;
-            }
-            const auto& p = metadata.params[*mod.paramId];
-            add[*mod.paramId] += mod.amount * mv * (float(p.maxValue) - float(p.minValue));
-            hit[*mod.paramId] = true;
+            const int id = macro.param[t];
+            const auto& p = metadata.params[id];
+            add[id] += macro.amount[t] * mv * (float(p.maxValue) - float(p.minValue));
+            hit[id] = true;
         }
     }
     for (int i = 0; i < count; i++)
@@ -340,21 +338,51 @@ class OpenInstrument final : public Instrument
             modOut[s] = 0.0f;
         }
         modSerial = patch ? patch->modSerial() : 0;
+        cfgSerial = patch ? patch->cfgSerial() : 0;
     }
 
-    void modAdvance(float bpm)
+    // The Patch FX put another slot's macros and automation on (or took them off): keep the state of the slots whose type stays (an LFO
+    // goes on from its phase, an envelope from its stage and level, so a fast rhythmic patch change neither retriggers nor clicks) and
+    // start the slots whose type changes (modSync). A slot that went Off is cleared. An envelope that starts under a held note goes to
+    // its attack, otherwise it would sit idle until the next note.
+    __attribute__((noinline)) void modSwitch()
+    {
+        cfgSerial = patch->cfgSerial();
+        const bool held = anyGate();
+        for (int s = 0; s < open::kModSlots; s++)
+        {
+            const open::ModRun& c = patch->live().mod[s];
+            open::modSync(c, modSt[s]);
+            if (c.type == open::ModType::kEnv && held && modSt[s].stage == open::EnvStage::kIdle)
+            {
+                modSt[s].stage = open::EnvStage::kAttack;
+            }
+            modOut[s] = modSt[s].out;
+        }
+    }
+
+    void modCheck()
     {
         if (patch->modSerial() != modSerial)
         {
             modResetAll(); // another file came in (slot select, load): its modulators start fresh
         }
+        else if (patch->cfgSerial() != cfgSerial)
+        {
+            modSwitch();
+        }
+    }
+
+    void modAdvance(float bpm)
+    {
+        modCheck();
         if (!patch->modActive())
         {
             return;
         }
         for (int s = 0; s < open::kModSlots; s++)
         {
-            open::modStep(patch->modSlot(s), modSt[s], bpm);
+            open::modStep(patch->live().mod[s], modSt[s], bpm);
             modOut[s] = modSt[s].out;
         }
     }
@@ -374,14 +402,11 @@ class OpenInstrument final : public Instrument
     // Note and gate events of the automation: once per MIDI event, not per block, kept out of line (the MIDI lambda inlines the rest)
     __attribute__((noinline)) void modNoteOnAll()
     {
-        if (patch->modSerial() != modSerial)
-        {
-            modResetAll();
-        }
+        modCheck();
         const bool afterSilence = !anyActive();
         for (int s = 0; s < open::kModSlots; s++)
         {
-            open::modNoteOn(patch->modSlot(s), modSt[s], afterSilence);
+            open::modNoteOn(patch->live().mod[s], modSt[s], afterSilence);
             modOut[s] = modSt[s].out;
         }
     }
@@ -390,9 +415,10 @@ class OpenInstrument final : public Instrument
     {
         if (patch && patch->modActive() && !anyGate())
         {
+            modCheck();
             for (int s = 0; s < open::kModSlots; s++)
             {
-                open::modGateOff(patch->modSlot(s), modSt[s]);
+                open::modGateOff(patch->live().mod[s], modSt[s]);
             }
         }
     }
@@ -655,6 +681,7 @@ class OpenInstrument final : public Instrument
     open::ModState modSt[open::kModSlots];
     float modOut[open::kModSlots] = {};
     uint8_t modSerial = 0;
+    uint8_t cfgSerial = 0;
     float bend = 0.0f; // pitch bend in semitones, applied to every voice (SynthVoice::bend)
     Voice voices[kMaxVoicesPerInstrument];
 };
