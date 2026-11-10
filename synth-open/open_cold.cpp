@@ -293,6 +293,7 @@ void namesClear()
     if (!gNamesClear)
     {
         std::memset(gNames, 0, sizeof(gNames));
+        std::memcpy(gNames[6 - open::kPlugStoredFirst].name, "CHIP", 5);   // CHIP is a plugin but always was number 6: a card without chip.plg says "Missing: CHIP"
         gNamesClear = true;
     }
 }

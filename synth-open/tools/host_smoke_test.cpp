@@ -452,9 +452,8 @@ int main() {
       // CHIP is a plugin (chip.plg, stored 6, .patch engine 8): without it a part on CHIP and a CHIP .patch are Missing, not reset
 #ifndef SMOKE_CHIP_PLUGIN   // (the variant with the CHIP plugin has it)
       check(open::missingDef(6) && !open::engineOf(open::missingDef(6)) && open::typeForStored(6) == kMiss && open::engineUiForStored(6) == -1 &&
-              std::string(open::missingName(6)) == "#6" && open::typeForEngineId(8) == kMiss && open::engineNameRemember(6, "CHIP") &&
-              std::string(open::missingName(6)) == "CHIP",
-            "stored 6 / engine 8 (CHIP, a plugin): the missing placeholder, \"Missing: CHIP\"");
+              std::string(open::missingName(6)) == "CHIP" && open::typeForEngineId(8) == kMiss && !open::engineNameRemember(6, "CHIP"),
+            "stored 6 / engine 8 (CHIP, a plugin): the missing placeholder, \"Missing: CHIP\" without the card having told the name");
 #endif
       auto src = ps->createPatch(kLead); open::PatchData pd; static_cast<open::OpenPatch&>(*src).exportData(pd);
       pd.engine = 0xC7; uint8_t pbuf[4096]; const size_t pn = open::encodePatch(pd, pbuf, sizeof(pbuf));
