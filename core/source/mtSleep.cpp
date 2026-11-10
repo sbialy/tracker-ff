@@ -2,6 +2,9 @@
 #include "FT812.h"
 #include "RestartMode.h"
 #include "TrackerImpl.h"
+#ifdef FEATURE_EXT_HOOKS
+#include "features.h"
+#endif
 #include <Audio.h>
 
 mtSleep lowPower;
@@ -23,6 +26,10 @@ void mtSleep::stopPowerOffSequence()
     if (shutdownState == shutdownStateStart)
     {
         TrackerImpl::getInstance()->getPlatform()->setPowerOffGuard(false);
+        if (startOnPowerReturn)
+        {
+            TrackerImpl::getInstance()->getPlatform()->setStartOnPowerReturn(true); // the press wrote 0, a cancelled one puts 1 back
+        }
     }
     shutdownState = shutdownStateNone;
     if (restartLeave)
@@ -62,7 +69,12 @@ void mtSleep::goLowPower()
     Platform* platform = TrackerImpl::getInstance()->getPlatform();
     if (restart_mode::powerOffEnd(restartActive, restartLeave) == restart_mode::PowerOffEnd::kLeave)
     {
+#ifdef FEATURE_EXT_HOOKS
+        features::set(features::find("restart"), false);
+        features::flush(); // the file is written before the power goes
+#else
         platform->getFileSystem()->remove(restart_mode::kFilePath);
+#endif
         restartActive = false;
         restartLeave = false;
     }
@@ -80,9 +92,31 @@ void mtSleep::setRestartActive(bool on)
 void mtSleep::initRestartMode()
 {
     restartLeave = false;
+#ifdef FEATURE_EXT_HOOKS
+    // the features own the mode: a /.autorestart of an older image switches the feature on once and is removed
+    FileSystem* fs = TrackerImpl::getInstance()->getPlatform()->getFileSystem();
+    if (fs->exists(restart_mode::kFilePath))
+    {
+        features::set(features::find("restart"), true);
+        fs->remove(restart_mode::kFilePath);
+    }
+#else
     setRestartActive(TrackerImpl::getInstance()->getPlatform()->getFileSystem()->exists(restart_mode::kFilePath));
+#endif
     restartWindowOpen = true;
     restartWindowTimer = 0;
+}
+
+void mtSleep::setRestartMode(bool on, bool recordShortcut)
+{
+    restartRecordKey = recordShortcut;
+    setRestartActive(on);
+}
+
+void mtSleep::setStartOnPowerReturn(bool on)
+{
+    startOnPowerReturn = on;
+    TrackerImpl::getInstance()->getPlatform()->setStartOnPowerReturn(on);
 }
 
 void mtSleep::updateRestartMode(bool recordHeld)
@@ -94,7 +128,7 @@ void mtSleep::updateRestartMode(bool recordHeld)
 
     if (shutdownState == shutdownStateStart)
     {
-        if (restartActive && recordHeld && !restartLeave)
+        if (restartActive && restartRecordKey && recordHeld && !restartLeave)
         {
             restartLeave = true; // Record during the bar: this power off leaves the mode and goes off
             setRestartActive(true);
@@ -102,8 +136,14 @@ void mtSleep::updateRestartMode(bool recordHeld)
         return;
     }
 
-    if (shutdownState == shutdownStateNone && restart_mode::shouldEnter(restartActive, restartWindowOpen, recordHeld))
+    if (shutdownState == shutdownStateNone && restartRecordKey &&
+        restart_mode::shouldEnter(restartActive, restartWindowOpen, recordHeld))
     {
+#ifdef FEATURE_EXT_HOOKS
+        restartWindowOpen = false;
+        features::set(features::find("restart"), true);
+        return;
+#endif
         FileSystem* fs = TrackerImpl::getInstance()->getPlatform()->getFileSystem();
         auto openFileInfo = fs->openFile(restart_mode::kFilePath, FileSystem::FileOpenMode::kWriteCreateNew);
         if (std::get<0>(openFileInfo))

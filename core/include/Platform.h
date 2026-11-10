@@ -43,6 +43,8 @@ class Platform
     // Restart mode (RestartMode.h): while on, a power off that completes restarts the unit, and a stalled one (the guard above)
     // resets into a start instead of the off state. Default: nothing (the unit goes off as usual).
     virtual void setRestartOnPowerOff(bool on) { (void)on; }
+    // keep the start state of a power-on while the unit runs, so a power cut followed by power return starts the UI (original)
+    virtual void setStartOnPowerReturn(bool on) { (void)on; }
     virtual void runBootloader(char* fileName) = 0;
     virtual void setPowerButtonCallback(PowerButtonCallback) = 0;
     virtual bool getPowerButtonState() = 0;

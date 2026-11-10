@@ -37,6 +37,10 @@ class mtSleep
     void updateRestartMode(bool recordHeld);
     inline bool isRestartMode() const { return restartActive; }
     inline bool isLeavingRestartMode() const { return restartLeave; }
+    // Features (features_builtin.cpp): the restart mode feature switches the mode and the Record shortcut, and keeps the
+    // EEPROM start state at 1 while the unit runs when "Power return: Start" is picked
+    void setRestartMode(bool on, bool recordShortcut);
+    void setStartOnPowerReturn(bool on);
 
   private:
     void setRestartActive(bool on);
@@ -46,6 +50,8 @@ class mtSleep
     bool restartActive = false;
     bool restartLeave = false;     // Record seen during the bar of the current power off
     bool restartWindowOpen = false; // the start window for Record (kKeyWindowMs)
+    bool restartRecordKey = true;   // the Record shortcut (enter at start, leave at power off)
+    bool startOnPowerReturn = false;
     elapsedMillis restartWindowTimer;
 };
 

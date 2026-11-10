@@ -524,6 +524,8 @@ class HPlatform : public Platform
     }
     // no override: also builds against a tree without the restart mode
     void setRestartOnPowerOff(bool on) { g_restartOnPowerOff = on; }
+    // no override: also builds against a tree without the features (PlatformImpl::setStartOnPowerReturn, saveStartState)
+    void setStartOnPowerReturn(bool on) { g_startState = on ? 1 : 0; }
     // no override: also builds against a tree without the guard (bug mode)
     void setPowerOffGuard(bool armed)
     {

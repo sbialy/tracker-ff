@@ -164,6 +164,17 @@ void PlatformImpl::setRestartOnPowerOff(bool on)
 #endif
 }
 
+void PlatformImpl::setStartOnPowerReturn(bool on)
+{
+#ifndef TRACKER_MINI
+    // checkPowerState wrote 0 at this start. 1 makes the next power-up (power returning after a cut) start the UI, the press of
+    // a power off writes 0 again (setPowerOffGuard), so a deliberate power off still ends off. One EEPROM write per change.
+    saveStartState(on ? 1 : 0);
+#else
+    (void)on;
+#endif
+}
+
 bool PlatformImpl::powerOffGuardArmed() const
 {
     return powerOffGuard.armed();

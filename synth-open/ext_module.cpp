@@ -120,6 +120,23 @@ bool enter(const plug_file_header&) { return false; }
 #endif
 }   // namespace
 
+namespace
+{
+ext::Status s_status = ext::Status::kOff;
+}
+
+extern "C" const char* ext_status_short(void)
+{
+    switch (s_status)
+    {
+    case ext::Status::kOff: return "On";
+    case ext::Status::kLoaded: return "Loaded";
+    case ext::Status::kNone: return "No module";
+    case ext::Status::kCrashed: return "Crashed";
+    default: return "Refused";
+    }
+}
+
 extern "C" void ext_boot(void* platformPtr, int develop)
 {
     memset(&ext_hooks, 0, sizeof(ext_hooks));
@@ -129,7 +146,8 @@ extern "C" void ext_boot(void* platformPtr, int develop)
     s_timer = platform->getTimer();
     CardFs card{s_fs};
     const ext::Slot slot{s_ext, EXT_LOAD_BYTES, uintptr_t(s_ext)};
-    const bool loaded = ext::boot(card, true, slot, imageCrc, enter) == ext::Status::kLoaded;
+    s_status = ext::boot(card, true, slot, imageCrc, enter);
+    const bool loaded = s_status == ext::Status::kLoaded;
     s_markerMs = now();
     s_markerSet = loaded;
 }
