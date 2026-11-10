@@ -28,6 +28,7 @@ extern uint32_t g_powerOffAtMs;      // virtual time of the first one
 extern int g_guardArmed, g_guardKicks; // power-off stall guard (Platform::setPowerOffGuard): armed now, kicks while armed
 // MK66 power model (host_platform.cpp): EEPROM start state byte, MCU resets (all, and those that hit a unit that was off)
 extern int g_startState;
+extern bool g_restartOnPowerOff;
 extern int g_mcuResets, g_resetsWhileOff;
 void bootModel();                    // the start decision of the first boot (UISHOT_START_STATE), before the UI starts
 void resetCommand();                 // an MCU reset now: prints the start decision

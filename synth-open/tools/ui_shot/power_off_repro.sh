@@ -53,4 +53,46 @@ if [ "$MODE" = fixed ]; then
   runm wdog-5878f0e "UISHOT_K66_WDOG=1" "pad 2;wait 300;power hold 5000;power release;wait 60000;resets" "^mcu reset \(k66 wdog\)" "^resets 1 while off 1"
   runm wdog-5878f0e-abort "UISHOT_K66_WDOG=1" "pad 2;wait 300;power hold 500;power release;wait 10000;resets" "^mcu reset \(k66 wdog\)" "^resets 1 while off 0"
 fi
+# restart mode (core/include/RestartMode.h), tree with the mode only. runr keeps the SD folder of its group between cases, so a case
+# sees the file the one before it left (the unit's card across starts).
+runr() {  # name sd env script ere...
+  local name=$1 sd=$O/sd-rm-$2 env=$3 script=$4; shift 4
+  local r; r=$(env $env timeout 300 $U $sd "$script" 2>&1; echo "exit $?")
+  local v=PASS miss=""
+  for e in "$@"; do echo "$r" | grep -qE "$e" || { v=FAIL; rc=1; miss="$miss [$e]"; }; done
+  echo "$v $name:$miss $(echo "$r" | grep -E '^(restart mode|mcu|resets|exit)' | tr '\n' ' ')"
+}
+if [ "$MODE" = fixed ] && [ -f "$(dirname "$0")/../../../core/include/RestartMode.h" ]; then
+  rm -rf $O/sd-rm-a $O/sd-rm-b
+  # no file: a power off stays off (the 79a0b37 behaviour), Record after the start window does not enter the mode
+  runr rm-none a "" "restartmode;pad 2;wait 300;power hold 5000;power release;wait 10000;resets;restartmode" \
+    "^restart mode 0 leaving 0 platform 0 file 0" "power hold: off 1 " "^resets 0 while off 0" "^exit 0"
+  runr rm-late-rec a "" "hold Rec;wait 500;unhold Rec;restartmode" "^restart mode 0 leaving 0 platform 0 file 0" "^exit 0"
+  # Record held through the start: the file is created, the mode is on
+  runr rm-enter a "UISHOT_REC_BOOT=1" "restartmode" "^restart mode 1 leaving 0 platform 1 file 1" "^exit 0"
+  # file present at start: the mode is on, a completed power off restarts (start state 1, the reset of a power-on), file kept
+  runr rm-restart a "" "restartmode;pad 2;wait 300;power hold 5000;resets;restartmode" "^restart mode 1 leaving 0 platform 1 file 1" \
+    "^mcu reset \(restart\): start RUN" "power hold: off 1 after 1500 ms" "^resets 1 while off 0" "^exit 0"
+  # an aborted power off: no reset, the mode stays
+  runr rm-abort a "" "pad 2;wait 300;power hold 500;power release;wait 10000;resets;restartmode" \
+    "^resets 0 while off 0" "^restart mode 1 leaving 0 platform 1 file 1" "^exit 0"
+  # a stalled power off in the mode: the guard resets into a start (restart marker)
+  runr rm-stall a "" "pad 2;wait 300;power press;stall 5000;resets" "^mcu reset \(guard restart\): start RUN" "^resets 1 while off 0" "^exit 0"
+  # Record pressed during the bar, then released before the power button: aborted, the mode stays
+  runr rm-leave-cancel a "" "pad 2;wait 300;power press;hold Rec;wait 300;unhold Rec;power release;wait 10000;resets;restartmode" \
+    "^resets 0 while off 0" "^restart mode 1 leaving 0 platform 1 file 1" "^exit 0"
+  # Record + power during a stall: leaving, so the guard resets into off, the file stays (the delete runs at the end of the bar)
+  runr rm-leave-stall a "" "pad 2;wait 300;power press;hold Rec;stall 5000;resets;restartmode" "^mcu reset \(guard\): start off" \
+    "^restart mode 1 leaving 1 platform 0 file 1" "^exit 0"
+  # Record held first, then power: the file is deleted, the unit goes off, no reset
+  runr rm-leave a "" "pad 2;wait 300;hold Rec;power hold 5000;power release;wait 10000;resets;restartmode" \
+    "power hold: off 1 after 1500 ms" "^resets 0 while off 0" "^restart mode 0 leaving 0 platform 0 file 0" "^exit 0"
+  # the next start is a normal one
+  runr rm-after a "" "restartmode;pad 2;wait 300;power hold 5000;resets" "^restart mode 0 leaving 0 platform 0 file 0" \
+    "power hold: off 1 " "^resets 0 while off 0" "^exit 0"
+  # the other order: power first, Record during the bar
+  runr rm-enter2 b "UISHOT_REC_BOOT=1" "restartmode" "^restart mode 1 leaving 0 platform 1 file 1" "^exit 0"
+  runr rm-leave2 b "" "pad 2;wait 300;power press;wait 200;hold Rec;wait 5000;resets;restartmode" \
+    "^resets 0 while off 0" "^restart mode 0 leaving 0 platform 0 file 0" "^exit 0"
+fi
 exit $rc
