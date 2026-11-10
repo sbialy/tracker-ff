@@ -133,6 +133,8 @@ void Interface::begin(Platform* platform, Synth* synth)
 //=======================================================================
 void Interface::update()
 {
+    lowPower.updateRestartMode(getPlatform()->getButtons()->isButtonPressed(interfaceButtonRec));
+
     processOperatingMode();
 
     if (onScreenModule != nullptr && onScreenModule->moduleRefresh)

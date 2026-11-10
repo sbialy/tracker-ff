@@ -9,7 +9,7 @@
 
 bool powerButtonLastState;
 
-bool takePowerOffMarker(); // PlatformImpl.cpp
+uint32_t takePowerOffMarker(); // PlatformImpl.cpp
 
 void checkPowerState(PlatformImpl* platformImpl)
 {
@@ -24,7 +24,9 @@ void checkPowerState(PlatformImpl* platformImpl)
 #else
         in.consoleBuild = false;
 #endif
-        in.offMarker = takePowerOffMarker();
+        const uint32_t marker = takePowerOffMarker();
+        in.offMarker = marker == power_off_guard::kOffMarker;
+        in.restartMarker = marker == power_off_guard::kRestartMarker;
 #ifndef TRACKER_MINI
         in.watchdogReset = (RCM_SRS0 & RCM_SRS0_WDOG) != 0;
 #else

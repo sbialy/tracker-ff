@@ -28,6 +28,7 @@ class PlatformImpl final : public Platform
     virtual void resetMCU() override;
     virtual void setPowerOffGuard(bool armed) override;
     virtual void kickPowerOffGuard() override;
+    virtual void setRestartOnPowerOff(bool on) override;
     virtual void runBootloader(char* fileName) override;
     virtual void setPowerButtonCallback(PowerButtonCallback) override;
     virtual bool getPowerButtonState() override;

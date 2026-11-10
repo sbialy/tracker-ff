@@ -32,9 +32,21 @@ class mtSleep
     void wakeUp();
     void resetMCU();
 
+    // Restart mode (RestartMode.h): read the file once at start, then every main loop pass with the Record key state
+    void initRestartMode();
+    void updateRestartMode(bool recordHeld);
+    inline bool isRestartMode() const { return restartActive; }
+    inline bool isLeavingRestartMode() const { return restartLeave; }
+
   private:
+    void setRestartActive(bool on);
+
     uint8_t shutdownState = shutdownStateNone;
     elapsedMillis shutdownTimer;
+    bool restartActive = false;
+    bool restartLeave = false;     // Record seen during the bar of the current power off
+    bool restartWindowOpen = false; // the start window for Record (kKeyWindowMs)
+    elapsedMillis restartWindowTimer;
 };
 
 extern mtSleep lowPower;

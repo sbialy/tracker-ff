@@ -18,6 +18,9 @@ PlatformImpl::SystemInfo PlatformImpl::systemInfo = { BUILD_ID DEBUG_TEXT };
 
 extern void disableHardware();
 
+// restart mode (RestartMode.h, set by the core through setRestartOnPowerOff): read by setPowerMode(false) and the guard
+static volatile bool restartOnPowerOff;
+
 void PlatformImpl::init()
 {
 }
@@ -44,13 +47,28 @@ void PlatformImpl::setPowerMode(bool mode)
     }
     else
     {
-        saveStartState(0);
+        // restart mode (RestartMode.h): the same teardown, then the reset of a power-on (start state 1, as resetMCU) instead of
+        // the sleep. The next start reads 1 and comes up without a button press, exactly as after a wake from the sleep.
+        const bool restart = restartOnPowerOff;
+
+        saveStartState(restart ? 1 : 0);
 
         noInterrupts();
 
         disableHardware();
 
         setPowerOffGuard(false); // interrupts are off from here, the sleep below polls the power button
+
+        if (restart)
+        {
+            __asm volatile("dsb");
+            (*(volatile uint32_t*)0xE000ED0C) = (uint32_t)((0x5FAUL << 16) | 0x04U);
+            __asm volatile("dsb");
+            for (;;)
+            {
+                __asm volatile("nop");
+            }
+        }
 
         Snooze.sleep();
     }
@@ -84,11 +102,11 @@ extern "C" volatile uint32_t systick_millis_count;
 // survives a reset, not a power cycle (.noinit is not cleared by the startup code)
 uint32_t powerOffMarker __attribute__((section(".noinit.power_off")));
 
-extern "C" void resetToOffState()
+static void resetWithMarker(uint32_t marker)
 {
 #ifndef TRACKER_MINI
     __disable_irq();
-    powerOffMarker = power_off_guard::kOffMarker;
+    powerOffMarker = marker;
     __asm volatile("dsb");
     (*(volatile uint32_t*)0xE000ED0C) = (uint32_t)((0x5FAUL << 16) | 0x04U);
     __asm volatile("dsb");
@@ -99,11 +117,23 @@ extern "C" void resetToOffState()
 #endif
 }
 
-bool takePowerOffMarker()
+extern "C" void resetToOffState()
 {
-    const bool set = powerOffMarker == power_off_guard::kOffMarker;
+    resetWithMarker(power_off_guard::kOffMarker);
+}
+
+// the end of a stalled power-off sequence: the off state, or a start in the restart mode. The restart marker is written only here,
+// while the guard of a power-off sequence runs, and taken at the next boot, so a start never re-enters it by itself.
+extern "C" void resetAfterPowerOff()
+{
+    resetWithMarker(restartOnPowerOff ? power_off_guard::kRestartMarker : power_off_guard::kOffMarker);
+}
+
+uint32_t takePowerOffMarker()
+{
+    const uint32_t marker = powerOffMarker;
     powerOffMarker = 0;
-    return set;
+    return marker;
 }
 
 // SysTick (EventResponder.cpp), every millisecond: the main loop of the power-off sequence stopped coming round
@@ -111,17 +141,27 @@ extern "C" void powerOffGuardTick()
 {
     if (powerOffGuard.expired(systick_millis_count))
     {
-        resetToOffState();
+        resetAfterPowerOff();
     }
 }
 
-// fault_isr (mk20dx128.c) of a release image: a fault during the power-off sequence powers off instead of a lit, dead unit
+// fault_isr (mk20dx128.c) of a release image: a fault during the power-off sequence powers off (or restarts in the restart mode)
+// instead of a lit, dead unit
 extern "C" void powerOffGuardFault()
 {
     if (powerOffGuard.armed())
     {
-        resetToOffState();
+        resetAfterPowerOff();
     }
+}
+
+void PlatformImpl::setRestartOnPowerOff(bool on)
+{
+#ifndef TRACKER_MINI
+    restartOnPowerOff = on && START_STATE_SAVE; // a debug build always starts anyway
+#else
+    (void)on;
+#endif
 }
 
 bool PlatformImpl::powerOffGuardArmed() const

@@ -40,6 +40,9 @@ class Platform
     // Default: nothing.
     virtual void setPowerOffGuard(bool armed) { (void)armed; }
     virtual void kickPowerOffGuard() {}
+    // Restart mode (RestartMode.h): while on, a power off that completes restarts the unit, and a stalled one (the guard above)
+    // resets into a start instead of the off state. Default: nothing (the unit goes off as usual).
+    virtual void setRestartOnPowerOff(bool on) { (void)on; }
     virtual void runBootloader(char* fileName) = 0;
     virtual void setPowerButtonCallback(PowerButtonCallback) = 0;
     virtual bool getPowerButtonState() = 0;

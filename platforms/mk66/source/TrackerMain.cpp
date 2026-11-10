@@ -12,15 +12,20 @@ extern void updateHardware();
 Tracker* trackerInstance;
 PlatformImpl platform;
 
-extern "C" void resetToOffState(); // PlatformImpl.cpp
+extern "C" void resetToOffState();    // PlatformImpl.cpp
+extern "C" void resetAfterPowerOff(); // PlatformImpl.cpp: the off state, or a start in the restart mode
 
 // The stock emergency restart (the SD driver when SysTick stopped, REBOOT_ON_FAULT). During the power-off sequence or after it, it
 // must not write the start state 1 of a power-on (resetMCU), that would start a unit that was going off: reset into off instead.
 extern "C" void restartMCU()
 {
-    if (!platform.getPowerMode() || platform.powerOffGuardArmed())
+    if (!platform.getPowerMode())
     {
         resetToOffState();
+    }
+    if (platform.powerOffGuardArmed())
+    {
+        resetAfterPowerOff();
     }
     platform.resetMCU();
 }

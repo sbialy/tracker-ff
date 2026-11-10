@@ -1,5 +1,6 @@
 #include "mtSleep.h"
 #include "FT812.h"
+#include "RestartMode.h"
 #include "TrackerImpl.h"
 #include <Audio.h>
 
@@ -24,6 +25,11 @@ void mtSleep::stopPowerOffSequence()
         TrackerImpl::getInstance()->getPlatform()->setPowerOffGuard(false);
     }
     shutdownState = shutdownStateNone;
+    if (restartLeave)
+    {
+        restartLeave = false; // an aborted power off keeps the restart mode
+        setRestartActive(restartActive);
+    }
 }
 
 uint32_t mtSleep::getOverrun()
@@ -53,7 +59,60 @@ void mtSleep::goLowPower()
 {
     shutdownState = shutdownStateSleep;
 
-    TrackerImpl::getInstance()->getPlatform()->setPowerMode(false);
+    Platform* platform = TrackerImpl::getInstance()->getPlatform();
+    if (restart_mode::powerOffEnd(restartActive, restartLeave) == restart_mode::PowerOffEnd::kLeave)
+    {
+        platform->getFileSystem()->remove(restart_mode::kFilePath);
+        restartActive = false;
+        restartLeave = false;
+    }
+
+    // the platform restarts instead of going off while the restart mode is on (setRestartOnPowerOff)
+    platform->setPowerMode(false);
+}
+
+void mtSleep::setRestartActive(bool on)
+{
+    restartActive = on;
+    TrackerImpl::getInstance()->getPlatform()->setRestartOnPowerOff(on && !restartLeave);
+}
+
+void mtSleep::initRestartMode()
+{
+    restartLeave = false;
+    setRestartActive(TrackerImpl::getInstance()->getPlatform()->getFileSystem()->exists(restart_mode::kFilePath));
+    restartWindowOpen = true;
+    restartWindowTimer = 0;
+}
+
+void mtSleep::updateRestartMode(bool recordHeld)
+{
+    if (restartWindowOpen && restartWindowTimer >= restart_mode::kKeyWindowMs)
+    {
+        restartWindowOpen = false;
+    }
+
+    if (shutdownState == shutdownStateStart)
+    {
+        if (restartActive && recordHeld && !restartLeave)
+        {
+            restartLeave = true; // Record during the bar: this power off leaves the mode and goes off
+            setRestartActive(true);
+        }
+        return;
+    }
+
+    if (shutdownState == shutdownStateNone && restart_mode::shouldEnter(restartActive, restartWindowOpen, recordHeld))
+    {
+        FileSystem* fs = TrackerImpl::getInstance()->getPlatform()->getFileSystem();
+        auto openFileInfo = fs->openFile(restart_mode::kFilePath, FileSystem::FileOpenMode::kWriteCreateNew);
+        if (std::get<0>(openFileInfo))
+        {
+            fs->closeFile(std::get<1>(openFileInfo));
+        }
+        restartWindowOpen = false;
+        setRestartActive(fs->exists(restart_mode::kFilePath)); // no card or a write error: the mode stays off
+    }
 }
 
 void mtSleep::resetMCU()

@@ -19,6 +19,9 @@ namespace power_off_guard
 constexpr uint32_t kTimeoutMs = 3000;
 // RAM word that survives a reset (not a power cycle): written right before the guard resets the MCU, read and cleared at the next boot
 constexpr uint32_t kOffMarker = 0x0FF5A7E1u;
+// same RAM word, written instead when the restart mode (RestartMode.h) is on: the next boot starts the UI. Taken once at boot, and only
+// the guard of a power-off sequence writes it, so a fault or reset early in a start can never come back into it.
+constexpr uint32_t kRestartMarker = 0x5EB007EDu;
 
 class Guard
 {
@@ -57,6 +60,7 @@ struct StartInputs
     bool watchdogReset;  // RCM_SRS0 WDOG: on a release image without the console nothing arms it, a bite is never a power-on
     bool configValid;    // the EEPROM holds a valid config ("EEPROM" id), else the start state byte is not trusted
     uint8_t startState;  // EEPROM byte 0: 1 = a power-on, a bootloader hand-off or a console image left it, 0 = off
+    bool restartMarker = false; // the guard reset the MCU in the restart mode (kRestartMarker found)
 };
 
 inline Start decideStart(const StartInputs& in)
@@ -68,6 +72,10 @@ inline Start decideStart(const StartInputs& in)
     if (in.offMarker || (in.watchdogReset && !in.consoleBuild))
     {
         return Start::kOff;
+    }
+    if (in.restartMarker)
+    {
+        return Start::kRun; // a stalled power off in the restart mode
     }
     if (!in.configValid)
     {

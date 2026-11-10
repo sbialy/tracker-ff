@@ -160,6 +160,7 @@ void TrackerImpl::init(Platform* platform)
 #endif
 
     interfaceGlobals.devMode = platform->getFileSystem()->exists("/.develop");
+    lowPower.initRestartMode();
 #ifdef FEATURE_PLUG_HOST
     plug::boot(platform);
 #endif
