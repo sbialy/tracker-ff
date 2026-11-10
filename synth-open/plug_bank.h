@@ -23,6 +23,8 @@
 //   - a flash command is never issued when the bytes are already there.
 //   - the index carries one erase counter per sector ("c" line, wear): the erases an install will do are counted in the
 //     journal, before the first command, so a cut can only count one too many, never one too few.
+//   - the two sectors of master insert 2 (plug_nvm.cpp) are counted on the same "c" line, after the 30 (insWear, bankCountInsert),
+//     the same way: before its first erase. Counting only, insert 2 stays on its two fixed sectors.
 #pragma once
 
 #include "plug_index.h"
@@ -37,6 +39,7 @@ constexpr uintptr_t kBankRun = 0x10000000u;   // data flash (FlexNVM) base, exec
 constexpr uint32_t kBankBytes = 0x1E000u;     // up to insert 2's two sectors at 0x1001E000
 constexpr uint32_t kBankSector = 4096;
 constexpr int kBankSectors = int(kBankBytes / kBankSector);   // 30
+constexpr int kBankInsSectors = 2;            // master insert 2's sectors after the bank (0x1001E000, 0x1001F000): counted, not allocated
 constexpr int kBankMax = 12;                  // installed engines at once (the 12 shipped ones need 38 whole sectors, 30 exist)
 constexpr int kBankFileLen = 24;
 
@@ -56,10 +59,12 @@ struct Bank
     int n;
     BankEntry e[kBankMax];
     uint32_t wear[kBankSectors];   // erases of each sector since the counters began (the "c" line of installed.txt)
+    uint32_t insWear[kBankInsSectors];   // the same for insert 2's two sectors (the end of the "c" line)
 };
 
 // ------------------------------------------------------------------------------------------------ installed.txt
-// "tffbank 1", "c" and the 30 erase counters (hex), then one line per entry: state uid version fileCrc off len text rwRun rwLen
+// "tffbank 1", "c" and the 30 erase counters (hex) and the 2 of insert 2 (an index written before them has 30: the 2 start at 0, and
+// a host that does not know them reads the 30 and ignores the rest), then one line per entry: state uid version fileCrc off len text rwRun rwLen
 // entry crc file (hex, 8 digits). Hosts before round E drop the "c" line (its state is not 'o' or 'w') and lose the counters.
 inline int bankWrite(const Bank& b, char* t, int cap)
 {
@@ -68,6 +73,11 @@ inline int bankWrite(const Bank& b, char* t, int cap)
     {
         if (n < cap) t[n++] = ' ';
         n = sc::putHex(t, n, cap, b.wear[k]);
+    }
+    for (int k = 0; k < kBankInsSectors; k++)
+    {
+        if (n < cap) t[n++] = ' ';
+        n = sc::putHex(t, n, cap, b.insWear[k]);
     }
     n = sc::putStr(t, n, cap, "\r\n");
     for (int i = 0; i < b.n; i++)
@@ -92,6 +102,7 @@ inline void bankRead(const char* t, int len, Bank& b)
 {
     b.n = 0;
     memset(b.wear, 0, sizeof(b.wear));
+    memset(b.insWear, 0, sizeof(b.insWear));
     const char* p = t;
     const char* e = t + (len > 0 ? len : 0);
     if (len < 9 || memcmp(t, "tffbank 1", 9) != 0) return;
@@ -106,7 +117,14 @@ inline void bankRead(const char* t, int len, Bank& b)
             bool ok = true;
             q++;
             for (int k = 0; k < kBankSectors && ok; k++) ok = q < eol && *q++ == ' ' && sc::getHex(q, eol, w[k]);
-            if (ok) memcpy(b.wear, w, sizeof(w));
+            if (ok)
+            {
+                memcpy(b.wear, w, sizeof(w));
+                uint32_t iw[kBankInsSectors];   // insert 2's: both or neither
+                bool ins = true;
+                for (int k = 0; k < kBankInsSectors && ins; k++) ins = q < eol && *q++ == ' ' && sc::getHex(q, eol, iw[k]);
+                if (ins) memcpy(b.insWear, iw, sizeof(iw));
+            }
             p = eol + 1;
             continue;
         }
@@ -284,6 +302,7 @@ struct BankOpenStatus
 {
     int dropped;   // index entries that must not run (half written, damaged, outside the bank): dropped
     int stale;     // entries whose .plg left the card or changed (another version): dropped, installed again on demand
+    bool indexRead;   // installed.txt was read (false: none, or a card error, the counters in the bank are then not the card's)
 };
 
 // Io (both steps):
@@ -300,6 +319,7 @@ BankOpenStatus bankOpen(Flash& f, Io& io, const BankWant* w, int nw, uintptr_t p
 {
     BankOpenStatus st = {};
     const int got = io.readIndex(text, cap);
+    st.indexRead = got >= 0;
     bankRead(text, got, out);
     st.dropped = bankCheck(out, f, pool, poolBytes);
     int k = 0;
@@ -406,6 +426,7 @@ BankInstallStatus bankInstall(Flash& f, Io& io, const BankWant& w, Rank rank, On
     Bank& j = work[1];
     j.n = 0;
     memcpy(j.wear, b.wear, sizeof(j.wear));
+    memcpy(j.insWear, b.insWear, sizeof(j.insWear));
     for (int i = 0; i < b.n; i++)
         if (!gone[i]) j.e[j.n++] = b.e[i];
     for (uint32_t s = off; s < off + len; s += kBankSector)
@@ -454,6 +475,25 @@ BankInstallStatus bankInstall(Flash& f, Io& io, const BankWant& w, Rank rank, On
     n = bankWrite(b, text, cap);
     if (n >= 0) io.writeIndex(text, n);   // a cut here leaves the 'w' of the journal: dropped at the next boot, nothing runs
     return st;
+}
+
+// Master insert 2 is about to erase the sectors in mask (bit k: its sector k): counted in the index before the first command, like
+// bankInstall's journal, so a cut can only count one too many. The counter in b goes up even when the index cannot be written
+// (the install goes on: the counters are a diagnostic, not a lock). persist false: only b (the index was not read at boot, a
+// write would replace a card index this host never saw). Returns whether the index holds the new count.
+template <class Io>
+bool bankCountInsert(Io& io, Bank& b, uint32_t mask, bool persist, char* text, int cap)
+{
+    bool any = false;
+    for (int k = 0; k < kBankInsSectors; k++)
+        if (mask & (1u << k))
+        {
+            b.insWear[k]++;
+            any = true;
+        }
+    if (!any || !persist) return false;
+    const int n = bankWrite(b, text, cap);
+    return n >= 0 && io.writeIndex(text, n);
 }
 
 // Drops entry i from the bank and the index (no flash command)

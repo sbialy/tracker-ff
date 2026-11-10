@@ -279,6 +279,12 @@ bool nvmInstall(const uint8_t* src, uintptr_t run, uint32_t len)
     flushCaches();
     if (memcmp(reinterpret_cast<const void*>(run), src, len) == 0) return true;   // already there: no flash wear
     const uint32_t off = uint32_t(run - kNvmBase);
+    {   // the erases below, counted first (installed.txt, shown in synth.txt): a cut can over-count, never miss one
+        uint32_t erases = 0;
+        for (uint32_t s = off & ~(kSector - 1); s < off + len; s += kSector)
+            if (!blank(kNvmBase + s, kSector)) erases |= 1u << ((s - uint32_t(kNvmRun - kNvmBase)) / kSector);
+        if (erases) synthNoteInsertErases(erases);
+    }
     for (uint32_t s = off & ~(kSector - 1); s < off + len; s += kSector)
         if (!blank(kNvmBase + s, kSector) && !eraseAhead(s)) return false;   // ERSSCR
     flushCaches();

@@ -332,6 +332,92 @@ int main()
         check(bankWrite(b, t, 40) < 0, "a full buffer is refused");
     }
 
+    // ---- insert 2's erase counters (the end of the "c" line): round trip, old index, journal, persist rules, size
+    {
+        Bank b = {};
+        b.n = 1;
+        b.e[0] = {0x73ac7ee0, 0x10000, 0x1234, 0, 6952, 6944, 0x20027000, 1648, 0, 0xdeadbeef, 'o', "ju6.plg"};
+        for (int k = 0; k < kBankSectors; k++) b.wear[k] = uint32_t(k + 1);
+        b.insWear[0] = 7;
+        b.insWear[1] = 0x1234;
+        char t[2048];
+        int n = bankWrite(b, t, sizeof(t));
+        Bank r;
+        bankRead(t, n, r);
+        check(n > 0 && r.insWear[0] == 7 && r.insWear[1] == 0x1234 && memcmp(r.wear, b.wear, sizeof(b.wear)) == 0 && r.n == 1,
+              "insert 2 counters round trip on the c line, the 30 sector counters and the entry unchanged");
+        // an index of a host that knows only the 30 (round E to 1.2.0): the 30 are kept, insert 2 starts at 0
+        std::string s30(t, size_t(n));
+        const size_t c0 = s30.find("\r\nc") + 3;   // the space before the first counter
+        const size_t cEnd = s30.find("\r\n", c0);
+        size_t cut = c0;
+        for (int k = 0; k < kBankSectors; k++) cut = s30.find(' ', cut + 1);   // the space before insert 2's first
+        s30.erase(cut, cEnd - cut);
+        bankRead(s30.data(), int(s30.size()), r);
+        check(r.n == 1 && r.wear[29] == 30 && r.insWear[0] == 0 && r.insWear[1] == 0, "a 30 counter c line: sector counters kept, insert 2 at 0");
+        // one of the two missing or damaged: neither is taken, the 30 stay
+        std::string s31(t, size_t(n));
+        s31.replace(s31.find("\r\n", s31.find("\r\nc") + 3) - 8, 8, "zz");   // the last counter, 8 digits
+        bankRead(s31.data(), int(s31.size()), r);
+        check(r.n == 1 && r.wear[29] == 30 && r.insWear[0] == 0 && r.insWear[1] == 0, "a damaged insert 2 counter: both start at 0, the rest stays");
+        // what a host before this change makes of the new line: reads the 30 and ignores the rest (same loop, no end of line check)
+        {
+            const char* q = t + 12;   // after "tffbank 1\r\nc"
+            const char* e = t + n;
+            bool ok = true;
+            uint32_t w[kBankSectors];
+            for (int k = 0; k < kBankSectors && ok; k++) ok = q < e && *q++ == ' ' && sc::getHex(q, e, w[k]);
+            check(ok && w[0] == 1 && w[29] == 30, "the previous parser (30 only) still reads the 30 counters of the new line");
+        }
+        // the worst index still fits the 2,048 B buffer of plug_synth.cpp: 12 entries with the longest file name, all counters at 8 digits
+        Bank big = {};
+        big.n = kBankMax;
+        for (int i = 0; i < kBankMax; i++)
+        {
+            big.e[i] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFF8u, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu,
+                        0xFFFFFFFFu, 'o', "abcdefghijklmnopqrstuvw"};
+        }
+        for (uint32_t& w : big.wear) w = 0xFFFFFFFFu;
+        big.insWear[0] = big.insWear[1] = 0xFFFFFFFFu;
+        const int nb = bankWrite(big, t, 2048);
+        check(nb > 0 && nb < 2048, "the largest possible index (12 entries, longest names, 8 digit counters) fits 2,048 B");
+        printf("      largest installed.txt %d of 2048 B\n", nb);
+
+        // bankCountInsert: counted in the bank and the index, only the sectors in the mask
+        Io io;
+        Bank c = {};
+        c.wear[3] = 5;
+        check(bankCountInsert(io, c, 3, true, t, sizeof(t)) && c.insWear[0] == 1 && c.insWear[1] == 1 && io.indexWrites == 1,
+              "insert 2 erases of both sectors counted and written");
+        check(bankCountInsert(io, c, 2, true, t, sizeof(t)) && c.insWear[0] == 1 && c.insWear[1] == 2 && io.indexWrites == 2,
+              "only the sector of the mask goes up");
+        Bank back;
+        bankRead(io.index.data(), int(io.index.size()), back);
+        check(back.insWear[0] == 1 && back.insWear[1] == 2 && back.wear[3] == 5, "the written index holds both kinds of counter");
+        check(!bankCountInsert(io, c, 0, true, t, sizeof(t)) && io.indexWrites == 2 && c.insWear[0] == 1, "no erase: nothing counted, nothing written");
+        check(!bankCountInsert(io, c, 1, false, t, sizeof(t)) && c.insWear[0] == 2 && io.indexWrites == 2,
+              "index not trusted (not read at boot): counted in RAM, the card index is not replaced");
+        io.failWrite = true;
+        check(!bankCountInsert(io, c, 1, true, t, sizeof(t)) && c.insWear[0] == 3, "a card error: still counted in RAM (the install goes on), reports false");
+        io.failWrite = false;
+
+        // the counters survive a boot and an install (the journal and the final index carry them)
+        Flash f;
+        Io io2 = allPlugins();
+        Bank b2;
+        Cache cache;
+        open(f, io2, b2);
+        bankCountInsert(io2, b2, 3, true, g_text, int(sizeof(g_text)));
+        bankCountInsert(io2, b2, 1, true, g_text, int(sizeof(g_text)));
+        install(f, io2, b2, "ju6.plg", cache);
+        check(b2.insWear[0] == 2 && b2.insWear[1] == 1, "an install keeps insert 2's counters");
+        Bank rb;
+        BankOpenStatus os = open(f, io2, rb);
+        check(os.indexRead && rb.insWear[0] == 2 && rb.insWear[1] == 1 && rb.n == 1, "reboot: insert 2's counters and the engine come back from the card");
+        Io none;
+        check(!open(f, none, rb).indexRead, "no index on the card: indexRead is false");
+    }
+
     // ---- boot: no plugin, no index: nothing written. Stale and damaged entries dropped without a flash command.
     {
         Flash f;

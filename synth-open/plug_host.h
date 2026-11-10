@@ -67,6 +67,9 @@ void syncCode();   // after writing code: DSB, ISB, invalidate the LMEM code cac
 // FlexNVM installer for insert 2 (plug_nvm.cpp): programs len bytes of text at run (inside [kNvmRun, kNvmRun + kNvmBytes)),
 // skips every flash command when the flash already holds those bytes. Only ERSSCR and PGM8, only these two sectors.
 bool nvmInstall(const uint8_t* src, uintptr_t run, uint32_t len);
+// Called by nvmInstall before its first erase with the sectors it will erase (bit 0: 0x1001E000, bit 1: 0x1001F000): plug_synth.cpp adds
+// them to the erase counters of installed.txt (main loop, no flash command, never blocks the install).
+void synthNoteInsertErases(uint32_t sectorMask);
 uint32_t nvmCommands();   // flash commands issued since boot (0 when every load found its bytes in place)
 uint64_t nvmCommandCycles();   // DWT cycles spent inside them (the core runs at 90 MHz there: HSRUN is left for each command)
 // One command on the synth bank (plug_bank.h, [0x10000000, 0x1001E000)): ERSSCR of the sector at bank offset off, PGM8 of the
