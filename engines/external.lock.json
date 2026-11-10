@@ -1,9 +1,9 @@
 {
- "_comment": "Every plugin module tracker-ff ships, pinned per module repository (engines/external.py reads it, engines/README.md explains it). engines-os (poly-engines-os, public) and effects-os (poly-effects-os, public) hold the OpenTracker ports, engines (poly-engines, private) and effects (poly-effects, private) our own modules. visibility decides how external.py fetch gets the release assets (public: plain https, private: gh with a token). Only the published files are pinned: .plg and .plgi for the card, .json and .wasm for the browser editor, each by sha256, plus the tag and the commit behind it. local_repo and local_dirs are a local checkout and its build directories, relative to the tracker-ff checkout (external.py fetch --from-local, the stand-in for the published release assets), source_root is where the module sources sit in the tag (external.py source, for ui_shot). After a module repository is rebuilt and tagged: python3 -I engines/external.py relock SET, or edit the tag, tag_commit and sha256 values by hand, then engines/crosscheck.sh on the fetched set.",
+ "_comment": "Every plugin module tracker-ff ships, pinned per module repository (engines/external.py reads it, engines/README.md explains it). engines-os (tracker-engines-os, public) and effects-os (tracker-effects-os, public) hold the OpenTracker ports, engines (poly-engines, private) and effects (poly-effects, private) our own modules. visibility decides how external.py fetch gets the release assets (public: plain https, private: gh with a token). Only the published files are pinned: .plg and .plgi for the card, .json and .wasm for the browser editor, each by sha256, plus the tag and the commit behind it. local_repo and local_dirs are a local checkout and its build directories, relative to the tracker-ff checkout (external.py fetch --from-local, the stand-in for the published release assets), source_root is where the module sources sit in the tag (external.py source, for ui_shot). After a module repository is rebuilt and tagged: python3 -I engines/external.py relock SET, or edit the tag, tag_commit and sha256 values by hand, then engines/crosscheck.sh on the fetched set.",
  "format_version": 2,
  "sets": {
   "engines-os": {
-   "repo": "sbialy/poly-engines-os",
+   "repo": "sbialy/tracker-engines-os",
    "visibility": "public",
    "kind": "synth",
    "tag": "v1.3.0",
@@ -157,7 +157,7 @@
    }
   },
   "effects-os": {
-   "repo": "sbialy/poly-effects-os",
+   "repo": "sbialy/tracker-effects-os",
    "visibility": "public",
    "kind": "master",
    "tag": "v1.3.0",

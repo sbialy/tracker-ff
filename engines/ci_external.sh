@@ -4,7 +4,7 @@
 #   EXTERNAL_DIR=DIR [EXTERNAL_VISIBILITY=public|all] engines/ci_external.sh
 #
 # EXTERNAL_DIR is a flat directory with the published files (engines/external.py fetch). The workflow always fetches the public sets
-# (poly-engines-os, poly-effects-os: plain https, no token) and the private sets (poly-engines, poly-effects) only when a token that
+# (tracker-engines-os, tracker-effects-os: plain https, no token) and the private sets (poly-engines, poly-effects) only when a token that
 # can read them is configured (EXTERNAL_VISIBILITY=all then). Unset EXTERNAL_DIR: skipped, exit 0. Set: every file must match the
 # pins of engines/external.lock.json and check_modules.py verify-external must pass, otherwise exit 1. EXTERNAL_WITH=formflux also checks
 # the optional group (FORM and FLUX), off by default like in the release package.

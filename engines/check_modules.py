@@ -4,7 +4,7 @@
     python3 engines/check_modules.py verify-external DIR --host-abi synth-open/plug/plug_abi.h [--visibility public|private|all] [--with GROUP]
 
 DIR is one flat directory with the published files of the module repositories (engines/external.py fetch DIR puts them there):
-poly-engines-os and poly-engines (synth engines: <id>.plg, <id>.plgi, <id>.wasm, <id>.json), poly-effects-os and poly-effects
+tracker-engines-os and poly-engines (synth engines: <id>.plg, <id>.plgi, <id>.wasm, <id>.json), tracker-effects-os and poly-effects
 (master inserts: <id>.plg, <id>.wasm, <id>.json). For every row of engines.json of the chosen visibility:
   - synth engine: <id>.plg is there, is a synth plugin this host accepts (header, CRC, kind, cpu, ABI major, min_host) and carries
     exactly the name, numbers (stored, patch, type) and version of its row, <id>.plgi is there
