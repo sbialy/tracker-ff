@@ -85,3 +85,22 @@ uint64_t nvmCommandCycles() { return 0; }
 bool nvmErase(uint32_t) { return false; }
 bool nvmProgram(uint32_t, const uint8_t*) { return false; }
 }   // namespace plug
+
+#if defined(FEATURE_EXT_HOOKS) && !defined(ENABLE_DEV_CONSOLE)
+// EXTHOOKS=1: LOGE is compiled in (core/source/log.h) and goes to a loaded module, as platforms/mk66/source/util.cpp does
+#include <stdarg.h>
+#include "ext_abi.h"
+extern "C" ext_hooks_t ext_hooks;
+void _debuglog(const char* msg)
+{
+    if (ext_hooks.log) ext_hooks.log(msg);
+}
+void _debuglogf(const char* format, ...)
+{
+    if (!ext_hooks.logv) return;
+    va_list args;
+    va_start(args, format);
+    ext_hooks.logv(format, args);
+    va_end(args);
+}
+#endif

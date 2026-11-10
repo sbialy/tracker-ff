@@ -11,7 +11,10 @@ include $(ROOT)/devtools.mk
 SAN     ?=
 # STACKMODEL=1: core/ and synth-open/ code calls the hooks of host_stackmodel.cpp, a virtual ARM stack (UISHOT_STACK_FRAMES=frame table)
 STACKMODEL ?=
-OUT     ?= $(ROOT)/build/ui-shot$(if $(filter 1,$(CONSOLE)),-console)$(if $(SAN),-san)$(if $(STACKMODEL),-stack)
+# EXTHOOKS=1: the runtime extension hooks of the one image (FEATURE_EXT_HOOKS, synth-open/ext_module.cpp): the loader rules run in
+# develop mode, the host never enters a module (its image id is 0, a card module is refused), every hook stays null
+EXTHOOKS ?=
+OUT     ?= $(ROOT)/build/ui-shot$(if $(filter 1,$(CONSOLE)),-console)$(if $(SAN),-san)$(if $(STACKMODEL),-stack)$(if $(filter 1,$(EXTHOOKS)),-ext)
 OBJ     := $(OUT)/obj
 GEN     := $(OUT)/gen
 CORE    := $(ROOT)/core
@@ -65,7 +68,7 @@ INC := -I$(HERE) -I$(GEN)/inc -I$(GEN)/src -I$(GEN)/libs/Audio -I$(GEN)/libs/Aud
 DEFS := -DFW_TRIM -DAUDIO_PERFORMANCE_INFO_ENABLED -DMEMORY_USAGE_INFO_ENABLED -D__NEWLIB__ -DKINETISK -D__MK66FX1M0__ -DF_CPU=180000000 \
   -DUSB_MIDI -DTEENSYDUINO=142 -DARDUINO=10805 -DLAYOUT_US_ENGLISH -DCPU_MK66FX1M0VMD18 $(FW_VERSION_DEFINES) \
   -DFEATURE_SYNTH -DFEATURE_SYNTH_OPEN $(SYNTH_ENGINE_DEFINES) -DFW_REVERB_SRAM=1 -DFEATURE_SAT_SOFTKNEE -DFEATURE_PLUG_HOST \
-  $(if $(DEVTOOLS_HOST_SRCS),-DENABLE_DEV_CONSOLE) -DUI_SHOT_HOST -DTINY_OPTIONAL_x64 -DAUDIO_CORE_RAM= -DAUDIO_CORE_FLASH= \
+  $(if $(DEVTOOLS_HOST_SRCS),-DENABLE_DEV_CONSOLE) $(if $(filter 1,$(EXTHOOKS)),-DFEATURE_EXT_HOOKS) -DUI_SHOT_HOST -DTINY_OPTIONAL_x64 -DAUDIO_CORE_RAM= -DAUDIO_CORE_FLASH= \
   "-D_GLIBCXX_THROW_OR_ABORT(x)=__builtin_abort()" "-Dstatic_assert(...)="
 WARN := -w
 OPT ?= -O1

@@ -15,6 +15,7 @@
 #     PLUGDIR         the shipped plugins (.plg, .plgi) for the index and logo tests. Default: the pinned modules of
 #                     engines/external.lock.json, fetched into OUTDIR/modules from the local module builds (external.py fetch --from-local)
 #     NO_BUILD_PLUGS  set: skip build_plugs.sh (run_host_tests.sh)
+#     EXT_MODULE      "module.plg IMAGE_CRC RUN_ADDRESS": ext_loader_test also loads that extension module (pack_ext.py output)
 #     SMOKE_ARCH      run_smoke.sh architecture, default arm64 here (native on Apple silicon). x86_64 runs under Rosetta
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -84,10 +85,15 @@ for t in $TESTS; do
 done
 c++ -std=c++20 -O1 -Wall -I synth-open -I synth-open/tools/plug_stub synth-open/tools/plug_sidecar_test.cpp -o "$T/plug_sidecar_test" \
   > "$L/plug_sidecar_test.build.log" 2>&1 || echo "BUILD FAIL plug_sidecar_test"
+c++ -std=c++20 -O1 -Wall -I synth-open -I core/include synth-open/tools/ext_loader_test.cpp -o "$T/ext_loader_test" \
+  > "$L/ext_loader_test.build.log" 2>&1 || echo "BUILD FAIL ext_loader_test"
 {
  for t in plug_bank_test plug_ui_nav_test sat_softknee_test plug_sidecar_test plug_work_test plug_scan_cache_test; do
    echo "### run $t"; "$T/$t"; echo "### rc=$?"
  done
+ # EXT_MODULE="module.plg IMAGE_CRC RUN_ADDRESS" (synth-open/plug/pack_ext.py prints them) adds the real module checks
+ read -r -a ext_args <<< "${EXT_MODULE:-}"
+ echo "### run ext_loader_test"; "$T/ext_loader_test" ${ext_args[@]+"${ext_args[@]}"}; echo "### rc=$?"
  echo "### run plug_index_test"; "$T/plug_index_test" "$PLUGDIR"; echo "### rc=$?"
  echo "### run plug_logo_test"; "$T/plug_logo_test" "$PLUGDIR"/*.plgi; echo "### rc=$?"
 } > "$L/plug_tests.log" 2>&1
@@ -98,5 +104,5 @@ bad=$((bad + $(grep -h '^### rc=' "$L/smoke.log" "$L/plug_tests.log" | grep -vc 
 nb=$(grep -c '^### rc=' "$L/plug_tests.log")
 for f in "$L"/*.build.log; do [ -s "$f" ] && grep -q 'error' "$f" && { echo "BUILD ERROR $f"; bad=$((bad+1)); }; done
 [ "$(grep -c '^### rc=0$' "$L/smoke.log")" -eq 5 ] || { echo "smoke: not 5 variants"; bad=$((bad+1)); }
-if [ "$bad" -eq 0 ] && [ "$nb" -ge 8 ]; then echo "RESULT: GREEN"; exit 0; fi
+if [ "$bad" -eq 0 ] && [ "$nb" -ge 9 ]; then echo "RESULT: GREEN"; exit 0; fi
 echo "RESULT: RED ($bad failing, $nb tests ran)"; exit 1
