@@ -22,6 +22,8 @@ directories of the private repositories, and without those the pages render with
 
 `synth-open/tools/ui_shot/synth_order_sim.sh [PNG_DIR]` is a behaviour test on the same binary: the order and visibility of the synth Model list (order file, hidden engines, wrap around, the edit mode, missing and new `.plg`, corrupt files). Each scenario stages its own card folder and ends with `RESULT: GREEN` or `RESULT: RED`. It uses the `put REL TEXT` and `cat REL` script commands and the `poke picker` action (`host_poke.cpp`).
 
+`synth-open/tools/ui_shot/model_rest_sim.sh [PNG_DIR]` checks the "Init patch loaded" message of the Synth Model list on the PLUG_HOST binary with the CHIP host twin (`ui-shot-chipplg`): a plugin engine that is not installed is picked after the list rests on it for 1 s, a built-in or attached engine switches at once, and the message of the engine change before the step must not read as the message of the pick that waits for the rest. It reads the popup with the `poke popup` action and the stored engine with `poke picker`, every scenario has its own card folder and the script ends with `RESULT: GREEN` or `RESULT: RED`. Variables: `CHIP_PLUGIN_SRC` (engine_chip.cpp of tracker-engines-os), `CHIP_PLG_DIR` (folder with chip.plg and chip.plgi), `PLG_DIR`.
+
 ## What is real and what is not
 
 Real: the display code (`core/libs/NewDisplay`, every control), all pages (`core/interface`), the synth GUI, the plugin host and its
