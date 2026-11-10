@@ -45,6 +45,8 @@ class AudioOutputI2S
 
     static void update(void);
     void begin(void (*updateBuffersFunc)(void* left, void* right));
+    // power off (disableHardware): no more DMA requests and no interrupt, the render of the block reads the SDRAM
+    static void stop(void);
 
     friend class AudioInputI2S;
 

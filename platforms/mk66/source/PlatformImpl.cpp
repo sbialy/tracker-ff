@@ -67,7 +67,12 @@ void PlatformImpl::setPowerMode(bool mode)
 
         disableHardware();
 
-        setPowerOffGuard(false); // interrupts are off from here, the sleep below polls the power button
+        // disableHardware turned the interrupts on again (detachInterrupt) with the SDRAM unpowered. Off from here for good, the same
+        // state as the off start (checkPowerState): the sleep below polls the power button and its wake (Snooze.wakeUp, resetMCU) polls
+        // registers only. Every handler left (SysTick, MIDI, card, display) would run on the slow BLPI clock with the SDRAM gone.
+        noInterrupts();
+
+        setPowerOffGuard(false); // the sleep below polls the power button
 
         if (restart)
         {
