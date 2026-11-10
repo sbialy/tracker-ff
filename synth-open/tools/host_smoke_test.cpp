@@ -111,7 +111,18 @@ struct RenameOps {
 static size_t gShortHeap = 0;
 void* operator new(size_t n, const std::nothrow_t&) noexcept { return gShortHeap && n > gShortHeap ? nullptr : std::malloc(n); }
 void* operator new[](size_t n, const std::nothrow_t&) noexcept { return gShortHeap && n > gShortHeap ? nullptr : std::malloc(n); }
+#ifdef SMOKE_CHIP_PLUGIN
+namespace polysynth::open { extern const EngineDef kChipDef; }
+#define CHIP_PLUG 1   // CHIP is one more engine of the list (a plugin at stored 6)
+#else
+#define CHIP_PLUG 0
+#endif
 int main() {
+#ifdef SMOKE_CHIP_PLUGIN
+  // CHIP as a plugin engine (chip.plg of tracker-engines-os): its engine_chip.cpp and the Polyend voice linked natively, added to the engine
+  // list by its manifest numbers (stored 6, .patch engine 8) the way plug_synth.cpp adds an installed plugin engine
+  const bool chipAdded = open::engineListAdd(&open::kChipDef, 6, 8);
+#endif
 #ifdef SMOKE_PLUGIN_ENGINE
   // A plugin engine as plug_synth.cpp adds it before the synth starts: ACD's definition and engine under JU6's numbers (stored 7,
   // type and .patch engine 0x81), shown by its name (builtin -1)
@@ -418,9 +429,9 @@ int main() {
               ws->loadPatch("0", *hp, true) && ws->savePatch("0", *hp) && mw->files["0.patch"] == before && !mw->files.count("0.patch.tmp"),
             "a Hand-Type part is the placeholder: no parameters, its Workspace file loads as done and is never written over");
 #ifdef SMOKE_PLUGIN_ENGINE
-      const int nList = nKinds + 2 + kBig;   // the attached plugin engine, the library engine that is not installed, the big library
+      const int nList = nKinds + 2 + kBig + CHIP_PLUG;   // the attached plugin engine, the library engine that is not installed, the big library
 #else
-      const int nList = nKinds;
+      const int nList = nKinds + CHIP_PLUG;
 #endif
       check(open::engineCount() == nList && open::engineUiForStored(open::engineAt(nList - 1).stored) == nList - 1 &&
               open::engineAt(0).builtin == 0, "the engine list is the built-in set (and the two plugin engines), by stored number");
@@ -439,10 +450,12 @@ int main() {
               !open::missingDef(-1) && open::typeForEngineId(0x7F) == -1 && open::typeForEngineId(7) == -1,
             "outside the plugin numbers (Polyend's 0 to 5 this build lacks, over 255, negative): no placeholder, the part takes the defaults");
       // CHIP is a plugin (chip.plg, stored 6, .patch engine 8): without it a part on CHIP and a CHIP .patch are Missing, not reset
+#ifndef SMOKE_CHIP_PLUGIN   // (the variant with the CHIP plugin has it)
       check(open::missingDef(6) && !open::engineOf(open::missingDef(6)) && open::typeForStored(6) == kMiss && open::engineUiForStored(6) == -1 &&
               std::string(open::missingName(6)) == "#6" && open::typeForEngineId(8) == kMiss && open::engineNameRemember(6, "CHIP") &&
               std::string(open::missingName(6)) == "CHIP",
             "stored 6 / engine 8 (CHIP, a plugin): the missing placeholder, \"Missing: CHIP\"");
+#endif
       auto src = ps->createPatch(kLead); open::PatchData pd; static_cast<open::OpenPatch&>(*src).exportData(pd);
       pd.engine = 0xC7; uint8_t pbuf[4096]; const size_t pn = open::encodePatch(pd, pbuf, sizeof(pbuf));
       const std::vector<uint8_t> file0(pbuf, pbuf + pn);
@@ -1395,9 +1408,14 @@ int main() {
     check(std::abs(crossings(200) - base) <= 2, "transport Stop resets the bend");
   }
 #endif
-#ifdef SYNTH_ENGINE_CHIP
+#if defined(SYNTH_ENGINE_CHIP) || defined(SMOKE_CHIP_PLUGIN)
   // ---- CHIP: pulse model, steady tone, bend and glide. The hosted voice must follow the shim's bend and report silence
   {
+#ifdef SMOKE_CHIP_PLUGIN
+    check(chipAdded && open::engineUiForStored(6) >= 0 && open::engineAt(open::engineUiForStored(6)).builtin == -1 && open::typeForStored(6) == 8 &&
+            open::typeForEngineId(8) == 8 && open::engineIdForType(8) == 8 && !open::missingDef(6),
+          "CHIP plugin: listed at stored 6 by its numbers (type 8, .patch engine 8), not missing, sits between PERC and the other plugins");
+#endif
     auto s6 = Synth::createSynth([](size_t){return nullptr;});
     auto st6 = s6->createPatchStore(Synth::FileSystemId::kPatches, true);
     auto p6 = std::shared_ptr<Patch>(st6->createPatch(int(InstrumentTypeId::kChiptuneSynth)));
@@ -2060,7 +2078,7 @@ int main() {
       }
       check(missing, "40 missing numbers (100..139): each the placeholder, each named by its remembered name (no name limit)");
       // names.txt: every number 6..255 known, written, read back line by line (plug_synth.cpp namesRead), nothing new learned
-      for (int st = 7; st <= 255; st++) {
+      for (int st = 6; st <= 255; st++) {
         char nm[9]; snprintf(nm, sizeof(nm), "N%03d", st);
         if (st < 100 || st >= 140) open::engineNameRemember(st, nm);
       }
