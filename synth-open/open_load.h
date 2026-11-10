@@ -29,7 +29,7 @@ void reportBlockStart(uint32_t startCycles, uint32_t (*cycles)());
 
 // Note-on admission limit: estimated block load, permille of the block (CpuMeter::kBudgetCycles). The default, and a setter for
 // the console (cpu admit N, clamped 500..1000)
-constexpr uint32_t kAdmitPermille = 870;   // device 2026-11-10: 950 left 2 overruns per 2 song loops, 870 none (ref/gov-fix.md)
+constexpr uint32_t kAdmitPermille = 870;   // device 2026-11-10, ref/gov-fix.md
 void setAdmitPermille(uint32_t permille);
 uint32_t admitPermille();
 
@@ -73,6 +73,7 @@ struct LoadStats
     uint32_t queueFull;     // note-ons admitted over the limit because the queue was full
     uint32_t attackUs[3];   // learned extra cost of a note-on per synth part (engine noteOn + first render over a running voice)
     uint32_t voiceUs[3];    // learned cost of one running voice per synth part
+    uint32_t stepPreUs;     // learned: how much later the synth render starts in a block with note-ons than guessed at the first
 };
 void loadStats(LoadStats& s);
 // Play (Sequencer::play): the counters above start again (the governor's own lifetime count stays in cutsTotal)

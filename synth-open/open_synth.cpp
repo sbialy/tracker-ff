@@ -899,7 +899,14 @@ class OpenSynth final
             const uint32_t used = prevPre + prevExtra;
             const uint32_t rest = prevTotal > used ? prevTotal - used : 0;
             // the synth render starts after the sequencer: at the last block's point or later when this block's step work ran longer
-            const uint32_t est = std::max(now, prevPre) + rest + extra + cost;
+            // a step block runs longer before the synth render than the last block did (the rest of the sequencer step, Patch and
+            // CC FX, the graph before the synth): stepPre, learned from earlier step blocks, is added
+            const uint32_t guess = std::max(now, prevPre);
+            if (preGuess == 0)
+            {
+                preGuess = guess;
+            }
+            const uint32_t est = guess + stepPre + rest + extra + cost;
             shot.estMax = std::max(shot.estMax, est);
             // the next block: a block without note-ons as the last one was, plus what already waits for it and this note-on.
             // When it would be over the limit too and is no cheaper, the note-on starts now: waiting would only move the load
@@ -1056,6 +1063,7 @@ class OpenSynth final
         s.cutsTotal = governor.cuts();
         s.cuts = governor.cuts() - cutsAtReset;
         s.govSteals = governor.steals() - govStealsAtReset;
+        s.stepPreUs = stepPre / kCyclesPerUs;
         s.cap = governor.cap();
         s.budget = governor.budget();
         s.sounding = sounding();
@@ -1081,6 +1089,13 @@ class OpenSynth final
         governor.evaluate(meter);
         if (inBlock)
         {
+            if (preGuess != 0)
+            {
+                // how much later the synth render started than the first admission check guessed (decaying max over step blocks)
+                const uint32_t miss = pre > preGuess ? pre - preGuess : 0;
+                stepPre = std::max(miss, stepPre - (stepPre >> 4));
+                preGuess = 0;
+            }
             prevTotal = cycles;
             prevPre = pre;
             prevExtra = extra;
@@ -1317,6 +1332,8 @@ class OpenSynth final
     uint32_t carry = 0;             // note-ons started between blocks, counted in the next
     uint32_t deferredNow = 0;
     uint32_t prevTotal = 0, prevPre = 0, prevExtra = 0;
+    uint32_t preGuess = 0;          // this block: the render start the first admission check assumed (0: no check yet)
+    uint32_t stepPre = 0;           // learned: how much later than that the render starts in a block with note-ons
     uint32_t peak = 0;
     uint32_t cutsAtReset = 0, govStealsAtReset = 0;
     open::LoadStats stats{};

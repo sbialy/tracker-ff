@@ -427,6 +427,12 @@ int main() {
     open::loadStats(st);
     printf("two hot blocks: sounding after note 1 %d, after note 2 %d, deferred %u\n", s0, s1, st.deferred);
     check(s0 == 0 && s1 == 1 && st.deferred == 1, "both blocks over the limit: the note-on goes where the estimate is lower");
+    // a block with note-ons whose synth render starts 54,000 cycles later than the first admission check guessed: learned (300 us)
+    fakeNow = 9200000; open::reportBlockStart(9200000, fclk); fakeNow += 5000;
+    src3[2].send(MidiEvent::Type::kNoteOn, 0, 50, 100);
+    fakeNow = 9200000 + 60000; renderAll(); fakeNow = 9200000 + 400000; open::reportBlockCycles(400000);
+    open::loadStats(st);
+    check(st.stepPreUs == 300, "the render start a step block missed is learned (300 us) and added to the next estimates");
     open::setAdmitPermille(open::kAdmitPermille);
     check(open::admitPermille() == 870, "admission limit back at the default");
     open::resetOnProjectLoad();
