@@ -22,6 +22,11 @@ uint8_t isAudioOutMuted() { return s_muted; }
 // ---- Teensy core
 extern "C" volatile uint32_t systick_millis_count;
 volatile uint32_t systick_millis_count = 0;
+// output_i2s.cpp on the device: the audio block counters plug_synth.cpp logs per install (no audio interrupt on the host)
+extern "C" volatile uint32_t ff_audio_late;
+extern "C" volatile uint32_t ff_audio_gap_max;
+volatile uint32_t ff_audio_late = 0;
+volatile uint32_t ff_audio_gap_max = 0;
 
 // ---- platform_math.cpp (CMSIS arm_sin_q15)
 int16_t sin_q15(int16_t value) { return int16_t(lrintf(sinf(float(uint16_t(value)) * 6.2831853f / 32768.0f) * 32767.0f)); }
@@ -84,6 +89,9 @@ uint32_t nvmCommands() { return 0; }
 uint64_t nvmCommandCycles() { return 0; }
 bool nvmErase(uint32_t) { return false; }
 bool nvmProgram(uint32_t, const uint8_t*) { return false; }
+const NvmStats& nvmStats() { static NvmStats s{}; return s; }
+void nvmStatsReset() {}
+void nvmLegacy(bool) {}
 }   // namespace plug
 
 #if defined(FEATURE_EXT_HOOKS) && !defined(ENABLE_DEV_CONSOLE)

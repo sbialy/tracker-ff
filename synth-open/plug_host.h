@@ -73,6 +73,18 @@ uint64_t nvmCommandCycles();   // DWT cycles spent inside them (the core runs at
 // phrase at off. The caches are invalidated after it, so the flash reads back what it holds.
 bool nvmErase(uint32_t off);
 bool nvmProgram(uint32_t off, const uint8_t* data8);
+// How the erases went (install-crackle): before an erase the audio interrupt renders ahead (output_i2s.cpp). leadOk: erases
+// that started with the full lead, leadShort: the lead did not build in 300 ms (erased anyway), noAudio: no audio block came,
+// leadMin: the smallest lead an erase started with (blocks), maskMaxCyc: the longest stretch with the interrupts off (DWT,
+// 90 MHz inside a command)
+struct NvmStats
+{
+    uint32_t erases, leadOk, leadShort, noAudio, leadMin, maskMaxCyc, waitMaxUs;
+};
+const NvmStats& nvmStats();
+void nvmStatsReset();
+void nvmLegacy(bool on);
+void nvmSliceUs(uint32_t us);   // fixed erase slice in us (0: from the last audio block), /Plugins/nvm-slice.txt   // the 1.2.0 way: every command in one window, MCLK not kept (/Plugins/nvm-legacy, A/B tests only)
 
 // ---- synth engine plugins (plug_synth.cpp, phase 3): /Plugins/Synth/*.plg is the library, every engine in it is in the
 // shim's engine list from boot (TrackerImpl::init, before Synth::init), installed or not. The FlexNVM bank (plug_bank.h) is a
