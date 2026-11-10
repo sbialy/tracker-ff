@@ -217,6 +217,8 @@ bool eraseAhead(uint32_t nvmOff)
         }
         if (now - t0 > kCpuHz / 1000u * 300u) break;
     }
+    const uint32_t waitUs = (*kDwtCyccnt - t0) / (kCpuHz / 1000000u);
+    if (waitUs > s_st.waitMaxUs) s_st.waitMaxUs = waitUs;
     if (ready) s_st.leadOk++;
     else if (audio) s_st.leadShort++;
     else s_st.noAudio++;
