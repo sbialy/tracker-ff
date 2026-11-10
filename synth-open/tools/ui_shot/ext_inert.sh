@@ -4,8 +4,12 @@
 # without develop mode, in develop mode with no module, with a module the image refuses (the host image id is 0, so any real module
 # is "another image", and the host slot is not the address the module was linked for, which the loader checks first), and with the crash marker of a last boot (skipped, marker removed). The status line of each develop boot is
 # checked too. Exit 0 when every case passes.
+# A features build (Config > Features, restartmode prints " cfg ") has one more row on the Config screen: its config.png is
+# compared with goldens/features/ext-config{,-develop}.png instead of the plain build (UPDATE=1 writes them).
 set -uo pipefail
 P=$1; X=$2; O=$3; MOD=${4:-}; mkdir -p "$O"; rc=0
+G=$(cd "$(dirname "$0")" && pwd)/goldens/features
+rm -rf "$O/probe"; FEAT=0; "$X" "$O/probe" "restartmode" 2>&1 | grep -q " cfg " && FEAT=1
 SCRIPT='wait 500;shot S/pattern.png;tap Config;wait 800;shot S/config.png;tap Master;wait 800;shot S/master.png;tap Pattern;wait 500;pad 2;wait 1000;shot S/pad.png'
 run() {  # name binary develop(0|1) module(0|1) marker(0|1)
   local d=$O/$1; rm -rf "$d"; mkdir -p "$d/sd" "$d/shots"
@@ -16,8 +20,15 @@ run() {  # name binary develop(0|1) module(0|1) marker(0|1)
   timeout 300 "$2" "$d/sd" "${SCRIPT//S\//$d/shots/}" > "$d/log.txt" 2>&1; echo "exit $?" >> "$d/log.txt"
 }
 same() {  # case reference
-  local bad=0
-  for f in pattern config master pad; do cmp -s "$O/$1/shots/$f.png" "$O/$2/shots/$f.png" || { bad=1; echo "    $f.png differs from $2"; }; done
+  local bad=0 ref
+  for f in pattern config master pad; do
+    ref=$O/$2/shots/$f.png
+    if [ $FEAT = 1 ] && [ $f = config ]; then
+      ref=$G/ext-config$([ "$2" = ref-develop ] && echo -develop).png
+      [ "${UPDATE:-}" = 1 ] && cp "$O/$1/shots/$f.png" "$ref"
+    fi
+    cmp -s "$O/$1/shots/$f.png" "$ref" || { bad=1; echo "    $f.png differs from $ref"; }
+  done
   grep -q "exit 0" "$O/$1/log.txt" || { bad=1; echo "    ui_shot did not exit 0: $(tail -2 "$O/$1/log.txt" | tr '\n' ' ')"; }
   return $bad
 }
