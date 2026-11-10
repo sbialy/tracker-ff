@@ -23,6 +23,7 @@ volatile uint32_t ext_site[2];
 #ifndef UI_SHOT_HOST
 extern uint32_t _etext, _sdata, _edata;   // mk66fx1m0.ld
 extern void (*_VectorsRam[])(void);
+extern void (*const _VectorsFlash[])(void);   // mk20dx128.c
 void ext_keep_platform(void);   // platforms/mk66/source/util.cpp
 extern const uint8_t ext_modulesCount asm("_ZN9Interface12modulesCountE");   // Interface::modulesCount (private)
 #endif
@@ -91,6 +92,11 @@ __attribute__((noinline, used)) void keepForModule()
     ext_keep_platform();
 }
 
+// the stock fault (3 to 6) and SysTick (15) vectors from before an accepted entry, put back by ext_power_down
+void (*s_stockVectors[5])(void);
+bool s_entered;
+constexpr int kVectors = 16 + 100;   // _VectorsRam / _VectorsFlash: 16 system vectors + NVIC_NUM_INTERRUPTS (MK66)
+
 bool enter(const plug_file_header& h)
 {
     asm volatile("" ::"r"(&keepForModule));
@@ -104,7 +110,11 @@ bool enter(const plug_file_header& h)
     const bool ok = entry(&hk, EXT_ABI_VERSION, 1) == 0;
     asm volatile("cpsid i" ::: "memory");
     if (ok)
+    {
         ext_hooks = hk;
+        for (int i = 0; i < 5; i++) s_stockVectors[i] = saved[i];
+        s_entered = true;
+    }
     else
     {   // a refusing module leaves the stock handlers
         for (int i = 0; i < 4; i++) _VectorsRam[3 + i] = saved[i];
@@ -193,6 +203,35 @@ extern "C" void ext_update(void)
         if (ext::markerExpired(card, s_markerMs, now())) s_markerSet = false;
     }
     if (ext_hooks.update) ext_hooks.update();
+}
+
+// The end of a power off (PlatformImpl::setPowerMode(false), interrupts off) unpowers the SDRAM and the module's code with it, and
+// detachInterrupt (teensy core, called by disableHardware) turns the interrupts on again after that. A SysTick or a fault whose
+// handler sits in the dead slot cannot be taken: the core locks up (RCM SRS1 LOCKUP, srs 0200, ref/restart-lockup.md). So before
+// the teardown every vector that points into the slot goes back to the image (fault and SysTick: the ones saved at the entry,
+// an interrupt vector: the flash one, with the interrupt disabled) and every hook is cleared. The module is gone for the rest of
+// this power cycle.
+extern "C" void ext_power_down(void)
+{
+    memset(&ext_hooks, 0, sizeof(ext_hooks));
+#ifndef UI_SHOT_HOST
+    if (!s_entered) return;
+    const uintptr_t lo = uintptr_t(s_ext), hi = lo + sizeof(s_ext);
+    for (int i = 0; i < kVectors; i++)
+    {
+        const uintptr_t v = uintptr_t(_VectorsRam[i]);
+        if (v < lo || v >= hi) continue;
+        if (i >= 3 && i <= 6) _VectorsRam[i] = s_stockVectors[i - 3];
+        else if (i == 15) _VectorsRam[i] = s_stockVectors[4];
+        else
+        {
+            _VectorsRam[i] = _VectorsFlash[i];
+            if (i >= 16) reinterpret_cast<volatile uint32_t*>(0xE000E180)[(i - 16) / 32] = 1u << ((i - 16) % 32);   // NVIC_ICER
+        }
+    }
+    s_entered = false;
+    asm volatile("dsb" ::: "memory");
+#endif
 }
 
 #endif

@@ -16,6 +16,7 @@ extern volatile uint32_t ext_site[2];
 void ext_boot(void* platform, int develop);   // synth-open/ext_module.cpp
 void ext_update(void);                         // main loop: the crash marker, then the module
 const char* ext_status_short(void);            // Features page: "Loaded", "No module", "Refused", "Crashed", "On"
+void ext_power_down(void);                     // power off, interrupts off: stock vectors back, hooks cleared
 #ifdef __cplusplus
 }
 #endif

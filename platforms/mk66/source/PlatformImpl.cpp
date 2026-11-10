@@ -7,6 +7,7 @@
 #include "pinout.h"
 #include "polyassert.h"
 #include "sdram.h"
+#include "devhooks.h" // FEATURE_EXT_HOOKS: ext_power_down (ext_hooks.h)
 #ifdef FEATURE_USB_AUDIO
 #include "usb_audio_ff.h"
 #endif
@@ -57,6 +58,12 @@ void PlatformImpl::setPowerMode(bool mode)
         saveStartState(restart ? 1 : 0);
 
         noInterrupts();
+
+#ifdef FEATURE_EXT_HOOKS
+        // disableHardware unpowers the SDRAM, where a loaded extension module keeps its SysTick and fault handlers, and turns the
+        // interrupts on again (detachInterrupt): the image's own handlers first, or the next SysTick locks the core up
+        ext_power_down();
+#endif
 
         disableHardware();
 
