@@ -20,6 +20,11 @@ static const int kAudioOutputInterruptLevel = value2priority(5);
 static const int kSDHCInterruptLevel = value2priority(6);
 
 static const int kUSBOTGPriorityLevel = value2priority(7);
+#ifdef FEATURE_USB_AUDIO
+// USB_AUDIO=1 with the feature on (usb_init picks it): above the audio output block, so a long block cannot starve the
+// isochronous endpoint (two BDTs, 2 ms of cover). Equal to the audio input level, they do not preempt each other.
+static const int kUSBOTGPriorityLevelAudio = value2priority(4);
+#endif
 
 #endif
 

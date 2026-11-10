@@ -54,7 +54,9 @@ void checkPowerState(PlatformImpl* platformImpl)
         }
         else
         {
-            platformImpl->saveStartState(0); // also clears a start state 1 a console image or the bootloader hand-off left
+            // also clears a start state 1 a console image or the bootloader hand-off left. Power return Start (restart mode feature,
+            // its EEPROM mirror) keeps the 1 instead: a power cut from here on starts the unit again
+            platformImpl->saveStartState(platformImpl->readPowerReturnMirror() ? 1 : 0);
         }
     }
 }

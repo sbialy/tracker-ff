@@ -1,6 +1,9 @@
 #include "PlatformImpl.h"
 #include "Tracker.h"
 #include "config.h"
+#ifdef FEATURE_USB_AUDIO
+#include "usb_audio_ff.h"
+#endif
 
 void initHardware(PlatformImpl* platform,
                   const char* version,
@@ -35,6 +38,10 @@ void updateBuffers(void* bufLeft, void* bufRight)
     if (trackerInstance != nullptr)
     {
         trackerInstance->updateAudioBuffers(bufLeft, bufRight, kAudioBlockSamples);
+#ifdef FEATURE_USB_AUDIO
+        // USB_AUDIO=1: the block the codec gets, to the computer (returns at once while the feature is off)
+        ffUsbAudioBlock(static_cast<const int16_t*>(bufLeft), static_cast<const int16_t*>(bufRight));
+#endif
     }
 }
 

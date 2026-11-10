@@ -123,10 +123,18 @@ bool enter(const plug_file_header&) { return false; }
 namespace
 {
 ext::Status s_status = ext::Status::kOff;
+// decision D4 (ref/features-design.md): the module is card code, so Shift held at power on skips it for the session. It loads
+// when the plugin host's key window closes (the same 4 s and the same key path), not in TrackerImpl::init
+constexpr uint32_t kKeyWindowMs = 4000;
+bool s_pending, s_safe;
+uint32_t s_bootMs;
 }
+
+bool plugUiShiftHeld();   // plug_ui.cpp
 
 extern "C" const char* ext_status_short(void)
 {
+    if (s_safe) return "Safe";
     switch (s_status)
     {
     case ext::Status::kOff: return "On";
@@ -144,6 +152,12 @@ extern "C" void ext_boot(void* platformPtr, int develop)
     Platform* platform = static_cast<Platform*>(platformPtr);
     s_fs = platform->getFileSystem();
     s_timer = platform->getTimer();
+    s_pending = true;   // loaded by ext_update once the key window closed
+    s_bootMs = now();
+}
+
+static void ext_load()
+{
     CardFs card{s_fs};
     const ext::Slot slot{s_ext, EXT_LOAD_BYTES, uintptr_t(s_ext)};
     s_status = ext::boot(card, true, slot, imageCrc, enter);
@@ -154,6 +168,19 @@ extern "C" void ext_boot(void* platformPtr, int develop)
 
 extern "C" void ext_update(void)
 {
+    if (s_pending)
+    {
+        if (plugUiShiftHeld())
+        {
+            s_pending = false;
+            s_safe = true;   // nothing of the card's code runs this session, the marker stays as it was
+        }
+        else if (now() - s_bootMs >= kKeyWindowMs)
+        {
+            s_pending = false;
+            ext_load();
+        }
+    }
     if (s_markerSet)
     {
         CardFs card{s_fs};

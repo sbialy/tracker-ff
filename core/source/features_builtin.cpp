@@ -4,16 +4,22 @@
 
 #include "features.h"
 
+#include "Platform.h"
+#include "TrackerImpl.h"
+#include "core/interface.h"
 #include "ext_hooks.h"
-#include "mtConfig.h"
 #include "mtSleep.h"
-#include "mtStructs.h"
 
 namespace features
 {
 namespace
 {
 const char* const kOnOff[] = { "Off", "On" };
+
+Platform* platform()
+{
+    return TrackerImpl::getInstance()->getPlatform();
+}
 
 // ---- restart mode (RestartMode.h): on = a power off restarts the unit
 const char* const kReturn[] = { "Stay off", "Start" };
@@ -41,7 +47,7 @@ void restartBoot(uint8_t on, const uint8_t* v)
 const feat_desc kRestart = {
     sizeof(feat_desc), FEAT_ABI, 1, "restart", "Restart mode",
     "Power options: restart at power off, start when power returns.", 0, 3, kRestartParams, 0,
-    restartBoot, restartApply, nullptr, nullptr, nullptr,
+    restartBoot, restartApply, nullptr, nullptr, nullptr, nullptr,
 };
 
 // ---- developer mode: the CPU readouts and, with Extension Load, the module of /Plugins/Ext (read at start only)
@@ -58,29 +64,43 @@ const char* developStatus(uint8_t on)
 const feat_desc kDevelop = {
     sizeof(feat_desc), FEAT_ABI, 1, "develop", "Developer mode",
     "CPU readouts and the extension module. Takes effect at the next start.", FEAT_F_RESTART, 1, kDevelopParams, 0,
-    nullptr, nullptr, developStatus, nullptr, nullptr,
+    nullptr, nullptr, developStatus, nullptr, nullptr, nullptr,
 };
 
-// ---- USB audio: the descriptor set is chosen before the card is up, so the switch is mirrored into the EEPROM config
-// (mtConfig.common.usbAudioMode, the field the IMX build already uses) and needs a restart
+// ---- USB audio: the descriptor set is chosen in usb_init before the card is up, so the switch is mirrored into an EEPROM
+// boot flag (platforms/mk66/usbaudio, byte 9) and needs a restart. The card file stays the truth, the flag follows it at start.
 void usbAudioApply(uint8_t on, const uint8_t*, uint8_t)
 {
-    mtConfig.common.usbAudioMode = on;
-    saveConfig();
+    platform()->setUsbAudioBoot(on != 0);
+}
+
+uint8_t usbAudioRunning()
+{
+    return platform()->usbAudioRunning() ? 1 : 0;
 }
 
 const feat_desc kUsbAudio = {
     sizeof(feat_desc), FEAT_ABI, 1, "usbaudio", "USB audio",
-    "The unit shows up as an audio input on a computer. Takes effect at the next start.", FEAT_F_RESTART | FEAT_F_BOOTFLAG, 0, nullptr, 0,
-    nullptr, usbAudioApply, nullptr, nullptr, nullptr,
+    "The unit shows up as an audio input on a computer. Takes effect at the next start.", FEAT_F_RESTART | FEAT_F_BOOTFLAG, 0,
+    nullptr, 0, nullptr, usbAudioApply, nullptr, nullptr, nullptr, usbAudioRunning,
 };
+
+// ---- Restart now: the power press sequence (bar, Workspace save, files) ending in a restart
+void restartNowFn()
+{
+    lowPower.requestRestartOnce();
+    mtInterface.handlePowerButtonAction(1);
+}
 }   // namespace
 
 void registerBuiltins()
 {
     add(&kRestart);
-    add(&kDevelop);
-    add(&kUsbAudio);
+    const int dev = add(&kDevelop);
+    // decision D8: the row only with /.develop on the card, or while the feature is on (so it can be switched off again)
+    if (!platform()->getFileSystem()->exists("/.develop")) hideUnlessOn(dev);
+    if (platform()->usbAudioBuilt()) add(&kUsbAudio);   // an image without USB_AUDIO=1 does not list it
+    setRestartNow(restartNowFn);
 }
 }   // namespace features
 

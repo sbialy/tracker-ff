@@ -114,6 +114,18 @@ extern int usb_audio_set_feature(void *stp, uint8_t *buf);
 extern void usb_touchscreen_update_callback(void);
 #endif
 
+#ifdef FF_USB_AUDIO_TX
+// tracker-ff USB_AUDIO=1: platforms/mk66/usbaudio/usb_audio_hooks.cpp
+extern uint16_t usb_audio_transmit_buffer[];
+extern uint8_t usb_audio_transmit_setting;
+extern unsigned int usb_audio_transmit_callback(uint16_t *buf);
+// boot-time switch (usb_desc.c): the audio function is described and served only while ff_usb_audio_on is 1
+extern uint8_t ff_usb_audio_on;
+void ff_usb_audio_select(int on);
+// usb_audio_hooks.cpp: the EEPROM boot flag the Features page writes, read before the card is up
+int ffUsbAudioBootFlag(void);
+#endif
+
 
 #ifdef __cplusplus
 }

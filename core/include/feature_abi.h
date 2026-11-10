@@ -53,4 +53,7 @@ struct feat_desc
     const char* (*status)(uint8_t on);                                // page status row and list value, null = "On" / "Off"
     int (*saveState)(uint8_t* buf, int cap);
     void (*loadState)(const uint8_t* buf, int n);
+    // FEAT_F_BOOTFLAG: the state this session really started with (the EEPROM mirror read before the card), null = the file's.
+    // A file that differs is re-synced to the mirror at start (apply) and the row reads Restart.
+    uint8_t (*running)(void);
 };

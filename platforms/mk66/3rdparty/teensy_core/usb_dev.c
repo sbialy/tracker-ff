@@ -58,7 +58,21 @@
 
 // buffer descriptor table
 
+#ifdef FF_USB_AUDIO_TX
+// tracker-ff USB_AUDIO=1: endpoint 8 exists for the host only while the audio function is on (ff_usb_audio_select)
+#define FF_EP_COUNT (ff_usb_audio_on ? NUM_ENDPOINTS : AUDIO_TX_ENDPOINT - 1)
+#else
+#define FF_EP_COUNT NUM_ENDPOINTS
+#endif
+
+#ifdef FF_USB_AUDIO_TX
+// tracker-ff USB_AUDIO=1 (from OpenTracker, Apache-2.0): a volatile BDT keeps the addr store ahead of the desc
+// store that hands the audio buffer to the controller.
+// https://forum.pjrc.com/threads/67081?p=278849&viewfull=1#post278849
+typedef volatile struct {
+#else
 typedef struct {
+#endif
 	uint32_t desc;
 	void * addr;
 } bdt_t;
@@ -194,6 +208,10 @@ static void usb_setup(void)
 		cfg = usb_endpoint_config_table;
 		// clear all BDT entries, free any allocated memory...
 		for (i=4; i < (NUM_ENDPOINTS+1)*4; i++) {
+#ifdef FF_USB_AUDIO_TX
+			// the audio BDTs point at static buffers, not usb_malloc() packets (from OpenTracker)
+			if ((i >> 2) == AUDIO_TX_ENDPOINT) continue;
+#endif
 			if (table[i].desc & BDT_OWN) {
 				usb_free((usb_packet_t *)((uint8_t *)(table[i].addr) - 8));
 			}
@@ -234,6 +252,9 @@ static void usb_setup(void)
 		usb_rx_memory_needed = 0;
 		for (i=1; i <= NUM_ENDPOINTS; i++) {
 			epconf = *cfg++;
+#ifdef FF_USB_AUDIO_TX
+			if (i == AUDIO_TX_ENDPOINT && !ff_usb_audio_on) epconf = 0; // off: endpoint 8 stays disabled, as without the flag
+#endif
 			*reg = epconf;
 			reg += 4;
 #ifdef AUDIO_INTERFACE
@@ -286,7 +307,7 @@ static void usb_setup(void)
 		break;
 	  case 0x0082: // GET_STATUS (endpoint)
 		i = setup.wIndex & 0x7F;
-		if (i > NUM_ENDPOINTS) {
+		if (i > FF_EP_COUNT) {
 			// TODO: do we need to handle IN vs OUT here?
 			endpoint0_stall();
 			return;
@@ -299,7 +320,7 @@ static void usb_setup(void)
 		break;
 	  case 0x0102: // CLEAR_FEATURE (endpoint)
 		i = setup.wIndex & 0x7F;
-		if (i > NUM_ENDPOINTS || setup.wValue != 0) {
+		if (i > FF_EP_COUNT || setup.wValue != 0) {
 			// TODO: do we need to handle IN vs OUT here?
 			endpoint0_stall();
 			return;
@@ -309,7 +330,7 @@ static void usb_setup(void)
 		break;
 	  case 0x0302: // SET_FEATURE (endpoint)
 		i = setup.wIndex & 0x7F;
-		if (i > NUM_ENDPOINTS || setup.wValue != 0) {
+		if (i > FF_EP_COUNT || setup.wValue != 0) {
 			// TODO: do we need to handle IN vs OUT here?
 			endpoint0_stall();
 			return;
@@ -336,6 +357,10 @@ static void usb_setup(void)
 				} else {
 					datalen = list->length;
 				}
+#ifdef FF_USB_AUDIO_TX
+				// the configuration's own wTotalLength (ff_usb_audio_select): off never sends the audio part
+				if ((setup.wValue >> 8) == 2) datalen = data[2] | (data[3] << 8);
+#endif
 #if 0
 				serial_print("Desc found, ");
 				serial_phex32((uint32_t)data);
@@ -397,6 +422,72 @@ static void usb_setup(void)
 	  case 0x0A21: // HID SET_IDLE
 		break;
 	  // case 0xC940:
+#endif
+
+#ifdef FF_USB_AUDIO_TX
+	  // tracker-ff USB_AUDIO=1: alternate settings of the audio streaming interface (from OpenTracker, Apache-2.0)
+	  case 0x0B01: // SET_INTERFACE (alternate setting)
+		if (!ff_usb_audio_on) { // off: stall, as without the flag (no other case takes these requests)
+			endpoint0_stall();
+			return;
+		}
+		if (setup.wIndex == FF_AUDIO_INTERFACE+1) {
+			usb_audio_transmit_setting = setup.wValue;
+			if (usb_audio_transmit_setting > 0) {
+				// prime both BDTs with silence, one buffer each (see the token handler)
+				for (int odd = 0; odd < 2; odd++) {
+					bdt_t *b = &table[index(AUDIO_TX_ENDPOINT, TX, odd)];
+					uint16_t *buf = usb_audio_transmit_buffer + odd * (AUDIO_TX_SIZE/2);
+					if (!(b->desc & BDT_OWN)) {
+						memset(buf, 0, 176);
+						b->addr = buf;
+						b->desc = (176 << 16) | BDT_OWN;
+					}
+				}
+			}
+		} else if (setup.wValue != 0 || setup.wIndex >= NUM_INTERFACE) {
+			endpoint0_stall();
+			return;
+		}
+		break;
+	  case 0x0A81: // GET_INTERFACE (alternate setting)
+		if (!ff_usb_audio_on) {
+			endpoint0_stall();
+			return;
+		}
+		datalen = 1;
+		data = reply_buffer;
+		if (setup.wIndex == FF_AUDIO_INTERFACE+1) {
+			reply_buffer[0] = usb_audio_transmit_setting;
+		} else if (setup.wIndex < NUM_INTERFACE) {
+			reply_buffer[0] = 0;
+		} else {
+			endpoint0_stall();
+			return;
+		}
+		break;
+	  case 0x0122: // SET_CUR sampling frequency (endpoint): one rate only, the data stage is acknowledged below
+		if (!ff_usb_audio_on) {
+			endpoint0_stall();
+			return;
+		}
+		return;
+	  case 0x81A2: // GET_CUR sampling frequency (endpoint)
+		if (!ff_usb_audio_on) {
+			endpoint0_stall();
+			return;
+		}
+		if (setup.wLength >= 3) {
+			reply_buffer[0] = 44100 & 255;
+			reply_buffer[1] = 44100 >> 8;
+			reply_buffer[2] = 0;
+			datalen = 3;
+			data = reply_buffer;
+		} else {
+			endpoint0_stall();
+			return;
+		}
+		break;
 #endif
 
 #if defined(AUDIO_INTERFACE)
@@ -628,6 +719,11 @@ static void usb_control(uint32_t stat)
 #endif
 #ifdef AUDIO_INTERFACE
 		if (usb_audio_set_feature(&setup, buf)) {
+			endpoint0_transmit(NULL, 0);
+		}
+#endif
+#ifdef FF_USB_AUDIO_TX
+		if (ff_usb_audio_on && setup.wRequestAndType == 0x0122) { // SET_CUR sampling frequency: accepted, the rate is fixed
 			endpoint0_transmit(NULL, 0);
 		}
 #endif
@@ -935,6 +1031,16 @@ void usb_isr(void)
 #endif
 			endpoint--;	// endpoint is index to zero-based arrays
 
+#ifdef FF_USB_AUDIO_TX
+			// tracker-ff USB_AUDIO=1 (from OpenTracker, Apache-2.0): one buffer per BDT and both BDTs kept armed,
+			// so the controller always has the next packet while this one is refilled in place.
+			if ((endpoint == AUDIO_TX_ENDPOINT-1) && (stat & 0x08)) {
+				uint16_t *buf = usb_audio_transmit_buffer + (((uint32_t)b & 8) ? AUDIO_TX_SIZE/2 : 0);
+				unsigned int len = usb_audio_transmit_callback(buf);
+				b->addr = buf;
+				b->desc = (len << 16) | BDT_OWN;
+			} else
+#endif
 #ifdef AUDIO_INTERFACE
 			if ((endpoint == AUDIO_TX_ENDPOINT-1) && (stat & 0x08)) {
 				unsigned int len;
@@ -1119,6 +1225,9 @@ void usb_init(void)
 	//serial_print("usb_init\n");
 
 	usb_init_serialnumber();
+#ifdef FF_USB_AUDIO_TX
+	ff_usb_audio_select(ffUsbAudioBootFlag()); // before the pull-up, the descriptors never change after this
+#endif
 
 	for (i=0; i < (NUM_ENDPOINTS+1)*4; i++) {
 		table[i].desc = 0;
@@ -1164,7 +1273,11 @@ void usb_init(void)
 	USB0_INTEN = USB_INTEN_USBRSTEN;
 
 	// enable interrupt in NVIC...
+#ifdef FF_USB_AUDIO_TX
+	NVIC_SET_PRIORITY(IRQ_USBOTG, ff_usb_audio_on ? kUSBOTGPriorityLevelAudio : kUSBOTGPriorityLevel);
+#else
 	NVIC_SET_PRIORITY(IRQ_USBOTG, kUSBOTGPriorityLevel);
+#endif
 	NVIC_ENABLE_IRQ(IRQ_USBOTG);
 
 	// enable d+ pullup

@@ -60,8 +60,8 @@ cMenuGroup menuUsb(menuBase, "USB", 2);
 cMenuGroup menuMetro(menuBase, "Metronome", 5);
 #if defined(FEATURE_EXT_HOOKS) && !defined(PLATFORM_IMX) && !defined(TRACKER_MINI)
 cMenuGroup menuFeatures(menuBase, "Features", features::kMax);
-// one page for every feature: State, up to kMaxParams params, Status. Re-pointed in featurePageEnter
-cMenuGroup menuFeaturePage(menuFeatures, "Feature", 2 + features::kMaxParams);
+// one page for every feature: State, up to kMaxParams params, Status, Restart now. Re-pointed in featurePageEnter
+cMenuGroup menuFeaturePage(menuFeatures, "Feature", 3 + features::kMaxParams);
 #endif
 cMenuGroup menuFirmware(menuBase, "Firmware", 4);
 
@@ -446,14 +446,15 @@ cMenuItem melFunctionButtons8(menuFunctionButtons,
 namespace
 {
 const char* const kFeatOnOff[] = { "Off", "On" };
-const char* const kFeatEmpty[] = { "" };
 strItemTypeLabel featDummySetup{ nullptr };
-cMenuItem featRows[2 + features::kMaxParams] = {
+cMenuItem featRows[3 + features::kMaxParams] = {
 #define FEAT_ROW cMenuItem(menuFeaturePage, "", nullptr, menuTypeItemLabel, &featDummySetup)
-    FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW,
+    FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW, FEAT_ROW,
 #undef FEAT_ROW
 };
-static_assert(2 + features::kMaxParams == 10, "featRows initialisers");
+static_assert(3 + features::kMaxParams == 11, "featRows initialisers");
+const strItemTypeActionButton featRestartSetup{ features::restartNow, nullptr };
+uint8_t featRowFeature[features::kMax];   // Features list row -> feature (a hidden feature has no row)
 strItemTypeListTextWithAction featStateSetup{ nullptr, 2, kFeatOnOff, features::changed };
 strItemTypeListTextWithAction featEnumSetup[features::kMaxParams];
 strItemTypeListValues featIntSetup[features::kMaxParams];
@@ -488,6 +489,13 @@ void featurePageFill()
     }
     featStatusText = features::rowValue(i);
     featRows[row].rebind("Status", d->help ? d->help : d->name, menuTypeItemLabelPtr, &featStatusSetup);
+    if (features::restartPending(i))
+    {
+        // decision D9: the power off of the power button, ending in a restart (the Workspace and the files are saved first)
+        row++;
+        featRows[row].rebind("Restart now", "Saves the project and restarts the unit, so the change takes effect.",
+                             menuTypeItemActionButton, &featRestartSetup);
+    }
     for (uint8_t r = 0; r <= row; r++)
     {
         menuFeaturePage.setChild(r, &featRows[r], featRows[r].getName()); // the group lists its own name table
@@ -497,27 +505,29 @@ void featurePageFill()
 
 void featurePageEnter(uint8_t row)
 {
-    featCurrent = row;
+    featCurrent = featRowFeature[row < features::kMax ? row : 0];
     featurePageFill();
 }
 
 const char* featureRowValue(uint8_t row)
 {
-    return features::rowValue(row);
+    return features::rowValue(featRowFeature[row < features::kMax ? row : 0]);
 }
 } // namespace
 
 void features::menuBuild()
 {
     const int n = features::count();
+    uint8_t rows = 0;
     for (int i = 0; i < n; i++)
     {
-        menuFeatures.setChild(uint8_t(i), &menuFeaturePage, features::desc(i)->name);
+        if (!features::listed(i)) continue;
+        featRowFeature[rows] = uint8_t(i);
+        menuFeatures.setChild(rows++, &menuFeaturePage, features::desc(i)->name);
     }
-    menuFeatures.setCount(uint8_t(n));
+    menuFeatures.setCount(rows);
     menuFeatures.childValue = featureRowValue;
     menuFeatures.onEnter = featurePageEnter;
-    (void)kFeatEmpty;
 }
 
 // the State row changed the row count, the page shows the new set at the refresh that follows the confirm

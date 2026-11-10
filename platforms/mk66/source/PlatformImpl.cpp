@@ -7,6 +7,9 @@
 #include "pinout.h"
 #include "polyassert.h"
 #include "sdram.h"
+#ifdef FEATURE_USB_AUDIO
+#include "usb_audio_ff.h"
+#endif
 
 #ifdef DEBUG
 #define DEBUG_TEXT " debug"
@@ -167,13 +170,50 @@ void PlatformImpl::setRestartOnPowerOff(bool on)
 void PlatformImpl::setStartOnPowerReturn(bool on)
 {
 #ifndef TRACKER_MINI
-    // checkPowerState wrote 0 at this start. 1 makes the next power-up (power returning after a cut) start the UI, the press of
-    // a power off writes 0 again (setPowerOffGuard), so a deliberate power off still ends off. One EEPROM write per change.
+    // checkPowerState wrote the mirror below at this start. 1 makes the next power-up (power returning after a cut) start the UI,
+    // the press of a power off writes 0 again (setPowerOffGuard), so a deliberate power off still ends off. The mirror lets the
+    // next start keep the 1 itself (no 3 s window with 0, one write fewer per session). One EEPROM write per change of each.
+    if (START_STATE_SAVE)
+    {
+        uint8_t mirror = 0;
+        EEPROM.readData(POWER_RETURN_EEPROM_ADRESS, &mirror, 1);
+        const uint8_t want = on ? POWER_RETURN_ON : 0;
+        if (mirror != want)
+        {
+            EEPROM.writeData(POWER_RETURN_EEPROM_ADRESS, &want, 1);
+        }
+    }
     saveStartState(on ? 1 : 0);
 #else
     (void)on;
 #endif
 }
+
+bool PlatformImpl::readPowerReturnMirror()
+{
+#ifndef TRACKER_MINI
+    uint8_t mirror = 0;
+    if (configValid())
+    {
+        EEPROM.readData(POWER_RETURN_EEPROM_ADRESS, &mirror, 1);
+    }
+    return mirror == POWER_RETURN_ON;
+#else
+    return false;
+#endif
+}
+
+#ifdef FEATURE_USB_AUDIO
+bool PlatformImpl::usbAudioRunning()
+{
+    return ffUsbAudioActive() != 0;
+}
+
+void PlatformImpl::setUsbAudioBoot(bool on)
+{
+    ffUsbAudioSetBootFlag(on ? 1 : 0);
+}
+#endif
 
 bool PlatformImpl::powerOffGuardArmed() const
 {

@@ -41,6 +41,8 @@ class mtSleep
     // EEPROM start state at 1 while the unit runs when "Power return: Start" is picked
     void setRestartMode(bool on, bool recordShortcut);
     void setStartOnPowerReturn(bool on);
+    // Restart now (Config > Features, decision D9): the next power off of this session restarts, whatever the mode
+    void requestRestartOnce();
 
   private:
     void setRestartActive(bool on);
@@ -52,6 +54,7 @@ class mtSleep
     bool restartWindowOpen = false; // the start window for Record (kKeyWindowMs)
     bool restartRecordKey = true;   // the Record shortcut (enter at start, leave at power off)
     bool startOnPowerReturn = false;
+    bool restartOnce = false;       // requestRestartOnce, until the power off completes or is aborted
     elapsedMillis restartWindowTimer;
 };
 

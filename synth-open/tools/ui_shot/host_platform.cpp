@@ -35,6 +35,9 @@ static bool g_held[64];
 // UISHOT_K66_WDOG=1 models 5878f0e instead: setPowerOffGuard(true) arms the K66 WDOG, which on the unit ignores the refresh and the
 // disable (ref/shot-hang-1.2.0.md R8.2), so it bites kTimeoutMs after the arm whatever the firmware does next.
 int g_startState = 1;       // EEPROM byte 0 (UISHOT_START_STATE, default 1 = the unit was switched on)
+int g_returnMirror;         // EEPROM byte 8 (UISHOT_RETURN_MIRROR), PlatformImpl::readPowerReturnMirror
+int g_usbAudioFlag;         // EEPROM byte 9 (UISHOT_USB_FLAG), ffUsbAudioBootFlag
+int g_usbAudioRunning;      // usb_init at the last start (ff_usb_audio_select)
 bool g_offMarker;           // RAM marker of a guard reset
 bool g_restartMarker;       // RAM marker of a guard reset in the restart mode (RestartMode.h)
 bool g_restartOnPowerOff;   // Platform::setRestartOnPowerOff
@@ -65,7 +68,9 @@ static void mcuReset(const char* why, bool watchdog)
     g_offMarker = false;        // checkPowerState takes it
     g_restartMarker = false;
     const bool run = power_off_guard::decideStart(in) == power_off_guard::Start::kRun;
-    g_startState = 0;           // both branches write 0 (saveStartState(0), setPowerMode(false))
+    // the off branch writes 0 (setPowerMode(false)), the start branch the Power return mirror (PowerControl.cpp checkPowerState)
+    g_startState = run && g_returnMirror ? 1 : 0;
+    g_usbAudioRunning = g_usbAudioFlag;   // usb_init runs before checkPowerState at every MCU start
     g_guard.disarm();
     g_wdogBiteAt = 0;
     printf("mcu reset (%s)%s: start %s\n", why, in.watchdogReset ? " wdog" : "", run ? "RUN" : "off");
@@ -99,10 +104,13 @@ void bootModel()
 {
     g_wdogModel = getenv("UISHOT_K66_WDOG") != nullptr;
     if (const char* e = getenv("UISHOT_START_STATE")) g_startState = atoi(e);
+    if (const char* e = getenv("UISHOT_RETURN_MIRROR")) g_returnMirror = atoi(e);
+    if (const char* e = getenv("UISHOT_USB_FLAG")) g_usbAudioFlag = atoi(e);
+    g_usbAudioRunning = g_usbAudioFlag;
     power_off_guard::StartInputs in{true, false, false, false, true, uint8_t(g_startState)};
     const bool run = power_off_guard::decideStart(in) == power_off_guard::Start::kRun;
     printf("boot: start state %d: start %s\n", g_startState, run ? "RUN" : "off");
-    g_startState = 0;
+    g_startState = run && g_returnMirror ? 1 : 0;
 }
 
 void resetCommand() { mcuReset("reset", false); }
@@ -525,7 +533,15 @@ class HPlatform : public Platform
     // no override: also builds against a tree without the restart mode
     void setRestartOnPowerOff(bool on) { g_restartOnPowerOff = on; }
     // no override: also builds against a tree without the features (PlatformImpl::setStartOnPowerReturn, saveStartState)
-    void setStartOnPowerReturn(bool on) { g_startState = on ? 1 : 0; }
+    void setStartOnPowerReturn(bool on)
+    {
+        g_returnMirror = on ? 1 : 0;   // PlatformImpl: the mirror for the next start, then the start state now
+        g_startState = on ? 1 : 0;
+    }
+    // no override: also builds against a tree without USB audio. UISHOT_NO_USB_AUDIO=1 models an image built without it
+    bool usbAudioBuilt() { return getenv("UISHOT_NO_USB_AUDIO") == nullptr; }
+    bool usbAudioRunning() { return g_usbAudioRunning != 0; }
+    void setUsbAudioBoot(bool on) { g_usbAudioFlag = on ? 1 : 0; }
     // no override: also builds against a tree without the guard (bug mode)
     void setPowerOffGuard(bool armed)
     {

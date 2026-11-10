@@ -32,9 +32,10 @@ void mtSleep::stopPowerOffSequence()
         }
     }
     shutdownState = shutdownStateNone;
-    if (restartLeave)
+    if (restartLeave || restartOnce)
     {
         restartLeave = false; // an aborted power off keeps the restart mode
+        restartOnce = false;  // and an aborted Restart now is forgotten
         setRestartActive(restartActive);
     }
 }
@@ -71,7 +72,6 @@ void mtSleep::goLowPower()
     {
 #ifdef FEATURE_EXT_HOOKS
         features::set(features::find("restart"), false);
-        features::flush(); // the file is written before the power goes
 #else
         platform->getFileSystem()->remove(restart_mode::kFilePath);
 #endif
@@ -79,6 +79,10 @@ void mtSleep::goLowPower()
         restartLeave = false;
     }
 
+#ifdef FEATURE_EXT_HOOKS
+    features::flush(); // every changed feature file is written before the power goes (the 1 s debounce would lose it)
+#endif
+    restartOnce = false;
     // the platform restarts instead of going off while the restart mode is on (setRestartOnPowerOff)
     platform->setPowerMode(false);
 }
@@ -86,7 +90,13 @@ void mtSleep::goLowPower()
 void mtSleep::setRestartActive(bool on)
 {
     restartActive = on;
-    TrackerImpl::getInstance()->getPlatform()->setRestartOnPowerOff(on && !restartLeave);
+    TrackerImpl::getInstance()->getPlatform()->setRestartOnPowerOff((on && !restartLeave) || restartOnce);
+}
+
+void mtSleep::requestRestartOnce()
+{
+    restartOnce = true;
+    setRestartActive(restartActive);
 }
 
 void mtSleep::initRestartMode()
