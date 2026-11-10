@@ -197,7 +197,7 @@ struct Install
     char file[kBankFileLen];
     int err, evicted, commands, erases;
     uint32_t ms, cmdMs;
-    uint32_t late, gapUs, maskUs, leadOk, leadShort, leadMin;   // install-crackle: what the audio saw during the install
+    uint32_t late, gapUs, maskUs, leadOk, leadShort, noAudio, leadMin, waitUs;   // install-crackle: what the audio saw during the install
 };
 Install s_log[8];
 int s_logN;
@@ -582,10 +582,11 @@ void status()
         const Install& x = s_log[(s_logN - 1 - i) % 8];
         len += snprintf(t + len, size_t(cap - len),
                         "install %s err %d ms %lu (in flash commands %lu) commands %d erases %d evicted %d"
-                        " audio late %lu gap max %lu us masked max %lu us erase lead ok %lu short %lu min %lu%s\r\n",
+                        " audio late %lu gap max %lu us masked max %lu us erase lead ok %lu short %lu no audio %lu min %lu wait max %lu us%s\r\n",
                         x.file, x.err, (unsigned long)x.ms, (unsigned long)x.cmdMs, x.commands, x.erases, x.evicted,
                         (unsigned long)x.late, (unsigned long)x.gapUs, (unsigned long)x.maskUs, (unsigned long)x.leadOk,
-                        (unsigned long)x.leadShort, (unsigned long)x.leadMin, s_legacyOn ? " legacy" : "");
+                        (unsigned long)x.leadShort, (unsigned long)x.noAudio, (unsigned long)x.leadMin, (unsigned long)x.waitUs,
+                        s_legacyOn ? " legacy" : "");
     }
     static const char* const kSrc[3] = {"text", "sidecar", "trailer"};
     for (int k = 0; k < s_sn && s_uiUp && len < cap; k++)
@@ -657,7 +658,9 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
         l.gapUs = ff_audio_gap_max / 180u;
         l.maskUs = nvmStats().maskMaxCyc / 90u;
         l.leadOk = nvmStats().leadOk;
-        l.leadShort = nvmStats().leadShort + nvmStats().noAudio;
+        l.leadShort = nvmStats().leadShort;
+        l.noAudio = nvmStats().noAudio;
+        l.waitUs = nvmStats().waitMaxUs;
         l.leadMin = nvmStats().erases ? nvmStats().leadMin : 0;
         if (st.err)
         {

@@ -79,7 +79,7 @@ bool nvmProgram(uint32_t off, const uint8_t* data8);
 // 90 MHz inside a command)
 struct NvmStats
 {
-    uint32_t erases, leadOk, leadShort, noAudio, leadMin, maskMaxCyc;
+    uint32_t erases, leadOk, leadShort, noAudio, leadMin, maskMaxCyc, waitMaxUs;
 };
 const NvmStats& nvmStats();
 void nvmStatsReset();
