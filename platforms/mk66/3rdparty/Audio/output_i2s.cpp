@@ -54,8 +54,6 @@ DMAChannel AudioOutputI2S::dma(false);
 extern "C"
 {
 volatile uint32_t ff_audio_blocks;
-volatile uint32_t ff_audio_end_cyc;
-volatile uint32_t ff_audio_isr_cyc;
 volatile uint32_t ff_audio_gap_max;
 volatile uint32_t ff_audio_late;
 volatile uint32_t ff_audio_lead;
@@ -164,9 +162,6 @@ void AudioOutputI2S::isr(void)
         s_wr++;
     }
     ff_audio_lead = uint32_t(ahead);
-    const uint32_t c1 = *kCyc;
-    ff_audio_isr_cyc = c1 - c0;
-    ff_audio_end_cyc = c1;
     ff_audio_blocks = ff_audio_blocks + 1;
 }
 

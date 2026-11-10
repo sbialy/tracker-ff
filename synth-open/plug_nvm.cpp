@@ -15,10 +15,8 @@
 
 #include <string.h>
 
-// The audio block clock (platforms/mk66/3rdparty/Audio/output_i2s.cpp): blocks done, DWT at the end of the last one and its length
+// The audio output (platforms/mk66/3rdparty/Audio/output_i2s.cpp): blocks done
 extern "C" volatile uint32_t ff_audio_blocks;
-extern "C" volatile uint32_t ff_audio_end_cyc;
-extern "C" volatile uint32_t ff_audio_isr_cyc;
 extern "C" volatile uint32_t ff_audio_lead;          // blocks written after the one the DMA plays
 extern "C" volatile uint32_t ff_audio_lead_target;   // what the audio interrupt renders ahead (1 normally)
 
@@ -174,23 +172,6 @@ bool ftfe(uint8_t cmd, uint32_t nvmOff, const uint8_t* data8)
     return (after & 0xF1u) == 0x80u;   // CCIF, no ACCERR FPVIOL RDCOLERR MGSTAT0
 }
 
-// Waits (interrupts on) until an audio block has just ended: true then, false when no block came for 8 ms (no audio running)
-bool afterBlock()
-{
-    const uint32_t t0 = *kDwtCyccnt;
-    uint32_t b = ff_audio_blocks;
-    for (;;)
-    {
-        const uint32_t nb = ff_audio_blocks;
-        if (nb != b)
-        {
-            if (*kDwtCyccnt - ff_audio_end_cyc < kCpuHz / 1000000u * 200u) return true;   // within 0.2 ms of its end
-            b = nb;   // a later interrupt held us up: wait for the next one
-        }
-        if (*kDwtCyccnt - t0 > kCpuHz / 1000u * 8u) return false;
-    }
-}
-
 bool blank(uintptr_t run, uint32_t len)
 {
     for (uint32_t i = 0; i < len; i += 4)
@@ -202,8 +183,11 @@ bool blank(uintptr_t run, uint32_t len)
 // against 7.4 ms of erase and one block to render after it. The ring holds 8 (output_i2s.cpp, at most 6 ahead).
 constexpr uint32_t kEraseLead = 5;
 
-// ERSSCR with the audio rendered ahead. The lead builds by one block per audio interrupt (about 15 ms at low load, longer near
-// full load); 300 ms without it, or no audio running, and the erase goes ahead anyway (counted in the stats)
+// ERSSCR with the audio rendered ahead. The lead builds by one block per audio interrupt (about 10 ms from the normal lead at low
+// load, longer near full load). It does not matter where in a block the erase starts: with 5 blocks written after the playing one
+// the DMA has at least 14.5 ms, the erase takes 7.4 at most, and the audio interrupt that was held off runs right at the cpsie,
+// so the lead read here is never older than one block. No audio block for 8 ms (no audio running) or no lead after 300 ms: the
+// erase goes ahead anyway (counted in the stats).
 bool eraseAhead(uint32_t nvmOff)
 {
     if (!valid(0x09, nvmOff)) return false;
@@ -211,22 +195,28 @@ bool eraseAhead(uint32_t nvmOff)
     s_st.erases++;
     ff_audio_lead_target = kEraseLead;
     const uint32_t t0 = *kDwtCyccnt;
+    uint32_t b = ff_audio_blocks, tb = t0;
     bool audio = true, ready = false;
-    while (*kDwtCyccnt - t0 < kCpuHz / 1000u * 300u)
+    for (;;)
     {
-        if (!afterBlock())
-        {
-            audio = false;
-            break;
-        }
         if (ff_audio_lead >= kEraseLead)
         {
             ready = true;
             break;
         }
+        const uint32_t now = *kDwtCyccnt, nb = ff_audio_blocks;
+        if (nb != b)
+        {
+            b = nb;
+            tb = now;
+        }
+        else if (now - tb > kCpuHz / 1000u * 8u)
+        {
+            audio = false;
+            break;
+        }
+        if (now - t0 > kCpuHz / 1000u * 300u) break;
     }
-    const uint32_t waitUs = (*kDwtCyccnt - t0) / (kCpuHz / 1000000u);
-    if (waitUs > s_st.waitMaxUs) s_st.waitMaxUs = waitUs;
     if (ready) s_st.leadOk++;
     else if (audio) s_st.leadShort++;
     else s_st.noAudio++;
