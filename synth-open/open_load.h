@@ -29,7 +29,7 @@ void reportBlockStart(uint32_t startCycles, uint32_t (*cycles)());
 
 // Note-on admission limit: estimated block load, permille of the block (CpuMeter::kBudgetCycles). The default, and a setter for
 // the console (cpu admit N, clamped 500..1000)
-constexpr uint32_t kAdmitPermille = 950;
+constexpr uint32_t kAdmitPermille = 870;   // device 2026-11-10: 950 left 2 overruns per 2 song loops, 870 none (ref/gov-fix.md)
 void setAdmitPermille(uint32_t permille);
 uint32_t admitPermille();
 

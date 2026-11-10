@@ -901,7 +901,11 @@ class OpenSynth final
             // the synth render starts after the sequencer: at the last block's point or later when this block's step work ran longer
             const uint32_t est = std::max(now, prevPre) + rest + extra + cost;
             shot.estMax = std::max(shot.estMax, est);
-            if (est <= admitCycles)
+            // the next block: a block without note-ons as the last one was, plus what already waits for it and this note-on.
+            // When it would be over the limit too and is no cheaper, the note-on starts now: waiting would only move the load
+            const uint32_t steady = prevTotal > prevExtra ? prevTotal - prevExtra : 0;
+            const uint32_t estNext = steady + queuedCost + cost;
+            if (est <= admitCycles || (estNext > admitCycles && est < estNext))
             {
                 extra += cost;
                 shot.admitted++;
@@ -931,6 +935,7 @@ class OpenSynth final
             pendSlots++;
         }
         pend[pendN++] = Pending{&inst, note, velocity, false, c()};
+        queuedCost += cost;
         stats.deferred++;
         shot.deferred++;
         if (++deferredNow > stats.deferMaxBlock)
@@ -996,6 +1001,7 @@ class OpenSynth final
         pre = 0;
         deferredNow = 0;
         pendSlots = 0;
+        queuedCost = 0;
         if (pendN == 0 || !clock())
         {
             return;
@@ -1015,7 +1021,10 @@ class OpenSynth final
         shot.flushed = uint32_t(n);
     }
     void setAdmit(uint32_t permille) { admitCycles = admitCyclesFor(std::clamp<uint32_t>(permille, 500, 1000)); }
-    uint32_t admit() const { return uint32_t(uint64_t(admitCycles) * 1000u / ot::audio::CpuMeter::kBudgetCycles); }
+    uint32_t admit() const
+    {
+        return uint32_t((uint64_t(admitCycles) * 1000u + ot::audio::CpuMeter::kBudgetCycles / 2) / ot::audio::CpuMeter::kBudgetCycles);
+    }
     void shots(open::BlockShot& w, open::BlockShot& o) const
     {
         w = worst;
@@ -1298,6 +1307,7 @@ class OpenSynth final
     };
     Pending pend[kPendingMax];
     int pendN = 0;
+    uint32_t queuedCost = 0;        // estimated cycles of the note-ons queued in this block (they start in the next)
     int pendSlots = 0;              // queued note-ons of this block that take a free pool voice (no victim faded for them)
     ot::audio::CpuMeter::CycleFn clk = nullptr;
     bool inBlock = false;

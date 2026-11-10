@@ -336,6 +336,8 @@ int main() {
       fakeNow = start + total; open::reportBlockCycles(total);
     };
     open::resetOnProjectLoad();
+    check(open::admitPermille() == 870, "admission limit default 870 permille");
+    open::setAdmitPermille(950);   // the numbers below are worked out for 950 (496,128 cycles)
     open::LoadStats st{};
     hostBlock(0, 400000, false, []{});            // block 1: the last block for the estimate (render part 394,000)
     open::loadStats(st);
@@ -412,8 +414,22 @@ int main() {
     const uint32_t hi = open::admitPermille();
     open::setAdmitPermille(10);
     const uint32_t lo = open::admitPermille();
+    open::setAdmitPermille(950);
+    check(hi == 1000 && lo == 500 && open::admitPermille() == 950, "admission limit clamps to 500..1000 permille");
+    // both blocks over the limit: the first note-on waits (the next block is no cheaper), the second starts now because the next
+    // block would carry both (now 480,000 + c, next 480,000 + c0 + c1, c = the learned note-on cost of the part, over 16,128 here)
+    open::resetOnProjectLoad();
+    hostBlock(9000000, 480000, false, []{});
+    open::resetLoadStats();
+    int s0 = -1, s1 = -1;
+    hostBlock(9100000, 400000, true, [&]{ src3[0].send(MidiEvent::Type::kNoteOn, 0, 60, 100); s0 = open::voicesSounding();
+                                          src3[1].send(MidiEvent::Type::kNoteOn, 0, 64, 100); s1 = open::voicesSounding(); });
+    open::loadStats(st);
+    printf("two hot blocks: sounding after note 1 %d, after note 2 %d, deferred %u\n", s0, s1, st.deferred);
+    check(s0 == 0 && s1 == 1 && st.deferred == 1, "both blocks over the limit: the note-on goes where the estimate is lower");
     open::setAdmitPermille(open::kAdmitPermille);
-    check(hi == 1000 && lo == 500 && open::admitPermille() == open::kAdmitPermille, "admission limit clamps to 500..1000 permille, default 950");
+    check(open::admitPermille() == 870, "admission limit back at the default");
+    open::resetOnProjectLoad();
     open::resetOnProjectLoad();
   }
   // ---- .patch save / load (open_patchio.cpp + OpenPatchStore) on an in-memory file system
