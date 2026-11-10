@@ -30,7 +30,7 @@ an engine is installed when a part needs it (model list after a 500 ms rest, pro
 that no part plays make room (`plug/README.md`, Library and cache). A Tracker has 3 synth parts (`kSynthInstrumentsCount` in
 `mtStructs.h`), each with one engine, and Patch FX slots keep the part's engine, so at most 3 engines play at once, 4 while one
 part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set, 12.3.rel1): the thirteen need 50 whole sectors (173,428 B packed), the 3
-biggest plus the one being picked need 20 (81,920 of 122,880 B, 23 with FORM and FLUX in the library). Engine rw and bss: 7,176 B of the 7,680 B SRAM pool for all thirteen (CHIP alone 4,200 B: its 12 voice objects; the worst 3 at once
+biggest plus the one being picked need 20 (81,920 of 122,880 B, 23 with FORM and FLUX in the library). Engine rw and bss: 7,176 B of the 7,680 B SRAM pool for all thirteen (CHIP alone 4,200 B: its 12 voice objects, the worst 3 at once
 need 6,016 B, the pool stays at all thirteen so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
 work arena (`plug_work.h`, a block per attached engine, given back when another engine needs the room and no part plays it, so the
 limit is the engines in use at once: worst 3 of 1.2.0 + formflux 15,000 B, all four hungry ones 15,512 B), no engine takes internal heap.
