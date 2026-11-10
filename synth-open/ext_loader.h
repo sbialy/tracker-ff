@@ -5,7 +5,9 @@
 //       bool open(const char*), bool read(uint8_t* dst, uint32_t n) (exactly n bytes), void close()
 //
 // boot() in develop mode, in this order (nothing is read or written outside develop mode):
-//   1. crash marker kMarker found: the module crashed the last boot before kMarkerMs of clean running. Remove it, load nothing.
+//   1. crash marker kMarker found: the module crashed the last boot before kMarkerMs of clean running. Write kCrash (reset
+//      reason, the module's fault record from the slot tail, the tail in hex) so a card reader shows what happened, remove the
+//      marker, load nothing.
 //   2. no kPath: nothing to load.
 //   3. header (magic, ABI, CPU, kind EXT, size bounds), no rebase table, the layout inside the slot's load part, the run address
 //      in reserved[1], then the file CRC over manifest and image, then the image CRC in reserved[0] (the costly one, last).
@@ -25,6 +27,7 @@ namespace ext
 constexpr const char* kPath = "/Plugins/Ext/module.plg";
 constexpr const char* kMarker = "/Plugins/Ext/.loading";   // written before the entry, removed after kMarkerMs of clean running
 constexpr const char* kStatus = "/Plugins/Ext/status.txt";
+constexpr const char* kCrash = "/Plugins/Ext/crash.txt";    // written on the boot that finds the marker, replaced each time
 constexpr uint32_t kMarkerMs = 3000;
 
 enum class Status : uint8_t
@@ -66,7 +69,61 @@ struct Slot
     uint8_t* mem;        // where text, data and bss are written
     uint32_t loadBytes;  // EXT_LOAD_BYTES on the device: the tail after it is the module's reset surviving area
     uintptr_t run;       // the address the module must be linked for (the device: mem)
+    uint32_t resetReason = 0;   // RCM_SRS1 << 8 | RCM_SRS0 of this start (the device), what ended the boot before it
 };
+
+// The fault record a module keeps in the slot tail (ext_abi.h EXT_FAULT_*), 4 aligned anywhere in it. Its index, or -1.
+inline uint32_t tailWord(const uint8_t* tail, uint32_t i)
+{
+    uint32_t v;
+    memcpy(&v, tail + i * 4, 4);
+    return v;
+}
+inline int findFaultRecord(const uint8_t* tail, uint32_t words)
+{
+    for (uint32_t i = 0; i + EXT_FAULT_WORDS <= words; i++)
+        if (tailWord(tail, i) == EXT_FAULT_MAGIC && tailWord(tail, i + 5) == ~(tailWord(tail, i + 1) ^ EXT_FAULT_MAGIC))
+            return int(i);
+    return -1;
+}
+
+// Step 1's report: formatted into the slot's load part (free on a boot that loads nothing, no stack or SRAM for 5 KB of text),
+// the tail itself is only read. RCM_SRS0 bits: 7 POR, 6 PIN, 5 WDOG, 2 LOC/LOL, 1 LVD. RCM_SRS1: 5 SACKERR, 3 SW (SYSRESETREQ,
+// what the module's fault handler and restartMCU do), 2 MDM_AP, 1 LOCKUP.
+template <class Fs> int crashReport(Fs& fs, const Slot& s)
+{
+    char* const out = reinterpret_cast<char*>(s.mem);
+    const uint32_t cap = s.loadBytes;
+    const uint8_t* const tail = s.mem + s.loadBytes;
+    constexpr uint32_t kWords = EXT_NOINIT_BYTES / 4;
+    uint32_t n = 0;
+    auto put = [&](const char* fmt, auto... a) {
+        const int k = snprintf(out + n, cap - n, fmt, a...);
+        if (k > 0) n = n + uint32_t(k) < cap ? n + uint32_t(k) : cap - 1;
+    };
+    put("extension module crash report: the module was loaded on the boot before this one and the unit reset within %lu ms\n",
+        static_cast<unsigned long>(kMarkerMs));
+    put("reset reason RCM_SRS0 %02lx RCM_SRS1 %02lx\n", static_cast<unsigned long>(s.resetReason & 0xFF),
+        static_cast<unsigned long>((s.resetReason >> 8) & 0xFF));
+    const int f = findFaultRecord(tail, kWords);
+    if (f >= 0)
+        put("fault record at %08lx: pc %08lx lr %08lx xpsr %08lx cfsr %08lx\n",
+            static_cast<unsigned long>(s.run + s.loadBytes + uint32_t(f) * 4), static_cast<unsigned long>(tailWord(tail, f + 1)),
+            static_cast<unsigned long>(tailWord(tail, f + 2)), static_cast<unsigned long>(tailWord(tail, f + 3)),
+            static_cast<unsigned long>(tailWord(tail, f + 4)));
+    else
+        put("%s", "fault record: none (the module died before its handlers were in, it reset without a fault, or the SDRAM lost it)\n");
+    put("slot tail %lu bytes at %08lx (the module's map names the records):\n", static_cast<unsigned long>(EXT_NOINIT_BYTES),
+        static_cast<unsigned long>(s.run + s.loadBytes));
+    for (uint32_t i = 0; i < kWords; i += 8)
+    {
+        put("%08lx:", static_cast<unsigned long>(s.run + s.loadBytes + i * 4));
+        for (uint32_t j = 0; j < 8; j++) put(" %08lx", static_cast<unsigned long>(tailWord(tail, i + j)));
+        put("%s", "\n");
+    }
+    fs.writeText(kCrash, out, int(n));
+    return f;
+}
 
 // Steps 2 and 3: the file into the slot. h is the header on return (also on a refusal, as far as it was read).
 template <class Fs, class ImageCrc> Status load(Fs& fs, const Slot& s, ImageCrc imageCrc, plug_file_header& h)
@@ -107,6 +164,7 @@ template <class Fs, class ImageCrc, class Enter> Status boot(Fs& fs, bool develo
     memset(&h, 0, sizeof(h));
     if (fs.exists(kMarker))
     {
+        crashReport(fs, s);
         fs.remove(kMarker);
         st = Status::kCrashed;
     }

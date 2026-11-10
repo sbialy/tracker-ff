@@ -9,6 +9,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
@@ -57,7 +58,7 @@ struct MemFs
 };
 
 constexpr uint32_t kImageCrc = 0x1234ABCDu;
-constexpr uint32_t kSlotBytes = 4096, kLoadBytes = 3072;
+constexpr uint32_t kLoadBytes = 3072, kSlotBytes = kLoadBytes + EXT_NOINIT_BYTES;
 
 // A module file as pack_ext.py writes it: header, manifest, image (text then data), no rebase table.
 std::string makeModule(uint32_t imageCrc, uint32_t run, uint32_t textBytes = 256, uint32_t dataBytes = 32, uint32_t bss = 128)
@@ -174,8 +175,36 @@ void synthetic()
         check(r.st == ext::Status::kCrashed && r.entered == 0 && !r.marker && startsWith(r.status, "skipped"),
               "marker found: module skipped this boot, marker removed");
         check(fs.reads == 0, "  the module file is not even read");
+        check(fs.exists(ext::kCrash) && fs.files[ext::kCrash].find("fault record: none") != std::string::npos,
+              "  crash.txt written, no fault record in the tail: says none");
         Run r2 = boot(fs, slot, true);
         check(r2.st == ext::Status::kLoaded && r2.entered == 1, "  next boot loads again");
+    }
+    {   // the boot that finds the marker reports the module's fault record (ext_abi.h EXT_FAULT_*) in /Plugins/Ext/crash.txt
+        std::vector<uint8_t> big(EXT_SLOT_BYTES, 0xEE);
+        const uint32_t pc = 0x37F8DAF6u, rec[6] = {EXT_FAULT_MAGIC, pc, 0x70D880B3u, 0x21000000u, 0x00000100u, ~(pc ^ EXT_FAULT_MAGIC)};
+        const uint32_t at = EXT_LOAD_BYTES + 0x30C;   // 4 aligned, anywhere in the tail
+        memcpy(&big[at], rec, sizeof(rec));
+        const std::vector<uint8_t> tailBefore(big.begin() + EXT_LOAD_BYTES, big.end());
+        MemFs fs;
+        fs.files[ext::kPath] = makeModule(kImageCrc, 0x70D88000u);
+        fs.files[ext::kMarker] = "ext";
+        const ext::Slot s{big.data(), EXT_LOAD_BYTES, uintptr_t(0x70D88000u), 0x0800u};
+        const ext::Status st = ext::boot(fs, true, s, [] { return kImageCrc; }, [](const plug_file_header&) { return true; });
+        const std::string& c = fs.files[ext::kCrash];
+        check(st == ext::Status::kCrashed, "fault record in the tail: module skipped");
+        check(c.find("fault record at 70d93b0c: pc 37f8daf6 lr 70d880b3 xpsr 21000000 cfsr 00000100") != std::string::npos,
+              "  crash.txt decodes pc, lr, xpsr, cfsr and the record's address");
+        check(c.find("RCM_SRS0 00 RCM_SRS1 08") != std::string::npos, "  crash.txt carries the reset reason (SRS1 SW)");
+        check(c.find("70d93fe0:") != std::string::npos && c.back() == '\n', "  the whole 2 KB tail in hex, last line complete");
+        check(std::equal(tailBefore.begin(), tailBefore.end(), big.begin() + EXT_LOAD_BYTES), "  the tail is only read");
+        uint32_t bad[6];
+        memcpy(bad, rec, sizeof(bad));
+        bad[5] ^= 1u;   // a torn record (reset in the middle of the write) is not reported as one
+        memcpy(&big[at], bad, sizeof(bad));
+        fs.files[ext::kMarker] = "ext";
+        ext::boot(fs, true, s, [] { return kImageCrc; }, [](const plug_file_header&) { return true; });
+        check(fs.files[ext::kCrash].find("fault record: none") != std::string::npos, "  a record with a wrong check word: none");
     }
     {   // the entry refuses
         MemFs fs;

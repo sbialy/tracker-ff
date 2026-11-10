@@ -21,6 +21,10 @@
 #define EXT_SLOT_BYTES (48u * 1024u)
 #define EXT_NOINIT_BYTES 2048u                 // the slot tail: never written by the loader
 #define EXT_LOAD_BYTES (EXT_SLOT_BYTES - EXT_NOINIT_BYTES)
+// A fault record in the tail (the module's fault handler writes it, magic last): EXT_FAULT_MAGIC, pc, lr, xpsr, cfsr,
+// ~(pc ^ EXT_FAULT_MAGIC). The image reads it on the boot that skips a crashed module and writes /Plugins/Ext/crash.txt.
+#define EXT_FAULT_MAGIC 0xFA17C0DEu
+#define EXT_FAULT_WORDS 6u
 
 #ifdef __cplusplus
 extern "C" {

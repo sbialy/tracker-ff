@@ -159,7 +159,13 @@ extern "C" void ext_boot(void* platformPtr, int develop)
 static void ext_load()
 {
     CardFs card{s_fs};
-    const ext::Slot slot{s_ext, EXT_LOAD_BYTES, uintptr_t(s_ext)};
+#ifndef UI_SHOT_HOST
+    // RCM_SRS0 / RCM_SRS1: what ended the last boot, for the crash report (they hold until the next reset)
+    const uint32_t reset = *reinterpret_cast<volatile uint8_t*>(0x4007F000) | *reinterpret_cast<volatile uint8_t*>(0x4007F001) << 8;
+#else
+    const uint32_t reset = 0;
+#endif
+    const ext::Slot slot{s_ext, EXT_LOAD_BYTES, uintptr_t(s_ext), reset};
     s_status = ext::boot(card, true, slot, imageCrc, enter);
     const bool loaded = s_status == ext::Status::kLoaded;
     s_markerMs = now();
