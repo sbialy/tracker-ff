@@ -12,6 +12,7 @@
 #     TOOLCHAIN       Arm GNU prefix (.../bin/arm-none-eabi-) for build_plugs.sh. Default: WORKTREE/agt/12.3.rel1/bin/arm-none-eabi-
 #                     when it is there, else arm-none-eabi-gcc on PATH
 #     PY              a python3 with the unicorn module (the emulator of build_plugs.sh). Default python3
+#                     (python3 -m venv /tmp/phzvenv && /tmp/phzvenv/bin/pip install unicorn, then PY=/tmp/phzvenv/bin/python)
 #     PLUGDIR         the shipped plugins (.plg, .plgi) for the index and logo tests. Default: the pinned modules of
 #                     engines/external.lock.json, fetched into OUTDIR/modules from the local module builds (external.py fetch --from-local)
 #     NO_BUILD_PLUGS  set: skip build_plugs.sh (run_host_tests.sh)

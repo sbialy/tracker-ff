@@ -44,6 +44,9 @@ void InstrumentTypeRegistry::registerInstrumentTypes(InstrumentTypeRegistry& r, 
 }
 }
 using namespace polysynth;
+#if defined(SYNTH_ENGINE_CHIP)
+namespace polysynth::open { void chipTestForgetVoices(); }
+#endif
 struct Src : MidiSource { Src():MidiSource(Type::kInternalKeyboard){} std::weak_ptr<MidiEventCallback> cb;
   void subscribeMidiEvents(int, std::weak_ptr<MidiEventCallback> c) override { cb = c; }
   void send(MidiEvent::Type t, int ch, int a, int b) { MidiEvent e{}; e.type=t; e.channel=ch; e.data.rawData.value1=a; e.data.rawData.value2=b; (*cb.lock())(e,0);} };
@@ -1589,6 +1592,9 @@ int main() {
       }
       std::vector<float> lo, hi; const float pkLo = renderCase(id.typeId, note, 32, -1, 0, lo); const float pkHi = renderCase(id.typeId, note, 127, -1, 0, hi);
       const double eLo = energy(lo), eHi = energy(hi);
+#ifdef SYNTH_ENGINE_CHIP
+      polysynth::open::chipTestForgetVoices();   // entries keyed by voice record address: a stale key can alias a new record
+#endif
       // polyphony: 4 voice instrument: 2 notes -> min(2, maxVoices) voices, 4 notes -> min(4, maxVoices), a fifth steals
       auto sp = Synth::createSynth([](size_t){return nullptr;});
       auto stp = sp->createPatchStore(Synth::FileSystemId::kPatches, true);

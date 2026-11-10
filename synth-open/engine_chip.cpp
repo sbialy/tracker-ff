@@ -160,6 +160,16 @@ class ChipEngine final : public ot::audio::ISynthEngine
         return e->voice->isActive();
     }
 
+#ifdef OPEN_HOST_TEST
+    void forgetKeys()
+    {
+        for (auto& e : pool)
+        {
+            e.key = nullptr;
+        }
+    }
+#endif
+
   private:
     struct Entry
     {
@@ -246,6 +256,16 @@ ChipEngine gChip;
 ot::audio::ISynthEngine* chipEngine() { return &gChip; }
 
 } // namespace
+
+#ifdef OPEN_HOST_TEST
+// The entries are keyed by the address of a shim voice record. A host test that builds a synth after another one can get the address of an
+// older record back from the heap, and the oldest entry (the older record's) is then evicted under a live voice. The firmware has at most
+// kMaxVoiceObjects live records and never sees this.
+void chipTestForgetVoices()
+{
+    gChip.forgetKeys();
+}
+#endif
 
 const EngineDef kChipDef = {
     "CHIP",
