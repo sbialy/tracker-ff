@@ -96,6 +96,11 @@ void ffUsbAudioBlock(const int16_t* left, const int16_t* right)
 
 void ffUsbAudioGetStats(uint32_t* s)
 {
+    if (!s_ready)
+    {
+        memset(s, 0, FF_USB_AUDIO_STATS * sizeof(uint32_t)); // off: the SDRAM ring was never cleared, nothing to report
+        return;
+    }
     s[0] = g_out.packets();
     s[1] = g_out.underruns();
     s[2] = g_out.overflows();
