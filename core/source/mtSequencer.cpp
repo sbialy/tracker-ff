@@ -100,19 +100,17 @@ AUDIO_CORE_RAM void Sequencer::tick(float intervalSeconds)
 
     if (isSetInternalClock() || player.selectionMode)
     {
-        double uStepPeriod_us = static_cast<double>(getTimerPeriod_us());
-        double blockDurationUs = static_cast<double>(intervalSeconds) * 1000000.0;
-
-        internalTickAccumulatorUs += blockDurationUs;
-
-        while (internalTickAccumulatorUs >= uStepPeriod_us)
-        {
-            internalTickAccumulatorUs -= uStepPeriod_us;
-            double offsetUs = blockDurationUs - internalTickAccumulatorUs;
-            midiSetClockSubBlockOffsetUs(
-              offsetUs > 0.0 ? static_cast<uint32_t>(offsetUs + 0.5) : 0U);
-            tick_uStep();
-        }
+        // Integer clock, same ticks and offsets as the double accumulator it replaced (internalTickClock.h)
+        internalTickClock.advance(
+          intervalSeconds,
+          getCurrentTempo(),
+          player.swing.isActive ? player.swing.getTempoCorrection() : 0.0f,
+          [this]() { return getTimerPeriod_us(); },
+          [this](uint32_t offsetUs)
+          {
+              midiSetClockSubBlockOffsetUs(offsetUs);
+              tick_uStep();
+          });
     }
     else
     {
@@ -1352,7 +1350,7 @@ AUDIO_CORE_RAM void Sequencer::play(uint8_t fromPos)
     player.isStop = 0;
     player.isPlay = 1;
     timerTicks = 1;
-    internalTickAccumulatorUs = 0.0;
+    internalTickClock.reset();
 
     player.uStep = 1;
     player.globalPos = fromPos;
@@ -1598,7 +1596,7 @@ void Sequencer::stop(StopContext context)
     player.breakPattern = 0;
 
     timerTicks = 0;
-    internalTickAccumulatorUs = 0.0;
+    internalTickClock.reset();
 
     if (player.onPatternOrSelectionEnd == cbkTurnOffPerformanceMode)
     {

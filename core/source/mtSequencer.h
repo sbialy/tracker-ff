@@ -2,6 +2,7 @@
 #define _MTSEQUENCER_H_
 
 #include "Platform.h"
+#include "internalTickClock.h"
 #include "mtChordDefs.h"
 #include "mtMidi.h"
 #include "mtStructs.h"
@@ -1055,7 +1056,7 @@ class Sequencer
     int externalClockPulses = 0;
     int externalClocksToPlay = 0;
 
-    double internalTickAccumulatorUs = 0.0;
+    InternalTickClock internalTickClock;
 
     seqtimesec_t timeWithoutClockPulse = 0;
     int16_t externalClockCompensation_clockSignals = 0;
