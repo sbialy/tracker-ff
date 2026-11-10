@@ -36,7 +36,7 @@ Two kinds of plugin are loaded:
 
 | Kind | `PLUG_KIND_*` | What it does | Where it runs | Folder |
 | :--- | :--- | :--- | :--- | :--- |
-| **Master insert** | `PLUG_KIND_MASTER_INSERT` (1) | Processes the stereo master bus in place, after the tracks and sends mixer and before the stock limiters | Insert 1: 8 KB SRAM_L slot. Insert 2: code in FlexNVM at `0x1001E000` | `/Plugins/Master/` |
+| **Master insert** | `PLUG_KIND_MASTER_INSERT` (1) | Processes the stereo master bus in place, after the tracks and sends mixer and before the stock limiters | Both inserts share one 8 KB SRAM_L slot (insert 1 from the bottom, insert 2 from the top) | `/Plugins/Master/` |
 | **Synth engine** | `PLUG_KIND_SYNTH` (4) | Adds a model to the synth model list. The shim's voice pool, macros, patch slots and governor treat it like a built-in engine | Code in the FlexNVM bank, data in an SRAM pool | `/Plugins/Synth/` |
 
 `plug_abi.h` also declares `PLUG_KIND_SEND_FX`, `PLUG_KIND_TRACK_FX` and `PLUG_KIND_OFFLINE`. The current host does not load them.
@@ -167,7 +167,7 @@ synth-open/plug/build_plugs.sh build/plugins
 It builds the two examples of this guide and checks each one (the shipped plugins are built and checked the same way in their module repositories, section 18):
 
 - no `R_ARM_GOT*` relocation, and the rebase table holds exactly the `R_ARM_ABS32` words of the ELF
-- the insert renders to the same checksum at the SRAM_L home, the FlexNVM home with rw on the heap and in SDRAM, with default settings and again with every parameter moved and one more change in block 5
+- the insert renders to the same checksum at the SRAM_L home, at the top of the slot (insert 2's home) and in SDRAM, with default settings and again with every parameter moved and one more change in block 5
 - the synth example passes the firmware's own attach check ([`validate_synth.py`](#13-validation-safe-mode-and-the-crash-marker)) and renders to the same checksum at two homes
 
 The examples build into `build/plugins/examples/`. The script prints `PASSED` or `FAILED` last.
@@ -250,8 +250,8 @@ The host lists a synth engine before it is installed from these numbers alone. A
 | `header_size` | 1,024 | `checkHeader` |
 | `image_size`, `bss_size` | 65,536 each | `checkHeader` |
 | `rebase_count` | 16,384 and at most `image_size / 4` | `checkHeader`, `checkLayout` |
-| Insert 1 | `image + bss` up to 8,192 | the SRAM_L slot |
-| Insert 2 | text up to 8,192, `rw + bss` up to 1,024 | FlexNVM and a fixed SRAM buffer |
+| One insert | `image + bss` up to 8,192 | the SRAM_L slot, either insert |
+| Two inserts | both `image + bss` together up to 8,192 (less up to 15 B, insert 2 starts 16 B aligned) | the same slot, shared |
 | Synth engine | `image + bss` up to 32,768 and `rw + bss` within the 3,072 byte pool | staging buffer and rw pool |
 | Insert instance | `instance_size` up to 16,384 | `checkDesc` |
 
@@ -838,18 +838,18 @@ The firmware's own engine bench (`synth-open/tools/phz_cycles/run_bench.sh`) use
 
 | Resource | Insert 1 | Insert 2 | Synth engine |
 | :--- | :--- | :--- | :--- |
-| **Code** | SRAM_L slot, 8,192 B for image + bss. No wait states | FlexNVM `0x1001E000`, text up to 8,192 B (the last two 4 KB sectors of the 128 KB data flash). Erased and programmed when a different plugin is loaded there. No flash command when the bytes are already there | FlexNVM bank `0x10000000` to `0x1001E000`: 120 KB, 30 sectors of 4 KB |
-| **Writable data** | in the same slot | `rw + bss` up to **1,024 B**, fixed SRAM buffer. More is refused (error 4) | rw + bss from a **3,072 B** SRAM pool shared by the installed engines |
+| **Code** | the bottom of the 8,192 B SRAM_L slot, image + bss. No wait states | the top of the same slot. Both together up to 8,192 B. Never written to flash | FlexNVM bank `0x10000000` to `0x10020000`: 128 KB, 32 sectors of 4 KB |
+| **Writable data** | in the same slot, after the text | the same | rw + bss from a **3,072 B** SRAM pool shared by the installed engines |
 | **Instance** | up to 16 KB from the SRAM heap | same | none (an 8 byte scratch). Per voice 128 B, per part 384 B |
 | **Big tables, delay lines** | `alloc(bytes, 1)`: SDRAM arena, 32 KB per slot | same | `work_bytes`: 16 KB SDRAM arena shared by the engines in use at the same time |
-| **Limit on the file** | `image + bss` 8,192 | text 8,192 | `image + bss` 32,768 (staging buffer) |
+| **Limit on the file** | `image + bss` 8,192, less what insert 2 holds | `image + bss` 8,192, less what insert 1 holds | `image + bss` 32,768 (staging buffer) |
 
 Notes:
 
 - **FlexNVM and SRAM_L run code at flash speed** (device bench). The host runs code only from these two. SDRAM is for data: an uncached access costs about 20 to 30 cycles on the MK66.
-- **Whole sectors.** An engine takes whole 4 KB sectors, and a sector never holds two engines, so an install never erases a sector of an engine that may be playing. The thirteen shipped engines need 50 whole sectors (173,428 B packed) and the bank has 30 (122,880 B), so the bank is a **cache** (library of up to 16 files in `/Plugins/Synth`, up to 12 installed at once, least recently used engines out first, never an engine a part plays). At most 3 engines play at once (3 parts).
+- **Whole sectors.** An engine takes whole 4 KB sectors, and a sector never holds two engines, so an install never erases a sector of an engine that may be playing. The thirteen shipped engines need 50 whole sectors (173,428 B packed) and the bank has 32 (131,072 B, the whole data flash), so the bank is a **cache** (library of up to 16 files in `/Plugins/Synth`, up to 12 installed at once, least recently used engines out first, never an engine a part plays). At most 3 engines play at once (3 parts).
 - **Install cost.** Each flash erase runs with interrupts off and can drop a few audio blocks. An engine of 5 sectors needs up to 5 erases, none on blank sectors. One erase plus 282 phrase programs took about 15.4 ms. The biggest engine (8-Type, 5 sectors) is estimated at 0.1 to 0.2 s including the card read. An engine that returns to the sectors it left only writes what another engine overwrote.
-- **Flash wear.** Every build with changed bytes erases the sectors it lands in. `installed.txt` keeps an erase counter per sector. While developing, test an insert in **insert 1** (SRAM_L, no flash writes) and test the DSP on the Mac before you copy it to the card.
+- **Flash wear.** Every build with changed bytes erases the sectors it lands in. `installed.txt` keeps an erase counter per sector. Master inserts never write the flash, in either slot. Test the DSP on the Mac before you copy an engine to the card.
 - **SRAM heap** is shared with the rest of the firmware. Keep instances small and put large tables in SDRAM.
 
 ### Stack
@@ -989,7 +989,7 @@ p Tilt=3
 
 ### Insert error numbers (`host.txt`, `Fail:`)
 
-1 no file, 2 header (magic or header size), 3 ABI (major, `min_host`, cpu, kind or flags), 4 too big (image, bss or layout against the slot), 5 read, 6 CRC, 7 rebase, 8 entry returned `NULL`, 9 descriptor, 10 commit (FlexNVM write failed), 11 init.
+1 no file, 2 header (magic or header size), 3 ABI (major, `min_host`, cpu, kind or flags), 4 too big (image, bss or layout against the slot), 5 read, 6 CRC, 7 rebase, 8 entry returned `NULL`, 9 descriptor, 10 commit (not used by inserts since they run from SRAM), 11 init, 12 stale (the file changed since the scan, reloaded once), 13 no room (fits alone, not beside the other insert's plugin: `Full:<name>`, it loads once the other one leaves room).
 
 ---
 
@@ -1037,7 +1037,7 @@ You can test almost everything without a device. The tools need `unicorn` for th
 | Tool | What it does |
 | :--- | :--- |
 | `plug/build_plugs.sh` | Builds the examples and runs every check below that applies. The module repositories run the same checks on the shipped plugins |
-| `plug/emu_plug.py` | The firmware's loader in Python and your insert's ARM code in Unicorn. Checks the header, CRC and descriptor, runs `init` and `process` on 128 frame blocks, prints instructions per block and an output checksum, writes a wav (`--wav`), reads a wav (`--inwav`, 16 bit stereo 44.1 kHz). `--base` picks the home (SRAM_L `0x1FFF0BD0`, FlexNVM `0x1001E000` with `--rw-base 0x20026C00`, SDRAM `0x70000000`). The checksum **must not depend on `--base`**. `--param I=V` sets a parameter after `init`, `--param-at BLOCK:I=V` sets one just before that block to test ramps and crossfades |
+| `plug/emu_plug.py` | The firmware's loader in Python and your insert's ARM code in Unicorn. Checks the header, CRC and descriptor, runs `init` and `process` on 128 frame blocks, prints instructions per block and an output checksum, writes a wav (`--wav`), reads a wav (`--inwav`, 16 bit stereo 44.1 kHz). `--base` picks the home (SRAM_L `0x1FFF0BD0` for insert 1, a higher SRAM_L address such as `0x1FFF1BA0` for insert 2 at the top of the slot, SDRAM `0x70000000`). The checksum **must not depend on `--base`**. `--param I=V` sets a parameter after `init`, `--param-at BLOCK:I=V` sets one just before that block to test ramps and crossfades |
 | `plug/emu_synth.py` | Renders an engine plugin through `synth/synth_harness.cpp` (a fixed chord, a parameter script) and prints a checksum, the libm calls, the worst block and the manifest numbers. `--scenario 0` is the defaults, `1` has every parameter moved and ramped. Same checksum at the FlexNVM and SRAM homes |
 | `tools/validate_synth.py` | The firmware's `checkSynth`, [section 13](#13-validation-safe-mode-and-the-crash-marker) |
 | `tools/plug_index_test.cpp` | The `/Plugins/Master` scan and the header, layout and CRC checks on a folder of real `.plg` files |
@@ -1055,9 +1055,9 @@ A plugin that is correct on the Mac can still fail on the device in ways the emu
 
 ## 15. Pitfalls from Real Bugs
 
-**Stale pointers after a plugin is unloaded.** An insert's parameter names and enum names live in the plugin's text segment. The Inserts page keeps lists that point at them. Insert 2's text is in FlexNVM and a reload **erases the sector**, so a hidden list read `0xFFFFFFFF` on the next redraw and the Tracker faulted. The host now notifies the UI from its unload path before the slot memory is reused and the labels copy their strings. For you: keep every table `const` in the text segment, never point the host at strings built in rw and never keep a pointer into another plugin or into host memory across calls. Synth engines are detached (parts cut, parameters removed) before their flash or rw bytes change, because the host points at your arrays directly.
+**Stale pointers after a plugin is unloaded.** An insert's parameter names and enum names live in the plugin's text segment. The Inserts page keeps lists that point at them. A reload copies the next plugin over the old text (insert 2 ran from FlexNVM then, and a reload **erased the sector**), so a hidden list read garbage on the next redraw and the Tracker faulted. The host now notifies the UI from its unload path before the slot memory is reused and the labels copy their strings. For you: keep every table `const` in the text segment, never point the host at strings built in rw and never keep a pointer into another plugin or into host memory across calls. Synth engines are detached (parts cut, parameters removed) before their flash or rw bytes change, because the host points at your arrays directly.
 
-**Writable data in insert 2.** Insert 2 has only 1,024 B for `rw + bss`. A plugin with a larger writable table is refused for insert 2 (error 4, `kTooBig`) and loads fine in insert 1, which is easy to miss. Declare tables `const` so they stay in the text segment, and keep state in the instance (up to 16 KB from the heap, not counted against the 1 KB). Read the `rw` and `bss` sizes `build_plug.py` prints, and test your plugin in both slots (`build_plugs.sh` runs the emulator at both homes).
+**Two inserts share 8 KB.** Insert 1 and insert 2 run from the same 8,192 B SRAM_L slot, so a plugin that fits alone can be refused beside a large one (`Full:<name>`, error 13). It loads by itself once the other insert leaves room. Every pair of two different shipped inserts fits (Phaser twice does not, 8,768 B). Keep `image + bss` small: declare tables `const`, keep state in the instance (up to 16 KB from the heap, not counted against the slot) and put delay lines in the SDRAM arena (`alloc(bytes, 1)`). Read the `image` and `bss` sizes `build_plug.py` prints.
 
 **A PC-relative reference between the text and rw segments** does not survive the copy to different addresses. The builder refuses it and names the relocation. The ordinary absolute addresses in the literal pool are fine, they are in the rebase table.
 

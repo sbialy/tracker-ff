@@ -9,7 +9,7 @@ What 1.2.0 has:
 - Synth engines chosen at build time (see "Engine picker") plus synth plugins at run time. The PLUGS configuration has five built in (ACD, FAT, VAP, WTFM, PERC) and a library of thirteen plugins in `/Plugins/Synth/` (JU6, PHZ, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type, Arc-Type, PLK, CHIP). ACD, FAT, VAP and WTFM are the Polyend engines as OpenTracker re-implements them. PERC is OpenTracker's drum engine, CHIP is Polyend's own open Chiptune voice, PHZ (phase distortion) and PLK (Karplus-Strong) are our own, the rest are OpenTracker 3.x modules. Other built-in sets still build, for example the 16 engine 1.1.0 image. MIDI registers by name only and Shaping has no engine.
 - Up to 4 voices per instrument, a shared voice pool and OpenTracker's governor.
 - `.patch` files that load and save from the SD card, a bank of 16 patch slots per synth part with the Patch step FX (see "Patch files"), and pitch bend.
-- Master insert plugins (`/Plugins/Master/`, two slots on the master bus, seven inserts with the release, Dirt among them), see `plug/README.md`.
+- Master insert plugins (`/Plugins/Master/`, two slots on the master bus, seven inserts with the release, Dirt among them), see `plug/README.md`. Both slots run from one 8 KB SRAM_L slot, so the image + bss of the two plugins together must fit 8,192 B (insert 1 from the bottom, insert 2 from the top). A pair that does not fit is refused (`Full:<name>` on the second insert, `host.txt` gives the bytes), every pair of two different shipped inserts fits (only Phaser twice, 8,768 B, does not). No master insert ever writes the flash.
 - A flash trim (`TRIM=1`). It made the 16 built-in engines of 1.1.0 fit the original's flash, the PLUGS configuration uses it with five built-in engines and the rest as plugins.
 - A set of audio CPU optimisations that remove work the stock firmware does for silence.
 
@@ -25,12 +25,12 @@ the built-in engine (the render compare, both scenarios, run before the engine s
 CS-Type A-Type T-Type 8-Type Arc-Type) frees 88,884 B: the image ends at 0xE535C instead of 0xFAEB8 (same tree, flag flipped).
 CHIP followed in 1.3.0 and is now an installable engine too (`chip.plg`, stored 6, patch id 8, the numbers it had when it was built in). Moving it frees 15,180 B of flash. The sound is bit identical to the built-in voice (the render compare, ten scenarios). A project or a `.patch` that uses CHIP on a card without `chip.plg` shows `Missing: CHIP`.
 
-All thirteen are in the model list from boot, installed or not. The FlexNVM bank (30 sectors of 4 KB) is a cache of the card:
+All thirteen are in the model list from boot, installed or not. The FlexNVM bank (32 sectors of 4 KB, the whole 128 KB data flash) is a cache of the card:
 an engine is installed when a part needs it (model list after a 1 s rest, project load) and the least recently used engines
 that no part plays make room (`plug/README.md`, Library and cache). A Tracker has 3 synth parts (`kSynthInstrumentsCount` in
 `mtStructs.h`), each with one engine, and Patch FX slots keep the part's engine, so at most 3 engines play at once, 4 while one
 part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set, 12.3.rel1): the thirteen need 50 whole sectors (173,428 B packed), the 3
-biggest plus the one being picked need 20 (81,920 of 122,880 B, 23 with FORM and FLUX in the library). Engine rw and bss: 7,176 B of the 7,680 B SRAM pool for all thirteen (CHIP alone 4,200 B: its 12 voice objects, the worst 3 at once
+biggest plus the one being picked need 20 (81,920 of 131,072 B, 23 with FORM and FLUX in the library). Engine rw and bss: 7,176 B of the 7,680 B SRAM pool for all thirteen (CHIP alone 4,200 B: its 12 voice objects, the worst 3 at once
 need 6,016 B, the pool stays at all thirteen so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
 work arena (`plug_work.h`, a block per attached engine, given back when another engine needs the room and no part plays it, so the
 limit is the engines in use at once: worst 3 of 1.2.0 + formflux 15,000 B, all four hungry ones 15,512 B), no engine takes internal heap.

@@ -149,9 +149,12 @@ Contract:
 - CPU: a slot that takes more than 60,000 cycles (11.5 % of a 522,240 cycle block) three blocks in a row is bypassed until
   it is loaded again. `emu_plug.py` gives instructions per block, a lower bound: the device measured 1.5 times the emulated
   count for Dirt (design section 11). Add the host's conversion pair (6,496 cycles measured, shared by the two slots).
-- Size: insert 1 holds image + bss up to 8,192 B in SRAM_L. Insert 2 holds text up to 8,192 B in the FlexNVM data flash,
-  its rw and bss go to a fixed 1 KB SRAM buffer (more is refused for insert 2), so its text is the
-  same bytes on every load and a reload costs no flash command.
+- Size: both inserts share one 8 KB SRAM_L slot. Insert 1 holds its image + bss from the bottom, insert 2 from the top (its
+  start aligned down to 16 B), so the two plugins' image + bss together must fit 8,192 B, less up to 15 B of alignment
+  (`plug_index.h` `insertPlace`). One plugin alone may take the whole slot in either insert. The second one of a pair that
+  does not fit is refused before any card read: its column shows `Full:<name>`, the audio passes, its values are kept and
+  saved back, `host.txt` says how many bytes it needs and how many are free, and it loads by itself once the other insert
+  leaves room (another pick, `None`). There is no flash fallback: no insert writes the flash.
 - No static constructors, no exceptions, no RTTI, no per instance state in globals. Constant tables of pointers are fine
   (they are rebased).
 
@@ -209,12 +212,12 @@ TOOLCHAIN=/path/to/agt/10.3/bin/arm-none-eabi- python3 build_plug.py --id org.ex
   all their entries in the stock list control with the
   current one highlighted, numeric parameters show their value and a bar. The value line of an insert column is at most 9 characters:
   the plugin name, `None`, `Loading`, `Bypassed`, or a tag and as much of the name as fits (`Safe:BBD`, `Miss:Lo-Fi`,
-  `Fail:Dirt`, `CPU:Phase`). Picking a plugin while a built-in Saturation
+  `Fail:Dirt`, `CPU:Phase`, `Full:Phas`: no room beside the other insert). Picking a plugin while a built-in Saturation
   entry is on switches the Saturation to Inserts. With `/.develop` on the card the title shows the last block's cycles of
   each insert in percent.
-- Insert 1 runs from the 8 KB SRAM_L slot. Insert 2 runs its text from the FlexNVM data flash at 0x1001E000 (two 4 KB
-  sectors, erased and programmed when a different plugin is loaded there, no flash command when the bytes are already
-  there) and its data from a fixed 1 KB SRAM buffer.
+- Both inserts run from the 8 KB SRAM_L slot, insert 1 from the bottom and insert 2 from the top. Loading one never
+  writes the bytes of the other, which keeps playing, and the new one is attached with the audio interrupt off. Until
+  insert2-sram, insert 2 ran from the last two FlexNVM sectors (0x1001E000), which the synth bank now uses.
 - The project stores the inserts in `plugins.txt` next to the project file (`tffplug 1`, `format 2`, `mixer <n>` when the
   stage is not Hard Clip (1 Soft Clip, 10 Soft Knee), `slot <n> <uid> <version> <name>`, `p <param>=<value>`). The binary
   project only holds the reserved saturationType `0x80` for the Inserts entry, which stock firmware loads as Hard Clip
@@ -262,7 +265,7 @@ Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sect
 - An engine is installed when a part needs it: the model list (after the list rests 500 ms on it, so scrolling past engines
   writes nothing), a project load (all the project's engines before any part changes, the boot project included). Patch FX
   slots are of the part's own engine and never change it, a patch load is of the part's engine too.
-- When the bank (30 sectors of 4 KB) or the rw pool has no room, the least recently used engines go first. An engine a part
+- When the bank (32 sectors of 4 KB, the whole data flash) or the rw pool has no room, the least recently used engines go first. An engine a part
   plays is never evicted for another part's pick. On a model change the part's own old engine goes only when nothing else
   frees room, on a project load the old project's engines go before the new ones.
 - An install takes whole free sectors (a sector never holds two engines), so it never erases a sector of an engine that may be
@@ -271,7 +274,11 @@ Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sect
 - Power cut: the index is rewritten before the first flash command without the evicted engines and with the new one as `w`.
   A cut leaves a `w`: dropped at the next boot, installed again when picked. A journal that cannot be written issues no command.
 - Wear: `installed.txt` keeps an erase counter per sector (`c` line, counted in the journal, so never fewer than the flash did),
-  `synth.txt` prints them with the total and the highest.
+  `synth.txt` prints them with the total and the highest. The bank had 30 sectors before insert2-sram. A `c` line of 32
+  (wear-fixes, where the last two counted insert 2's erases of the same two sectors) is read as is. A `c` line of 30 (1.2.0)
+  keeps the 30, and sectors 30 and 31, which insert 2 erased without counting, start at the highest of the 30, so the
+  least worn policy does not favour them. Older hosts read the first 30 (1.2.0) or 30 + 2 (wear-fixes) of the new line and
+  drop an engine placed in sectors 30 and 31, which is outside their bank (its CRC check protects a downgrade either way).
 - What the user sees: the popup `Loading <NAME>` while it installs (the main loop waits for it). Audio keeps running, but every
   flash command runs with interrupts off, so each sector erase (up to 5 for the biggest engine, none on blank sectors) can drop
   a few audio blocks. Engines that cannot be loaded (no room next to the engines the parts play, file gone, flash error, safe
@@ -280,7 +287,7 @@ Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sect
   5 sectors) is then about 0.1 to 0.2 s of flash commands plus the card read and two index writes. `synth.txt` logs every install
   (`ms`, `in flash commands`, commands, erases, evicted).
 
-Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the thirteen need 50 whole sectors of 30 (173,428 B packed). The 3 biggest on the parts plus the one being picked need 20 sectors (23 with FORM and FLUX in the library). Their rw needs 7,176 B of the 7,680 B pool (CHIP 4,200 B, JU6 1,648 B, the rest 112 to 168 B each), so the pool
+Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the thirteen need 50 whole sectors of 32 (173,428 B packed). The 3 biggest on the parts plus the one being picked need 20 sectors (23 with FORM and FLUX in the library). Their rw needs 7,176 B of the 7,680 B pool (CHIP 4,200 B, JU6 1,648 B, the rest 112 to 168 B each), so the pool
 never decides what is evicted. The worst 3 at once need 6,016 B (6,136 B with the one being picked): a pool of 6,656 B would
 save 1,024 B of SRAM but then hold CHIP, JU6 and a few others only, and the 5th engine picked could rewrite the flash.
 
