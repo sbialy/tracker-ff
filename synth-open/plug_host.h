@@ -82,7 +82,8 @@ struct NvmStats
 };
 const NvmStats& nvmStats();
 void nvmStatsReset();
-void nvmLegacy(bool on);   // the 1.2.0 way: every command in one window, MCLK not kept (/Plugins/nvm-legacy, A/B tests only)
+void nvmLegacy(bool on);
+void nvmSliceUs(uint32_t us);   // fixed erase slice in us (0: from the last audio block), /Plugins/nvm-slice.txt   // the 1.2.0 way: every command in one window, MCLK not kept (/Plugins/nvm-legacy, A/B tests only)
 
 // ---- synth engine plugins (plug_synth.cpp, phase 3): /Plugins/Synth/*.plg is the library, every engine in it is in the
 // shim's engine list from boot (TrackerImpl::init, before Synth::init), installed or not. The FlexNVM bank (plug_bank.h) is a

@@ -200,13 +200,15 @@ bool afterBlock()
 }
 
 // The slice the next block can spare, in DWT cycles at 90 MHz (RUN). The next audio interrupt waits for the slice, and must still end
-// before the DMA reaches its half 5.8 ms after the last one started: slice <= 5.8 ms - 2 x block - 0.2 ms. Taken as 5 ms - 2.5 x the
-// last block, kept within 0.3 .. 2 ms.
+// before the DMA reaches its half 5.8 ms after the last one started: slice <= 5.8 ms - 2 x block - 0.2 ms. Taken as 5.4 ms - 2 x the
+// last block, kept within 0.3 .. 4.5 ms. s_sliceUs (nvmSliceUs, /Plugins/nvm-slice.txt) fixes it for measurements.
+uint32_t s_sliceUs;
 uint32_t sliceCycles()
 {
+    if (s_sliceUs) return s_sliceUs * 90u;
     const uint32_t blockUs = ff_audio_isr_cyc / (kCpuHz / 1000000u);
-    const int32_t us = 5000 - int32_t(blockUs * 5 / 2);
-    const uint32_t lim = us < 300 ? 300u : (us > 2000 ? 2000u : uint32_t(us));
+    const int32_t us = 5400 - int32_t(blockUs * 2);
+    const uint32_t lim = us < 300 ? 300u : (us > 4500 ? 4500u : uint32_t(us));
     return lim * 90u;
 }
 
@@ -309,6 +311,11 @@ void nvmStatsReset()
 void nvmLegacy(bool on)
 {
     s_legacy = on;
+}
+
+void nvmSliceUs(uint32_t us)
+{
+    s_sliceUs = us;
 }
 
 // The synth bank: only below insert 2's sectors

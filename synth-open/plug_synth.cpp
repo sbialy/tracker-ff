@@ -725,6 +725,10 @@ void synthBoot(FileSystem* fs)
     if (!n && !hadIndex) return;   // no synth plugin was ever installed: nothing to do, nothing written
     s_legacyOn = fs->exists(kLegacyPath);
     nvmLegacy(s_legacyOn);
+    {
+        char b[16] = {};
+        nvmSliceUs(readText("/Plugins/nvm-slice.txt", b, int(sizeof(b)) - 1) > 0 ? uint32_t(strtoul(b, nullptr, 10)) : 0u);
+    }
     s_safe = fs->exists(kMarker);  // a marker left by the last session (plug_host.cpp boot() reads it too): no engine runs
     BankWant* const w = s_bwant;
     for (int k = 0; k < n; k++)
