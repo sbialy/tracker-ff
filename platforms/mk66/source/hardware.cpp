@@ -176,6 +176,14 @@ void updateHardware()
 
 void disableHardware()
 {
+    if (hardwareInitialized)
+    {
+        // the audio DMA interrupts render from (and record into) the SDRAM, which goes off below, and detachInterrupt (the buttons
+        // and the pads further down) turns the interrupts on again: stop both before the SDRAM is unpowered
+        AudioOutputI2S::stop();
+        AudioInputI2S::stop();
+    }
+
     // turn off USB
     USB0_INTEN = 0;
     USB0_CTL = 0;

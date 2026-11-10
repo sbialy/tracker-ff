@@ -113,6 +113,17 @@ void AudioOutputI2S::begin(void (*updateBuffersFunc)(void* left, void* right))
     dma.setInterruptPriority(kAudioOutputInterruptLevel);
 }
 
+// Power off (hardware.cpp disableHardware): the interrupt renders the next block from the project and the engines in the SDRAM,
+// which is unpowered right after this, and the I2S keeps clocking from the system clock through the sleep (MCLK_SRC 0, the 4 MHz of
+// BLPI), so the DMA would keep asking for blocks. Its request and its interrupt go off for good here. A start brings both back.
+void AudioOutputI2S::stop(void)
+{
+    if (dma.channel >= DMA_NUM_CHANNELS) return;   // never begun
+    dma.disable();
+    NVIC_DISABLE_IRQ(IRQ_DMA_CH0 + (dma.channel & 15));
+    NVIC_CLEAR_PENDING(IRQ_DMA_CH0 + (dma.channel & 15));
+}
+
 void AudioOutputI2S::isr(void)
 {
     const uint32_t c0 = *kCyc;

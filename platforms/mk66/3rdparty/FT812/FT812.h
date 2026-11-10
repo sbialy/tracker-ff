@@ -60,6 +60,7 @@ void MCU_Delay_20ms(void);
 void MCU_Delay_500ms(void);
 void MCU_set_sleepMode(void);
 void MCU_set_runMode(void);
+void MCU_panelOffAtOffStart(void); // the off start after a reset: panel off, PD# high (MCU_Layer.cpp)
 
 void MCU_InitSpi(uint32_t baudrate, uint32_t sourceClock);
 void MCU_StopSpi();

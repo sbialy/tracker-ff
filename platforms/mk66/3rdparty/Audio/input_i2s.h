@@ -38,6 +38,8 @@ class AudioInputI2S
     //     Left and right channel samples are grouped in pairs. It's client responsibility to split
     //     it correctly to left and right buffers.
     void begin(void (*updateBuffersFunc)(void* data));
+    // power off (disableHardware): no more DMA requests and no interrupt
+    static void stop(void);
 
   protected:
     AudioInputI2S(int dummy) {} // to be used only inside AudioInputI2Sslave !!
