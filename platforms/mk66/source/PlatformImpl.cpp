@@ -144,6 +144,40 @@ extern "C" void resetAfterPowerOff()
     resetWithMarker(restartOnPowerOff ? power_off_guard::kRestartMarker : power_off_guard::kOffMarker);
 }
 
+// the off starts a reset caused (checkPowerState), for the report at the next start that runs (takeOffStartRecord). Same RAM as the
+// marker: survives a reset, not a power cycle, so the magic tells a record from what the RAM held at power up.
+struct OffStartRecord
+{
+    uint32_t magic, srs, marker, count;
+};
+constexpr uint32_t kOffStartMagic = 0x0FF57A27u;
+OffStartRecord offStartRecord __attribute__((section(".noinit.power_off")));
+
+void noteOffStart(uint32_t srs, uint32_t marker)
+{
+    if (offStartRecord.magic != kOffStartMagic)
+    {
+        offStartRecord.count = 0;
+    }
+    offStartRecord.magic = kOffStartMagic;
+    offStartRecord.srs = srs;
+    offStartRecord.marker = marker;
+    offStartRecord.count++;
+}
+
+bool PlatformImpl::takeOffStartRecord(uint32_t& srs, uint32_t& marker, uint32_t& count)
+{
+    if (offStartRecord.magic != kOffStartMagic)
+    {
+        return false;
+    }
+    srs = offStartRecord.srs;
+    marker = offStartRecord.marker;
+    count = offStartRecord.count;
+    offStartRecord.magic = 0;
+    return true;
+}
+
 uint32_t takePowerOffMarker()
 {
     const uint32_t marker = powerOffMarker;

@@ -30,6 +30,7 @@ class PlatformImpl final : public Platform
     virtual void kickPowerOffGuard() override;
     virtual void setRestartOnPowerOff(bool on) override;
     virtual void setStartOnPowerReturn(bool on) override;
+    virtual bool takeOffStartRecord(uint32_t& srs, uint32_t& marker, uint32_t& count) override;
 #ifdef FEATURE_USB_AUDIO
     virtual bool usbAudioBuilt() override { return true; }
     virtual bool usbAudioRunning() override;

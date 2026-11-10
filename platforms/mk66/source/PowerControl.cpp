@@ -11,6 +11,7 @@
 bool powerButtonLastState;
 
 uint32_t takePowerOffMarker(); // PlatformImpl.cpp
+void noteOffStart(uint32_t srs, uint32_t marker); // PlatformImpl.cpp: the report of the next start that runs
 
 void checkPowerState(PlatformImpl* platformImpl)
 {
@@ -38,6 +39,9 @@ void checkPowerState(PlatformImpl* platformImpl)
 
         if (power_off_guard::decideStart(in) == power_off_guard::Start::kOff)
         {
+#ifndef TRACKER_MINI
+            noteOffStart(uint32_t(RCM_SRS0) | uint32_t(RCM_SRS1) << 8, in.offMarker ? 1u : in.restartMarker ? 2u : 0u);
+#endif
 #ifndef TRACKER_MINI
             // A reset into the off state (the power-off guard, any reset after the power off) can leave the display controller
             // running the last frame. Turn the panel off over SPI as the power off does (backlight 0, DISP low). Not PD# low: the

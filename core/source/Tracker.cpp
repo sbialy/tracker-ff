@@ -173,6 +173,20 @@ void TrackerImpl::init(Platform* platform)
     interfaceGlobals.devMode = platform->getFileSystem()->exists("/.develop");
 #endif
     lowPower.initRestartMode();
+#ifdef FEATURE_EXT_HOOKS
+    {
+        // a reset sent the unit into the off state since the last start that ran (a power off that did not end in the sleep, or a
+        // reset while off): what reset it, for the device rows of ref/r130-poweroff.md. Develop mode only, one small file.
+        uint32_t srs = 0, marker = 0, count = 0;
+        if (platform->takeOffStartRecord(srs, marker, count) && interfaceGlobals.devMode)
+        {
+            char t[96];
+            const int n = snprintf(t, sizeof t, "off starts %lu, last: srs %04lx marker %s\n", (unsigned long)count,
+                                   (unsigned long)srs, marker == 1 ? "off" : marker == 2 ? "restart" : "none");
+            plug::writeText("/Plugins/Ext/offstart.txt", t, n > 0 && n < int(sizeof t) ? n : 0);
+        }
+    }
+#endif
 #ifdef FEATURE_PLUG_HOST
     plug::boot(platform);
 #endif
