@@ -602,6 +602,12 @@ void audioEngine::connectSynthToMixer(MixerAndFxs<kVoices>* mixerAndFxs, SynthVo
     static_assert(kFirstSynthMixerChannel + kSynthParts <= MixerAndFxs<kVoices>::kSendsInputsCount,
                   "a synth send input is outside the pre fx mixers");
 
+#ifdef AUDIO_NULL_IS_SILENCE
+    synth->getPolySynth()->setSendMixers(mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kDelay),
+                                         mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb),
+                                         kFirstSynthMixerChannel);
+#endif
+
     for (int synthChannel = 0; synthChannel < kSynthParts; synthChannel++)
     {
         connections.push_back(

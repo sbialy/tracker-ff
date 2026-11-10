@@ -73,13 +73,26 @@ AUDIO_CORE_RAM void PolySynth::update(void)
 
         bool hasSends = part.patch != nullptr && part.patch->getMetadata().rendersAuxSends;
 
+        const bool reuseUnmodifiedMono = (!hasSends && !isStereo && gainDB[partIdx] == 0.0f);
+
+        // Both pre FX send gains of the part are 0 (target and previous, the default): the mixers release the send blocks unread, so
+        // the part does not build them (soft clip and int16 conversion). Not for a part with aux sends, not while the send block is also
+        // the post fader signal (0 dB), and not in offline render (stems are written block by block).
+        bool skipSendBlocks = false;
+#ifdef AUDIO_NULL_IS_SILENCE
+        skipSendBlocks = !hasSends && !reuseUnmodifiedMono && !AudioStream::renderMode && sendMixer[0] != nullptr &&
+                         sendMixer[1] != nullptr &&
+                         sendMixer[0]->isInputSilenced(firstSendInput + partIdx) &&
+                         sendMixer[1]->isInputSilenced(firstSendInput + partIdx);
+#endif
+
         audio_block_t* blockPostFaderLeft = allocate();
         audio_block_t* blockPostFaderRight = isStereo ? allocate() : NULL;
-        audio_block_t* blockSendsCommonOrSend1 = allocate();
+        audio_block_t* blockSendsCommonOrSend1 = skipSendBlocks ? NULL : allocate();
         audio_block_t* blockSend2 = hasSends ? allocate() : NULL;
 
         if (blockPostFaderLeft == NULL || (isStereo && blockPostFaderRight == NULL) ||
-            blockSendsCommonOrSend1 == NULL || (hasSends && blockSend2 == NULL))
+            (!skipSendBlocks && blockSendsCommonOrSend1 == NULL) || (hasSends && blockSend2 == NULL))
         {
             if (blockPostFaderLeft != NULL)
             {
@@ -112,7 +125,6 @@ AUDIO_CORE_RAM void PolySynth::update(void)
           std::span<polysynth::AudioBufferRef>(tempSendsBufArray),
           partIdx);
 
-        const bool reuseUnmodifiedMono = (!hasSends && !isStereo && gainDB[partIdx] == 0.0f);
         if (!reuseUnmodifiedMono)
         {
             tempBufPostfaderLeft = tempBufSendsCommonLeft;
@@ -143,7 +155,7 @@ AUDIO_CORE_RAM void PolySynth::update(void)
                 *(destSend2++) = static_cast<int16_t>(*(srcSend2++) * INT16_MAX);
             }
         }
-        else
+        else if (!skipSendBlocks)
         {
 
             if (isStereo)
@@ -173,9 +185,12 @@ AUDIO_CORE_RAM void PolySynth::update(void)
                    sizeof(blockPostFaderLeft->data));
         }
 
-        transmit(blockSendsCommonOrSend1, kSend1Offset + partIdx);
-        transmit(hasSends ? blockSend2 : blockSendsCommonOrSend1, kSend2Offset + partIdx);
-        release(blockSendsCommonOrSend1);
+        if (!skipSendBlocks)
+        {
+            transmit(blockSendsCommonOrSend1, kSend1Offset + partIdx);
+            transmit(hasSends ? blockSend2 : blockSendsCommonOrSend1, kSend2Offset + partIdx);
+            release(blockSendsCommonOrSend1);
+        }
         if (blockSend2 != NULL)
         {
             release(blockSend2);
