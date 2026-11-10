@@ -26,7 +26,7 @@ CS-Type A-Type T-Type 8-Type Arc-Type) frees 88,884 B: the image ends at 0xE535C
 CHIP followed in 1.3.0 and is now an installable engine too (`chip.plg`, stored 6, patch id 8, the numbers it had when it was built in). Moving it frees 15,180 B of flash. The sound is bit identical to the built-in voice (the render compare, ten scenarios). A project or a `.patch` that uses CHIP on a card without `chip.plg` shows `Missing: CHIP`.
 
 All thirteen are in the model list from boot, installed or not. The FlexNVM bank (30 sectors of 4 KB) is a cache of the card:
-an engine is installed when a part needs it (model list after a 500 ms rest, project load) and the least recently used engines
+an engine is installed when a part needs it (model list after a 1 s rest, project load) and the least recently used engines
 that no part plays make room (`plug/README.md`, Library and cache). A Tracker has 3 synth parts (`kSynthInstrumentsCount` in
 `mtStructs.h`), each with one engine, and Patch FX slots keep the part's engine, so at most 3 engines play at once, 4 while one
 part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set, 12.3.rel1): the thirteen need 50 whole sectors (173,428 B packed), the 3

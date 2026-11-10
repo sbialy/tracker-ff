@@ -91,7 +91,7 @@ SD Card Root/
 - The host reads only the header and manifest of each insert file at boot and when the Inserts page opens, and of each engine file at boot. Nothing executes until a plugin is picked or a project needs it.
 - A rejected file is listed in `/Plugins/host.txt` (inserts) with its error number. See [section 13](#13-validation-safe-mode-and-the-crash-marker).
 
-**Using a plugin.** Master inserts: on the Master screen, **Shift + Saturation** opens the Master Inserts page. Columns 2 and 3 pick the plugin of insert 1 and insert 2. Columns 4 to 7 are the parameters of the focused insert, four at a time. Picking a plugin while a built-in Saturation entry is on switches the Saturation to `Inserts`. Synth engines: the engine appears in the synth model list from boot, installed or not. When the list rests on it for 500 ms the host installs it and shows the popup `Loading <NAME>`.
+**Using a plugin.** Master inserts: on the Master screen, **Shift + Saturation** opens the Master Inserts page. Columns 2 and 3 pick the plugin of insert 1 and insert 2. Columns 4 to 7 are the parameters of the focused insert, four at a time. Picking a plugin while a built-in Saturation entry is on switches the Saturation to `Inserts`. Synth engines: the engine appears in the synth model list from boot, installed or not. When the list rests on it for 1 s the host installs it and shows the popup `Loading <NAME>`.
 
 ---
 

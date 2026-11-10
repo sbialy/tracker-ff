@@ -519,7 +519,10 @@ static void functSynthEditPatch()
 // installed and picked once the list rests there for kModelRestMs (synthModelTick), so scrolling past engines writes no flash.
 namespace
 {
-constexpr uint32_t kModelRestMs = 500;
+// One second, not half: every install erases and programs 3 or more 4 KB FlexNVM sectors (rated 10,000 cycles) and can glitch
+// the audio, so a longer rest means fewer installs while scrolling, less flash wear and fewer install glitches.
+// Only this Model-list pick uses it, a project load still installs at once.
+constexpr uint32_t kModelRestMs = 1000;
 struct PendingModel
 {
     int part = -1;
