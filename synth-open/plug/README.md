@@ -281,9 +281,9 @@ Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sect
   (`ms`, `in flash commands`, commands, erases, evicted).
 
 Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the twelve need 44 whole sectors of 30 (157,136 B packed), 7 to 8 stay
-resident at once. The 3 biggest on the parts plus the one being picked need 18 sectors. Their rw needs 2,976 B of the 3,072 B pool, so the pool
-never decides what is evicted. The worst 3 at once need 1,928 B (2,048 B with the one being picked): a pool of that size would
-save 1,024 B of SRAM but then hold JU6 and three others only, and the 5th engine picked would rewrite the flash.
+resident at once. The 3 biggest on the parts plus the one being picked need 18 sectors. Their rw needs 7,176 B of the 7,680 B pool (CHIP 4,200 B, JU6 1,648 B, the rest 112 to 168 B each), so the pool
+never decides what is evicted. The worst 3 at once need 6,016 B (6,136 B with the one being picked): a pool of 6,656 B would
+save 1,024 B of SRAM but then hold CHIP, JU6 and a few others only, and the 5th engine picked could rewrite the flash.
 
 The shipped synth plugins are the twelve custom engines (`engines/engines.json`, the PLUGS image builds in only ACD FAT VAP
 WTFM PERC CHIP). Ten are built here, PHZ and PLK are private modules built from the private repository `poly-engines`:

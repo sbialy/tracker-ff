@@ -1,14 +1,14 @@
 # engines/ - the plugin modules of tracker-ff
 
 tracker-ff 1.2.0 is split into five repositories. This one is the firmware: the plugin host, the plugin SDK, the built-in engines
-(ACD FAT VAP WTFM PERC from OpenTracker, CHIP from Polyend's open Chiptune voice) and the `.ptfx` Sample Editor effects. It holds no
+(ACD FAT VAP WTFM PERC from OpenTracker) and the `.ptfx` Sample Editor effects. It holds no
 plugin module source. Every synth engine plugin and master insert plugin is built in a module repository, and this folder pins and
 checks what they publish.
 
 | Repository | Visibility | Lock set | Modules |
 |---|---|---|---|
 | tracker-ff (this one) | public | | host, SDK, built-in engines, `.ptfx` |
-| poly-engines-os | public | `engines-os` | the OpenTracker 3.x module engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type (`.plg`, `.plgi`, `.wasm`, `.json`) |
+| poly-engines-os | public | `engines-os` | CHIP (Polyend's open Chiptune voice, `.plg` and `.plgi` only) and the OpenTracker 3.x module engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type (`.plg`, `.plgi`, `.wasm`, `.json`) |
 | poly-engines | private | `engines` | our own engines PHZ and PLK (FORM and FLUX are in the repository, not in 1.2.0), freeware binaries only |
 | poly-effects-os | public | `effects-os` | the OpenTracker fx ports Dirt, Tape, Lo-Fi, BBD, Phaser (`.plg`, `.wasm`, `.json`) |
 | poly-effects | private | `effects` | our own inserts Console and Tube, freeware binaries only |

@@ -29,8 +29,8 @@ an engine is installed when a part needs it (model list after a 500 ms rest, pro
 that no part plays make room (`plug/README.md`, Library and cache). A Tracker has 3 synth parts (`kSynthInstrumentsCount` in
 `mtStructs.h`), each with one engine, and Patch FX slots keep the part's engine, so at most 3 engines play at once, 4 while one
 part changes engine. Budgets (`tools/plug_bank_test.cpp`, sizes of the `-O2` set, 12.3.rel1): the twelve need 44 whole sectors, 7 to 8 stay resident, the 3
-biggest plus the one being picked need 18 (73,728 of 122,880 B). Engine rw and bss: 2,976 B of the 3,072 B SRAM pool for all twelve (the worst 3 at once
-need 1,928 B, the pool stays at all twelve so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
+biggest plus the one being picked need 18 (73,728 of 122,880 B). Engine rw and bss: 7,176 B of the 7,680 B SRAM pool for all thirteen (CHIP alone 4,200 B: its 12 voice objects; the worst 3 at once
+need 6,016 B, the pool stays at all thirteen so it never forces a flash write). PLK's 8,772 B delay lines live in a 16 KB SDRAM
 work arena (`plug_work.h`, a block per attached engine, given back when another engine needs the room and no part plays it, so the
 limit is the engines in use at once: worst 3 of 1.2.0 + formflux 15,000 B, all four hungry ones 15,512 B), no engine takes internal heap.
 RAM_G logos: a cache of 32 list and 2 editor images (`plug_logo.h`), every listed plugin shows its logo. CPU: FlexNVM runs code at flash speed (device bench run 3), the plugin executes the same
@@ -55,7 +55,7 @@ chain stays in the stock build), checked over all 131 sections of the 18 engines
 | `open_engine.h` | `EngineDef`: parameter table, editor sections, default macros and the hosted `ISynthEngine`. A new engine is one `EngineDef` plus its engine source |
 | `engines.mk` `engine_list.h` | The engine picker: names, sources and default set (`engines.mk`, read by the top Makefile and `core/makefile`) and one X-macro entry per engine (`engine_list.h`: registry factory, `Synth::kSynthTypes`, editor name and icon, `.patch` engine id, stored project number) |
 | `engine_<name>.cpp` | One `EngineDef` per engine (parameter table, sections, default macros, value text). `engine_acd.cpp` also holds the enum name tables shared by all engines |
-| `engine_chip.cpp` | CHIP: also the `ISynthEngine` adapter that hosts `core/synth/engines/ChiptuneSynthVoice.cpp` |
+| `engine_chip.cpp` | (moved to poly-engines-os with CHIP, which is `chip.plg` since 1.3.0: the `ISynthEngine` adapter that hosts `core/synth/engines/ChiptuneSynthVoice.cpp`) |
 | `ot/` | Copies from OpenTracker (commit 927b1516385e, Apache-2.0): `audio/engines/{acd,fat,vap,wtfm,perc}.{h,cpp}`, `audio/dsp.h`, `audio/synth_engine.h`, `audio/audio_tables.h`, `audio/{governor,cpu_meter}.{h,cpp}`, `model/synth_patch.h`, `fastrun.h`, plus the 3.x headers the module engines need. Unmodified apart from a provenance line at the top (Apache section 4b) |
 | (module repositories) | The plugin engines and inserts are not in this repository: poly-engines-os and poly-effects-os (public), poly-engines and poly-effects (private). `engines/README.md` |
 | `ff_dirt.h` `ff_dirt.cpp` `ff_dirt_ctl.cpp` | The live Dirt master bus insert (FF_DIRT, see "Dirt master insert"): per block DSP at `-O2 -ffp-contract=off`, the preset table, coefficients and the `AudioEffectDirt` audio object at `-Os` |

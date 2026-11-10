@@ -44,7 +44,7 @@ void check(bool ok, const char* what)
 }
 
 constexpr uintptr_t kPool = 0x20027000;
-constexpr uint32_t kPoolBytes = 3072;   // plug_synth.cpp
+constexpr uint32_t kPoolBytes = 7680;   // plug_synth.cpp
 
 struct Flash
 {
@@ -283,6 +283,7 @@ const P kAll[] = {
     {"eight.plg", 0x9d7c57e2, 21160, 21152, 120},
     {"form.plg", 0xdbc3be3d, 22148, 22144, 112},
     {"flux.plg", 0x28785da0, 21868, 21864, 120},
+    {"chip.plg", 0xb16d36ed, 13328, 13320, 4200},   // last: the indices above are used by the tests below
 };
 constexpr int kN = int(sizeof(kAll) / sizeof(kAll[0]));
 
@@ -515,7 +516,7 @@ int main()
         io.card["c.plg"] = plg("c.plg", 0xC, 40000, 39992, 64);
         io.card["d.plg"] = plg("d.plg", 0xD, 5000, 4992, 64);
         io.card["huge.plg"] = plg("huge.plg", 0xE, 130000, 129992, 64);
-        io.card["fat.plg"] = plg("fat.plg", 0xF, 4000, 3992, 4000);
+        io.card["fat.plg"] = plg("fat.plg", 0xF, 4000, 3992, kPoolBytes + 8);
         Bank b;
         Cache c;
         open(f, io, b);
@@ -536,9 +537,10 @@ int main()
     {
         Flash f;
         Io io;
-        io.card["r1.plg"] = plg("r1.plg", 0x11, 3000, 2000, 1500);
-        io.card["r2.plg"] = plg("r2.plg", 0x12, 3000, 2000, 1500);
-        io.card["r3.plg"] = plg("r3.plg", 0x13, 3000, 2000, 1500);
+        const uint32_t third = kPoolBytes / 2 - 8;   // two of them fit the pool, three do not
+        io.card["r1.plg"] = plg("r1.plg", 0x11, 3000, 2000, third);
+        io.card["r2.plg"] = plg("r2.plg", 0x12, 3000, 2000, third);
+        io.card["r3.plg"] = plg("r3.plg", 0x13, 3000, 2000, third);
         Bank b;
         Cache c;
         open(f, io, b);
@@ -546,7 +548,7 @@ int main()
         install(f, io, b, "r2.plg", c);
         BankInstallStatus r = install(f, io, b, "r3.plg", c);
         check(r.err == 0 && r.evicted == 1 && find(b, 0x11) < 0 && layoutOk(b) && exact(f, io, b),
-              "3 x 1,500 B rw in a 3,072 B pool: the third evicts the oldest by rw, with sectors to spare");
+              "3 x 3,832 B rw in a 7,680 B pool: the third evicts the oldest by rw, with sectors to spare");
     }
 
     // ---- power cut after every command of an install that evicts and erases, and a journal that cannot be written
