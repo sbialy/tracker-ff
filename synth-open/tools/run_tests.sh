@@ -87,6 +87,11 @@ c++ -std=c++20 -O1 -Wall -I synth-open -I synth-open/tools/plug_stub synth-open/
   > "$L/plug_sidecar_test.build.log" 2>&1 || echo "BUILD FAIL plug_sidecar_test"
 c++ -std=c++20 -O1 -Wall -I synth-open -I core/include synth-open/tools/ext_loader_test.cpp -o "$T/ext_loader_test" \
   > "$L/ext_loader_test.build.log" 2>&1 || echo "BUILD FAIL ext_loader_test"
+# the Features registry and its file parser (core/source/features.cpp), plain and with ASan/UBSan
+FT=(-std=c++20 -O1 -Wall -DFEATURE_EXT_HOOKS -DFEATURES_TEST -I core/source -I core/include synth-open/tools/features_test.cpp core/source/features.cpp)
+c++ "${FT[@]}" -o "$T/features_test" > "$L/features_test.build.log" 2>&1 || echo "BUILD FAIL features_test"
+c++ -g -fsanitize=address,undefined -fno-sanitize-recover=all "${FT[@]}" -o "$T/features_test_san" > "$L/features_test_san.build.log" 2>&1 \
+  || echo "BUILD FAIL features_test_san"
 {
  for t in plug_bank_test plug_ui_nav_test sat_softknee_test plug_sidecar_test plug_work_test plug_scan_cache_test; do
    echo "### run $t"; "$T/$t"; echo "### rc=$?"
@@ -95,6 +100,11 @@ c++ -std=c++20 -O1 -Wall -I synth-open -I core/include synth-open/tools/ext_load
  read -r -a ext_args <<< "${EXT_MODULE:-}"
  echo "### run ext_loader_test"; "$T/ext_loader_test" ${ext_args[@]+"${ext_args[@]}"}; echo "### rc=$?"
  echo "### run plug_index_test"; "$T/plug_index_test" "$PLUGDIR"; echo "### rc=$?"
+ echo "### run features_test"; "$T/features_test"; echo "### rc=$?"
+ echo "### run features_test_san"; "$T/features_test_san"; echo "### rc=$?"
+ # USB audio (Config > Features): the ring, and the descriptors served with the switch off (= the image without it) and on
+ echo "### run usb_audio_out_test"; bash platforms/mk66/usbaudio/test/run.sh; echo "### rc=$?"
+ echo "### run usb_desc_test"; bash platforms/mk66/usbaudio/test/usb_desc_test.sh; echo "### rc=$?"
  echo "### run plug_logo_test"; "$T/plug_logo_test" "$PLUGDIR"/*.plgi; echo "### rc=$?"
 } > "$L/plug_tests.log" 2>&1
 grep -E '^### (run|rc)' "$L/plug_tests.log" | paste - -

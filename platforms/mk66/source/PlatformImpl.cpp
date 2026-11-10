@@ -177,7 +177,7 @@ void PlatformImpl::setStartOnPowerReturn(bool on)
     {
         uint8_t mirror = 0;
         EEPROM.readData(POWER_RETURN_EEPROM_ADRESS, &mirror, 1);
-        const uint8_t want = on ? POWER_RETURN_ON : 0;
+        uint8_t want = on ? POWER_RETURN_ON : 0;
         if (mirror != want)
         {
             EEPROM.writeData(POWER_RETURN_EEPROM_ADRESS, &want, 1);

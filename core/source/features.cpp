@@ -96,12 +96,21 @@ void parse(Entry& e, char* t, int n)
 {
     defaults(e);
     t[n < kFileMax ? n : kFileMax - 1] = 0;
-    if (strncmp(t, "feature 1\n", 10) != 0) return;
     int stateN = 0;
+    bool first = true;
     for (char* line = t; line && *line;)
     {
         char* next = strchr(line, '\n');
         if (next) *next++ = 0;
+        const size_t len = strlen(line);
+        if (len && line[len - 1] == '\r') line[len - 1] = 0;   // a file saved by a Windows editor reads the same
+        if (first)
+        {
+            first = false;
+            if (strcmp(line, "feature 1") != 0) return;   // another format major (or not a feature file): all defaults
+            line = next;
+            continue;
+        }
         char* sp = strchr(line, ' ');
         if (sp)
         {
