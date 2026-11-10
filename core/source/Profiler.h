@@ -36,6 +36,8 @@ class Profiler
     void startMeasuringAudio();
     void stopMeasuringAudio();
     void resetMeasuringAudio();
+    // Blocks since the last reset that took the whole block time or longer (the same reading as maximum >= 100 %)
+    int audioOverruns() const { return overrunBlocks; }
 
   private:
     static constexpr uint8_t kStackWatermark =
@@ -52,6 +54,7 @@ class Profiler
     int minSampleUs;
     int maxSampleUs;
     int tempMaxSampleUs;
+    int overrunBlocks = 0;
 };
 
 #endif /* SOURCE_PROFILER_H_ */

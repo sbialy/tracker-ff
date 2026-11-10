@@ -929,9 +929,9 @@ void cConfigEditor::showDiagnosticInfo()
 
     snprintf(audioPerformanceText,
              sizeof(audioPerformanceText),
-             "min: %d%%, max: %d%%",
-             usage.minimum,
-             usage.maximum);
+             "max: %d%%, ovr: %d",
+             usage.maximum,
+             Profiler::getInstance()->audioOverruns()); // blocks over 100 % since the last Play
 
     display.setControlText(audioPerformanceLabelControl, audioPerformanceText);
 

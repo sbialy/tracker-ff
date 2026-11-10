@@ -2,7 +2,11 @@
 #include <numeric>
 
 #ifdef FEATURE_SYNTH
+#include "Profiler.h"
 #include "Synth.h"
+#ifdef FEATURE_SYNTH_OPEN
+#include "open_load.h"
+#endif
 #endif
 #include "fileManager.h"
 #include "log.h"
@@ -1333,6 +1337,12 @@ AUDIO_CORE_RAM void Sequencer::play(uint8_t fromPos)
     }
 
     songTimer.start();
+
+    // every Play starts a fresh audio load reading (max, overruns, the synth's governor and admission counters)
+    Profiler::getInstance()->resetMeasuringAudio();
+#ifdef FEATURE_SYNTH_OPEN
+    polysynth::open::resetLoadStats();
+#endif
 
     engine.endAllFx();
 

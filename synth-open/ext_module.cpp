@@ -6,6 +6,7 @@
 
 #include "devhooks.h"
 #include "ext_loader.h"
+#include "open_load.h"
 #include "plug_host.h"
 
 #include "FileSystemAdapter.h"
@@ -89,6 +90,7 @@ volatile uint32_t s_keepSink;
 __attribute__((noinline, used)) void keepForModule()
 {
     s_keepSink = display.isIdle() + ext_modulesCount;
+    asm volatile("" ::"r"(&polysynth::open::loadStats));   // the console's cpu command reads the synth load counters
     ext_keep_platform();
 }
 

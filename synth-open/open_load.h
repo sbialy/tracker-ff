@@ -21,6 +21,44 @@ namespace polysynth::open
 // governor (ot::audio::Governor). No-op without a Synth.
 void reportBlockCycles(uint32_t cycles);
 
+// Audio interrupt, at the start of every live block (Profiler::startMeasuringAudio, before MIDI and the sequencer): `startCycles`
+// is the cycle counter at the block start and `cycles` reads it. Turns the note-on admission on: a note-on whose estimated cost
+// would take the block over kAdmitPermille starts at the start of the next block instead (at most one block late, never dropped).
+// The note-ons deferred in the block before start here, first. No-op without a Synth.
+void reportBlockStart(uint32_t startCycles, uint32_t (*cycles)());
+
+// Note-on admission limit: estimated block load, permille of the block (CpuMeter::kBudgetCycles)
+constexpr uint32_t kAdmitPermille = 950;
+
+// Live load counters of the open synth since the last Play (resetLoadStats) or project load. Read from the main loop or the
+// console (copies of 32-bit words written by the audio interrupt).
+struct LoadStats
+{
+    uint32_t blocks;        // live blocks counted
+    uint32_t overruns;      // blocks at or over the block budget (CpuMeter, L >= 1000 permille)
+    uint32_t peakPermille;  // the worst single block
+    uint32_t avgPermille;   // CpuMeter average (about 100 ms)
+    uint32_t cuts;          // governor cuts (cap lowered)
+    uint32_t cutsTotal;     // governor cuts since boot
+    int32_t cap;            // governor cap now
+    int32_t budget;         // voice budget
+    int32_t sounding;       // synth voices sounding now
+    uint32_t govSteals;     // voices the governor stole after a cut
+    uint32_t steals;        // voices stolen by a note-on in a full pool
+    uint32_t fastKills;     // of those, released voices under kFastKillLevel freed at once (no fade block)
+    uint32_t preSteals;     // victims faded in the block before their deferred note started
+    uint32_t admitted;      // note-ons checked by the admission (live, inside a block)
+    uint32_t deferred;      // note-ons moved to the start of the next block
+    uint32_t deferMaxBlock; // most note-ons deferred in one block
+    uint32_t deferMaxUs;    // longest delay of a deferred note-on (asked for to started)
+    uint32_t queueFull;     // note-ons admitted over the limit because the queue was full
+    uint32_t attackUs[3];   // learned extra cost of a note-on per synth part (engine noteOn + first render over a running voice)
+    uint32_t voiceUs[3];    // learned cost of one running voice per synth part
+};
+void loadStats(LoadStats& s);
+// Play (Sequencer::play): the counters above start again (the governor's own lifetime count stays in cutsTotal)
+void resetLoadStats();
+
 // Offline render (export): the governor is off and the cap is back at the budget.
 void setOffline(bool offline);
 

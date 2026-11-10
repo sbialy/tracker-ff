@@ -323,6 +323,90 @@ int main() {
     for (int k = 0; k < 3; k++) ins3[k]->setVoiceCount(2);
     open::resetOnProjectLoad();
   }
+  // ---- note-on admission (live blocks with a cycle counter): a note-on that would take the estimated block over 95 % starts
+  // at the start of the next block (one block late at most, never dropped). A fake counter: the renders cost 0 cycles, so
+  // the estimate is now + the last block's render part + the learned costs (seeds 150 us + 32 us per note-on at first).
+  {
+    static uint32_t fakeNow = 0;
+    auto fclk = []() -> uint32_t { return fakeNow; };
+    auto hostBlock = [&](uint32_t start, uint32_t total, bool notesFirst, auto notes) {
+      fakeNow = start; open::reportBlockStart(start, fclk);
+      fakeNow = start + 5000; if (notesFirst) notes();
+      fakeNow = start + 6000; renderAll();
+      fakeNow = start + total; open::reportBlockCycles(total);
+    };
+    open::resetOnProjectLoad();
+    open::LoadStats st{};
+    hostBlock(0, 400000, false, []{});            // block 1: the last block for the estimate (render part 394,000)
+    open::loadStats(st);
+    check(st.deferred == 0 && st.blocks == 1, "admission: a quiet block defers nothing");
+    // block 2: 6,000 + 394,000 + 2 x 32,760 = 465,520 fits, the third note's estimate 498,280 does not (limit 496,128)
+    int soundingIn2 = 0;
+    hostBlock(1000000, 470000, true, [&]{
+      src3[0].send(MidiEvent::Type::kNoteOn, 0, 60, 100);
+      src3[1].send(MidiEvent::Type::kNoteOn, 0, 64, 100);
+      src3[2].send(MidiEvent::Type::kNoteOn, 0, 67, 100);
+      soundingIn2 = open::voicesSounding();
+    });
+    open::loadStats(st);
+    printf("admission block 2: sounding=%d admitted=%u deferred=%u slot peaks %.3f %.3f %.3f\n", soundingIn2, st.admitted, st.deferred, slotPk[0], slotPk[1], slotPk[2]);
+    check(st.admitted == 3 && st.deferred == 1 && soundingIn2 == 2 && slotPk[2] < 1e-6f, "3 note-ons in a hot block: 2 start, the third waits");
+    hostBlock(2000000, 400000, false, []{});      // block 3: the waiting note starts first
+    open::loadStats(st);
+    printf("admission block 3: sounding=%d deferMaxUs=%u deferMaxBlock=%u slot 2 peak %.3f\n", open::voicesSounding(), st.deferMaxUs, st.deferMaxBlock, slotPk[2]);
+    check(open::voicesSounding() == 3 && slotPk[2] > 1e-3f, "the waiting note-on sounds in the next block");
+    check(st.deferMaxUs == (2000000 - 1005000) / 180 && st.deferMaxBlock == 1, "deferral delay = asked to the next block start (fake blocks 1,000,000 cycles apart)");
+    // a note-off that comes while its note-on waits is kept: the note starts and is released. 490,000 cycle blocks (938 permille)
+    // stay under the governor's risk line, so no cut takes a voice in between
+    hostBlock(2500000, 490000, false, []{});
+    hostBlock(3000000, 490000, true, [&]{ src3[0].send(MidiEvent::Type::kNoteOn, 0, 72, 100); src3[0].send(MidiEvent::Type::kNoteOff, 0, 72, 0); });
+    open::loadStats(st);
+    check(st.deferred == 2, "after a hot block (490,000 cycles) even one note-on waits");
+    const int before = open::voicesSounding();
+    fakeNow = 4000000; open::reportBlockStart(4000000, fclk);   // block 5 by hand: the voices are counted before its render
+    const int after = open::voicesSounding();
+    fakeNow = 4006000; renderAll(); fakeNow = 4490000; open::reportBlockCycles(490000);
+    printf("note-off while waiting: sounding %d -> %d at the next block start\n", before, after);
+    check(after == before + 1, "the deferred note with its note-off starts in the next block (then releases)");
+    // Stop while a note-on waits: it starts and is released like the others, nothing is left in the queue
+    hostBlock(4500000, 490000, false, []{});
+    hostBlock(5000000, 400000, true, [&]{ src3[1].send(MidiEvent::Type::kNoteOn, 0, 74, 100); src3[1].send(MidiEvent::Type::kStop, 0, 0, 0); });
+    open::loadStats(st);
+    const uint32_t d0 = st.deferred;
+    hostBlock(6000000, 400000, false, []{});
+    open::loadStats(st);
+    check(st.deferred == d0 && st.deferMaxBlock == 1, "Stop starts a waiting note-on, the next block starts nothing twice");
+    // offline render: no admission, nothing waits
+    open::setOffline(true);
+    fakeNow = 7000000; open::reportBlockStart(7000000, fclk); fakeNow += 5000;
+    src3[2].send(MidiEvent::Type::kNoteOn, 0, 50, 100); src3[2].send(MidiEvent::Type::kNoteOn, 0, 53, 100);
+    open::loadStats(st);
+    check(st.deferred == d0, "offline render: every note-on starts at once");
+    open::setOffline(false);
+    // resetLoadStats (Play): counters start again
+    open::resetLoadStats(); open::loadStats(st);
+    check(st.deferred == 0 && st.blocks == 0 && st.overruns == 0 && st.peakPermille == 0, "Play resets the load counters");
+    // a waiting note-on in a full pool: its victim fades in the block the note-on came in, the next block renders only the new voice
+    open::resetOnProjectLoad();
+    hostBlock(7100000, 300000, true, [&]{ src3[0].send(MidiEvent::Type::kNoteOn, 0, 60, 100); src3[0].send(MidiEvent::Type::kNoteOn, 0, 64, 100); });
+    hostBlock(7200000, 300000, true, [&]{ src3[1].send(MidiEvent::Type::kNoteOn, 0, 67, 100); src3[1].send(MidiEvent::Type::kNoteOn, 0, 71, 100); });
+    hostBlock(7300000, 490000, false, []{});
+    open::loadStats(st);
+    const uint32_t steals0 = st.steals, pre0 = st.preSteals;
+    int full = 0, inBlock = 0;
+    hostBlock(7400000, 490000, true, [&]{ full = open::voicesSounding(); src3[2].send(MidiEvent::Type::kNoteOn, 0, 72, 100); inBlock = open::voicesSounding(); });
+    fakeNow = 7500000; open::reportBlockStart(7500000, fclk);
+    const int next = open::voicesSounding();
+    fakeNow = 7506000; renderAll(); fakeNow = 7900000; open::reportBlockCycles(400000);
+    open::loadStats(st);
+    printf("pre-steal: sounding %d, after the deferred note-on %d, next block %d, preSteals %u steals %u\n", full, inBlock, next, st.preSteals - pre0, st.steals - steals0);
+    check(full == 4 && inBlock == 3 && next == 4 && st.preSteals == pre0 + 1 && st.steals == steals0, "full pool: the waiting note's victim fades at once, the next block steals nothing");
+    // overrun count and peak
+    hostBlock(8000000, 530000, false, []{});
+    open::loadStats(st);
+    check(st.overruns == 1 && st.peakPermille == 1014, "a 530,000 cycle block counts as an overrun, peak 1014 permille");
+    open::resetOnProjectLoad();
+  }
   // ---- .patch save / load (open_patchio.cpp + OpenPatchStore) on an in-memory file system
   {
     auto s4 = Synth::createSynth([](size_t){return nullptr;});
