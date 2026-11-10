@@ -125,11 +125,6 @@ AUDIO_CORE_FLASH void AudioEffectPolyverb::reset(void)
     isBlockedUpdate = false;
 }
 
-AUDIO_CORE_FLASH bool AudioEffectPolyverb::isActive(void)
-{
-    return reverb.IsActive();
-}
-
 AUDIO_CORE_FLASH void AudioEffectPolyverb::setActiveThreshold(float threshold)
 {
     reverb.SetActiveThreshold(threshold);

@@ -15,7 +15,6 @@ class AudioEffectPolyverb : public AudioStream
     void reset();
 
     // Does reverb still produce sound
-    bool isActive();
 
     // Set threshold of activity check (sample value)
     void setActiveThreshold(float threshold);

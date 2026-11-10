@@ -46,6 +46,19 @@
 #define REVERB_WRITE2_TRACKED(c, d, s) c.Write2(d, s)
 #endif
 
+// An empty asm that takes the float in a register and hands it back: the compiler can not see through it, so `*out += delta` stays a
+// separate rounded add after the multiply (no fused multiply add). The output samples keep the rounding the build had while the
+// activity sum (abs(delta), removed) also used delta. The constraint is the float register of the target.
+#if defined(__arm__)
+#define REVERB_KEEP_FLOAT(x) __asm__("" : "+t"(x))
+#elif defined(__aarch64__)
+#define REVERB_KEEP_FLOAT(x) __asm__("" : "+w"(x))
+#elif defined(__x86_64__) || defined(__i386__)
+#define REVERB_KEEP_FLOAT(x) __asm__("" : "+x"(x))
+#else
+#define REVERB_KEEP_FLOAT(x) __asm__("" : "+m"(x))
+#endif
+
 class Reverb
 {
   public:
@@ -113,7 +126,6 @@ class Reverb
         float lp_2 = lp_decay_2_;
 
         float delta;
-        float delta_sum = 0.0f;
 
         for (size_t i = 0; i < size; i++)
         {
@@ -155,8 +167,8 @@ class Reverb
             c.Write(wet, 0.0f);
 
             delta = (wet * 32768 - *left) * amount;
+            REVERB_KEEP_FLOAT(delta);
             *left += delta;
-            delta_sum += abs(delta);
 
             c.Load(apout);
             // c.Interpolate(del1, 4450.0f, LFO_1, 50.0f, krt);
@@ -170,8 +182,8 @@ class Reverb
             c.Write(wet, 0.0f);
 
             delta = (wet * 32768 - *right) * amount;
+            REVERB_KEEP_FLOAT(delta);
             *right += delta;
-            delta_sum += abs(delta);
 
             ++left;
             ++right;
@@ -180,7 +192,6 @@ class Reverb
         lp_decay_0_ = lp_0;
         lp_decay_1_ = lp_1;
         lp_decay_2_ = lp_2;
-        last_update_delta_ = delta_sum / size;
 #ifdef FEATURE_SYNTH_OPEN
         // Quiet block = the two long lines of the feedback loop (del1, del2: all the recirculating energy passes through them, at the
         // latest after the longest line, 6312 samples) were written with values below 1 LSB of 16 bit (they compress to 0), and the three
@@ -201,7 +212,7 @@ class Reverb
     // a block with sound went in: the line buffers are about to fill
     inline void ClearQuiet() { quiet_samples_ = 0; }
 
-    // The skipped block: the low pass states (below 1 LSB) and the activity meter go to zero, the line buffers are already zero. The
+    // The skipped block: the low pass states (below 1 LSB) go to zero, the line buffers are already zero. The
     // write position and the LFO phase move as Process() would move them, so the next block with sound modulates as the stock reverb does.
     inline void SkipQuiet(size_t size)
     {
@@ -209,7 +220,6 @@ class Reverb
         lp_decay_0_ = 0;
         lp_decay_1_ = 0;
         lp_decay_2_ = 0;
-        last_update_delta_ = 0;
     }
 #endif
 
@@ -237,10 +247,7 @@ class Reverb
         lp_decay_0_ = 0;
         lp_decay_1_ = 0;
         lp_decay_2_ = 0;
-        last_update_delta_ = sound_delta_threshold_;
     }
-
-    inline bool IsActive() { return last_update_delta_ > sound_delta_threshold_; }
 
     inline void SetActiveThreshold(float threshold) { sound_delta_threshold_ = threshold; }
 
@@ -268,7 +275,6 @@ class Reverb
 
     int predelay_length_;
 
-    float last_update_delta_;
     float sound_delta_threshold_ = 5.0f;
 
     DISALLOW_COPY_AND_ASSIGN(Reverb);
