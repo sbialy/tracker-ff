@@ -2,6 +2,7 @@
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
+#include "plug_defer.h"
 #include "log.h"
 #include "plug_sidecar_io.h"
 
@@ -80,6 +81,7 @@ char s_reason[48];
 char s_note[96];   // what the last project load changed (a Dirt entry migrated), host.txt line 3
 Timer* s_timer;
 uint32_t s_bootMs, s_pickMs, s_markerMs;
+OpenGate s_openGate;   // plug_defer.h: the loads that come from a project load wait their turn
 bool s_markerSet;
 uint32_t now()
 {
@@ -474,6 +476,13 @@ Err checkDesc(const plug_desc* d, uintptr_t base, uint32_t size, uint32_t wantKi
             return kDesc;
         for (uint32_t e = 0; e < pp.enum_count; e++)
             if (!inImage(uintptr_t(pp.enum_names[e]), base, size)) return kDesc;
+        // a numeric parameter that names its ends (PLUG_PARAM_NAME_*): the names must be in the image like an enum's
+        const uint32_t nn = plug_param_name_count(&pp);
+        if (nn && (!pp.enum_names || !inImage(uintptr_t(pp.enum_names), base, size) ||
+                   !inImage(uintptr_t(pp.enum_names + nn) - 1u, base, size)))
+            return kDesc;
+        for (uint32_t e = 0; e < nn; e++)
+            if (!inImage(uintptr_t(pp.enum_names[e]), base, size)) return kDesc;
     }
     if (d->instance_size > 16384) return kDesc;
     return kOk;
@@ -796,9 +805,10 @@ void projectLoaded(const char* dir, bool newProject)
     {
         unload(k);
         s_slots[k].state = SlotState::kEmpty;
-        s_slots[k].pending = s_side.slot[k].uid != 0;   // loads in tick(), after the boot key window
+        s_slots[k].pending = s_side.slot[k].uid != 0;   // loads in tick(), after the boot key window and the rest of plug_defer.h
         s_slots[k].manual = false;
     }
+    s_openGate.arm(now());
     if (s_note[0]) writeStatus();
 }
 
@@ -882,8 +892,22 @@ void tick()
         Slot& s = s_slots[k];
         if (s.state == SlotState::kNoRoom && !s.pending && s_pair.retry(k)) s.pending = true;
     }
+    bool openLoaded = false;   // one load that comes from a project load per pass (plug_defer.h)
     for (int k = 0; k < kSlots; k++)
-        if (s_slots[k].pending && (!s_slots[k].manual || now() - s_pickMs >= kDebounceMs)) apply(k);
+    {
+        Slot& s = s_slots[k];
+        if (!s.pending) continue;
+        if (s.manual)
+        {   // a pick on the Inserts page: its own short debounce
+            if (now() - s_pickMs >= kDebounceMs) apply(k);
+        }
+        else if (!openLoaded && s_openGate.ready(now()))
+        {
+            apply(k);
+            s_openGate.took(now());
+            openLoaded = true;
+        }
+    }
     if (s_markerSet && now() - s_markerMs >= kMarkerMs)
     {
         s_fs->remove(kMarker);

@@ -12,7 +12,8 @@
 # directory with the published files, checked against the pins) or else from the local build directories of the private repositories.
 # The sources of the insert twins at the pinned tags of local checkouts: Tape, Lo-Fi, BBD, Phaser and the Dirt wrapper from
 # poly-effects-os ($EXTERNAL_SRC_EFFECTS_OS, default ~/prj/poly-effects-os), Console and Tube from poly-effects ($EXTERNAL_SRC_EFFECTS,
-# default ~/prj/poly-effects). Without them the pages still render and show those modules as missing.
+# default ~/prj/poly-effects), Glue too. $GLUE_SRC (a ff_glue_plug.c) and $GLUE_PLG (a glue.plg) replace the pinned Glue source and file for
+# a Glue that is not tagged yet (the inserts:glue pages). Without them the pages still render and show those modules as missing.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -42,6 +43,11 @@ p Mix=100
 slot 2 b75e3097 00010000 BBD
 p Mix=45
 p Width=70'
+# Glue alone in insert 1 with every parameter at its default (Makeup at Auto, the bottom step): the uid is FNV-1a of ff.glue
+SIDECAR_GLUE='tffplug 1
+format 2
+mixer 0
+slot 1 __GLUE_UID__ 00010000 Glue'
 # only Dirt in the project: with Shift at power up it stays "Safe", and BBD picked by hand in that session (the plugin host loads a plugin the
 # user picks even in safe mode) runs and shows its parameters
 SIDECAR_DIRT='tffplug 1
@@ -75,6 +81,7 @@ script_for() {   # page[:state] -> commands, empty when the page does not exist 
         inserts:bbd) echo "$INS_OPEN; tap Right; wait 600" ;;
         inserts:safe-mixed) echo "$INS_OPEN; tap Right; tap Down; wait 800" ;;
         inserts:dirt2) echo "$INS_OPEN; tap F2; wait 600" ;;
+        inserts:glue) echo "$INS_OPEN; tap F2; wait 600" ;;   # Glue in insert 1: the second press on the column shows parameters 5 to 8, Makeup first
         inserts:many) echo "$INS_OPEN; tap Down 60; wait 1200" ;;
         inserts:many-end) echo "$INS_OPEN; tap Down 300; wait 1200" ;;
         engines) echo "$SYNTH_PAGES; wait 2500" ;;
@@ -108,13 +115,14 @@ fetch_private() {
         echo "ui_shot.sh: no poly-effects-os checkout, Tape, Lo-Fi, BBD, Phaser and Dirt will fail to load on the pages" >&2
         rm -f "$EXT_SRC/fx_dirt_plug.cpp"   # gen_overlay.py writes the Dirt stub, the Makefile the others
     fi
-    if ! python3 -I "$EXTERNAL" source effects "$EXT_SRC" ff_console_plug.c ff_tube_plug.c; then
-        echo "ui_shot.sh: no private source for the Console and Tube twins, they will fail to load on the pages" >&2
-        for f in ff_console_plug ff_tube_plug; do   # a stub with the same entry point, rewritten only when it changes (make tracks the timestamp)
+    if ! python3 -I "$EXTERNAL" source effects "$EXT_SRC" ff_console_plug.c ff_tube_plug.c ff_glue_plug.c; then
+        echo "ui_shot.sh: no private source for the Console, Tube and Glue twins, they will fail to load on the pages" >&2
+        for f in ff_console_plug ff_tube_plug ff_glue_plug; do   # a stub with the same entry point, rewritten only when it changes (make tracks the timestamp)
             printf '/* stub: the private source of %s was not available */\nconst void *plug_entry(const void *host, unsigned abi) { (void)host; (void)abi; return 0; }\n' "$f" >"$EXT_SRC/$f.c.new"
             if cmp -s "$EXT_SRC/$f.c.new" "$EXT_SRC/$f.c"; then rm "$EXT_SRC/$f.c.new"; else mv "$EXT_SRC/$f.c.new" "$EXT_SRC/$f.c"; fi
         done
     fi
+    [ -z "${GLUE_SRC:-}" ] || cp "$GLUE_SRC" "$EXT_SRC/ff_glue_plug.c"   # an untagged Glue (make follows the timestamp)
     if [ -n "$EXT_PLG" ]; then
         python3 -I "$EXTERNAL" check "$EXT_PLG" || { echo "ui_shot.sh: EXTERNAL_DIR does not match engines/external.lock.json" >&2; exit 1; }
     else
@@ -132,15 +140,20 @@ stage_sd() {   # stage_sd DIR
     [ -f "$plg/dirt.plg" ] || { echo "ui_shot.sh: no plugins found (set PLG_DIR to a folder with dirt.plg ...)" >&2; exit 1; }
     for f in dirt bbd tape lofi phaser; do cp "$plg/$f.plg" "$sd/Plugins/Master/"; done
     for f in "$plg"/*.plg "$plg"/*.plgi; do
-        case "$(basename "$f")" in dirt.plg|bbd.plg|tape.plg|lofi.plg|console.plg|tube.plg|phaser.plg|phz.*|pluck.*) ;; *) cp "$f" "$sd/Plugins/Synth/" ;; esac
+        case "$(basename "$f")" in dirt.plg|bbd.plg|tape.plg|lofi.plg|console.plg|tube.plg|glue.plg|phaser.plg|phz.*|pluck.*) ;; *) cp "$f" "$sd/Plugins/Synth/" ;; esac
     done
+    [ -z "${GLUE_PLG:-}" ] || cp "$GLUE_PLG" "$sd/Plugins/Master/glue.plg"
     if [ -n "$EXT_PLG" ]; then   # the pinned private files, whatever $PLG_DIR holds of the same names is not used
         for f in console tube; do cp "$EXT_PLG/$f.plg" "$sd/Plugins/Master/"; done
+        [ ! -f "$EXT_PLG/glue.plg" ] || cp "$EXT_PLG/glue.plg" "$sd/Plugins/Master/"
         for f in phz pluck; do cp "$EXT_PLG/$f.plg" "$EXT_PLG/$f.plgi" "$sd/Plugins/Synth/"; done
     fi
 }
 
-needs_sidecar() { case "$1" in master:inserts|inserts|inserts:running|inserts:bbd|inserts:dirt2|inserts:safe|inserts:safe-mixed|inserts:many*) return 0 ;; *) return 1 ;; esac; }
+glue_uid() { python3 -I -c 'h=2166136261
+for c in b"ff.glue": h=((h^c)*16777619)&0xFFFFFFFF
+print("%08x"%h)'; }
+needs_sidecar() { case "$1" in master:inserts|inserts|inserts:running|inserts:bbd|inserts:dirt2|inserts:glue|inserts:safe|inserts:safe-mixed|inserts:many*) return 0 ;; *) return 1 ;; esac; }
 # inserts:many*: the card also holds 100 fake inserts FX000 .. FX099 (make_fake_inserts.py, listed, a pick fails with err 6): the picker of
 # Insert 1 scrolled 60 rows down from Dirt (a fake picked) or to the end of the 108 rows (Tube)
 needs_fakes() { case "$1" in inserts:many*) return 0 ;; *) return 1 ;; esac; }
@@ -156,7 +169,9 @@ render() {   # render page[:state] out.png
     if needs_sidecar "$key"; then
         # a first power up writes the Workspace project, the sidecar goes next to it, the real run then opens it
         "$BIN" "$sd" "wait 100" >"$BUILD/log-prime.txt" 2>&1 || { echo "FAIL $key (priming run)"; tail -5 "$BUILD/log-prime.txt"; return 1; }
-        if [ "$key" = inserts:safe-mixed ]; then printf '%s\n' "$SIDECAR_DIRT"; else printf '%s\n' "$SIDECAR"; fi >"$sd/Workspace/plugins.txt"
+        if [ "$key" = inserts:safe-mixed ]; then printf '%s\n' "$SIDECAR_DIRT"
+        elif [ "$key" = inserts:glue ]; then printf '%s\n' "${SIDECAR_GLUE/__GLUE_UID__/$(glue_uid)}"
+        else printf '%s\n' "$SIDECAR"; fi >"$sd/Workspace/plugins.txt"
     fi
     local env=()
     case "$key" in inserts:safe|inserts:safe-mixed) env=(UISHOT_SHIFT_BOOT=1) ;; esac

@@ -95,7 +95,7 @@ fi
 echo "plugins for the index and logo tests: $PLUGDIR"
 
 echo "### host unit tests"
-TESTS="plug_bank_test plug_index_test plug_logo_test plug_ui_nav_test sat_softknee_test plug_work_test plug_scan_cache_test synth_order_test"
+TESTS="plug_bank_test plug_index_test plug_logo_test plug_ui_nav_test plug_defer_test sat_softknee_test plug_work_test plug_scan_cache_test synth_order_test"
 for t in $TESTS; do
   c++ -std=c++20 -O1 -Wall -I synth-open synth-open/tools/$t.cpp -o "$T/$t" > "$L/$t.build.log" 2>&1 || echo "BUILD FAIL $t"
 done
@@ -112,7 +112,7 @@ c++ "${FT[@]}" -o "$T/features_test" > "$L/features_test.build.log" 2>&1 || echo
 c++ -g -fsanitize=address,undefined -fno-sanitize-recover=all "${FT[@]}" -o "$T/features_test_san" > "$L/features_test_san.build.log" 2>&1 \
   || echo "BUILD FAIL features_test_san"
 {
- for t in plug_bank_test plug_ui_nav_test sat_softknee_test plug_sidecar_test plug_work_test plug_scan_cache_test synth_order_test; do
+ for t in plug_bank_test plug_ui_nav_test plug_defer_test sat_softknee_test plug_sidecar_test plug_work_test plug_scan_cache_test synth_order_test; do
    echo "### run $t"; "$T/$t"; echo "### rc=$?"
  done
  # EXT_MODULE="module.plg IMAGE_CRC RUN_ADDRESS" (synth-open/plug/pack_ext.py prints them) adds the real module checks

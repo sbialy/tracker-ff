@@ -146,6 +146,10 @@ Contract:
   are floats in the parameter's units, enums are indices `0 .. enum_count - 1`. The host rounds to `step` and clamps.
 - At most 32 parameters. Names of 11 characters or less show in full on the Inserts page. Values are stored in the project
   by name, so renaming a parameter loses its stored value and reordering is harmless.
+- A numeric parameter can name its end values: set `PLUG_PARAM_NAME_MIN` and/or `PLUG_PARAM_NAME_MAX` in `plug_param.flags`
+  and point `enum_names` at one string for min (first) and one for max. The Inserts page then shows that name ("Auto") instead
+  of the number and the unit while the value sits at that end. The value stays a plain float (the bar, the stored value and
+  `set_param` are unchanged), so a project written before the name existed reads the same. A host without it shows the number.
 - CPU: a slot that takes more than 60,000 cycles (11.5 % of a 522,240 cycle block) three blocks in a row is bypassed until
   it is loaded again. `emu_plug.py` gives instructions per block, a lower bound: the device measured 1.5 times the emulated
   count for Dirt (design section 11). Add the host's conversion pair (6,496 cycles measured, shared by the two slots).

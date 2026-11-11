@@ -268,7 +268,11 @@ void showParam(int col)
         {
             showList(col, nullptr, 0, 0);
             const bool whole = pp->step >= 1.0f;
-            snprintf(s_val[col], sizeof(s_val[col]), whole ? "%.0f%s" : "%.2f%s", double(v), pp->unit ? pp->unit : "");
+            const char* named = plug_param_value_name(pp, v);   // "Auto" at an end the plugin names, else the number
+            if (named)
+                snprintf(s_val[col], sizeof(s_val[col]), "%s", named);
+            else
+                snprintf(s_val[col], sizeof(s_val[col]), whole ? "%.0f%s" : "%.2f%s", double(v), pp->unit ? pp->unit : "");
             const float span = pp->max - pp->min;
             display.setControlValue(MP->barControl[col], span > 0.0f ? int((v - pp->min) * 100.0f / span + 0.5f) : 0);
             display.setControlShow(MP->barControl[col]);
