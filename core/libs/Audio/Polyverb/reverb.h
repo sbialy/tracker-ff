@@ -297,7 +297,7 @@ class Reverb
     // about 0.5 points. E2: dap2a 0, dap2b 1264, del2 2364 + 3156 = 5520, 5521 cells with the one the interpolated read of the modulated
     // del2 at its longest touches. Its wrap is a compare and a subtract (about 1.3 k cycles per block for 7 accesses per tick, 5.3 KB).
     // 5536 = 5521 rounded up to a multiple of 32: the compare constant is then one instruction immediate (58 cycles per block less
-    // than 5521) and Wrap() keeps 31 cells of room for its i < 2 n rule (see the static_assert in Process()).
+    // than 5521) and Wrap() keeps 16 cells of room for its i < 2 n rule (see the static_assert in Process()).
     static constexpr size_t kLen1 = 8192;
     static constexpr size_t kLen2 = 5536;
     static_assert(kBufferSamples == kLen1 + kLen2, "kBufferSamples follows the rings");
