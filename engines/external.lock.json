@@ -213,8 +213,8 @@
     "tube.json": "d5877e72236dbad9b52aed610e205b99faf7431922266e4e6e0f43b9ae0dc7b7",
     "tube.wasm": "a5370d4bab6974158c8a2ed3e2c56187de718045579e9d37e8424fcabfc0ceef",
     "glue.plg": "3d04575348442539eb00e584efe9092643d0b181c34f9835ffc78515a9ec1ac0",
-    "glue.json": "251558772a4e189610ccdf8a5987e59bfc04a0cb34ccf7ace6d1e4aaea515790",
-    "glue.wasm": "f891b4996e903df25633cd074c80fe611cc0ccb703de581abc893418e2d90400"
+    "glue.json": "dd012ba581cf38bd1f20640d5bb6be77443083a916e011faaeb9dca4ea458b98",
+    "glue.wasm": "52e82a4282daad20709d1f557a84a7af164c8f603f0df29cbdd39a60759a299a"
    },
    "notice_files": {
     "LICENSE.md": "fd96fd6d22348ff5f116ca5eccf89d99e522052d84528436ffdeac2550add279",
