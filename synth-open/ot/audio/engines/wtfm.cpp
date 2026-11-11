@@ -730,6 +730,9 @@ public:
             // The silent modulator keeps running (free-running phase).
             V.ph2 = fracf(V.ph2 + float(kBlock) * 0.5f * (d0.inc2 + d1.inc2));
             V.y2a = V.y2b = 0.0f;
+            // The carrier kernel with a modulation input (own feedback alone) reads op 2's output from buf: a silent op 2 is 0. Left unwritten
+            // buf is stack garbage, and a NaN or Inf in it makes fm * y2 (0 * NaN) NaN in the carrier's feedback memory for good.
+            if (d0.fb1 > 0.0f || d1.fb1 > 0.0f) zeroFloats(buf, kBlock);
         }
         const float rate = os ? 0.5f : 1.0f;
         OpRamp o1 = opRamp(ch1, 0, d0.inc1, d1.inc1, d0.s1, d1.s1, rate);

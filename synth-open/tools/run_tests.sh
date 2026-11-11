@@ -125,6 +125,8 @@ c++ -g -fsanitize=address,undefined -fno-sanitize-recover=all "${FT[@]}" -o "$T/
  # USB audio (Config > Features): the ring, and the descriptors served with the switch off (= the image without it) and on
  echo "### run usb_audio_out_test"; bash platforms/mk66/usbaudio/test/run.sh; echo "### rc=$?"
  echo "### run usb_desc_test"; bash platforms/mk66/usbaudio/test/usb_desc_test.sh; echo "### rc=$?"
+ # a read of uninitialised stack in the synth path (render fuzz, zero against pattern stack init, 40,000 steps): the two hashes must be equal
+ echo "### run uninit_equiv"; ZEROPAT=1 sh synth-open/tools/run_refresh_equiv.sh "ACD FAT VAP WTFM PERC" 40000; echo "### rc=$?"
  echo "### run plug_logo_test"; "$T/plug_logo_test" "$PLUGDIR"/*.plgi; echo "### rc=$?"
 } > "$L/plug_tests.log" 2>&1
 grep -E '^### (run|rc)' "$L/plug_tests.log" | paste - -
@@ -135,5 +137,5 @@ nb=$(grep -c '^### rc=' "$L/plug_tests.log")
 for f in "$L"/*.build.log; do [ -s "$f" ] && grep -q 'error' "$f" && { echo "BUILD ERROR $f"; bad=$((bad+1)); }; done
 nsmoke=5; [ -z "${CHIP_PLUGIN_SRC:-}" ] || nsmoke=7
 [ "$(grep -c '^### rc=0$' "$L/smoke.log")" -eq "$nsmoke" ] || { echo "smoke: not $nsmoke variants"; bad=$((bad+1)); }
-if [ "$bad" -eq 0 ] && [ "$nb" -ge 9 ]; then echo "RESULT: GREEN"; exit 0; fi
+if [ "$bad" -eq 0 ] && [ "$nb" -ge 10 ]; then echo "RESULT: GREEN"; exit 0; fi
 echo "RESULT: RED ($bad failing, $nb tests ran)"; exit 1
