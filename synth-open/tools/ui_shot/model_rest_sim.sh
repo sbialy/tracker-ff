@@ -213,5 +213,81 @@ case "$o" in
     *) fail "1030 ms after the last step: ACD picked once, with the message" "got: $o" ;;
 esac
 
+# Scenarios 11 to 15: the screen while the list moves. "poke watch" (host_poke.cpp) samples the right-hand side of the Synth screen (patch name and
+# slot, polyphony, gain, panning, sends, the part's patch) and the popup at every millisecond of the main loop since "watch reset" and reports how
+# often each changed and when the first change was, so a flash of "Init patch loaded" or of the next engine's content between two looks is caught too.
+# Required: while the list moves nothing on the right changes and no popup shows (not a load status, not the Init patch message), the engine loads
+# one rest (kModelRestMs) after the last step and only then the right-hand side changes and "Init patch loaded" shows, never earlier.
+# wscen LABEL LAST_ENGINE FIRST_ENGINE STEP...: STEP is the script of one step (tap, enc, hold + repeat), all but the last are followed by 850 ms and a
+# look, the last one is marked, looked at 930 ms later (rest not over) and 100 ms after that (over). WAITS is the pause after every step but the last.
+WAITS='wait 850'
+TAILW='wait 850'   # after the last step: 80 ms tap + 850 = 930 ms after the mark (a repeat event takes 40 ms: wait 890)
+wscen() {
+    local label="$1" last="$2" first="$3"; shift 3
+    local sd="$WORK/w$wn"; wn=$((wn+1)); stage "$sd"
+    local script="$SYNTH; poke rhs; poke watch reset" n=$#
+    local i=0 st
+    for st in "$@"; do
+        i=$((i+1))
+        if [ "$i" -lt "$n" ]; then script="$script; $st; $WAITS; poke watch"
+        else script="$script; poke watch mark; $st; $TAILW; poke watch; wait 100; poke watch; wait 2500; poke rhs; poke picker; $(shot "${label// /-}")"; fi
+    done
+    rm -f "$WORK/poke" "$WORK/poke.out"
+    UISHOT_POKE="$WORK/poke" "$BIN" "$sd" "$script" >"$WORK/out.txt" 2>"$WORK/err.txt" || { echo "ui_shot failed:"; tail -5 "$WORK/err.txt"; fails=$((fails+1)); }
+    [ -f "$WORK/poke.out" ] || : >"$WORK/poke.out"
+    grep '^watch ' "$WORK/poke.out" >"$WORK/w.txt"; grep '^rhs ' "$WORK/poke.out" >"$WORK/r.txt"
+    local k
+    for k in $(seq 1 $((n-1))); do
+        expect "$label: after step $k of $n: right-hand side unchanged, no popup" "watch rhs=0 first=-1 pops=0 first=-1 text=''" "$(sed -n "${k}p" "$WORK/w.txt")"
+    done
+    expect "$label: 930 ms after the last step: right-hand side unchanged, no popup" "watch rhs=0 first=-1 pops=0 first=-1 text=''" "$(sed -n "${n}p" "$WORK/w.txt")"
+    local o t t2; o="$(sed -n "$((n+1))p" "$WORK/w.txt")"
+    case "$o" in
+        "watch rhs="[1-9]*" first="*" pops=1 first="*" text='$MSG'")
+            t="${o#*pops=1 first=}"; t="${t%% *}"; t2="${o#*first=}"; t2="${t2%% *}"
+            if [ "$t" -ge 1000 ] && [ "$t2" -ge 1000 ]; then pass "$label: 1030 ms after the last step the engine loaded: right-hand side first changed at $t2 ms, '$MSG' at $t ms (>= 1000)"
+            else fail "$label: nothing earlier than the last step + 1000 ms" "right-hand side first change $t2 ms, message $t ms: $o"; fi ;;
+        *) fail "$label: 1030 ms after the last step: the engine loaded, the right-hand side changed and '$MSG' shows once" "got: $o" ;;
+    esac
+    expect "$label: the part plays $last at the end" "$last" "$(awk '/^part 0 /{print $NF}' "$WORK/poke.out" | tail -1)"
+    if [ "$(sed -n 1p "$WORK/r.txt")" != "$(sed -n 2p "$WORK/r.txt")" ]; then pass "$label: the loaded engine's right-hand side differs from the one before the scroll (the watch can see a change)"
+    else fail "$label: the load changes the right-hand side" "same before and after: $(sed -n 1p "$WORK/r.txt")"; fi
+}
+wn=1
+
+echo "### scenario 11: arrows over built in engines, Up from WTFM to ACD (VAP, FAT, ACD)"
+wscen "arrows built-in" ACD WTFM 'tap Up' 'tap Up' 'tap Up'
+echo "### scenario 12: arrows down from WTFM over PERC (built in) onto CHIP, which installs"
+wscen "arrows onto CHIP" CHIP WTFM 'tap Down' 'tap Down'
+echo "### scenario 13: encoder over built in engines"
+wscen "encoder built-in" ACD WTFM 'enc -1' 'enc -1' 'enc -1'
+echo "### scenario 14: a held arrow (press and key repeats) from WTFM to ACD"
+TAILW='wait 890' WAITS='wait 340' wscen "held arrow" ACD WTFM 'hold Up' 'repeat Up' 'repeat Up'
+echo "### scenario 15: a long run of arrow steps over built in and plugin engines, the last onto PERC"
+wscen "arrows mixed" PERC WTFM 'tap Down' 'tap Down' 'tap Down' 'tap Up' 'tap Up'
+
+# Scenario 16: the same on the pixels. Frames of the Synth screen before the scroll, in the middle of it (two arrow steps, the last 300 ms ago) and
+# after the rest. Mid-scroll only the Model column (x < 100) differs from the frame before: the title bar, the bars, the patch panel and the popup
+# area are the same pixels. After the rest the rest of the screen shows the loaded engine (title bar, polyphony bar) and the message.
+echo "### scenario 16: frames before, mid-scroll and after the rest differ only where they should"
+sd="$WORK/s16"; stage "$sd"
+run "$sd" "$SYNTH; shot $WORK/f0.png; tap Down; wait 850; tap Down; wait 300; shot $WORK/f1.png; wait 1200; shot $WORK/f2.png"
+PNGDIFF="$HERE/png_diff.py"
+d01="$(python3 -I "$PNGDIFF" "$WORK/f0.png" "$WORK/f1.png" 2>&1)"
+case "$d01" in
+    "none") fail "mid-scroll frame differs from the one before (the Model cursor moved)" "frames are equal" ;;
+    [0-9]*) set -- $d01
+        if [ "$3" -lt 100 ]; then pass "mid-scroll: only the Model column changed (pixels x $1..$3, y $2..$4), nothing on the right"
+        else fail "mid-scroll: nothing right of the Model column (x >= 100) changes" "differs in x $1..$3, y $2..$4" ; fi ;;
+    *) fail "png_diff.py ran" "$d01" ;;
+esac
+d12="$(python3 -I "$PNGDIFF" "$WORK/f1.png" "$WORK/f2.png" 2>&1)"
+case "$d12" in
+    [0-9]*) set -- $d12
+        if [ "$3" -ge 600 ]; then pass "after the rest: the screen shows the loaded engine and the message (pixels x $1..$3, y $2..$4)"
+        else fail "after the rest the right-hand side changes" "differs only in x $1..$3, y $2..$4"; fi ;;
+    *) fail "after the rest the right-hand side differs from mid-scroll" "$d12" ;;
+esac
+
 echo
 if [ "$fails" -eq 0 ]; then echo "RESULT: GREEN ($checks checks)"; exit 0; else echo "RESULT: RED ($fails failing of $checks)"; exit 1; fi

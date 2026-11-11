@@ -19,6 +19,11 @@
 //   masterfx FEEDBACK DAMP_PERMILLE      the delay feedback byte and the reverb low pass coefficient after a project load and after audioEngine::init's
 //                                        own code (beginDelay, beginReverb), "same" or "DIFFER" (master_fx_sim.sh)
 //   popup                                the text popup the UI shows now (first line, "popup none" when hidden), for model_rest_sim.sh
+//   rhs                                  the right-hand side of the Synth screen as the UI holds it (the engine the part plays and its voice limit,
+//                                        patch name, polyphony, gain, panning, sends), for model_rest_sim.sh
+//   watch [reset|mark]                   what the screen showed since the last "watch reset", sampled at every millis() of the main loop: how many
+//                                        times the right-hand side changed and the first change, how many popups came up and the first one with its
+//                                        text, times in ms after the last "watch mark" (-1 for none) (model_rest_sim.sh)
 //   loads [reset|mark]                   engine changes of synth part 0 seen since the last "loads reset" (sampled at every millis() of the
 //                                        main loop) and the time of the last one in ms after the last "loads mark" (model_rest_sim.sh)
 // The same lines run from a ui_shot script as "poke LINE" (ui_shot_main.cpp), at that point of the script.
@@ -76,6 +81,61 @@ void out(const char* fmt, ...)
 int g_loadsSeen = 0;
 int g_loadsPrev = -1;
 uint32_t g_loadsLastMs = 0, g_loadsMarkMs = 0;
+
+// Screen watch (model_rest_sim.sh): the right-hand side of the Synth screen and the popup, sampled at every millis() call
+std::string g_rhsPrev, g_popPrev, g_popFirst;
+int g_rhsChanges = 0, g_popCount = 0;
+uint32_t g_rhsFirstMs = 0, g_popFirstMs = 0, g_watchMarkMs = 0;
+bool g_watching = false;
+
+std::string rhsNow()
+{
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    if (part < 0 || part >= kSynthInstrumentsCount)
+        return "no part";
+    const SynthPartSettings& sp = mtProject.values.synthPart[part];
+    char b[512];
+    snprintf(b, sizeof b, "engine[%s] maxvoices[%d] name[%s] stored[%s] voices[%d] gain[%.2f] pan[%.0f] rev[%.2f] del[%.2f] labels[%s|%s|%s|%s|%s|%s]",
+             Synth::storedName(sp.synthType), instrumentEditor.getSynth()->getMaxVoiceCount(part), sp.patchName,
+             instrumentEditor.synthPatchNameText, (int)sp.voiceCount, (double)sp.gainDb, (double)sp.panning, (double)sp.reverbSend,
+             (double)sp.delaySend, instrumentEditor.labelText[0], instrumentEditor.labelText[1], instrumentEditor.labelText[2],
+             instrumentEditor.labelText[3], instrumentEditor.labelText[4], instrumentEditor.labelText[5]);
+    return b;
+}
+
+std::string popNow()
+{
+    if (mtPopups.globalPopupDisplayTime && mtPopups.popupData.multiLineText && mtPopups.popupData.textLinesCount)
+        return mtPopups.popupData.multiLineText[0] ? mtPopups.popupData.multiLineText[0] : "";
+    return "none";
+}
+
+void watchSample()
+{
+    if (!g_watching)
+        return;
+    const std::string r = rhsNow(), p = popNow();
+    if (r != g_rhsPrev)
+    {
+        if (!g_rhsChanges)
+            g_rhsFirstMs = hostp::g_nowMs;
+        g_rhsChanges++;
+        g_rhsPrev = r;
+    }
+    if (p != g_popPrev)
+    {
+        if (p != "none")
+        {
+            if (!g_popCount)
+            {
+                g_popFirstMs = hostp::g_nowMs;
+                g_popFirst = p;
+            }
+            g_popCount++;
+        }
+        g_popPrev = p;
+    }
+}
 
 std::vector<int16_t> g_left, g_right;
 char g_name[64];
@@ -186,6 +246,27 @@ void run(const char* line)
             out("part %d stored %d engine %s", p, st, Synth::storedName(st));
         }
     }
+    else if (!strcmp(cmd, "rhs"))
+    {
+        out("rhs %s", rhsNow().c_str());
+    }
+    else if (!strcmp(cmd, "watch"))
+    {
+        if (!strcmp(a, "reset"))
+        {
+            g_watching = true;
+            g_rhsChanges = g_popCount = 0;
+            g_rhsPrev = rhsNow();
+            g_popPrev = popNow();
+            g_popFirst.clear();
+        }
+        else if (!strcmp(a, "mark"))
+            g_watchMarkMs = hostp::g_nowMs;
+        else
+            out("watch rhs=%d first=%d pops=%d first=%d text='%s'", g_rhsChanges,
+                g_rhsChanges ? (int)(g_rhsFirstMs - g_watchMarkMs) : -1, g_popCount,
+                g_popCount ? (int)(g_popFirstMs - g_watchMarkMs) : -1, g_popFirst.c_str());
+    }
     else if (!strcmp(cmd, "loads"))
     {
         if (!strcmp(a, "reset"))
@@ -229,6 +310,7 @@ extern "C" void hostPokeRun(const char* line)
 
 extern "C" void hostPokePoll()
 {
+    watchSample();
     {
         const int t = mtProject.values.synthPart[0].synthType;
         if (g_loadsPrev >= 0 && t != g_loadsPrev)
