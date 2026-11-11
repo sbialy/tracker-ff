@@ -16,6 +16,8 @@
 //   macroid POS VALUE                    the same for the section id list, which holds the macro index on a macro section
 //   picker                               the Model list of the Synth screen as the control holds it (rows, cursor, the row texts) and the
 //                                        engine every synth part stores (synth-open/tools/ui_shot/synth_order_sim.sh)
+//   masterfx FEEDBACK DAMP_PERMILLE      the delay feedback byte and the reverb low pass coefficient after a project load and after audioEngine::init's
+//                                        own code (beginDelay, beginReverb), "same" or "DIFFER" (master_fx_sim.sh)
 //   popup                                the text popup the UI shows now (first line, "popup none" when hidden), for model_rest_sim.sh
 // The same lines run from a ui_shot script as "poke LINE" (ui_shot_main.cpp), at that point of the script.
 #include <cstdarg>
@@ -45,6 +47,7 @@
 
 extern "C" void hostPokeImporterLabels(std::string* out);
 extern "C" void hostPokeImporterPlayEnd();
+extern "C" void hostPokeMasterFx(unsigned feedback, float damp, std::string* out);
 
 namespace
 {
@@ -138,6 +141,12 @@ void run(const char* line)
     {
         hostPokeImporterPlayEnd();
         out("importplayend done");
+    }
+    else if (!strcmp(cmd, "masterfx"))
+    {   // masterfx FEEDBACK DAMP_PERMILLE: the delay and the reverb after init and after a project load (master_fx_sim.sh)
+        std::string t;
+        hostPokeMasterFx((unsigned)atoi(a), (float)n / 1000.0f, &t);
+        out("%s", t.c_str());
     }
     else if (!strcmp(cmd, "sizes"))
     {
