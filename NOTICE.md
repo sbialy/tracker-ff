@@ -122,20 +122,13 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Author**: Scott Lepore.
 * **License**: MIT. Contributed under the contribution terms of `CONTRIBUTING.md`, so the repository `LICENSE` applies (MIT with the Wholesale Commercial Clone Restriction for the complete application).
 
-## 21. Plate Reverb (sample editor plugin, `editor-fx-sdk/effects/plate_reverb.c`, optional)
-* **Location**: `editor-fx-sdk/effects/plate_reverb.c`. It builds to a `.ptfx` file that is loaded from the SD card, nothing here is linked into the firmware.
-* **Source**: https://github.com/mranthropology/tracker-ce (branch `plate-ptfx`, commits 6145892 and 26abefd). Copied with the original author kept (commit bd5dd08). The file header says it is ported from the live master plate in mranthropology/Tracker-Firmware-Mod (`fxbank/fx_bank.c`). The algorithm is the plate reverb of Jon Dattorro, "Effect Design Part 1", Journal of the Audio Engineering Society, 1997.
-* **Author**: MrAnthropology.
-* **License**: MIT. The fork carries the same Polyend Tracker Community Edition license as this tree and adds no notice of its own. The `editor-fx-sdk/` folder is MIT under Part 1 of `LICENSE`.
-* **Note**: the author reports a test on an original Tracker (MK66) with CE 1.0.0. In this project it has only been run in a host harness (`editor-fx-sdk/ptfx_emu_check.py`).
-
-## 22. Transient Shaper (sample editor plugin, `editor-fx-sdk/effects/transient_shaper.c`, optional)
+## 21. Transient Shaper (sample editor plugin, `editor-fx-sdk/effects/transient_shaper.c`, optional)
 * **Location**: `editor-fx-sdk/effects/transient_shaper.c`. It builds to a `.ptfx` file that is loaded from the SD card, nothing here is linked into the firmware.
 * **Source**: https://github.com/emanlapponi/tracker-ce (branch `feature/transient-shaper`, commits b170f11 to 95fbe30, upstream pull request 48 of polyend/tracker-ce). Squashed to the final file with the original author kept (commit 51bd65f).
 * **Author**: Emanuele Lapponi.
 * **License**: MIT. Contributed under the contribution terms of `CONTRIBUTING.md`. The `editor-fx-sdk/` folder is MIT under Part 1 of `LICENSE`.
 
-## 23. OpenTracker USB audio (`USB_AUDIO=1` images, Config > Features > USB audio)
+## 22. OpenTracker USB audio (`USB_AUDIO=1` images, Config > Features > USB audio)
 * **Location**: `platforms/mk66/usbaudio/` (`UsbAudioOut.{h,cpp}`, `usb_audio_hooks.cpp`, `test/usb_audio_out_test.cpp`) and the blocks marked `FF_USB_AUDIO_TX` in `platforms/mk66/3rdparty/teensy_core/usb_desc.{h,c}`, `usb_dev.{c,h}`. Each file says what was changed (Apache-2.0 section 4b): Tracker to computer only (no OUT and no feedback endpoint), our namespace, the ring in SDRAM, the audio function switched on or off at start, a statistics hook for the development console.
 * **Source**: https://github.com/syamajala/polyend-tracker-re (commit ef7a4bbce247: `src/core/usb/usb_audio_out.{h,cpp}`, `src/hal/usb_audio.cpp`, `tests/usb_audio_out_test.cpp`, the `OPENTRACKER PATCH` audio parts of `third_party/teensy3/usb_desc.{h,c}` and `usb_dev.c`).
 * **License**: Apache License 2.0, text in `licenses/LICENSE-OpenTracker-Apache-2.0.txt` (the upstream project ships no NOTICE file). The Teensy core files they patch stay under item 4.

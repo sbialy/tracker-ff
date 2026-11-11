@@ -4,7 +4,7 @@ non-zero base, no relocation, bss cleared, entry points at base + offset | 1), r
 plugin_process_block in Unicorn and checks the output. A load through a stale link-time address (base 0) faults here,
 because nothing is mapped there.
 
-    /tmp/phzvenv/bin/python -I editor-fx-sdk/ptfx_emu_check.py build/Effects/plate_reverb.ptfx [...]
+    /tmp/phzvenv/bin/python -I editor-fx-sdk/ptfx_emu_check.py build/Effects/transient_shaper.ptfx [...]
 
 Needs unicorn. Not a replacement for the device, libm results are rounded to float32 by Python.
 """
