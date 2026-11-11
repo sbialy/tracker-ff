@@ -2,8 +2,10 @@
 # Fuzz of the open shim's parameter refresh (host, arm64 native), see refresh_equiv_test.cpp.
 #   synth-open/tools/run_refresh_equiv.sh [ENGINES="ACD FAT VAP WTFM PERC"] [STEPS=20000] [TREE=<other tree for the reference hash>]
 # 1. the tree with -DOPEN_REFRESH_CHECK: every refresh is compared bit for bit with the reference algorithm (abort on a difference)
-# AUTOINIT=zero (default) or pattern: the stack is initialised so the hashes are deterministic. Without it the output after a part's engine is swapped
-#    (operation 28 of the test) depends on stack garbage, in the base tree d8abebc as well (found by this test, not fixed here)
+# AUTOINIT=zero (default) or pattern: the stack is initialised so the hashes are deterministic. A read of uninitialised stack makes the hash depend on it
+#    (found this way: WTFM read an unwritten buffer, fixed in wtfm.cpp)
+# ZEROPAT=1: only the uninitialised stack check: the test without the refresh check built with zero and with pattern stack init, the two output
+#    hashes must be equal (a read of a stack variable before its write shows as a difference; clang's pattern for floats is NaN). Used by run_tests.sh
 # 2. the same test without the check on TREE (default: none) and on this tree: the output hashes must be equal
 set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -28,6 +30,12 @@ build() {   # tree flags out
     "$ROOT/synth-open/tools/refresh_equiv_test.cpp" "$T/synth-open/open_synth.cpp" "$T/synth-open/open_cold.cpp" \
     "$T/synth-open/open_patchio.cpp" "$T/synth-open/stub_fmt.cpp" $SRCS_ABS "$T/synth-open/ot/audio/governor.cpp" "$T/synth-open/ot/audio/cpu_meter.cpp" -o "$3"
 }
+if [ -n "${ZEROPAT:-}" ]; then
+  AUTOINIT=zero build "$ROOT" "" "$OUT/zero"; AUTOINIT=pattern build "$ROOT" "" "$OUT/pattern"
+  HZ=$("$OUT/zero" "$STEPS"); HP=$("$OUT/pattern" "$STEPS"); echo "zero:    $HZ"; echo "pattern: $HP"
+  rm -rf "$OUT"
+  [ "$HZ" = "$HP" ] && { echo "ZERO == PATTERN: no read of uninitialised stack in the fuzz"; exit 0; } || { echo "ZERO != PATTERN: a stack variable is read before it is written"; exit 1; }
+fi
 build "$ROOT" -DOPEN_REFRESH_CHECK "$OUT/check"
 build "$ROOT" "" "$OUT/new"
 "$OUT/check" "$STEPS"
