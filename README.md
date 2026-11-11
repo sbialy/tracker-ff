@@ -9,7 +9,7 @@ tracker-ff is not affiliated with, endorsed by or supported by Polyend. It is fr
 Upstream CE has synth engines only on the Tracker+ and the Mini, because Polyend's engine library is closed and built for their Cortex-M7 chip. tracker-ff replaces that layer on the original with an open one in [`synth-open/`](synth-open/README.md), so the original gets synth slots too. It never links Polyend's closed `libPolySynth.a` or `libPolyDSP.a`.
 
 - **Synth engines, built in and as plugins.** The image has five built in: ACD, FAT, VAP, WTFM and PERC. The other thirteen are synth plugins (`.plg` with a `.plgi` logo in `/Plugins/Synth/` on the card): CHIP, JU6, PHZ, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type, Arc-Type and PLK. A plugin engine is installed into the data flash when a part picks it or a project needs it, and a part whose engine is not on the card shows Missing and keeps its settings. The library takes as many synth plugins as the card holds (up to 256 files, file names up to 23 characters). Most engines come from [OpenTracker](https://github.com/sandlbn/polyend-tracker-re) and [opentracker-synths](https://github.com/opentracker-fw/opentracker-synths) through a shim that hosts their engine interface. CHIP is Polyend's own open Chiptune voice, a plugin since 1.3.0 (same project and `.patch` numbers as before). PHZ is a phase distortion engine and PLK a Karplus-Strong engine, both written for this project.
-- **Polyphony and a governor.** Up to 4 voices per synth instrument, a shared voice pool (default 4, at most 8) and OpenTracker's governor, which drops voices when the audio block load gets too high.
+- **Polyphony and a governor.** Up to 4 voices per synth instrument, a shared pool of 4 voices (the Polyphony settings of the three parts add up to at most 8) and OpenTracker's governor, which drops voices when the audio block load gets too high.
 - **`.patch` files and pitch bend.** Patches load and save from `Patches/<ENGINE>/` on the SD card, including Polyend's factory patches. Pitch bend works from MIDI and from the Micro-tune FX.
 - **Patch slots and the Patch FX.** Every synth part keeps a bank of 16 patches in the project. The `O - Patch` step FX switches the part to one of them at a step, so a pattern can change the sound of an instrument. Slot 0 is the stock `<N>.patch`, so stock firmware opens the song with that sound.
 - **Lower idle audio CPU.** Synth parts with nothing sounding are skipped in the audio graph, idle voices send no data, the reverb and short delay sleep when silent, mixers skip empty inputs and one reverb buffer lives in internal SRAM. The details and the bench that checks the output stays bit identical are in `synth-open/README.md`.
@@ -22,6 +22,35 @@ Upstream CE has synth engines only on the Tracker+ and the Mini, because Polyend
 - **Fixes.** Three out of bounds writes to `label[8]` arrays in the UI are fixed in all builds. Slot names of the Patch FX bank survive a slot change and a project reload, and a knob edit made while a song with the Patch FX plays is kept. A patch file, plugin settings file or project copy that fails on the card is reported and the old files stay. An unreadable folder on the card no longer breaks the file lists, a corrupt `.it` module cannot overflow the stack and the main loop and the display use less stack. A post-build check (`synth-open/tools/check_static_init.py`) refuses an image whose static constructors touch the SDRAM, which hangs the boot.
 
 Not available: Polyend's DIRT and Shaping engines (they exist only in the closed library). A project that uses an engine this firmware does not know gets that part reset to defaults on load.
+
+## Recommended polyphony
+
+Each synth part plays up to 4 voices, set with Polyphony on the Synth page. The Polyphony settings of the three parts add up to at most 8. All parts draw from one shared pool of 4 voices, so at most 4 notes sound at the same time and a new note takes over a sounding one when the pool is full. PERC and T-Type are drum engines with one voice.
+
+The table gives the number of voices that leaves room for the rest of a project when one synth part plays with the reverb and delay switched on. The rest means a second synth part and the sample tracks. Leave some headroom on top of it.
+
+| Engine | Suggested voices |
+|---|---:|
+| ACD | 4 |
+| FAT | 4 |
+| PLK | 4 |
+| Hand-Type | 4 |
+| B-Type | 4 |
+| 8-Type | 4 |
+| VAP | 4 |
+| WTFM | 4 |
+| JU6 | 4 |
+| FM4 | 4 |
+| A-Type | 4 |
+| PHZ | 4 |
+| Arc-Type | 4 |
+| D-Type | 4 |
+| CS-Type | 4 |
+| CHIP | 2 |
+| PERC | 1 |
+| T-Type | 1 |
+
+CHIP is the heaviest engine and the only multi-voice engine that stays below 4.
 
 ## Hardware
 
