@@ -59,13 +59,8 @@ extern "C"
         return p;
     }
 }
-// the firmware's SDRAM objects (Tracker.cpp). The second reverb buffer is SDRAM or SRAM like in the firmware (FW_REVERB_SRAM >= 2)
+// the firmware's SDRAM objects (Tracker.cpp)
 __attribute__((section(".sdram"), aligned(4))) int16_t externalRamDelayBuff[3 * MAX_DELAYLINE_LENGTH];
-#if defined(FW_REVERB_SRAM) && FW_REVERB_SRAM >= 2
-uint16_t externalRamReverbBuff[REVERB_MEMORY_SIZE / 2] __attribute__((section(".noinit")));
-#else
-__attribute__((section(".sdram"), aligned(4))) uint16_t externalRamReverbBuff[REVERB_MEMORY_SIZE / 2];
-#endif
 
 namespace
 {

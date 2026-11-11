@@ -3,13 +3,12 @@
 #include "effect_polyverb.h"
 #include "cr_mtb_buffer.h"
 
-extern uint16_t externalRamReverbBuff[];
 #ifdef PLATFORM_IMX
 static uint16_t internalRamReverbBuff[16384] __attribute__((section(".noinit")));
 #elif defined(FW_REVERB_SRAM) && FW_REVERB_SRAM >= 1
 // SYNTH_OPEN images: buffer E (8 of the 12 reads and 8 of the 11 writes per reverb sample) in internal SRAM, not in the 90 MHz
-// SDRAM (no data cache on the MK66). Same size, same content, same arithmetic: bit identical output. FW_REVERB_SRAM >= 2 also
-// moves E2 (externalRamReverbBuff, Tracker.cpp)
+// SDRAM (no data cache on the MK66). The half rate reverb (Polyverb/reverb.h) keeps both line sets in this one buffer, the second
+// SDRAM buffer (externalRamReverbBuff, .reverb_memory) of the full rate reverb is gone.
 static uint16_t internalRamReverbBuff[16384] __attribute__((section(".noinit")));
 #else
 static __NOINIT(EXTERNAL_RAM) uint16_t internalRamReverbBuff[16384];
@@ -19,8 +18,7 @@ AudioEffectPolyverb::AudioEffectPolyverb()
   : AudioStream(2, inputQueueArray)
 {
     buffer = internalRamReverbBuff;
-    buffer2 = externalRamReverbBuff;
-    reverb.Init(buffer, buffer2);
+    reverb.Init(buffer, nullptr); // the second buffer is not used by the half rate reverb
 
     reverb.SetInputGain(0.1f);
     reverb.SetDiffusion(0.625f);

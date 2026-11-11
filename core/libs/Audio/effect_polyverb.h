@@ -42,6 +42,5 @@ class AudioEffectPolyverb : public AudioStream
     audio_block_t* inputQueueArray[2];
     Reverb reverb;
     uint16_t* buffer;
-    uint16_t* buffer2;
     bool isBlockedUpdate;
 };

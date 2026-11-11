@@ -71,7 +71,6 @@ const uint32_t SAMPLE_MEMORY_SIZE = ((60 * 1024 - 64) * 1024); // ~60 MB minus 6
 #endif
 
 const uint32_t DELAY_MEMORY_SIZE = (3 * 512 * 1024);               // 1,5 MB
-const uint32_t REVERB_MEMORY_SIZE = 32768;                         // 32 KB
 const uint32_t SHARED_SCRATCH_MEMORY_SIZE = 768 * 1024; // 768 KB shared external scratch (.scratch_memory)
 
 const uint32_t EDIT_BUFF_SIZE = (15 * 256 * 1024); // 3,75 MB

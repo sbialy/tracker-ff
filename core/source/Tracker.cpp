@@ -28,12 +28,6 @@
 // clang-format off
 __attribute__((section(".sample_memory"), used)) int16_t externalRamSampleMemory[SAMPLE_MEMORY_SIZE / 2];
 __attribute__((section(".delay_memory"), used)) int16_t externalRamDelayBuff[DELAY_MEMORY_SIZE / 2];
-#if defined(FW_REVERB_SRAM) && FW_REVERB_SRAM >= 2
-// SYNTH_OPEN, REVERB_SRAM=2: the second reverb buffer in SRAM as well (64 KB of heap), see effect_polyverb.cpp
-__attribute__((section(".noinit"), used)) uint16_t externalRamReverbBuff[REVERB_MEMORY_SIZE / 2];
-#else
-__attribute__((section(".reverb_memory"), used)) uint16_t externalRamReverbBuff[REVERB_MEMORY_SIZE / 2];
-#endif
 __attribute__((section(".scratch_memory"), aligned(32), used)) uint8_t externalRamScratchBuff[SHARED_SCRATCH_MEMORY_SIZE];
 
 // clang-format on
