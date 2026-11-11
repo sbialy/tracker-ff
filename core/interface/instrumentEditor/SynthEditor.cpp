@@ -891,31 +891,27 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     }
 #endif
 #ifdef FEATURE_PLUG_HOST
+    if (!s_applyModel)
     {
-        const int t = static_cast<int>(Synth::synthTypeAt(newUi));
-        if (!s_applyModel && newUi != currentUi && plug::synthIsPlugin(t) && !plug::synthLoaded(t))
-        {   // not installed: the list shows it, synthModelTick installs and picks it when the list rests
+        if (newUi != currentUi)
+        {   // Every step of the list, onto any engine (built in, attached or not installed): the list shows it, synthModelTick picks it
+            // when the list has rested for kModelRestMs after the last step. The one place that restarts the rest, whatever the input
+            // (arrows, their key repeat, the encoder, F1): scrolling past engines loads none of them.
             s_pendModel = { syntPartIdx, newUi };
-            s_pendTimer = 0;
             if (s_initMsgUp)
             {   // "Init patch loaded" of the engine change before this step is still up (2 s): it is not the message of the pick that
-                // follows the rest, so it goes now. The new one comes with the install, and a skip with short rests shows none.
+                // follows the rest, so it goes now. The new one comes with the pick, and a skip with short rests shows none.
                 s_initMsgUp = false;
                 mtPopups.hide();
             }
-            synthModelLogos(newPos);
+            synthModelLogos(newPos); // card reads for the logos around the row: part of the step, the rest starts after them
             display.setControlValue(modelListControl, newPos);
             display.refreshControl(modelListControl);
+            s_pendTimer = 0;
             return;
         }
-        if (!s_applyModel)
-        {
-            s_pendModel = {}; // back on the current one, or on an engine that is there: no wait
-            if (newUi == currentUi)
-            {
-                showSynthModel(syntPartIdx);
-            }
-        }
+        s_pendModel = {}; // back on the current one: no wait
+        showSynthModel(syntPartIdx);
     }
 #endif
     mtProject.values.synthPart[syntPartIdx].synthType = Synth::uiToStored(newUi);

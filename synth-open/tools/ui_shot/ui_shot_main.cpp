@@ -104,6 +104,16 @@ bool command(const std::string& line)
     is >> c;
     if (c.empty()) return true;
     if (c == "wait") { int ms = 0; is >> ms; run(uint32_t(ms)); return true; }
+    if (c == "repeat")
+    {   // the auto-repeat of a held key: a buttonHold event (Keys::update every holdTime), Interface::buttonChange turns it into a press on the arrows
+        is >> a;
+        int n = 1;
+        is >> n;
+        const int id = buttonId(a);
+        if (id < 0) { fprintf(stderr, "ui_shot: unknown button '%s'\n", a.c_str()); return false; }
+        for (int i = 0; i < n; i++) { mtInterface.buttonChange(uint8_t(id), buttonHold); run(40); }
+        return true;
+    }
     if (c == "tap" || c == "hold" || c == "unhold")
     {
         is >> a;

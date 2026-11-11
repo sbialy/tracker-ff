@@ -19,6 +19,8 @@
 //   masterfx FEEDBACK DAMP_PERMILLE      the delay feedback byte and the reverb low pass coefficient after a project load and after audioEngine::init's
 //                                        own code (beginDelay, beginReverb), "same" or "DIFFER" (master_fx_sim.sh)
 //   popup                                the text popup the UI shows now (first line, "popup none" when hidden), for model_rest_sim.sh
+//   loads [reset|mark]                   engine changes of synth part 0 seen since the last "loads reset" (sampled at every millis() of the
+//                                        main loop) and the time of the last one in ms after the last "loads mark" (model_rest_sim.sh)
 // The same lines run from a ui_shot script as "poke LINE" (ui_shot_main.cpp), at that point of the script.
 #include <cstdarg>
 #include <cstdio>
@@ -33,6 +35,7 @@
 #include "fileManagerDefs.h"
 #include "mtStructs.h"
 #include "Synth.h"
+#include "host_platform.h"
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -68,6 +71,11 @@ void out(const char* fmt, ...)
     fputc('\n', f);
     fclose(f);
 }
+
+// Engine changes of part 0 (model_rest_sim.sh): the stored engine is sampled at every millis() call, a change is one load
+int g_loadsSeen = 0;
+int g_loadsPrev = -1;
+uint32_t g_loadsLastMs = 0, g_loadsMarkMs = 0;
 
 std::vector<int16_t> g_left, g_right;
 char g_name[64];
@@ -178,6 +186,18 @@ void run(const char* line)
             out("part %d stored %d engine %s", p, st, Synth::storedName(st));
         }
     }
+    else if (!strcmp(cmd, "loads"))
+    {
+        if (!strcmp(a, "reset"))
+        {
+            g_loadsSeen = 0;
+            g_loadsPrev = mtProject.values.synthPart[0].synthType;
+        }
+        else if (!strcmp(a, "mark"))
+            g_loadsMarkMs = hostp::g_nowMs;
+        else
+            out("loads %d last %d", g_loadsSeen, g_loadsSeen ? (int)(g_loadsLastMs - g_loadsMarkMs) : -1);
+    }
     else if (!strcmp(cmd, "popup"))
     {   // the popup on screen: globalPopupDisplayTime is non zero from show() until hide()
         if (mtPopups.globalPopupDisplayTime && mtPopups.popupData.multiLineText && mtPopups.popupData.textLinesCount)
@@ -209,6 +229,15 @@ extern "C" void hostPokeRun(const char* line)
 
 extern "C" void hostPokePoll()
 {
+    {
+        const int t = mtProject.values.synthPart[0].synthType;
+        if (g_loadsPrev >= 0 && t != g_loadsPrev)
+        {
+            g_loadsSeen++;
+            g_loadsLastMs = hostp::g_nowMs;
+        }
+        g_loadsPrev = t;
+    }
     static const char* path = getenv("UISHOT_POKE");
     static unsigned calls = 0;
     if (!path || (++calls & 255) != 0)
