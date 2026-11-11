@@ -109,15 +109,45 @@ typedef struct
                              // numbers of a synth engine: stored, patch_engine, type_id, PLUG_SYNTH_MANIFEST (below)
 } plug_manifest;
 
+// plug_param.flags. A numeric parameter (enum_count 0) may name its end values: the host shows the name instead of the number
+// and the unit (the bar and the stored value stay numeric). enum_names then holds the names in this order: first the one for
+// min if PLUG_PARAM_NAME_MIN is set, then the one for max if PLUG_PARAM_NAME_MAX is set. An older host ignores the flags and
+// shows the number, so a plugin that sets them still runs there. Flags a host does not know are ignored.
+enum
+{
+    PLUG_PARAM_NAME_MIN = 1u << 0,   // enum_names[0] is shown while the value is min ("Auto", "Off")
+    PLUG_PARAM_NAME_MAX = 1u << 1,   // the next enum_names entry is shown while the value is max
+};
+
 typedef struct
 {
     const char* name;         // <= 11 chars shows in full on the parameter page, the sidecar stores values by this name
     const char* unit;         // "", "%", "Hz", "dB", "ms"
     float min, max, def, step;
     uint16_t enum_count;      // > 0: an enum, enum_names has enum_count entries, min 0, max enum_count - 1
-    uint16_t flags;           // reserved, 0
+    uint16_t flags;           // PLUG_PARAM_*, 0 for none (the field was reserved as 0, so an older host ignores a flag)
     const char* const* enum_names;
 } plug_param;
+
+// Number of names a numeric parameter's flags promise in enum_names (0 for an enum: its own enum_count rules)
+static inline uint32_t plug_param_name_count(const plug_param* p)
+{
+    return p->enum_count ? 0u : ((p->flags & PLUG_PARAM_NAME_MIN) ? 1u : 0u) + ((p->flags & PLUG_PARAM_NAME_MAX) ? 1u : 0u);
+}
+
+// The name to show for value v instead of the number (a numeric parameter at an end it names), NULL for the number
+static inline const char* plug_param_value_name(const plug_param* p, float v)
+{
+    if (p->enum_count || !p->enum_names) return 0;
+    uint32_t i = 0;
+    if (p->flags & PLUG_PARAM_NAME_MIN)
+    {
+        if (v <= p->min) return p->enum_names[0];
+        i++;
+    }
+    if ((p->flags & PLUG_PARAM_NAME_MAX) && v >= p->max) return p->enum_names[i];
+    return 0;
+}
 
 typedef struct plug_host plug_host;
 

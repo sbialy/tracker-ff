@@ -14,7 +14,7 @@ Version 1.3.0 of the tracker-ff firmware for the original Tracker. The Tracker+ 
 2. **USB audio.** Built in. With USB audio on, the unit shows up as an audio input on a computer after the next start. With it off, the unit presents only the stock USB interfaces.
 3. **Restart mode.** Power button: turn off as usual, or restart the unit at a power off. Power return: stay off, or start by itself when power comes back after a cut while the unit was on. Holding Record at start switches the mode on and Record with the power button switches it off, and the Record shortcut can be turned off on its page.
 4. **Developer mode.** A row of the Features page, listed once `/.develop` exists on the card. It shows the CPU readouts and loads an optional extension module from `/Plugins/Ext/` at start. A module that crashed is skipped at the next start and its fault record is written to `/Plugins/Ext/crash.txt`. Holding Shift in the first 4 seconds after power on starts without it.
-5. **Glue master insert.** `glue.plg` in `/Plugins/Master/`, a bus compressor with Auto makeup and a Character setting (Clean, Glue, Smooth, Punch or Colour). There are eight inserts now. Glue and Phaser do not fit the insert memory together, the second of the two shows `Full`.
+5. **Glue master insert.** `glue.plg` in `/Plugins/Master/`, a bus compressor with Auto makeup and a Character setting (Clean, Glue, Smooth, Punch or Colour). Its Makeup reads `Auto` at the bottom step. A plugin can name the end values of a numeric parameter now (`PLUG_PARAM_NAME_MIN` and `PLUG_PARAM_NAME_MAX`), older plugins and hosts are not affected. There are eight inserts now. Glue and Phaser do not fit the insert memory together, the second of the two shows `Full`.
 
 ### Changed
 
@@ -29,6 +29,7 @@ Version 1.3.0 of the tracker-ff firmware for the original Tracker. The Tracker+ 
 1. Installing a synth plugin into the data flash no longer makes the audio crackle. The audio output renders ahead into a deeper buffer while the flash erases, and the erase works in short slices.
 2. A power off or a restart with an extension module loaded no longer ends in a lockup.
 3. The delay feedback and the reverb damping are set the same way at the start as a project load sets them. Before, they started from the raw project values and the first project load corrected them.
+4. The master inserts of a project load now wait like the synth engines do: 1 s after the load finished, then one insert at a time, 250 ms apart. Before, both read the card in the first main loop pass after the load. A pick on the Inserts page still loads after 400 ms.
 
 ---
 

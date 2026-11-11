@@ -328,11 +328,12 @@ typedef struct {
     const char* unit;      // "", "%", "Hz", "dB", "ms"
     float min, max, def, step;
     uint16_t enum_count;   // > 0: an enum with enum_count names, min 0, max enum_count - 1
-    uint16_t flags;        // reserved, 0
+    uint16_t flags;        // PLUG_PARAM_NAME_MIN (1) / PLUG_PARAM_NAME_MAX (2), else 0
     const char* const* enum_names;
 } plug_param;
 ```
 
+- A numeric parameter may name its end values (for example Glue's Makeup, whose bottom step means `Auto`): set `PLUG_PARAM_NAME_MIN` and/or `PLUG_PARAM_NAME_MAX` in `flags` and point `enum_names` at one string for min, then one for max (`enum_count` stays 0). The Inserts page shows the name instead of the number and the unit while the value sits at that end, the bar and the stored float do not change, and a host without the flags shows the number.
 - A numeric parameter shows its value and a bar. An enum shows all its names in the stock list control with the current one highlighted.
 - The host rounds a value to `step` and clamps it to `[min, max]` before it reaches you. Enums arrive as indices `0 .. enum_count - 1`.
 - A project stores values **by name**. Renaming a parameter loses its stored value. Reordering is harmless. A value that is missing takes the default.
@@ -372,7 +373,7 @@ The Inserts page has a first column, **Mixer**, that does not belong to any plug
 
 ### Picking and the status line
 
-Picking waits until the selection rests for 400 ms, then loads. The value line of an insert column is at most 9 characters: the plugin name, `None`, `Loading`, `Bypassed` or a tag and as much of the name as fits (`Safe:BBD`, `Miss:Lo-Fi`, `Fail:Dirt`, `CPU:Phase`). A built-in Saturation entry bypasses both slots and keeps them loaded.
+Picking waits until the selection rests for 400 ms, then loads. The inserts of a project load (an opened project, or the one that is up at power on) take the road of the synth engines instead: they wait 1 s after the load finished (the rest of the synth model list), then load one per main loop pass, 250 ms apart, insert 1 first, and not before the 4 s key window of the boot has closed. Until then the column shows `Loading` and the audio passes. The value line of an insert column is at most 9 characters: the plugin name, `None`, `Loading`, `Bypassed` or a tag and as much of the name as fits (`Safe:BBD`, `Miss:Lo-Fi`, `Fail:Dirt`, `CPU:Phase`). A built-in Saturation entry bypasses both slots and keeps them loaded.
 
 The plugin list comes from the last scan of `/Plugins/Master`. Opening the page reads only the folder's directory entries (the names and sizes of the `.plg` files) and scans the files again when they differ from the last scan, so the page opens without a card read per plugin. Every USB storage session and every card change makes the next open scan all files. A file rewritten in place at the same name and size is not seen until then, and picking it is safe: the loader checks that the file still has the `uid` and CRC the list showed, and when it does not the host scans the folder and loads again from the new list.
 
