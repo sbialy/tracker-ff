@@ -175,7 +175,8 @@ audioEngine::audioEngine()
 
 void audioEngine::beginDelay()
 {
-    delay->begin(mtProject.values.delayFeedback,
+    // the same values a project load sets (setDelayFeedback takes percent)
+    delay->begin(mtProject.values.delayFeedback / 100.0,
                  mtProject.values.delayTime,
                  mtProject.values.delayParams & 0b10000000,
                  mtProject.values.delayParams & 0b01000000,
@@ -187,7 +188,7 @@ void audioEngine::beginReverb()
 {
     polyverb->reset();
     polyverb->setTime(mtProject.values.reverb.size);
-    polyverb->setDamp(mtProject.values.reverb.damp);
+    polyverb->setDamp(1.0f - mtProject.values.reverb.damp); // as setReverbDamp
     polyverb->SetPredelayLength(mtProject.values.reverb.predelay);
     polyverb->SetDiffusion(mtProject.values.reverb.diffusion);
     polyverb->unblockUpdate();
