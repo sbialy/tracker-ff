@@ -35,7 +35,12 @@
 #include "PolySynth/sdk/InstrumentVoice.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#ifdef OPEN_REFRESH_CHECK
+#include <cstdio>
+#include <cstdlib>
+#endif
 #include <cstring>
 #include <span>
 #include <vector>
@@ -357,8 +362,20 @@ class OpenInstrument final : public Instrument
             }
         }
 #endif
-        std::memcpy(params.start, params.end, sizeof(float) * params.count);
+#ifdef OPEN_REFRESH_CHECK
+        ot::audio::SynthParams ref = params;
+        std::memcpy(ref.start, ref.end, sizeof(float) * ref.count);
+        ref.moving = false;
+#endif
+        if (!startIsEnd)
+        {
+            std::memcpy(params.start, params.end, sizeof(float) * params.count);
+            startIsEnd = true;
+        }
         params.moving = false;
+#ifdef OPEN_REFRESH_CHECK
+        refreshCheck(ref, true);
+#endif
     }
 
     // Note-on admission: the learned cycles of a note-on of this part (over a running voice) and of one running voice
@@ -518,38 +535,148 @@ class OpenInstrument final : public Instrument
 #endif
     }
 
-    void refreshParams()
+    // The parameters of this block: params.end = the patch's effective values, params.start = the block's start values, serial and moving as
+    // before. The SDRAM is slow (the instrument lives there: blocks of 1 KB and more come from the SDRAM arena, platforms/mk66/.../new.cpp), so a
+    // block with nothing changed reads each value twice (patch, params.end) and writes nothing: startIsEnd says that params.start already equals
+    // params.end bit for bit (set at the end of every render), then a value that did not change cannot make the parameters move.
+#ifdef OPEN_REFRESH_CHECK
+    // Test build only (synth-open/tools/run_refresh_equiv.sh): the refresh as it was before the fast paths, run on a copy of the parameters,
+    // and the bit for bit comparison of the two results
+    void refreshParamsRef(ot::audio::SynthParams& pr, bool valid)
     {
         float eff[kMaxParams];
         patch->effective(eff, modOut);
-        params.count = patch->paramCount();
+        pr.count = patch->paramCount();
         bool changed = false;
-        for (int i = 0; i < params.count; i++)
+        for (int i = 0; i < pr.count; i++)
         {
-            if (!paramsValid)
+            if (!valid)
             {
-                params.start[i] = eff[i];
+                pr.start[i] = eff[i];
             }
-            if (params.end[i] != eff[i] || !paramsValid)
+            if (pr.end[i] != eff[i] || !valid)
             {
                 changed = true;
             }
-            params.end[i] = eff[i];
+            pr.end[i] = eff[i];
         }
-        params.moving = false;
-        for (int i = 0; i < params.count; i++)
+        pr.moving = false;
+        for (int i = 0; i < pr.count; i++)
         {
-            if (params.start[i] != params.end[i])
+            if (pr.start[i] != pr.end[i])
             {
-                params.moving = true;
+                pr.moving = true;
                 break;
             }
         }
         if (changed)
         {
+            pr.serial++;
+        }
+    }
+    void refreshCheck(const ot::audio::SynthParams& pr, bool atRenderEnd)
+    {
+        bool ok = pr.count == params.count && pr.serial == params.serial && pr.moving == params.moving;
+        for (int i = 0; ok && i < params.count; i++)
+        {
+            ok = std::bit_cast<uint32_t>(pr.start[i]) == std::bit_cast<uint32_t>(params.start[i]) &&
+                 std::bit_cast<uint32_t>(pr.end[i]) == std::bit_cast<uint32_t>(params.end[i]);
+        }
+        if (!ok)
+        {
+            std::fprintf(stderr, "refreshParams differs from the reference (%s)\n", atRenderEnd ? "render end" : "refresh");
+            std::abort();
+        }
+    }
+#endif
+    void refreshParams()
+    {
+#ifdef OPEN_REFRESH_CHECK
+        ot::audio::SynthParams ref = params;
+        refreshParamsRef(ref, paramsValid);
+#endif
+        refreshParamsFast();
+#ifdef OPEN_REFRESH_CHECK
+        refreshCheck(ref, false);
+#endif
+    }
+    void refreshParamsFast()
+    {
+        // Nothing the patch feeds effective() with changed since the refresh that found params.end already equal to it (OpenPatch::effSerial),
+        // and params.start equals params.end: the result of the loops below is no change, not moving
+        if (seenOk && paramsValid && startIsEnd && patch->effSerial() == seenSer)
+        {
+            params.moving = false;
+            return;
+        }
+        float eff[kMaxParams];
+        const float* src = eff;
+        if (patch->plainValues(true))
+        {
+            src = patch->values_(); // effective() would copy exactly these
+        }
+        else
+        {
+            patch->effective(eff, modOut);
+        }
+        params.count = patch->paramCount();
+        const int n = params.count;
+        bool changed = false;
+        bool moving = false;
+        bool same = true; // params.start == params.end bit for bit, after this refresh
+        if (!paramsValid)
+        {
+            changed = true;
+            for (int i = 0; i < n; i++)
+            {
+                const float v = src[i];
+                params.start[i] = v;
+                params.end[i] = v;
+                moving |= v != v; // start != end only for a NaN
+            }
+        }
+        else if (startIsEnd)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                const float v = src[i];
+                const float e = params.end[i]; // start[i] has the bits of e
+                if (e != v)
+                {
+                    changed = true;
+                    moving = true;
+                }
+                if (std::bit_cast<uint32_t>(e) != std::bit_cast<uint32_t>(v))
+                {
+                    params.end[i] = v;
+                    same = false;
+                }
+                else
+                {
+                    moving |= v != v; // a NaN: start != end
+                }
+            }
+        }
+        else
+        {
+            for (int i = 0; i < n; i++)
+            {
+                const float v = src[i];
+                changed |= params.end[i] != v;
+                params.end[i] = v;
+                moving |= params.start[i] != v;
+                same &= std::bit_cast<uint32_t>(params.start[i]) == std::bit_cast<uint32_t>(v);
+            }
+        }
+        params.moving = moving;
+        startIsEnd = same;
+        if (changed)
+        {
             params.serial++;
         }
         paramsValid = true;
+        seenOk = same && !changed && !moving && patch->effStatic();
+        seenSer = patch->effSerial();
     }
 
     void onMidi(const MidiEvent& e)
@@ -793,6 +920,9 @@ class OpenInstrument final : public Instrument
     ot::audio::SynthSlotScratch scratch;
     ot::audio::SynthParams params;
     bool paramsValid = false;
+    bool seenOk = false;      // the last refresh found params.end equal to effective() and the patch can say when that changes (effStatic)
+    uint32_t seenSer = 0;     // OpenPatch::effSerial() at that refresh
+    bool startIsEnd = false; // params.start equals params.end bit for bit over params.count (refreshParams, render)
     open::ModState modSt[open::kModSlots];
     float modOut[open::kModSlots] = {};
     uint8_t modSerial = 0;
@@ -1276,16 +1406,16 @@ class OpenSynth final
     {
         renderStarts();
         clear(bufferMain);
-        for (auto& aux : bufferAux)
-        {
-            std::fill(aux.begin(), aux.end(), 0.0f);
-        }
+        // The aux buffers (the send taps of a stereo patch that renders aux sends) stay as they are: no open patch has rendersAuxSends
+        // (open_cold.cpp never sets it), so PolySynth::update never reads them, and clearing 2 x 512 B per part and block cost 5 us.
+        (void)bufferAux;
         if (instrumentId >= 0 && instrumentId < int(instruments.size()) && instruments[instrumentId])
         {
             float* l = bufferMain[0].data();
             float* r = bufferMain[1].data();
             static_cast<OpenInstrument&>(*instruments[instrumentId]).render(l, r);
             // mono output: tracker-ce reads the left buffer only
+#pragma GCC unroll 8
             for (int i = 0; i < kAudioBufferSize; i++)
             {
                 l[i] = 0.5f * (l[i] + r[i]);

@@ -663,6 +663,7 @@ void OpenPatch::setParamValue(int id, optional_paramvalue_t value, ParamChangeSo
     const float v = value.has_value() ? *value : p.defaultValue.value_or(0.0f);
     patchBankBeforeEdit(this); // the caller holds the audio lock: the edit lands on the edited values, never on the ones of an FX slot
     values[id] = std::clamp(v, float(p.minValue), float(p.maxValue));
+    effSer++;
 }
 
 Patch::optional_paramvalue_t OpenPatch::getMacroValue(int id) const
@@ -676,6 +677,7 @@ void OpenPatch::setMacroValue(int id, optional_paramvalue_t value, tiny_optional
     if (validMacro(id) && value.has_value())
     {
         macroCC[id] = uint8_t(std::clamp(std::lround(*value * 127.0f / kMaxMacroValue), 0L, 127L));
+        effSer++;
     }
 }
 
@@ -912,6 +914,7 @@ void OpenPatch::importData(const PatchData& d)
     }
     cfg = &own; // the live config may have been a Patch FX slot's: the file just imported is the open slot, the FX starts again from it
     cfgSer++;
+    effSer++;
 }
 
 ModSlot OpenPatch::resolveMod(const ModSlot& in) const
@@ -991,6 +994,7 @@ void OpenPatch::buildCfg(SlotCfg& out) const
 void OpenPatch::rebuildOwn()
 {
     buildCfg(own);
+    effSer++;
 }
 
 void OpenPatch::adoptCfg(const SlotCfg* next)
@@ -1009,6 +1013,7 @@ void OpenPatch::adoptCfg(const SlotCfg* next)
     }
     cfg = next;
     cfgSer++;
+    effSer++;
 }
 
 // ------------------------------------------------------------- automation (editor access)
