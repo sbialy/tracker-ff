@@ -75,6 +75,9 @@ case "$DEFAULT_LIST" in ACD,FAT,VAP,WTFM,PERC,CHIP,*JU6*) pass "no file: the bui
 NROWS="$(echo "$DEFAULT_LIST" | tr ',' '\n' | wc -l | tr -d ' ')"
 FIRST="${DEFAULT_LIST%%,*}"; LAST="${DEFAULT_LIST##*,}"
 [ ! -f "$sd/Plugins/synth-order.txt" ] && pass "no file: the unit does not write one on its own" || fail "no file: the unit does not write one on its own"
+# the edit list fits every name in the list column (synthorder::fitRow, scenario 11): Hand-Type reads HAND there, the normal list has its logo or full name
+EDIT_DEFAULT="$(echo "$DEFAULT_LIST" | sed 's/HANDTYPE/HAND/')"
+EDIT_REST="$(echo "$EDIT_DEFAULT" | cut -d, -f3-)"
 START="$(part_engine 1 0)"
 STORED0="$(part_stored 1 0)"
 
@@ -176,13 +179,13 @@ echo "### scenario 7: the edit mode on the unit"
 sd="$WORK/s7"; stage "$sd"
 run "$sd" "$SYNTH; hold Shift; tap F1; unhold Shift; wait 800; $(shot s7-edit-mode); $P"
 L7="$(list_of 1)"
-expect "the edit mode lists every engine" "$DEFAULT_LIST" "$L7"
+expect "the edit mode lists every engine" "$EDIT_DEFAULT" "$L7"
 expect "the cursor starts on the engine of the part" "$(( POS_START - 1 ))" "$(cursor_of 1)"
 expect "nothing is picked on entering it" "$START" "$(part_engine 1 0)"
 # the cursor to the top, hide the 2nd (FAT), move the 1st below it with Shift + Down, leave
 run "$sd" "$SYNTH; hold Shift; tap F1; unhold Shift; wait 500; tap Up $((POS_START - 1)); tap Down; tap Delete; wait 500; $P; tap Up; hold Shift; tap Down; unhold Shift; wait 500; $P; $(shot s7-edited); tap F1; wait 800; $P"
-expect "Delete hides the engine under the cursor (edit list)" "ACD,-FAT,$(echo "$DEFAULT_LIST" | cut -d, -f3-)" "$(list_of 1)"
-expect "Shift + Down moves the engine down, the cursor goes with it" "-FAT,ACD,$(echo "$DEFAULT_LIST" | cut -d, -f3-)" "$(list_of 2)"
+expect "Delete hides the engine under the cursor (edit list)" "ACD,-FAT,$EDIT_REST" "$(list_of 1)"
+expect "Shift + Down moves the engine down, the cursor goes with it" "-FAT,ACD,$EDIT_REST" "$(list_of 2)"
 expect "the cursor followed the engine" "1" "$(cursor_of 2)"
 expect "leaving the edit mode: the list without the hidden engine, in the new order" "ACD,$(echo "$DEFAULT_LIST" | cut -d, -f3-)" "$(list_of 3)"
 expect "leaving the edit mode: nothing was picked meanwhile" "$START" "$(part_engine 3 0)"
@@ -197,8 +200,8 @@ run "$sd" "$SYNTH; $P"
 expect "after a restart the file is what the list shows" "ACD,$(echo "$DEFAULT_LIST" | cut -d, -f3-)" "$(list_of 1)"
 # Insert shows it again
 run "$sd" "$SYNTH; hold Shift; tap F1; unhold Shift; wait 500; tap Up $((POS_START - 1)); wait 300; $P; tap Insert; wait 500; $P; tap F1; wait 600; $P"
-expect "edit list shows FAT with its - mark" "-FAT,ACD,$(echo "$DEFAULT_LIST" | cut -d, -f3-)" "$(list_of 1)"
-expect "Insert shows the engine again" "FAT,ACD,$(echo "$DEFAULT_LIST" | cut -d, -f3-)" "$(list_of 2)"
+expect "edit list shows FAT with its - mark" "-FAT,ACD,$EDIT_REST" "$(list_of 1)"
+expect "Insert shows the engine again" "FAT,ACD,$EDIT_REST" "$(list_of 2)"
 expect "and the normal list has it back (at the order's place)" "FAT,ACD,$(echo "$DEFAULT_LIST" | cut -d, -f3-)" "$(list_of 3)"
 
 echo "### scenario 8: other buttons leave the edit mode, pad keys keep working"
@@ -232,6 +235,43 @@ expect "an arrow wraps in a short list too" "2" "$(cursor_of 2)"
 expect "the edit mode still works and hides in memory (WTFM at the cursor is the part's engine)" "5" "$(echo "$(list_of 3)" | tr ',' '\n' | wc -l | tr -d ' ')"
 # (the host card creates the folder on the first write, the unit's FAT does not: there the save says "Order not saved")
 
+
+echo "### scenario 11: the hidden mark is visible for every engine name in the edit mode"
+# The list centres each row text in a clip of synthorder::kRowPx (68 px, font 1) and shows it as the font draws it: a row wider than the clip
+# loses its first glyph, the "-". Every engine of the card is hidden here (the pixel width of every row comes from "poke rowpx", the
+# font's own advance widths), plus WIDE, a copy of hand.plg renamed to the longest name the host lists (8 characters, plug_synth.cpp), in the widest glyphs (9 px, 72 px in all)
+sd="$WORK/s11"; stage "$sd"
+WIDE_NAME="WWWWWWWW"
+python3 -I - "$sd/Plugins/Synth/hand.plg" "$sd/Plugins/Synth/wide.plg" "$WIDE_NAME" <<'PY'
+import sys, zlib, struct
+b = bytearray(open(sys.argv[1], 'rb').read())
+assert b[0x44:0x4c] == b'HANDTYPE'
+b[0x44:0x54] = sys.argv[3].encode().ljust(16, b'\0')   # manifest name
+struct.pack_into('<I', b, 12, 0x57494445)                # uid: not the one of hand.plg
+struct.pack_into('<III', b, 0x8c, 200, 0xC8, 0xC8)       # stored number, patch engine id, type id: not the ones of hand.plg
+struct.pack_into('<I', b, 48, zlib.crc32(bytes(b[64:])) & 0xffffffff)   # header crc32 covers everything after the 64 byte header
+open(sys.argv[2], 'wb').write(b)
+PY
+printf -- '-ACD\r\n-FAT\r\n-VAP\r\n-WTFM\r\n-PERC\r\n-CHIP\r\n-JU6\r\n-FM4\r\n-DTYPE\r\n-CSTYPE\r\n-ATYPE\r\n-TTYPE\r\n-8TYPE\r\n-HANDTYPE\r\n-BTYPE\r\n-ARCTYPE\r\n-PHZG\r\n-%s\r\n' "$WIDE_NAME" >"$sd/Plugins/synth-order.txt"
+run "$sd" "$SYNTH; hold Shift; tap F1; unhold Shift; wait 800; $(shot s11-hidden-marks); $P; poke rowpx; enc 40; wait 500; $(shot s11-hidden-marks-bottom)"
+L11="$(list_of 1)"
+RP="$(grep '^rowpx' "$WORK/poke.out" | head -1)"
+CLIP="$(echo "$RP" | sed 's/^rowpx clip \([0-9]*\) px.*/\1/')"
+WIDTHS="$(echo "$RP" | sed 's/.* px //')"
+echo "     edit list: $L11"
+echo "     row widths (px, clip $CLIP): $WIDTHS"
+case ",$L11," in *,-WWWWW*) pass "the longest, widest plugin name ($WIDE_NAME) is listed" ;; *) fail "the widest plugin name is listed" "$L11" ;; esac
+case ",$L11," in *,-HAND,*|*,-HANDTYPE,*) pass "Hand-Type is listed" ;; *) fail "Hand-Type is listed" "$L11" ;; esac
+nmark=0; nrows=0; over=0; i=0
+for row in $(echo "$L11" | tr ',' ' '); do
+    i=$((i+1)); nrows=$((nrows+1))
+    w="$(echo "$WIDTHS" | cut -d, -f$i)"
+    case "$row" in -*) nmark=$((nmark+1)) ;; esac
+    [ "${w:-999}" -gt "$CLIP" ] && { over=$((over+1)); echo "     too wide: $row = $w px"; }
+done
+expect "every hidden engine shows its - mark" "$nrows" "$nmark"
+expect "no row is wider than the clip of the list (the first glyph is not cut off)" "0" "$over"
+case ",$L11," in *,-HAND,*) pass "Hand-Type reads -HAND when hidden" ;; *) fail "Hand-Type reads -HAND when hidden" "$L11" ;; esac
 echo
 if [ "$fails" -eq 0 ]; then echo "RESULT: GREEN ($checks checks)"; exit 0; fi
 echo "RESULT: RED ($fails failing of $checks checks)"; exit 1

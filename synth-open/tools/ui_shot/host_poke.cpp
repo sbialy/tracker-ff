@@ -16,6 +16,9 @@
 //   macroid POS VALUE                    the same for the section id list, which holds the macro index on a macro section
 //   picker                               the Model list of the Synth screen as the control holds it (rows, cursor, the row texts) and the
 //                                        engine every synth part stores (synth-open/tools/ui_shot/synth_order_sim.sh)
+//   rowpx                                the pixel width of every row text of the Model list in the font the list draws (font 1, getTextWidth), then the
+//                                        width of the clip the rows are drawn in. Output line "rowpx clip N px W1,W2,..."
+//   textw TEXT                           the pixel width of TEXT in that font ("textw HANDTYPE" -> "textw HANDTYPE px N")
 //   masterfx FEEDBACK DAMP_PERMILLE      the delay feedback byte and the reverb low pass coefficient after a project load and after audioEngine::init's
 //                                        own code (beginDelay, beginReverb), "same" or "DIFFER" (master_fx_sim.sh)
 //   popup                                the text popup the UI shows now (first line, "popup none" when hidden), for model_rest_sim.sh
@@ -41,6 +44,8 @@
 #include "mtStructs.h"
 #include "Synth.h"
 #include "host_platform.h"
+#include "displayControls.h"
+#include "synth_order.h"
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -278,6 +283,18 @@ void run(const char* line)
             g_loadsMarkMs = hostp::g_nowMs;
         else
             out("loads %d last %d", g_loadsSeen, g_loadsSeen ? (int)(g_loadsLastMs - g_loadsMarkMs) : -1);
+    }
+    else if (!strcmp(cmd, "rowpx"))
+    {   // the rows the list holds, in pixels of font 1 (the list's font: controlStyleFont1 is fonts[0])
+        const strNewListData& d = instrumentEditor.modelListData;
+        std::string w;
+        for (int i = 0; i < d.length; i++)
+            w += (i ? "," : "") + std::to_string(d.params && d.params[i] ? getTextWidth(&fonts[0], d.params[i], 32) : 0);
+        out("rowpx clip %d px %s", synthorder::kRowPx, w.c_str());
+    }
+    else if (!strcmp(cmd, "textw"))
+    {
+        out("textw %s px %d", a, (int)getTextWidth(&fonts[0], a, 32));
     }
     else if (!strcmp(cmd, "popup"))
     {   // the popup on screen: globalPopupDisplayTime is non zero from show() until hide()

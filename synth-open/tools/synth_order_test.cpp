@@ -242,6 +242,52 @@ int main()
     r.build();
     check(r.v.n == 2 && r.v.ui[0] == 0, "a name longer than 23 characters is matched on its first 23");
 
+
+    // the rows of the edit list fit the clip of the list column with the "-" first (synthorder::fitRow). The widths are those of the
+    // list's font (font 1) measured in ui_shot ("poke textw"): 8 px for every printable glyph, 9 px for # % & K W w
+    {
+        auto glyph = [](char c) { return strchr("#%&KWw", c) && c ? 9 : 8; };
+        auto pxOf = [&](const char* t) { int w = 0; for (; *t; t++) w += glyph(*t); return w; };
+        struct Row { const char* name; bool hidden; const char* want; };
+        const Row rows[] = {
+            {"ACD", true, "-ACD"},             {"ACD", false, "ACD"},
+            {"CSTYPE", true, "-CSTYPE"},       {"ARCTYPE", true, "-ARCTYPE"},     {"ARCTYPE", false, "ARCTYPE"},
+            {"8TYPE", true, "-8TYPE"},         {"HANDTYPE", true, "-HAND"},       {"HANDTYPE", false, "HAND"},
+            {"Hand-Type", true, "-Hand"},      {"Hand-Type", false, "Hand"},      {"HANDTYPE", true, "-HAND"},
+            {"WWWWWWWW", true, "-WWWWWW"},        {"WWWWWWWW", false, "WWWWWW"},   {"abcdefghij", true, "-abcdefg"},  {"abcdefgh", false, "abcdefg"},
+            {"TYPE", true, "-TYPE"},           {"-TYPE", true, "--TYPE"},          {"Type", false, "Type"},
+        };
+        for (const Row& t : rows)
+        {
+            char out[12];
+            fitRow(out, sizeof(out), t.name, t.hidden, glyph);
+            std::string what = std::string("row ") + (t.hidden ? "-" : "") + t.name + " -> '" + out + "'";
+            check(strcmp(out, t.want) == 0, (what + ", wanted '" + t.want + "'").c_str());
+            check(pxOf(out) <= kRowPx - kRowMarginPx + (t.hidden ? 0 : glyph('-')), (what + " fits the clip").c_str());
+            check(!t.hidden || out[0] == '-', (what + ": the mark is first").c_str());
+        }
+        // every name length and glyph mix of up to 15 characters: the hidden row always fits the clip, mark first, and never overflows out
+        const char alpha[] = "WMiK-8x#";
+        int bad = 0;
+        for (int seed = 0; seed < 4000; seed++)
+        {
+            char nm[16];
+            int len = 1 + seed % 15;
+            unsigned h = seed * 2654435761u;
+            for (int i = 0; i < len; i++) { nm[i] = alpha[(h >> (i * 2)) % 8]; h = h * 1664525u + 1013904223u; }
+            nm[len] = 0;
+            char out[12];
+            memset(out, 0x7f, sizeof(out));
+            fitRow(out, sizeof(out), nm, true, glyph);
+            if (!(out[0] == '-' && strlen(out) <= 11 && strlen(out) >= 2 && pxOf(out) <= kRowPx - kRowMarginPx))
+            {
+                bad++;
+                printf("      bad: %s -> %s\n", nm, out);
+            }
+        }
+        check(bad == 0, "4000 mixed names of 1..15 characters: a hidden row always fits, mark first, 2..11 characters");
+    }
+
     printf("%s\n", g_fail ? "FAILED" : "ALL OK");
     return g_fail ? 1 : 0;
 }

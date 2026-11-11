@@ -32,6 +32,13 @@ constexpr int kMaxEntries = 512;   // lines of the file that count (the engines 
 constexpr int kNameMax = 24;       // with the terminator, a longer name is cut
 constexpr int kViewMax = 256;      // engines in the list (open_engine.h: one stored byte each)
 
+// The room a row of the edit list has, in pixels of the list's font (font 1). The Model list is a NewList of 800 / 8 - 3 = 97 px: its
+// text clip starts 13 px in and ends 7 px before the right edge, which is itself 9 px in from the control when the scrollbar is up
+// (more than 7 rows, always the case in the edit mode with a plugin library) = 97 - 9 - 13 - 7 = 68 px. The text is centred, so a
+// row wider than this loses its first and last glyphs: the "-" first.
+constexpr int kRowPx = 68;
+constexpr int kRowMarginPx = 4;   // kept free in the row (the advance of a glyph is wider than its ink, the "-" is the outermost)
+
 struct Entry
 {
     char name[kNameMax];
@@ -375,6 +382,56 @@ inline int format(const List& l, char* out, int cap)
         out[n++] = '\n';
     }
     return n;
+}
+
+// The text of a row of the edit list: the "-" of a hidden engine, then the engine name, fitted so that the whole row is at most
+// kRowPx - kRowMarginPx wide. width(c) is the advance of the glyph c in pixels. The mark always stays the first character: it is the
+// name that gives way, and by the same width for hidden and shown engines (hiding one never changes how its name reads). A name that is
+// too wide first loses a trailing "TYPE" or "-TYPE" (HANDTYPE -> HAND), then characters from the end. out has cap bytes, at most
+// cap - 2 characters of the name are kept (the mark and the terminator).
+template <class W>
+inline void fitRow(char* out, int cap, const char* name, bool hidden, W width)
+{
+    auto px = [&](int len) {
+        int w = 0;
+        for (int i = 0; i < len; i++)
+        {
+            w += width(name[i]);
+        }
+        return w;
+    };
+    const int budget = kRowPx - kRowMarginPx - width('-');
+    int len = 0;
+    while (name[len] && len < cap - 2)
+    {
+        len++;
+    }
+    if (px(len) > budget)
+    {
+        if (len > 4 && lower(name[len - 4]) == 't' && lower(name[len - 3]) == 'y' && lower(name[len - 2]) == 'p' && lower(name[len - 1]) == 'e')
+        {
+            int cut = len - 4;
+            if (cut > 1 && name[cut - 1] == '-')
+            {
+                cut--;
+            }
+            len = cut;
+        }
+        while (len > 1 && px(len) > budget)
+        {
+            len--;
+        }
+    }
+    int n = 0;
+    if (hidden)
+    {
+        out[n++] = '-';
+    }
+    for (int i = 0; i < len; i++)
+    {
+        out[n++] = name[i];
+    }
+    out[n] = 0;
 }
 
 }   // namespace synthorder
