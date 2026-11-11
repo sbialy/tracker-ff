@@ -123,7 +123,12 @@ class FxEngine
         if constexpr ((n & (n - 1)) == 0)
             return i & (n - 1);
         else
+        {
+            // the empty asm keeps i = wp + c as it is: without it GCC derives i - n from write_ptr_ with two subtracts (n - c is not an
+            // immediate), with it the wrap is cmp, it, sub
+            __asm__("" : "+r"(i));
             return i >= n ? i - n : i;
+        }
     }
 
     FxEngine() {}
