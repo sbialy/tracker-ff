@@ -1,9 +1,9 @@
-// Tracker FF runtime plugin ABI 1.1 (1.0: phase 2, master inserts. 1.1: synth engines, PLUG_EXT_SYNTH, more libm). MIT licence, see synth-open/plug/README.md.
-// Design: ~/prj/poly/ref/plugin-architecture.md. Plain C, shared by the host (firmware) and by plugins (any licence).
+// Tracker FF runtime plugin ABI 1.1 (1.0: master inserts. 1.1: synth engines, PLUG_EXT_SYNTH, more libm). MIT licence, see synth-open/plug/README.md.
+// Format reference: synth-open/plug/README.md. Plain C, shared by the host (firmware) and by plugins (any licence).
 //
 // File layout (.plg, little endian):
 //   plug_file_header  64 bytes
-//   plug_manifest     header_size - 64 bytes (96 in ABI 1.0, absent in the spike files whose header_size is 64)
+//   plug_manifest     header_size - 64 bytes (96 in ABI 1.0, absent in early files whose header_size is 64)
 //   image             image_size bytes: .text .rodata .data of a link at address 0
 //   rebase table      rebase_count x uint32: byte offsets of 32-bit words in image that hold an image address (R_ARM_ABS32).
 //                     The loader adds the run address of the segment the value points into. No GOT, no ELF on the device.
@@ -32,10 +32,10 @@ extern "C" {
 enum
 {
     PLUG_KIND_MASTER_INSERT = 1,   // stereo, in place, after the tracks and sends mixer (and Dirt), before the limiters
-    PLUG_KIND_SEND_FX = 2,         // stereo return of a send bus (phase 5)
-    PLUG_KIND_TRACK_FX = 3,        // mono or stereo per track insert (phase 5)
-    PLUG_KIND_SYNTH = 4,           // ISynthEngine shaped voice engine (phase 3, PLUG_EXT_SYNTH)
-    PLUG_KIND_OFFLINE = 5,         // sample editor effect (phase 6, what .ptfx is today)
+    PLUG_KIND_SEND_FX = 2,         // stereo return of a send bus (reserved)
+    PLUG_KIND_TRACK_FX = 3,        // mono or stereo per track insert (reserved)
+    PLUG_KIND_SYNTH = 4,           // ISynthEngine shaped voice engine (PLUG_EXT_SYNTH)
+    PLUG_KIND_OFFLINE = 5,         // sample editor effect (reserved, what .ptfx is today)
     PLUG_KIND_EXT = 6,             // extension module of one exact image (core/include/ext_abi.h), develop mode only
 };
 
@@ -49,11 +49,11 @@ enum
 enum
 {
     // Reserved (decision 14): int16 in and out, the host passes the audio library blocks without the float conversion.
-    // Meant for bit identical ports of the stock int16 FX (phase 5b). A host that does not implement it refuses the file.
+    // Meant for bit identical ports of the stock int16 FX (reserved). A host that does not implement it refuses the file.
     PLUG_F_S16 = 1u << 0,
 };
 
-// plug_manifest.role: where a plugin may sit besides its kind's own slots. Reserved for phase 5b (override slots of the
+// plug_manifest.role: where a plugin may sit besides its kind's own slots. Reserved for later hosts (override slots of the
 // stock reverb and delay returns, section 14.7 of the design): a role plugin's first parameters are the stock ones in
 // stock order and range. Hosts before 5b treat every role as PLUG_ROLE_INSERT.
 enum
@@ -67,8 +67,8 @@ enum
 enum
 {
     PLUG_EXT_STATE = 1,   // reserved: state beyond the parameters (save and load through the project sidecar)
-    PLUG_EXT_TAIL = 2,    // plug_ext_tail (declared below, the phase 2 host does not ask for it yet)
-    PLUG_EXT_SYNTH = 3,   // plug_ext_synth (declared below): the C form of ISynthEngine, PLUG_KIND_SYNTH plugins (phase 3)
+    PLUG_EXT_TAIL = 2,    // plug_ext_tail (declared below, the current host does not ask for it yet)
+    PLUG_EXT_SYNTH = 3,   // plug_ext_synth (declared below): the C form of ISynthEngine, PLUG_KIND_SYNTH plugins
     PLUG_EXT_TEMPO = 4,   // reserved: set_tempo(inst, bpm) for synced inserts
 };
 
@@ -173,7 +173,7 @@ typedef struct
     const void* (*query)(uint32_t ext_id);
 } plug_desc;
 
-// PLUG_EXT_TAIL (reserved, phase 5b: the host keeps calling a plugin with a tail on a silent bus and lets a quiet one sleep)
+// PLUG_EXT_TAIL (reserved for later hosts: the host keeps calling a plugin with a tail on a silent bus and lets a quiet one sleep)
 typedef struct
 {
     uint32_t struct_size;
@@ -182,7 +182,7 @@ typedef struct
     void (*skip)(void* inst, uint32_t frames);     // advance LFOs and write heads exactly as process() on silence would
 } plug_ext_tail;
 
-// ---- PLUG_EXT_SYNTH: a synth engine (PLUG_KIND_SYNTH, phase 3). The host wraps it in an ISynthEngine adapter, so the
+// ---- PLUG_EXT_SYNTH: a synth engine (PLUG_KIND_SYNTH). The host wraps it in an ISynthEngine adapter, so the
 // shim's voice pool, macros, patch slots and governor treat it as a built-in engine. The audio calls get the OpenTracker 3.x
 // engine structs (synth-open/ot/audio/synth_engine.h: SynthVoice, SynthParams, SynthNote, SynthSlotScratch) by pointer,
 // frozen for ABI 1: plug_ext_synth.layout carries their sizes and the host refuses a plugin built against others. Same
