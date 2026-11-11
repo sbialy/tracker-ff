@@ -33,8 +33,8 @@
 // The Griesinger / Dattorro loop of the stock Polyverb, run at 22.05 kHz: the mono input sum is decimated by two with a 7 tap halfband
 // ([-1 0 9 16 9 0 -1] / 32), the loop runs at half the sample rate with every line half as long (so the room size, the damping and the
 // decay time stay the same), the wet pair is interpolated back to the full rate with the same halfband. The dry/wet mix stays at the
-// full rate. Both line sets (7.8k and 5.5k samples) fit the 16 bit SRAM buffer that buffer E already used, the SDRAM buffer is no
-// longer touched. Nothing above about 10.5 kHz reaches the tail, the level, decay time and stereo width are the stock ones
+// full rate. Both line sets (7.8k and 5.5k samples) sit back to back in one 16 bit SRAM buffer of 13,329 samples (26,658 B, the rings
+// are as long as the lines need, see kLen1 and kLen2), the SDRAM buffer is no longer touched. Nothing above about 10.5 kHz reaches the tail, the level, decay time and stereo width are the stock ones
 // (ref/reverb-cheap.md, ref/reverb-measure.md).
 
 #ifndef POLYVERB_REVERB_H_
@@ -59,12 +59,13 @@ class Reverb
     Reverb() {}
     ~Reverb() {}
 
-    // buffer: the 16384 x 16 bit SRAM line buffer (effect_polyverb.cpp). Both line sets live in it, in two halves of 8192 samples.
+    // buffer: the kBufferSamples x 16 bit SRAM line buffer (effect_polyverb.cpp). Both line sets live in it: E in the first kLen1
+    // samples, E2 in the next kLen2.
     // buffer2 (the 16384 x 16 bit SDRAM buffer of the full rate reverb) is not used any more.
     void Init(uint16_t* buffer, uint16_t* buffer2)
     {
         (void)buffer2;
-        engine_.Init(buffer, buffer + kHalf);
+        engine_.Init(buffer, buffer + kLen1);
 #ifdef FEATURE_SYNTH_OPEN
         quiet_samples_ = 0;
 #endif
@@ -77,7 +78,8 @@ class Reverb
         ClearRate();
     }
 
-    static constexpr size_t GetBufferSize() { return 2 * kHalf * sizeof(uint16_t); }
+    static constexpr size_t kBufferSamples = 7808 + 5521; // kLen1 + kLen2
+    static constexpr size_t GetBufferSize() { return kBufferSamples * sizeof(uint16_t); }
 
     // size: full rate samples per block, even. In place: out = in + (wet - in) * amount.
     inline __attribute__((always_inline)) void Process(int16_t* left, int16_t* right, size_t size)
@@ -107,6 +109,8 @@ class Reverb
         E::DelayLine<Memory2, 0> dap2a;
         E::DelayLine<Memory2, 1> dap2b;
         E::DelayLine<Memory2, 2> del2;
+        static_assert(decltype(del0)::base + decltype(del0)::length + 1 <= kLen1, "E ring too short for the lines");
+        static_assert(decltype(del2)::base + decltype(del2)::length + 1 <= kLen2, "E2 ring too short for the lines");
         E::Context c;
 #ifdef FEATURE_SYNTH_OPEN
         c.nonzero_ = 0;
@@ -284,8 +288,13 @@ class Reverb
     inline void SetActiveThreshold(float) {}
 
   private:
-    static constexpr size_t kHalf = 8192;
-    typedef FxEngine<kHalf, FORMAT_16_BIT> E;
+    // The rings. E: the lines of Memory end at 7800 (ap1 0, ap2 76, ap3 184, ap4 345, dap1a 610, dap1b 1702, del1 3048, del0 5300 + 2500),
+    // one cell more for the predelay read at its full length, rounded up to a multiple of 32 because the LFO ticks on write_ptr_ & 30.
+    // E2: dap2a 0, dap2b 1264, del2 2364 + 3156 = 5520, one cell more for the interpolated read of the modulated del2 at its longest.
+    static constexpr size_t kLen1 = 7808;
+    static constexpr size_t kLen2 = 5521;
+    static_assert(kBufferSamples == kLen1 + kLen2, "kBufferSamples follows the rings");
+    typedef FxEngine<kLen1, FORMAT_16_BIT, kLen2> E;
     E engine_;
 
     static constexpr size_t predelay_buffer_size_ = 2500; // 5000 at the full rate
