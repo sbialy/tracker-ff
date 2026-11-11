@@ -1,0 +1,41 @@
+# reverb-merge: noteOnNow calls engine->noteOn only (never render), the generic OpenInstrument rule below would also give it every render
+^polysynth::\(anonymous namespace\)::OpenInstrument::noteOnNow => ^(ot::audio::.*Engine|plug::\(anonymous namespace\)::PlugSynth|polysynth::open::\(anonymous namespace\)::ChipEngine)::noteOn\(
+# virtual FileSystem interface: FileSystemImpl is the only implementation. The file handling code calls it through a pointer, a
+# virtual call site (vptr load, then slot load) in these classes takes the FileSystemImpl method of that slot (slots of other
+# interfaces that coincide add spurious edges, so it is an over-approximation)
+^(cFileTransfer|cFileManager|VoiceStreamManager|ProjectOpen|ProjectSave|WorkspaceProjectLoad|WorkspaceProjectSave|SampleMemorySave|SampleMemoryReload|SampleImport|InstrumentCopy|InstrumentDelete|RecordingSave|PatternsMetadata|FileSystemAdapter|SdStream|Synth|ThemeManager|cProjectEditor|cSampleImporter|cSampleRecorder|cConfigEditor|Recorder|plug)(::|\()|^\(anonymous namespace\)::(readExact|PlatformFileOps)|^scanAssetDirectory => &FSVT
+# SD card driver: the host function table (SDMMCHOST_*) is called through pointers. Transfer family for the block I/O paths,
+# the power, detect and init callbacks only run from the card init and insert paths (shallow prefix), not chained here
+^SD_(CardInit|HostInit|PowerOnCard|PowerOffCard|HostReset|CardDeinit|SelectCard)\b => ^SDMMCHOST_(Init|Reset|PowerOnCard|PowerOffCard|DetectCardInsertByHost|DetectCardRemoveByHost|NotifyCardInsertStatus|TransferFunction|Delay)$
+^(SD_|SDMMC_|sd_disk_)\w* => ^SDMMCHOST_(TransferFunction|ErrorRecovery|Delay|WaitAsyncRead|StartAsyncRead|PollAsyncRead)$
+# ISR trampolines (pointer loaded from a RAM variable), resolved by hand from the disassembly and the sources
+^sdhc_isr$ => ^SDHC_TransferHandleIRQ$
+^SDHC_TransferHandleIRQ$ => ^SDMMCHOST_\w*Callback$
+^pit[0-3]_isr$ => ^\(anonymous namespace\)::onMidiClockTimer\(\)$
+^\(anonymous namespace\)::onMidiClockTimer\(\)$ => ^(sendMidiClockImmediate|sendMidiClock)\(\)$
+^I2C_TransferCommonIRQHandler$ => ^I2C_(Master|Slave)TransferHandleIRQ$
+^port_[A-E]_isr$ => ^(SI4703_interrupt\(\)|.*selfCheckFunction.*)$
+^loop$ => ^TrackerImpl::update\(\)$
+^setup$ => ^TrackerImpl::init\(
+# indirect call targets for stack_depth.py: caller regex => target regex (demangled names, first matching caller rule wins)
+#   &OBJ = the address-taken functions of the caller's own object file (function pointer tables of an engine TU)
+#   NONE = the target is not in this ELF (plugin code, added with --extra)
+^AudioOutputI2S::isr\(\) => ^updateBuffers\(void\*, void\*\)
+^updateBuffers\(void\*, void\*\) => ^TrackerImpl::updateAudioBuffers\(
+^AudioStream::update_all\(\) => ^(Audio\w*(<\d+>)?|MonoToStereo|PolySynth)::update\(\)$
+^PolySynth::update\(\) => ^(polysynth::\(anonymous namespace\)::Open(Instrument::getVoiceCount|Synth::renderAudioBuffer)|polysynth::open::OpenPatch::getMetadata)\(
+^polysynth::open::\(anonymous namespace\)::ChipEngine:: => ^polysynth::\(anonymous namespace\)::ChiptuneSynthVoice::
+^polysynth::\(anonymous namespace\)::ChiptuneSynthVoice:: => &OBJ
+# the shim calls the engine through ISynthEngine: every engine class of the image (the built-in ones and the plugin proxy)
+^polysynth::\(anonymous namespace\)::Open\w+::~ => &OBJ
+^polysynth::\(anonymous namespace\)::Open(Instrument::|Synth::render) => ^(ot::audio::.*Engine|plug::\(anonymous namespace\)::PlugSynth|polysynth::open::\(anonymous namespace\)::ChipEngine)::\w+\(
+^polysynth::open::chipVoiceReset => ^polysynth::\(anonymous namespace\)::ChiptuneSynthVoice::
+^polysynth:: => &OBJ
+^ot::audio:: => &OBJ
+# plugin code is not in the image: its own depth is added with --extra
+^plug::\(anonymous namespace\)::PlugSynth:: => NONE
+^AudioEffectPlug::update\(\) => NONE
+^std::_Sp_counted_base<.*>::_M_release\(\) => ::_M_(dispose|destroy)\(\)
+^std::unique_ptr<polysynth::InstrumentVoice => ^polysynth::.*::~\w*Voice\(\)
+^AudioInputI2S::isr\(\) => ^updateInputBuffers\(void\*\)
+^updateInputBuffers\(void\*\) => ^TrackerImpl::updateInputAudioBuffers\(
