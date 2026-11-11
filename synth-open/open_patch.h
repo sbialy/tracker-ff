@@ -50,17 +50,50 @@ class OpenPatch final : public Patch
     // Patch bank (patch change FX): the values of a decoded file, same range rules as importData, into out[paramCount()]
     // (cold). setValuesRaw / getValuesRaw swap the values on the audio callback, adoptCfg the macros and automation (a pointer).
     void valuesFromData(const PatchData& d, float* out) const;
-    void setValuesRaw(const float* v) { std::memcpy(values, v, size_t(count) * sizeof(float)); }
+    void setValuesRaw(const float* v)
+    {
+        std::memcpy(values, v, size_t(count) * sizeof(float));
+        effSer++;
+    }
     void getValuesRaw(float* out) const { std::memcpy(out, values, size_t(count) * sizeof(float)); }
     int typeId() const { return metadata.instrumentTypeId; }
 
     // Shim internal: macro CC (0..127) written by the instrument from MIDI
-    void setMacroCC(int macro, uint8_t cc) { macroCC[macro] = cc; }
+    void setMacroCC(int macro, uint8_t cc)
+    {
+        macroCC[macro] = cc;
+        effSer++;
+    }
 
     // Values with macros M1..M6 applied (additive, scaled by the param range, clamped). Render path. `modOut` (kModSlots values, the
     // instrument's automation outputs of this block) adds the slots on top: a macro slot moves its macro, a param slot adds
     // out * range to the param, every hit param is clamped once. nullptr: no automation (the editor's final value).
     void effective(float* out, const float* modOut = nullptr) const;
+    // True when effective(out, modOut) would only copy the plain values: no automation output applies (modOut is null or the live config has
+    // the automation off) and no user macro has a target. Render path: refreshParams then reads values() directly, no copy.
+    bool plainValues(bool hasModOut) const
+    {
+        const SlotCfg& live = *cfg;
+        if (hasModOut && live.modOn)
+        {
+            return false;
+        }
+        for (int m = 0; m < int(kUserMacroCount); m++)
+        {
+            if (live.macro[m].count != 0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+    const float* values_() const { return values; }
+    // Counts every change of what effective() reads from this patch: the values, the macro positions, the macros and automation slots
+    // (rebuildOwn), the live config pointer. With effStatic() (the open slot's own config and the automation off, so nothing else feeds
+    // effective(): a Patch FX bank row is rewritten by the bank in place, the automation outputs move every block) an unchanged serial means
+    // an unchanged result, and the instrument skips the refresh (OpenInstrument::refreshParams).
+    uint32_t effSerial() const { return effSer; }
+    bool effStatic() const { return cfg == &own && own.modOn == 0; }
 
     // Synth automation (open_mod.h). The slots belong to the patch (its .patch field 64) and the editor shows and edits the open slot's
     // (modSlot, metadata macros). What the render path reads is liveCfg(): the open slot's own compact copy (ownCfg) or, while the Patch FX
@@ -148,6 +181,7 @@ class OpenPatch final : public Patch
     ModSlot mod[kModSlots];
     uint8_t modSer = 0;
     uint8_t cfgSer = 0;
+    uint32_t effSer = 0;                 // see effSerial()
     SlotCfg own;                         // macros and slots of this patch in the form the render path reads (rebuildOwn)
     const SlotCfg* cfg = &own;           // the live one: own, or a row of the Patch FX bank
     PatchExtra extra;                    // raw .patch fields kept for the round trip
