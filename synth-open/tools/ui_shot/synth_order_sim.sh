@@ -135,10 +135,10 @@ expect "the part now plays the engine it was moved to" "CHIP" "$(part_engine 1 0
 # the next engine, then the file hides that engine (written while the unit runs, as an edit on the card would), and part 1 is opened
 sd="$WORK/s4c"; stage "$sd"
 S2="instr 65; tap Params; wait 1500"
-run "$sd" "$S2; $P; tap Down; wait 800; $P"
+run "$sd" "$S2; $P; tap Down; wait 1500; $P"
 P2_ENG="$(part_engine 2 1)"
 echo "     part 2 plays $(part_engine 1 1), then $P2_ENG"
-run "$sd" "$S2; tap Down; wait 800; put Plugins/synth-order.txt CHIP\\r\\nACD\\r\\n-$P2_ENG\\r\\n; tap Pattern; wait 300; $SYNTH; $P"
+run "$sd" "$S2; tap Down; wait 1500; put Plugins/synth-order.txt CHIP\\r\\nACD\\r\\n-$P2_ENG\\r\\n; tap Pattern; wait 300; $SYNTH; $P"
 L4c="$(list_of 1)"
 expect "part 2 plays the engine the test hid" "$P2_ENG" "$(part_engine 1 1)"
 expect "an engine hidden but played by part 2 is at the top of the list of part 1" "$P2_ENG" "$(echo "$L4c" | cut -d, -f1)"
