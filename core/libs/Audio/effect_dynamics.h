@@ -30,6 +30,7 @@
 #define effect_dynamics_h_
 
 #include "AudioStream.h"
+#include "mixer.h"
 #include "util_math.h"
 #include <cmath>
 
@@ -153,6 +154,23 @@ class AudioEffectDynamics : public AudioStream
         makeupdb = clamp(gain, -12.0f, 24.0f);
     }
 
+#ifdef AUDIO_NULL_IS_SILENCE
+    // The mixer inputs this object feeds (up to two). While every one of them is silenced (gain 0 now and in the previous block, so
+    // the mixer releases whatever arrives there unread) the object still tracks its gate, compressor and limiter state from the
+    // input but builds no output block: no copy, no gain, no transmit. The gain ramp start (last_mult) is recomputed from the last
+    // total gain when an output is read again, so the first block after that is the same as if every block had been built.
+    void setSilenceWatch(const AudioMixerBase* mixerA,
+                         unsigned int channelA,
+                         const AudioMixerBase* mixerB = nullptr,
+                         unsigned int channelB = 0)
+    {
+        watch[0] = mixerA;
+        watchChannel[0] = (uint8_t)channelA;
+        watch[1] = mixerB;
+        watchChannel[1] = (uint8_t)channelB;
+    }
+#endif
+
   private:
     audio_block_t* inputQueueArray[1];
 
@@ -192,6 +210,20 @@ class AudioEffectDynamics : public AudioStream
     float aLimitRelease;
 
     int32_t last_mult;
+
+#ifdef AUDIO_NULL_IS_SILENCE
+    const AudioMixerBase* watch[2] = { nullptr, nullptr };
+    uint8_t watchChannel[2] = { 0, 0 };
+    bool lastMultPending = false; // last_mult is dbToUnit(pendingGain) * 65536, not computed yet
+    float pendingGain = 0.0f;
+
+    bool outputIsUnread() const
+    {
+        if (watch[0] == nullptr || !watch[0]->isInputSilenced(watchChannel[0]))
+            return false;
+        return watch[1] == nullptr || watch[1]->isInputSilenced(watchChannel[1]);
+    }
+#endif
 
     void computeMakeupGain()
     {

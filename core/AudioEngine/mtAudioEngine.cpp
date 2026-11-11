@@ -427,6 +427,20 @@ void audioEngine::connectInputToMixer(AudioInput* input, MixerAndFxs<kVoices>* m
                           mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb),
                           kRightInputMixerChannel));
 
+#ifdef AUDIO_NULL_IS_SILENCE
+    // the gates feed exactly these two mixer inputs each: with both muted a gate only tracks its state (effect_dynamics.h)
+    input->getGate(AudioInput::InputChannels::kLeft)
+      ->setSilenceWatch(mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kDelay),
+                        kLeftInputMixerChannel,
+                        mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb),
+                        kLeftInputMixerChannel);
+    input->getGate(AudioInput::InputChannels::kRight)
+      ->setSilenceWatch(mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kDelay),
+                        kRightInputMixerChannel,
+                        mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb),
+                        kRightInputMixerChannel);
+#endif
+
     constexpr int kTracksAndSendsMixerInputIdx = 3;
 
     connections.push_back(
