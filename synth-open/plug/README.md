@@ -9,7 +9,7 @@ phases.
 Licence: the SDK files in this folder (`plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`,
 `build_plugs.sh`, this README) are MIT (`LICENSE` here). A plugin may use any licence that allows shipping it as a separate
 file. The firmware licence is unchanged. No shipped plugin is built here: the inserts Dirt, Tape, Lo-Fi, BBD and Phaser (ports
-of MIT and Apache-2.0 OpenTracker code) are built in the public repository `poly-effects-os`, Console and Tube (original, proprietary
+of MIT and Apache-2.0 OpenTracker code) are built in the public repository `poly-effects-os`, Console, Tube and Glue (original, proprietary
 freeware) in the private `poly-effects`, the engine plugins in `poly-engines-os` and `poly-engines`. Their notices ship with their
 release files, `engines/README.md` has the map.
 

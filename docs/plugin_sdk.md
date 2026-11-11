@@ -1118,7 +1118,7 @@ This repository holds the plugin host and this SDK, but no plugin module. tracke
 | poly-engines-os | public | the synth engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type |
 | poly-engines | private | the synth engines PHZ and PLK (freeware binaries) |
 | poly-effects-os | public | the master inserts Dirt, Tape, Lo-Fi, BBD, Phaser |
-| poly-effects | private | the master inserts Console and Tube (freeware binaries) |
+| poly-effects | private | the master inserts Console, Tube and Glue (freeware binaries) |
 
 [`engines/engines.json`](../engines/engines.json) keeps the identity of every shipped module (file id, name, engine numbers, version, repository), [`engines/external.lock.json`](../engines/external.lock.json) pins a release of each repository by tag, commit and the sha256 of every file, and [`engines/README.md`](../engines/README.md) shows how to fetch, check and package them.
 

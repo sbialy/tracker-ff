@@ -11,7 +11,7 @@ checks what they publish.
 | poly-engines-os | public | `engines-os` | CHIP (Polyend's open Chiptune voice, `.plg` and `.plgi` only) and the OpenTracker 3.x module engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type (`.plg`, `.plgi`, `.wasm`, `.json`) |
 | poly-engines | private | `engines` | our own engines PHZ and PLK (FORM and FLUX are in the repository, not in 1.2.0), freeware binaries only |
 | poly-effects-os | public | `effects-os` | the OpenTracker fx ports Dirt, Tape, Lo-Fi, BBD, Phaser (`.plg`, `.wasm`, `.json`) |
-| poly-effects | private | `effects` | our own inserts Console and Tube, freeware binaries only |
+| poly-effects | private | `effects` | our own inserts Console, Tube and Glue, freeware binaries only |
 
 ## Files
 

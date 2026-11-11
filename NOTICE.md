@@ -78,9 +78,9 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Source**: written for this project from the published Karplus-Strong algorithm (Karplus and Strong, CMJ 1983) and its extensions (Jaffe and Smith, CMJ 1983). No third-party code was read or adapted. Only the `ISynthEngine` interface (item 10, Apache-2.0) is shared, and the headers of the PLK source keep that attribution. The published `pluck.plg`, `pluck.plgi` and `pluck.wasm` ship with our notice. The PLK source and binaries are proprietary freeware, the terms are in `LICENSE.md` of the private repository `poly-engines`.
 * **Note**: the engine is no longer built here. It borrows the VAP list icons.
 
-## 13b. Console and Tube (original master inserts, source in the private repository poly-effects)
-* **Location**: the source is not in this repository. It lives in the private repository `poly-effects`. This repository keeps only the public identity of the two inserts (plugin ids `ff.console` and `ff.tube`).
-* **Source**: written for this project, no third-party code. The published `console.plg`, `tube.plg` and their `.wasm` files are proprietary freeware (free use with the Polyend Tracker and tracker-ff, unmodified redistribution, all rights reserved), the terms are in `LICENSE.md` of the private repository `poly-effects`. The plugin runtime built into them stays MIT.
+## 13b. Console, Tube and Glue (original master inserts, source in the private repository poly-effects)
+* **Location**: the source is not in this repository. It lives in the private repository `poly-effects`. This repository keeps only the public identity of the three inserts (plugin ids `ff.console`, `ff.tube` and `ff.glue`).
+* **Source**: written for this project, no third-party code. The published `console.plg`, `tube.plg`, `glue.plg` and their `.wasm` files are proprietary freeware (free use with the Polyend Tracker and tracker-ff, unmodified redistribution, all rights reserved), the terms are in `LICENSE.md` of the private repository `poly-effects`. The plugin runtime built into them stays MIT.
 
 ## 14. Mutable Instruments Polyverb sources (reverb code from Mutable Instruments Clouds and Rings)
 * **Location**: `core/libs/Audio/Polyverb/{reverb,fx_engine,util,cosine_oscillator}.h`
