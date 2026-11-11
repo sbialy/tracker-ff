@@ -199,7 +199,7 @@
    "visibility": "private",
    "kind": "master",
    "tag": "effects-v1.3.0",
-   "tag_commit": "d7e8588b77da2bf51ebe0741a9a4c697bcb82f19",
+   "tag_commit": "fcf2497d02151d85ce7f1947ce01fe47ead09411",
    "local_repo": "../poly-effects",
    "local_dirs": [
     "../poly-effects/build/set"
@@ -212,7 +212,7 @@
     "tube.plg": "0ea4233370437d48d90d9bec8b2bf5a060067338b6989183d3246b1ffba0d02f",
     "tube.json": "d5877e72236dbad9b52aed610e205b99faf7431922266e4e6e0f43b9ae0dc7b7",
     "tube.wasm": "a5370d4bab6974158c8a2ed3e2c56187de718045579e9d37e8424fcabfc0ceef",
-    "glue.plg": "7a14e7d4011fc068ecc9e9beb938bc090d1d371bf0264176c85d1dd64390924b",
+    "glue.plg": "3d04575348442539eb00e584efe9092643d0b181c34f9835ffc78515a9ec1ac0",
     "glue.json": "251558772a4e189610ccdf8a5987e59bfc04a0cb34ccf7ace6d1e4aaea515790",
     "glue.wasm": "f891b4996e903df25633cd074c80fe611cc0ccb703de581abc893418e2d90400"
    },
