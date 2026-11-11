@@ -45,6 +45,11 @@ class AudioRecordQueue : public AudioStream
     {
         clear();
         enabled = 1;
+        // Back in update_all and fed by transmit again: update() takes a disabled queue out of both (active = false). The order matters,
+        // the audio interrupt only deactivates a queue it finds with enabled == 0, so active is set after enabled. connect() keeps
+        // setting active, a queue wired while it is on runs from then on.
+        __asm__ volatile("" ::: "memory");
+        active = numConnections > 0;
     }
     int available(void);
     void clear(void);
@@ -54,6 +59,16 @@ class AudioRecordQueue : public AudioStream
     virtual void update(void);
 
   private:
+    // A disabled queue only releases what it is sent, so it leaves update_all and transmit skips it until begin(). Only when every
+    // stream that feeds it is updated before it (hasLaterSource false): then nothing is in flight in its input between two rounds and
+    // skipping the delivery changes nothing. A queue fed by a stream constructed after it (the master export tap) keeps the old
+    // behaviour, the block it was sent before begin() is the first block it records.
+    void sleepIfIdle(void)
+    {
+        if (!hasLaterSource)
+            active = false;
+    }
+
     audio_block_t* inputQueueArray[1];
     audio_block_t* volatile queue[QUEUE_SIZE];
     audio_block_t* userblock;

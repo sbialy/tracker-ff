@@ -130,6 +130,7 @@ c++ -g -fsanitize=address,undefined -fno-sanitize-recover=all "${FT[@]}" -o "$T/
  echo "### run kern_sample_read_test"; "$T/kern_sample_read_test"; echo "### rc=$?"
  echo "### run kern_env_steady_test"; "$T/kern_env_steady_test"; echo "### rc=$?"
  echo "### run kern_gain_copy_test"; "$T/kern_gain_copy_test"; echo "### rc=$?"
+ echo "### run kern_record_queue_test"; sh synth-open/tools/kern_record_queue_test.sh; echo "### rc=$?"
  echo "### run features_test"; "$T/features_test"; echo "### rc=$?"
  echo "### run features_test_san"; "$T/features_test_san"; echo "### rc=$?"
  # USB audio (Config > Features): the ring, and the descriptors served with the switch off (= the image without it) and on

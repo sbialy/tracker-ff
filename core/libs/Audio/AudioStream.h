@@ -171,6 +171,9 @@ class AudioStream
     static UsbAudio* usbAudio;
 #endif
     bool active;
+    // some stream that transmits into this one is updated after it in update_all (its blocks reach this stream one round later, so a
+    // block can be in flight in its input between two rounds). Set by AudioConnection::connect(), never cleared.
+    bool hasLaterSource = false;
     unsigned char num_inputs;
     static audio_block_t* allocate(void);
     static void release(audio_block_t* block);
