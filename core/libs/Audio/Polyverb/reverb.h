@@ -33,8 +33,8 @@
 // The Griesinger / Dattorro loop of the stock Polyverb, run at 22.05 kHz: the mono input sum is decimated by two with a 7 tap halfband
 // ([-1 0 9 16 9 0 -1] / 32), the loop runs at half the sample rate with every line half as long (so the room size, the damping and the
 // decay time stay the same), the wet pair is interpolated back to the full rate with the same halfband. The dry/wet mix stays at the
-// full rate. Both line sets (7.8k and 5.5k samples) fit the 16 bit SRAM buffer that buffer E already used, the SDRAM buffer is no
-// longer touched. Nothing above about 10.5 kHz reaches the tail, the level, decay time and stereo width are the stock ones
+// full rate. Both line sets (7.8k and 5.5k samples) sit back to back in one 16 bit SRAM buffer of 13,728 samples (27,456 B, E2's ring is
+// as long as its lines need, see kLen1 and kLen2), the SDRAM buffer is no longer touched. Nothing above about 10.5 kHz reaches the tail, the level, decay time and stereo width are the stock ones
 // (ref/reverb-cheap.md, ref/reverb-measure.md).
 
 #ifndef POLYVERB_REVERB_H_
@@ -59,12 +59,13 @@ class Reverb
     Reverb() {}
     ~Reverb() {}
 
-    // buffer: the 16384 x 16 bit SRAM line buffer (effect_polyverb.cpp). Both line sets live in it, in two halves of 8192 samples.
+    // buffer: the kBufferSamples x 16 bit SRAM line buffer (effect_polyverb.cpp). Both line sets live in it: E in the first kLen1
+    // samples, E2 in the next kLen2.
     // buffer2 (the 16384 x 16 bit SDRAM buffer of the full rate reverb) is not used any more.
     void Init(uint16_t* buffer, uint16_t* buffer2)
     {
         (void)buffer2;
-        engine_.Init(buffer, buffer + kHalf);
+        engine_.Init(buffer, buffer + kLen1);
 #ifdef FEATURE_SYNTH_OPEN
         quiet_samples_ = 0;
 #endif
@@ -77,7 +78,8 @@ class Reverb
         ClearRate();
     }
 
-    static constexpr size_t GetBufferSize() { return 2 * kHalf * sizeof(uint16_t); }
+    static constexpr size_t kBufferSamples = 8192 + 5536; // kLen1 + kLen2
+    static constexpr size_t GetBufferSize() { return kBufferSamples * sizeof(uint16_t); }
 
     // size: full rate samples per block, even. In place: out = in + (wet - in) * amount.
     inline __attribute__((always_inline)) void Process(int16_t* left, int16_t* right, size_t size)
@@ -107,6 +109,11 @@ class Reverb
         E::DelayLine<Memory2, 0> dap2a;
         E::DelayLine<Memory2, 1> dap2b;
         E::DelayLine<Memory2, 2> del2;
+        static_assert(decltype(del0)::base + decltype(del0)::length + 1 <= kLen1, "E ring too short for the lines");
+        static_assert(decltype(del2)::base + decltype(del2)::length + 1 <= kLen2, "E2 ring too short for the lines");
+        // Wrap() takes i < 2 n: the largest index is write_ptr_ (n - 1) + base + the largest integer offset of the modulated del2
+        // read (3105.5 + 50, LFO value in 0..1) + 1 for the second tap of the interpolation
+        static_assert(kLen2 - 1 + decltype(del2)::base + 3155 + 1 < 2 * kLen2, "E2 index beyond two ring lengths");
         E::Context c;
 #ifdef FEATURE_SYNTH_OPEN
         c.nonzero_ = 0;
@@ -284,8 +291,17 @@ class Reverb
     inline void SetActiveThreshold(float) {}
 
   private:
-    static constexpr size_t kHalf = 8192;
-    typedef FxEngine<kHalf, FORMAT_16_BIT> E;
+    // The rings (ref/reverb-sram-pack.md). E: the lines of Memory end at 7800 (ap1 0, ap2 76, ap3 184, ap4 345, dap1a 610, dap1b 1702,
+    // del1 3048, del0 5300 + 2500), 7801 cells with the one the predelay read at its full length touches. It stays a power of two: the
+    // index wrap is then a mask (1 cycle), a ring of 7808 (the least that keeps the LFO phase, a multiple of 32) would free 768 B for
+    // about 0.5 points. E2: dap2a 0, dap2b 1264, del2 2364 + 3156 = 5520, 5521 cells with the one the interpolated read of the modulated
+    // del2 at its longest touches. Its wrap is a compare and a subtract (about 1.3 k cycles per block for 7 accesses per tick, 5.3 KB).
+    // 5536 = 5521 rounded up to a multiple of 32: the compare constant is then one instruction immediate (58 cycles per block less
+    // than 5521) and Wrap() keeps 16 cells of room for its i < 2 n rule (see the static_assert in Process()).
+    static constexpr size_t kLen1 = 8192;
+    static constexpr size_t kLen2 = 5536;
+    static_assert(kBufferSamples == kLen1 + kLen2, "kBufferSamples follows the rings");
+    typedef FxEngine<kLen1, FORMAT_16_BIT, kLen2> E;
     E engine_;
 
     static constexpr size_t predelay_buffer_size_ = 2500; // 5000 at the full rate

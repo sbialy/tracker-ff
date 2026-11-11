@@ -104,11 +104,33 @@ struct DataType<FORMAT_32_BIT>
     static inline T Compress(float value) { return value; }
 };
 
-template<size_t size, Format format = FORMAT_12_BIT>
+// size: the ring length of buffer_ in samples, size2: the ring length of buffer2_ (the two line sets need not be equally long, see
+// Wrap()). size must be a multiple of 32: Start() ticks the LFO on write_ptr_ & 30, which the wrap must not move.
+template<size_t size, Format format = FORMAT_12_BIT, size_t size2 = size>
 class FxEngine
 {
+    static_assert(size % 32 == 0, "the LFO phase follows write_ptr_ & 30, the ring length must keep it");
+
   public:
     typedef typename DataType<format>::T T;
+
+    // i mod n for i < 2 n (write_ptr_ < n and every line offset base + offset + 1 <= n, the STATIC_ASSERTs). A ring that is not a power
+    // of two needs no division: one compare and one subtract. The cell a read finds is the same for every ring length of at least the
+    // extent of the lines (the last write to a logical position is the same), so the output does not depend on n.
+    template<size_t n>
+    static inline size_t Wrap(size_t i)
+    {
+        if constexpr ((n & (n - 1)) == 0)
+            return i & (n - 1);
+        else
+        {
+            // the empty asm keeps i = wp + c as it is: without it GCC derives i - n from write_ptr_ with two subtracts (n - c is not an
+            // immediate), with it the wrap is cmp, it, sub
+            __asm__("" : "+r"(i));
+            return i >= n ? i - n : i;
+        }
+    }
+
     FxEngine() {}
     ~FxEngine() {}
 
@@ -117,7 +139,7 @@ class FxEngine
         buffer_ = buffer;
         buffer2_ = buffer2;
         //    std::fill(&buffer_[0], &buffer_[size], 0);
-        //    std::fill(&buffer2_[0], &buffer2_[size], 0);
+        //    std::fill(&buffer2_[0], &buffer2_[size2], 0);
         write_ptr_ = 0;
         write_ptr2_ = 0;
     }
@@ -127,7 +149,7 @@ class FxEngine
     void Reset()
     {
         std::fill(&buffer_[0], &buffer_[size], 0);
-        std::fill(&buffer2_[0], &buffer2_[size], 0);
+        std::fill(&buffer2_[0], &buffer2_[size2], 0);
         write_ptr_ = 0;
         write_ptr2_ = 0;
     }
@@ -195,11 +217,11 @@ class FxEngine
             T w = DataType<format>::Compress(accumulator_);
             if (offset == -1)
             {
-                buffer_[(write_ptr_ + D::base + D::length - 1) % size] = w;
+                buffer_[Wrap<size>(write_ptr_ + D::base + D::length - 1)] = w;
             }
             else
             {
-                buffer_[(write_ptr_ + D::base + offset) % size] = w;
+                buffer_[Wrap<size>(write_ptr_ + D::base + offset)] = w;
             }
             accumulator_ *= scale;
         }
@@ -207,15 +229,15 @@ class FxEngine
         template<typename D>
         inline void Write2(D&, int32_t offset, float scale)
         {
-            STATIC_ASSERT(D::base + D::length <= size, delay_memory_full);
+            STATIC_ASSERT(D::base + D::length <= size2, delay_memory_full);
             T w = DataType<format>::Compress(accumulator_);
             if (offset == -1)
             {
-                buffer2_[(write_ptr2_ + D::base + D::length - 1) % size] = w;
+                buffer2_[Wrap<size2>(write_ptr2_ + D::base + D::length - 1)] = w;
             }
             else
             {
-                buffer2_[(write_ptr2_ + D::base + offset) % size] = w;
+                buffer2_[Wrap<size2>(write_ptr2_ + D::base + offset)] = w;
             }
             accumulator_ *= scale;
         }
@@ -281,11 +303,11 @@ class FxEngine
             T r;
             if (offset == -1)
             {
-                r = buffer_[(write_ptr_ + D::base + D::length - 1) % size];
+                r = buffer_[Wrap<size>(write_ptr_ + D::base + D::length - 1)];
             }
             else
             {
-                r = buffer_[(write_ptr_ + D::base + offset) % size];
+                r = buffer_[Wrap<size>(write_ptr_ + D::base + offset)];
             }
             float r_f = DataType<format>::Decompress(r);
             previous_read_ = r_f;
@@ -295,15 +317,15 @@ class FxEngine
         template<typename D>
         inline void Read2(D&, int32_t offset, float scale)
         {
-            STATIC_ASSERT(D::base + D::length <= size, delay_memory_full);
+            STATIC_ASSERT(D::base + D::length <= size2, delay_memory_full);
             T r;
             if (offset == -1)
             {
-                r = buffer2_[(write_ptr2_ + D::base + D::length - 1) % size];
+                r = buffer2_[Wrap<size2>(write_ptr2_ + D::base + D::length - 1)];
             }
             else
             {
-                r = buffer2_[(write_ptr2_ + D::base + offset) % size];
+                r = buffer2_[Wrap<size2>(write_ptr2_ + D::base + offset)];
             }
             float r_f = DataType<format>::Decompress(r);
             previous_read_ = r_f;
@@ -334,9 +356,9 @@ class FxEngine
             STATIC_ASSERT(D::base + D::length <= size, delay_memory_full);
             MAKE_INTEGRAL_FRACTIONAL(offset);
             float a = DataType<format>::Decompress(
-              buffer_[(write_ptr_ + offset_integral + D::base) % size]);
+              buffer_[Wrap<size>(write_ptr_ + offset_integral + D::base)]);
             float b = DataType<format>::Decompress(
-              buffer_[(write_ptr_ + offset_integral + D::base + 1) % size]);
+              buffer_[Wrap<size>(write_ptr_ + offset_integral + D::base + 1)]);
             float x = a + (b - a) * offset_fractional;
             previous_read_ = x;
             accumulator_ += x * scale;
@@ -345,12 +367,12 @@ class FxEngine
         template<typename D>
         inline void Interpolate2(D& d, float offset, float scale)
         {
-            STATIC_ASSERT(D::base + D::length <= size, delay_memory_full);
+            STATIC_ASSERT(D::base + D::length <= size2, delay_memory_full);
             MAKE_INTEGRAL_FRACTIONAL(offset);
             float a = DataType<format>::Decompress(
-              buffer2_[(write_ptr2_ + offset_integral + D::base) % size]);
+              buffer2_[Wrap<size2>(write_ptr2_ + offset_integral + D::base)]);
             float b = DataType<format>::Decompress(
-              buffer2_[(write_ptr2_ + offset_integral + D::base + 1) % size]);
+              buffer2_[Wrap<size2>(write_ptr2_ + offset_integral + D::base + 1)]);
             float x = a + (b - a) * offset_fractional;
             previous_read_ = x;
             accumulator_ += x * scale;
@@ -363,9 +385,9 @@ class FxEngine
             offset += amplitude * lfo_value_[index];
             MAKE_INTEGRAL_FRACTIONAL(offset);
             float a = DataType<format>::Decompress(
-              buffer_[(write_ptr_ + offset_integral + D::base) % size]);
+              buffer_[Wrap<size>(write_ptr_ + offset_integral + D::base)]);
             float b = DataType<format>::Decompress(
-              buffer_[(write_ptr_ + offset_integral + D::base + 1) % size]);
+              buffer_[Wrap<size>(write_ptr_ + offset_integral + D::base + 1)]);
             float x = a + (b - a) * offset_fractional;
             previous_read_ = x;
             accumulator_ += x * scale;
@@ -374,13 +396,13 @@ class FxEngine
         template<typename D>
         inline void Interpolate2(D&, float offset, LFOIndex index, float amplitude, float scale)
         {
-            STATIC_ASSERT(D::base + D::length <= size, delay_memory_full);
+            STATIC_ASSERT(D::base + D::length <= size2, delay_memory_full);
             offset += amplitude * lfo_value_[index];
             MAKE_INTEGRAL_FRACTIONAL(offset);
             float a = DataType<format>::Decompress(
-              buffer2_[(write_ptr2_ + offset_integral + D::base) % size]);
+              buffer2_[Wrap<size2>(write_ptr2_ + offset_integral + D::base)]);
             float b = DataType<format>::Decompress(
-              buffer2_[(write_ptr2_ + offset_integral + D::base + 1) % size]);
+              buffer2_[Wrap<size2>(write_ptr2_ + offset_integral + D::base + 1)]);
             float x = a + (b - a) * offset_fractional;
             previous_read_ = x;
             accumulator_ += x * scale;
@@ -416,7 +438,7 @@ class FxEngine
         --write_ptr2_;
         if (write_ptr2_ < 0)
         {
-            write_ptr2_ += size;
+            write_ptr2_ += size2;
         }
         c->accumulator_ = 0.0f;
         c->previous_read_ = 0.0f;
@@ -451,7 +473,7 @@ class FxEngine
             --write_ptr2_;
             if (write_ptr2_ < 0)
             {
-                write_ptr2_ += size;
+                write_ptr2_ += size2;
             }
             if ((write_ptr_ & 30) == 0)
             {
@@ -471,7 +493,7 @@ class FxEngine
         --write_ptr2_;
         if (write_ptr2_ < 0)
         {
-            write_ptr2_ += size;
+            write_ptr2_ += size2;
         }
         c->accumulator_ = 0.0f;
         c->previous_read_ = 0.0f;
