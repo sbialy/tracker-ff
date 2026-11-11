@@ -49,10 +49,10 @@ HOST_CPP  := $(wildcard $(HERE)/*.cpp)
 CONSOLE_OBJS := $(patsubst %.cpp,$(OBJ)/devtools/core/%.o,$(DEVTOOLS_CORE_SRCS)) $(patsubst %.cpp,$(OBJ)/devtools/host/%.o,$(DEVTOOLS_HOST_SRCS)) \
         $(if $(DEVTOOLS_HOST_SRCS),$(OBJ)/plat/Keys.o)
 # Every master insert source comes from its module repository: Tape, Lo-Fi, BBD, Phaser and the Dirt wrapper from poly-effects-os,
-# Console and Tube from poly-effects (private). ui_shot.sh puts their source at the pinned tag into $(EXT) (engines/external.py), without it
+# Console, Tube and Glue from poly-effects (private). ui_shot.sh puts their source at the pinned tag into $(EXT) (engines/external.py), without it
 # it writes a stub with the same entry point and the two inserts show as failed to load. Standalone, the rule below writes the stub
 EXT       ?= $(OUT)/external
-PLUG_EXT_C := ot_tape_plug ot_lofi_plug ot_bbd_plug ot_phaser_plug ff_console_plug ff_tube_plug
+PLUG_EXT_C := ot_tape_plug ot_lofi_plug ot_bbd_plug ot_phaser_plug ff_console_plug ff_tube_plug ff_glue_plug
 CHIP_OBJS := $(if $(CHIP_PLUGIN_SRC),$(OBJ)/chip/chip_smoke_engine.o $(OBJ)/chip/ChiptuneSynthVoice.o)
 EXCLUDE   := $(shell cat $(HERE)/exclude.txt 2>/dev/null | grep -v '^\#')
 

@@ -19,6 +19,8 @@
 //   masterfx FEEDBACK DAMP_PERMILLE      the delay feedback byte and the reverb low pass coefficient after a project load and after audioEngine::init's
 //                                        own code (beginDelay, beginReverb), "same" or "DIFFER" (master_fx_sim.sh)
 //   popup                                the text popup the UI shows now (first line, "popup none" when hidden), for model_rest_sim.sh
+//   inserts                              "inserts T=<virtual ms> 1=<state>:<name>[values] 2=<state>:<name>[values]" (plug_host.h SlotState), for insert_defer_sim.sh
+//   projload                             plug::projectLoaded(Workspace): what the end of a project load does to the inserts (insert_defer_sim.sh)
 // The same lines run from a ui_shot script as "poke LINE" (ui_shot_main.cpp), at that point of the script.
 #include <cstdarg>
 #include <cstdio>
@@ -33,6 +35,8 @@
 #include "fileManagerDefs.h"
 #include "mtStructs.h"
 #include "Synth.h"
+#include "plug_host.h"
+#include "host_platform.h"
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -67,6 +71,20 @@ void out(const char* fmt, ...)
     va_end(ap);
     fputc('\n', f);
     fclose(f);
+}
+
+// "inserts T=<ms> 1=<state>:<name>[values] 2=..." the state of both master insert slots now
+std::string insertsLine()
+{
+    static const char* const kState[] = {"empty", "pending", "running", "missing", "failed", "safe", "tripped", "bypassed", "noroom"};
+    char v[2][160] = {};
+    for (int k = 0; k < 2; k++)
+        for (uint32_t i = 0, n = plug::paramCount(k), at = 0; i < n && at + 16 < sizeof(v[k]); i++)
+            at += unsigned(snprintf(v[k] + at, sizeof(v[k]) - at, "%s%g", i ? "," : "", double(plug::paramValue(k, i))));
+    char l[480];
+    snprintf(l, sizeof(l), "inserts T=%lu 1=%s:%s[%s] 2=%s:%s[%s]", (unsigned long)hostp::g_nowMs, kState[int(plug::slotState(0))], plug::slotName(0), v[0],
+             kState[int(plug::slotState(1))], plug::slotName(1), v[1]);
+    return l;
 }
 
 std::vector<int16_t> g_left, g_right;
@@ -185,6 +203,14 @@ void run(const char* line)
         else
             out("popup none");
     }
+    else if (!strcmp(cmd, "inserts"))
+        out("%s", insertsLine().c_str());
+    else if (!strcmp(cmd, "projload"))
+    {   // the call that ends a project load (WorkspaceProjectLoad.cpp): the sidecar of the Workspace is read again, both inserts are
+        // unloaded and queued. The synth parts and the audio are not touched, so this isolates the insert side of a load
+        plug::projectLoaded(cWorkspacePath);
+        out("projload T=%lu", (unsigned long)hostp::g_nowMs);
+    }
     else if (!strcmp(cmd, "paramid") || !strcmp(cmd, "macroid"))
     {
         int* ids = !strcmp(cmd, "paramid") ? instrumentEditor.sectionParamsIds : instrumentEditor.sectionIds;
@@ -209,6 +235,20 @@ extern "C" void hostPokeRun(const char* line)
 
 extern "C" void hostPokePoll()
 {
+    // UISHOT_TRACE_INSERTS=1: every change of a slot's state (or of what it holds) is written to $UISHOT_POKE.out with the virtual clock,
+    // from the first millisecond, so the load order of a power on can be read (insert_defer_sim.sh)
+    static const bool trace = getenv("UISHOT_TRACE_INSERTS") != nullptr;
+    if (trace)
+    {
+        static std::string prev;
+        std::string l = insertsLine();
+        const std::string key = l.substr(l.find(" 1="));
+        if (key != prev)
+        {
+            prev = key;
+            out("%s", l.c_str());
+        }
+    }
     static const char* path = getenv("UISHOT_POKE");
     static unsigned calls = 0;
     if (!path || (++calls & 255) != 0)
