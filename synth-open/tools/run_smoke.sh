@@ -5,6 +5,7 @@
 #   PLUGENG=1 synth-open/tools/run_smoke.sh "..."          adds a plugin engine stand-in (JU6's numbers) to the run time engine list
 # Uses the same engine list as the firmware build (synth-open/engines.mk), so every built engine gets a note.
 # Needs clang++ (macOS: x86_64 build via Rosetta, as the test always was) and make.
+# SMOKE_EXTRA="-DOPEN_REFRESH_CHECK" adds compile flags (that one checks the refreshParams fast paths against the reference algorithm)
 # SMOKE_ARCH=arm64 builds a native arm64 binary instead (no Rosetta), the default stays x86_64:
 #   SMOKE_ARCH=arm64 synth-open/tools/run_smoke.sh "ACD VAP WTFM CHIP"
 #   CHIP_PLUGIN_SRC=.../poly-engines-os/src/synth-open/engine_chip.cpp synth-open/tools/run_smoke.sh "ACD FAT VAP WTFM PERC"
@@ -40,7 +41,7 @@ ARCH_DEFS=""
 [ "$ARCH" = x86_64 ] || ARCH_DEFS="-DTINY_OPTIONAL_x64"
 clang++ -arch "$ARCH" -std=c++20 -O1 "-D_GLIBCXX_THROW_OR_ABORT(x)=__builtin_abort()" \
   -I "$ROOT/synth/include" -I "$ROOT/util/include" -I "$ROOT/util/3rdparty" -I "$ROOT/synth-open" -I "$ROOT/synth-open/ot" -I "$ROOT/core/synth" -I "$ROOT/core/config" \
-  -DFEATURE_SYNTH -DFEATURE_SYNTH_OPEN -DOPEN_HOST_TEST "-DSMOKE_FIXTURES=\"$ROOT/synth-open/tools/fixtures\"" ${TRIM:+-DFW_TRIM} ${PLUGENG:+-DSMOKE_PLUGIN_ENGINE} ${CHIP_PLUGIN_SRC:+-DSMOKE_CHIP_PLUGIN "-DCHIP_PLUGIN_SRC=\"$CHIP_PLUGIN_SRC\""} $ARCH_DEFS $DEFS \
+  -DFEATURE_SYNTH -DFEATURE_SYNTH_OPEN -DOPEN_HOST_TEST "-DSMOKE_FIXTURES=\"$ROOT/synth-open/tools/fixtures\"" ${TRIM:+-DFW_TRIM} ${PLUGENG:+-DSMOKE_PLUGIN_ENGINE} ${SMOKE_EXTRA:-} ${CHIP_PLUGIN_SRC:+-DSMOKE_CHIP_PLUGIN "-DCHIP_PLUGIN_SRC=\"$CHIP_PLUGIN_SRC\""} $ARCH_DEFS $DEFS \
   "$ROOT/synth-open/tools/host_smoke_test.cpp" "$ROOT/synth-open/open_synth.cpp" "$ROOT/synth-open/open_cold.cpp" \
   "$ROOT/synth-open/open_patchio.cpp" "$ROOT/synth-open/stub_fmt.cpp" $SRCS_ABS "$ROOT/synth-open/ot/audio/governor.cpp" "$ROOT/synth-open/ot/audio/cpu_meter.cpp" \
   -o "$OUT"
