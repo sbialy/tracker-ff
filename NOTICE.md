@@ -96,6 +96,10 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Location**: `util/3rdparty/{fmt,nanopb,tiny,constexpr-string}/`, each with its own license file
 * **License**: fmt: MIT (Copyright (c) 2012 - present, Victor Zverovich). nanopb: zlib license (Copyright (c) 2011 Petteri Aimonen). tiny (optional): Boost Software License 1.0. constexpr-string: MIT (Copyright (c) 2019 Marek Bogusovsky). The `boost`, `catch2`, `googletest` and `googlemock` copies there are not included by any firmware source (checked with git grep), so they are not in the image.
 
+## 16a. Toolchain runtime libraries (linked into the image)
+* **What**: the C library newlib-nano (`libc_nano.a`, `libm.a`), `libgcc.a` and `libstdc++_nano.a` of the Arm GNU Toolchain 12.3.rel1.
+* **License**: newlib is under BSD-style and similar permissive licenses (the list is in `COPYING.NEWLIB` of the toolchain). libgcc and libstdc++ are GPL-3.0 with the GCC Runtime Library Exception 3.1, which allows linking them into a program under any license. None of this asks for source of the firmware.
+
 ## 17. opentracker-fx (the DIRT master insert for the `SYNTH_OPEN=1` build, FF_DIRT=1)
 * **Location**: `synth-open/ff_dirt.{h,cpp}` and `synth-open/ff_dirt_ctl.cpp`, with the host render and cycle bench in `synth-open/tools/dirt_render.*` and `synth-open/tools/dirt_cycles/`.
 * **Source**: https://github.com/opentracker-fw/opentracker-fx (commit 6e5a7da, `modules/dirt/src/dirt.cpp`). A rewrite, not a copy: the shaper maths, the mid-rise quantiser, the sample and hold, the tone low-pass and the make-up gain follow the original, the audio path (int16 blocks), the fixed preset table and the block loop are this project's own. The headers carry the notice.
