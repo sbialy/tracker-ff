@@ -109,6 +109,8 @@ c++ -std=c++20 -O2 -Wall -I core/libs/Audio synth-open/tools/kern_sample_read_te
   > "$L/kern_sample_read_test.build.log" 2>&1 || echo "BUILD FAIL kern_sample_read_test"
 c++ -std=c++20 -O2 -Wall -I synth-open/tools/kern_host -I core/libs/Audio synth-open/tools/kern_env_steady_test.cpp -o "$T/kern_env_steady_test" \
   > "$L/kern_env_steady_test.build.log" 2>&1 || echo "BUILD FAIL kern_env_steady_test"
+c++ -std=c++20 -O2 -Wall -I synth-open/tools/kern_host -I core/libs/Audio synth-open/tools/kern_gain_copy_test.cpp -o "$T/kern_gain_copy_test" \
+  > "$L/kern_gain_copy_test.build.log" 2>&1 || echo "BUILD FAIL kern_gain_copy_test"
 c++ -std=c++20 -O1 -Wall -I synth-open -I core/include synth-open/tools/ext_loader_test.cpp -o "$T/ext_loader_test" \
   > "$L/ext_loader_test.build.log" 2>&1 || echo "BUILD FAIL ext_loader_test"
 # the Features registry and its file parser (core/source/features.cpp), plain and with ASan/UBSan
@@ -127,6 +129,7 @@ c++ -g -fsanitize=address,undefined -fno-sanitize-recover=all "${FT[@]}" -o "$T/
  echo "### run seq_tick_test"; "$T/seq_tick_test" 1; echo "### rc=$?"
  echo "### run kern_sample_read_test"; "$T/kern_sample_read_test"; echo "### rc=$?"
  echo "### run kern_env_steady_test"; "$T/kern_env_steady_test"; echo "### rc=$?"
+ echo "### run kern_gain_copy_test"; "$T/kern_gain_copy_test"; echo "### rc=$?"
  echo "### run features_test"; "$T/features_test"; echo "### rc=$?"
  echo "### run features_test_san"; "$T/features_test_san"; echo "### rc=$?"
  # USB audio (Config > Features): the ring, and the descriptors served with the switch off (= the image without it) and on
