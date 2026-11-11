@@ -3,9 +3,10 @@
 #
 # When the "Init patch loaded" message of the Synth Model list appears, run on the real UI code of this tree (ui_shot, the PLUG_HOST
 # configuration with the CHIP host twin) on the Mac. Host only: no device, every scenario has its own SD card folder.
-# The message belongs to the engine change. A plugin engine that is not installed is picked after the list rests on it for kModelRestMs
-# (1 s), an engine that is built in or already attached switches at once. Scrolling past engines with short rests installs nothing
-# and shows no message. Reads the popup on screen ("poke popup", host_poke.cpp) and the engine the part stores ("poke picker").
+# The message belongs to the engine change. Any engine, built in, attached or a plugin that is not installed, is picked after the list
+# rests on it for kModelRestMs (1 s) and not before. Scrolling past engines with short rests picks and installs nothing and shows no message. Reads the popup on screen ("poke popup", host_poke.cpp) and the engine the part stores ("poke picker").
+# Every step of the list (arrow, held key repeat, encoder) restarts the rest: scenarios 5 to 10 step more often than kModelRestMs, count the
+# engine changes of part 0 ("poke loads") and time the one load against the last step.
 # Ends with "RESULT: GREEN" (exit 0) or "RESULT: RED (n failing)".
 #
 #   synth-open/tools/ui_shot/model_rest_sim.sh [PNG_DIR]
@@ -61,24 +62,32 @@ run() {
     awk '/^popup/ { p=$0; sub(/^popup /,"",p); gsub(/\x27/,"",p) }
          /^picker/ { c=$5 }
          /^part 0 / { print "popup=" p " engine=" $NF " cursor=" c }' "$WORK/poke.out" >"$WORK/obs.txt"
+    # the same with the load counter ("poke loads" before "poke popup"): "<obs> loads=<n> last=<ms after the mark, -1 for none>"
+    awk '/^loads/ { n=$2; t=$4 }
+         /^popup/ { p=$0; sub(/^popup /,"",p); gsub(/\x27/,"",p) }
+         /^picker/ { c=$5 }
+         /^part 0 / { print "popup=" p " engine=" $NF " cursor=" c " loads=" n " last=" t }' "$WORK/poke.out" >"$WORK/obsl.txt"
 }
 obs() { sed -n "${1}p" "$WORK/obs.txt"; }   # the Nth observation
+obsl() { sed -n "${1}p" "$WORK/obsl.txt"; } # the Nth observation with the load counter (CHECKL)
+CHECKL="poke loads; $CHECK"
 shot() { [ -n "$PNG_DIR" ] && echo "shot $PNG_DIR/$1.png" || echo "wait 10"; }
 MSG='Init patch loaded'
 
-echo "### scenario 1: the message of a built in engine does not stay up while the list moves to an engine that needs an install"
+echo "### scenario 1: the message of an engine change does not stay up while the list moves on"
 sd="$WORK/s1"; stage "$sd"
-run "$sd" "$SYNTH; tap Down; wait 100; $CHECK; wait 300; tap Down; $CHECK; wait 300; $CHECK; wait 300; $CHECK; wait 700; $CHECK; $(shot s1-installed)"
-expect "WTFM -> PERC (built in): the part switches at once with its message" "popup=$MSG engine=PERC cursor=4" "$(obs 1)"
-expect "-> CHIP (not installed): the list moves, the part stays on PERC, no message (the one of PERC is gone)" "popup=none engine=PERC cursor=5" "$(obs 2)"
-expect "300 ms later: still nothing" "popup=none engine=PERC cursor=5" "$(obs 3)"
-expect "600 ms of rest: still nothing, the part is on PERC" "popup=none engine=PERC cursor=5" "$(obs 4)"
-expect "after the 1 s rest: CHIP is installed and picked, now the message shows" "popup=$MSG engine=CHIP cursor=5" "$(obs 5)"
+run "$sd" "$SYNTH; tap Down; wait 100; $CHECK; wait 1000; $CHECK; tap Down; $CHECK; wait 300; $CHECK; wait 300; $CHECK; wait 700; $CHECK; $(shot s1-installed)"
+expect "WTFM -> PERC (built in): the list moves, the part waits on WTFM, no message yet" "popup=none engine=WTFM cursor=4" "$(obs 1)"
+expect "after the 1 s rest: PERC is picked with its message" "popup=$MSG engine=PERC cursor=4" "$(obs 2)"
+expect "-> CHIP (not installed): the list moves, the part stays on PERC, no message (the one of PERC is gone)" "popup=none engine=PERC cursor=5" "$(obs 3)"
+expect "300 ms later: still nothing" "popup=none engine=PERC cursor=5" "$(obs 4)"
+expect "600 ms of rest: still nothing, the part is on PERC" "popup=none engine=PERC cursor=5" "$(obs 5)"
+expect "after the 1 s rest: CHIP is installed and picked, now the message shows" "popup=$MSG engine=CHIP cursor=5" "$(obs 6)"
 
 echo "### scenario 2: skipping through engines with short rests installs nothing and shows no message"
 sd="$WORK/s2"; stage "$sd"
-run "$sd" "$SYNTH; tap Down; wait 2600; $CHECK; tap Down; wait 400; $CHECK; tap Down; wait 400; $CHECK; tap Down; wait 400; $CHECK; tap Up; wait 400; $CHECK; tap Up; wait 400; $CHECK; wait 2000; $CHECK"
-expect "PERC, message expired" "popup=none engine=PERC cursor=4" "$(obs 1)"
+run "$sd" "$SYNTH; tap Down; wait 3300; $CHECK; tap Down; wait 400; $CHECK; tap Down; wait 400; $CHECK; tap Down; wait 400; $CHECK; tap Up; wait 400; $CHECK; tap Up; wait 400; $CHECK; wait 2000; $CHECK"
+expect "PERC, picked after its rest, message expired" "popup=none engine=PERC cursor=4" "$(obs 1)"
 expect "Down onto CHIP, 400 ms" "popup=none engine=PERC cursor=5" "$(obs 2)"
 expect "Down onto JU6, 400 ms" "popup=none engine=PERC cursor=6" "$(obs 3)"
 expect "Down onto FM4, 400 ms" "popup=none engine=PERC cursor=7" "$(obs 4)"
@@ -88,18 +97,197 @@ expect "the rest on CHIP ends: installed, message" "popup=$MSG engine=CHIP curso
 
 echo "### scenario 3: back on the current engine before the rest ends: nothing is installed"
 sd="$WORK/s3"; stage "$sd"
-run "$sd" "$SYNTH; tap Down; wait 2600; tap Down; wait 500; $CHECK; tap Up; wait 200; $CHECK; wait 2500; $CHECK"
+run "$sd" "$SYNTH; tap Down; wait 3300; tap Down; wait 500; $CHECK; tap Up; wait 200; $CHECK; wait 2500; $CHECK"
 expect "on CHIP, 500 ms" "popup=none engine=PERC cursor=5" "$(obs 1)"
 expect "back on PERC: no message, no pending pick" "popup=none engine=PERC cursor=4" "$(obs 2)"
 expect "2.5 s later: the part is still on PERC, nothing was installed" "popup=none engine=PERC cursor=4" "$(obs 3)"
 
-echo "### scenario 4: a rest of 1 s picks the engine, an engine that is attached switches at once"
+echo "### scenario 4: every engine waits the rest of 1 s, one that is built in or attached too"
 sd="$WORK/s4"; stage "$sd"
-run "$sd" "$SYNTH; tap Down 2; wait 700; $CHECK; wait 500; $CHECK; wait 2600; tap Up; wait 100; $CHECK; wait 2600; tap Down; wait 100; $CHECK"
-expect "Down twice (PERC at once, then CHIP): the message of PERC is down, CHIP waits" "popup=none engine=PERC cursor=5" "$(obs 1)"
+run "$sd" "$SYNTH; tap Down 2; wait 700; $CHECK; wait 500; $CHECK; wait 2600; tap Up; wait 100; $CHECK; wait 1000; $CHECK; wait 2600; tap Down; wait 100; $CHECK; wait 1000; $CHECK"
+expect "Down twice (PERC, then CHIP): nothing is picked, the part stays on WTFM" "popup=none engine=WTFM cursor=5" "$(obs 1)"
 expect "1.2 s: CHIP installed and picked, message" "popup=$MSG engine=CHIP cursor=5" "$(obs 2)"
-expect "Up onto PERC (built in): at once" "popup=$MSG engine=PERC cursor=4" "$(obs 3)"
-expect "Down onto CHIP again (attached by now): at once, no rest" "popup=$MSG engine=CHIP cursor=5" "$(obs 4)"
+expect "Up onto PERC (built in): the list moves, the part waits on CHIP" "popup=none engine=CHIP cursor=4" "$(obs 3)"
+expect "after the rest: PERC is picked" "popup=$MSG engine=PERC cursor=4" "$(obs 4)"
+expect "Down onto CHIP again (attached by now): the list moves, the part waits on PERC" "popup=none engine=PERC cursor=5" "$(obs 5)"
+expect "after the rest: CHIP is picked, no new install" "popup=$MSG engine=CHIP cursor=5" "$(obs 6)"
+
+# Scenarios 5 to 8: the rest restarts on every step. Steps 930 ms apart (80 ms tap + 850 ms), less than the 1 s rest, 5 of them
+# (CHIP, JU6, FM4, JU6, CHIP: only CHIP installs on the host, so the one load is observable). The first step is 3.7 s before the last,
+# a timer that kept the first step (or any early one) would have fired in between. "loads mark" is the instant of the last step.
+GAP='wait 850'
+steps() {   # steps DOWN_CMD UP_CMD: five steps, check after each, mark before the last one, then the rest after the last
+    local dn="$1" up="$2"
+    echo "$SYNTH; tap Down; wait 2600; poke loads reset; $dn; $GAP; $CHECKL; $dn; $GAP; $CHECKL; $dn; $GAP; $CHECKL; $up; $GAP; $CHECKL; poke loads mark; $up; $GAP; $CHECKL; wait 100; $CHECKL; wait 2000; $CHECKL"
+}
+steps_expect() {   # steps_expect LABEL: the 8 observations of steps()
+    local L="$1"
+    expect "$L: onto CHIP, 930 ms: still PERC" "popup=none engine=PERC cursor=5 loads=0 last=-1" "$(obsl 1)"
+    expect "$L: onto JU6, 930 ms: still PERC" "popup=none engine=PERC cursor=6 loads=0 last=-1" "$(obsl 2)"
+    expect "$L: onto FM4, 930 ms: still PERC" "popup=none engine=PERC cursor=7 loads=0 last=-1" "$(obsl 3)"
+    expect "$L: back onto JU6, 930 ms (3.7 s after the first step): still PERC" "popup=none engine=PERC cursor=6 loads=0 last=-1" "$(obsl 4)"
+    expect "$L: onto CHIP (the last step), 930 ms: still PERC, no load" "popup=none engine=PERC cursor=5 loads=0 last=-1" "$(obsl 5)"
+    local o; o="$(obsl 6)"
+    case "$o" in
+        "popup=$MSG engine=CHIP cursor=5 loads=1 last="*)
+            local t="${o##*last=}"
+            if [ "$t" -ge 1000 ] && [ "$t" -le 1060 ]; then pass "$L: exactly one load of CHIP, ${t} ms after the last step (rest 1000 ms)"
+            else fail "$L: the load comes 1000 to 1060 ms after the last step" "got ${t} ms: $o"; fi ;;
+        *) fail "$L: 1030 ms after the last step: CHIP installed and picked once, with the message" "got: $o" ;;
+    esac
+    case "$(obsl 7)" in
+        "popup=none engine=CHIP cursor=5 loads=1 last="*) pass "$L: still one load and CHIP 3 s after the last step (message expired)" ;;
+        *) fail "$L: still one load and CHIP 3 s after the last step" "got: $(obsl 7)" ;;
+    esac
+}
+
+echo "### scenario 5: Down arrow, steps shorter than the rest apart: the load comes one full rest after the last step"
+sd="$WORK/s5"; stage "$sd"
+run "$sd" "$(steps 'tap Down' 'tap Up')"
+steps_expect "arrows"
+
+echo "### scenario 6: encoder steps, the same"
+sd="$WORK/s6"; stage "$sd"
+run "$sd" "$(steps 'enc 1' 'enc -1')"
+steps_expect "encoder"
+
+echo "### scenario 7: a held arrow, the key repeat events (buttonHold, 380 ms apart) are steps like the presses"
+# Down held: the press and 3 repeats (CHIP, JU6, FM4, row 8), then Up held: the press and 2 repeats (rows 7, 6, CHIP). 8 events in 3 s.
+sd="$WORK/s7"; stage "$sd"
+run "$sd" "$SYNTH; tap Down; wait 2600; poke loads reset; hold Down; wait 340; repeat Down; wait 340; repeat Down; wait 340; repeat Down; wait 340; unhold Down; $CHECKL; hold Up; wait 340; repeat Up; wait 340; $CHECKL; poke loads mark; repeat Up; wait 340; unhold Up; wait 500; $CHECKL; wait 100; $CHECKL; wait 2000; $CHECKL"
+expect "held Down, 4 steps over 1.5 s: still PERC, cursor on row 8" "popup=none engine=PERC cursor=8 loads=0 last=-1" "$(obsl 1)"
+expect "held Up, 3 steps: still PERC (3 s after the first step)" "popup=none engine=PERC cursor=6 loads=0 last=-1" "$(obsl 2)"
+expect "900 ms after the last repeat: still PERC" "popup=none engine=PERC cursor=5 loads=0 last=-1" "$(obsl 3)"
+o="$(obsl 4)"
+case "$o" in
+    "popup=$MSG engine=CHIP cursor=5 loads=1 last="*)
+        t="${o##*last=}"
+        if [ "$t" -ge 1000 ] && [ "$t" -le 1060 ]; then pass "exactly one load of CHIP, ${t} ms after the last repeat"
+        else fail "the load comes 1000 to 1060 ms after the last repeat" "got ${t} ms: $o"; fi ;;
+    *) fail "1 s after the last repeat: CHIP installed and picked once" "got: $o" ;;
+esac
+expect "3 s later: still one load" "popup=none engine=CHIP cursor=5 loads=1 last=${o##*last=}" "$(obsl 5)"
+
+echo "### scenario 8: a step right after the load starts a new rest, and the load before it is the only one"
+# the load of CHIP ends a rest. A step 100 ms later (JU6, not installed) waits a full rest of its own, the part stays on CHIP.
+sd="$WORK/s8"; stage "$sd"
+run "$sd" "$SYNTH; tap Down; wait 3300; poke loads reset; tap Down; wait 1000; $CHECKL; tap Down; wait 850; $CHECKL; tap Up; wait 850; $CHECKL; wait 2000; $CHECKL"
+nolast() { obsl "$1" | sed 's/ last=.*//'; }
+expect "CHIP loaded after its rest" "popup=$MSG engine=CHIP cursor=5 loads=1" "$(nolast 1)"
+expect "Down onto JU6 (not installed) right after the load: the part stays on CHIP" "popup=none engine=CHIP cursor=6 loads=1" "$(nolast 2)"
+expect "Up onto CHIP, the current one: no load, one load in all" "popup=none engine=CHIP cursor=5 loads=1" "$(nolast 3)"
+expect "2 s later: still one load" "popup=none engine=CHIP cursor=5 loads=1" "$(nolast 4)"
+
+# Scenarios 9 and 10: the engines that are built in (or attached) wait like the others. Stepping over them used to switch each at once.
+echo "### scenario 9: steps over built in engines and plugin engines alternate: one load, of the last, one rest after the last step"
+# WTFM -> PERC (built in) -> CHIP -> JU6 -> CHIP (not installed) -> PERC (built in, the last), 930 ms apart
+sd="$WORK/s9"; stage "$sd"
+run "$sd" "$SYNTH; poke loads reset; tap Down; wait 850; $CHECKL; tap Down; wait 850; $CHECKL; tap Down; wait 850; $CHECKL; tap Up; wait 850; $CHECKL; poke loads mark; tap Up; wait 850; $CHECKL; wait 100; $CHECKL; wait 2000; $CHECKL"
+expect "onto PERC (built in), 930 ms: the part stays on WTFM" "popup=none engine=WTFM cursor=4 loads=0 last=-1" "$(obsl 1)"
+expect "onto CHIP, 930 ms: still WTFM" "popup=none engine=WTFM cursor=5 loads=0 last=-1" "$(obsl 2)"
+expect "onto JU6, 930 ms: still WTFM" "popup=none engine=WTFM cursor=6 loads=0 last=-1" "$(obsl 3)"
+expect "back onto CHIP, 930 ms: still WTFM" "popup=none engine=WTFM cursor=5 loads=0 last=-1" "$(obsl 4)"
+expect "onto PERC (the last step), 930 ms: still WTFM, no load" "popup=none engine=WTFM cursor=4 loads=0 last=-1" "$(obsl 5)"
+o="$(obsl 6)"
+case "$o" in
+    "popup=$MSG engine=PERC cursor=4 loads=1 last="*)
+        t="${o##*last=}"
+        if [ "$t" -ge 1000 ] && [ "$t" -le 1060 ]; then pass "exactly one load, PERC, ${t} ms after the last step"
+        else fail "the load comes 1000 to 1060 ms after the last step" "got ${t} ms: $o"; fi ;;
+    *) fail "1030 ms after the last step: PERC picked once, with the message" "got: $o" ;;
+esac
+expect "3 s later: still one load, CHIP was never installed" "popup=none engine=PERC cursor=4 loads=1 last=${o##*last=}" "$(obsl 7)"
+
+echo "### scenario 10: scrolling over built in engines only: Up from WTFM past VAP and FAT to ACD, one load"
+sd="$WORK/s10"; stage "$sd"
+run "$sd" "$SYNTH; poke loads reset; tap Up; wait 850; $CHECKL; tap Up; wait 850; $CHECKL; poke loads mark; tap Up; wait 850; $CHECKL; wait 100; $CHECKL"
+expect "onto VAP, 930 ms: still WTFM" "popup=none engine=WTFM cursor=2 loads=0 last=-1" "$(obsl 1)"
+expect "onto FAT, 930 ms: still WTFM" "popup=none engine=WTFM cursor=1 loads=0 last=-1" "$(obsl 2)"
+expect "onto ACD (the last step), 930 ms: still WTFM" "popup=none engine=WTFM cursor=0 loads=0 last=-1" "$(obsl 3)"
+o="$(obsl 4)"
+case "$o" in
+    "popup=$MSG engine=ACD cursor=0 loads=1 last="*)
+        t="${o##*last=}"
+        if [ "$t" -ge 1000 ] && [ "$t" -le 1060 ]; then pass "exactly one load, ACD, ${t} ms after the last step"
+        else fail "the load comes 1000 to 1060 ms after the last step" "got ${t} ms: $o"; fi ;;
+    *) fail "1030 ms after the last step: ACD picked once, with the message" "got: $o" ;;
+esac
+
+# Scenarios 11 to 15: the screen while the list moves. "poke watch" (host_poke.cpp) samples the right-hand side of the Synth screen (patch name and
+# slot, polyphony, gain, panning, sends, the part's patch) and the popup at every millisecond of the main loop since "watch reset" and reports how
+# often each changed and when the first change was, so a flash of "Init patch loaded" or of the next engine's content between two looks is caught too.
+# Required: while the list moves nothing on the right changes and no popup shows (not a load status, not the Init patch message), the engine loads
+# one rest (kModelRestMs) after the last step and only then the right-hand side changes and "Init patch loaded" shows, never earlier.
+# wscen LABEL LAST_ENGINE FIRST_ENGINE STEP...: STEP is the script of one step (tap, enc, hold + repeat), all but the last are followed by 850 ms and a
+# look, the last one is marked, looked at 930 ms later (rest not over) and 100 ms after that (over). WAITS is the pause after every step but the last.
+WAITS='wait 850'
+TAILW='wait 850'   # after the last step: 80 ms tap + 850 = 930 ms after the mark (a repeat event takes 40 ms: wait 890)
+wscen() {
+    local label="$1" last="$2" first="$3"; shift 3
+    local sd="$WORK/w$wn"; wn=$((wn+1)); stage "$sd"
+    local script="$SYNTH; poke rhs; poke watch reset" n=$#
+    local i=0 st
+    for st in "$@"; do
+        i=$((i+1))
+        if [ "$i" -lt "$n" ]; then script="$script; $st; $WAITS; poke watch"
+        else script="$script; poke watch mark; $st; $TAILW; poke watch; wait 100; poke watch; wait 2500; poke rhs; poke picker; $(shot "${label// /-}")"; fi
+    done
+    rm -f "$WORK/poke" "$WORK/poke.out"
+    UISHOT_POKE="$WORK/poke" "$BIN" "$sd" "$script" >"$WORK/out.txt" 2>"$WORK/err.txt" || { echo "ui_shot failed:"; tail -5 "$WORK/err.txt"; fails=$((fails+1)); }
+    [ -f "$WORK/poke.out" ] || : >"$WORK/poke.out"
+    grep '^watch ' "$WORK/poke.out" >"$WORK/w.txt"; grep '^rhs ' "$WORK/poke.out" >"$WORK/r.txt"
+    local k
+    for k in $(seq 1 $((n-1))); do
+        expect "$label: after step $k of $n: right-hand side unchanged, no popup" "watch rhs=0 first=-1 pops=0 first=-1 text=''" "$(sed -n "${k}p" "$WORK/w.txt")"
+    done
+    expect "$label: 930 ms after the last step: right-hand side unchanged, no popup" "watch rhs=0 first=-1 pops=0 first=-1 text=''" "$(sed -n "${n}p" "$WORK/w.txt")"
+    local o t t2; o="$(sed -n "$((n+1))p" "$WORK/w.txt")"
+    case "$o" in
+        "watch rhs="[1-9]*" first="*" pops=1 first="*" text='$MSG'")
+            t="${o#*pops=1 first=}"; t="${t%% *}"; t2="${o#*first=}"; t2="${t2%% *}"
+            if [ "$t" -ge 1000 ] && [ "$t2" -ge 1000 ]; then pass "$label: 1030 ms after the last step the engine loaded: right-hand side first changed at $t2 ms, '$MSG' at $t ms (>= 1000)"
+            else fail "$label: nothing earlier than the last step + 1000 ms" "right-hand side first change $t2 ms, message $t ms: $o"; fi ;;
+        *) fail "$label: 1030 ms after the last step: the engine loaded, the right-hand side changed and '$MSG' shows once" "got: $o" ;;
+    esac
+    expect "$label: the part plays $last at the end" "$last" "$(awk '/^part 0 /{print $NF}' "$WORK/poke.out" | tail -1)"
+    if [ "$(sed -n 1p "$WORK/r.txt")" != "$(sed -n 2p "$WORK/r.txt")" ]; then pass "$label: the loaded engine's right-hand side differs from the one before the scroll (the watch can see a change)"
+    else fail "$label: the load changes the right-hand side" "same before and after: $(sed -n 1p "$WORK/r.txt")"; fi
+}
+wn=1
+
+echo "### scenario 11: arrows over built in engines, Up from WTFM to ACD (VAP, FAT, ACD)"
+wscen "arrows built-in" ACD WTFM 'tap Up' 'tap Up' 'tap Up'
+echo "### scenario 12: arrows down from WTFM over PERC (built in) onto CHIP, which installs"
+wscen "arrows onto CHIP" CHIP WTFM 'tap Down' 'tap Down'
+echo "### scenario 13: encoder over built in engines"
+wscen "encoder built-in" ACD WTFM 'enc -1' 'enc -1' 'enc -1'
+echo "### scenario 14: a held arrow (press and key repeats) from WTFM to ACD"
+TAILW='wait 890' WAITS='wait 340' wscen "held arrow" ACD WTFM 'hold Up' 'repeat Up' 'repeat Up'
+echo "### scenario 15: a long run of arrow steps over built in and plugin engines, the last onto PERC"
+wscen "arrows mixed" PERC WTFM 'tap Down' 'tap Down' 'tap Down' 'tap Up' 'tap Up'
+
+# Scenario 16: the same on the pixels. Frames of the Synth screen before the scroll, in the middle of it (two arrow steps, the last 300 ms ago) and
+# after the rest. Mid-scroll only the Model column (x < 100) differs from the frame before: the title bar, the bars, the patch panel and the popup
+# area are the same pixels. After the rest the rest of the screen shows the loaded engine (title bar, polyphony bar) and the message.
+echo "### scenario 16: frames before, mid-scroll and after the rest differ only where they should"
+sd="$WORK/s16"; stage "$sd"
+run "$sd" "$SYNTH; shot $WORK/f0.png; tap Down; wait 850; tap Down; wait 300; shot $WORK/f1.png; wait 1200; shot $WORK/f2.png"
+PNGDIFF="$HERE/png_diff.py"
+d01="$(python3 -I "$PNGDIFF" "$WORK/f0.png" "$WORK/f1.png" 2>&1)"
+case "$d01" in
+    "none") fail "mid-scroll frame differs from the one before (the Model cursor moved)" "frames are equal" ;;
+    [0-9]*) set -- $d01
+        if [ "$3" -lt 100 ]; then pass "mid-scroll: only the Model column changed (pixels x $1..$3, y $2..$4), nothing on the right"
+        else fail "mid-scroll: nothing right of the Model column (x >= 100) changes" "differs in x $1..$3, y $2..$4" ; fi ;;
+    *) fail "png_diff.py ran" "$d01" ;;
+esac
+d12="$(python3 -I "$PNGDIFF" "$WORK/f1.png" "$WORK/f2.png" 2>&1)"
+case "$d12" in
+    [0-9]*) set -- $d12
+        if [ "$3" -ge 600 ]; then pass "after the rest: the screen shows the loaded engine and the message (pixels x $1..$3, y $2..$4)"
+        else fail "after the rest the right-hand side changes" "differs only in x $1..$3, y $2..$4"; fi ;;
+    *) fail "after the rest the right-hand side differs from mid-scroll" "$d12" ;;
+esac
 
 echo
 if [ "$fails" -eq 0 ]; then echo "RESULT: GREEN ($checks checks)"; exit 0; else echo "RESULT: RED ($fails failing of $checks)"; exit 1; fi
