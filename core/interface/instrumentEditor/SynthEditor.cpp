@@ -165,8 +165,9 @@ static int fillSynthModelList()
         const int ui = synthView.ui[p];
         if (synthListEdit)
         {
-            snprintf(synthRowText[p], sizeof(synthRowText[p]), "%s%.10s", synthOrder.e[synthView.entry[p]].hidden ? "-" : "",
-                     polysynth::open::engineAt(ui).def->name);
+            // the list centres the text in a clip of synthorder::kRowPx: the name gives way, the "-" stays visible
+            synthorder::fitRow(synthRowText[p], sizeof(synthRowText[p]), polysynth::open::engineAt(ui).def->name,
+                               synthOrder.e[synthView.entry[p]].hidden, [](char c) { return int(fonts[0].data[uint8_t(c)]); });
             synthModelListImages[p] = -1;
             synthModelListNames[p] = synthRowText[p];
         }
