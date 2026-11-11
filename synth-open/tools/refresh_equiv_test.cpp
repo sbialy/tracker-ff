@@ -50,12 +50,18 @@ int main(int argc, char** argv) {
   uint32_t hash = 0; long blocks = 0;
   auto render = [&]() { for (int k = 0; k < 3; k++) { synth->renderAudioBuffer({AudioBufferRef(L),AudioBufferRef(R)}, std::span<AudioBufferRef>(aux), k);
       for (float v : L) { uint32_t b; std::memcpy(&b, &v, 4); hash = ((hash << 5) | (hash >> 27)) ^ b; } blocks++; } };
+  const bool nanOk = getenv("EQUIV_NAN") != nullptr;   // NaN values break the engines' integer conversions (undefined): only for the check build, not for hash comparisons
+  const int skipOp = getenv("EQUIV_SKIP") ? atoi(getenv("EQUIV_SKIP")) : -1;   // debugging: leave one operation out
+  const bool trace = getenv("EQUIV_TRACE") != nullptr;   // a line with the running hash every step: diff two builds to find the first step that differs
   for (int step = 0; step < steps; step++) {
     const int k = int(rnd() % 3);
+    const uint32_t opc = rnd() % 34;
+    if (trace) printf("%d %08x op=%u part=%d\n", step, hash, opc, k);
     auto& p = *patch[k]; auto& op = static_cast<open::OpenPatch&>(p);
     const auto& md = p.getMetadata();
     const int np = int(md.params.size());
-    switch (rnd() % 34) {
+    if (skipOp >= 0 && int(opc) == skipOp) continue;
+    switch (opc) {
       case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9: render(); break;
       case 10: case 11: case 12: case 13: {
         const int id = int(rnd() % np); const float lo = float(md.params[id].minValue), hi = float(md.params[id].maxValue);
@@ -76,7 +82,7 @@ int main(int argc, char** argv) {
       case 27: src[k].send(MidiEvent::Type::kControlChange, 0, 100 + int(rnd() % 8), int(rnd() % 128)); break;
       case 28: if (rnd() % 10 == 0) { patch[k] = std::shared_ptr<Patch>(store->createPatch(ids[rnd() % nEng])); inst[k]->assignPatch(patch[k]); } break;
       case 29: inst[k]->setVoiceCount(int(rnd() % 4)); break;
-      case 30: if (rnd() % 12 == 0) { float v[open::kMaxParams]; op.getValuesRaw(v); for (int i = 0; i < op.paramCount(); i++) if (rnd() % 7 == 0) v[i] = (rnd() % 5 == 0) ? NAN : v[i] * 0.5f; op.setValuesRaw(v); } break;
+      case 30: /* in range, as a bank row is (valuesFromData) */ if (rnd() % 12 == 0) { float v[open::kMaxParams]; op.getValuesRaw(v); for (int i = 0; i < op.paramCount(); i++) if (rnd() % 7 == 0) { const float lo = float(md.params[i].minValue), hi = float(md.params[i].maxValue); v[i] = (nanOk && rnd() % 5 == 0) ? NAN : lo + (hi - lo) * rndf(); } op.setValuesRaw(v); } break;
       case 31: op.useOwnCfg(); break;
       case 32: case 33: render(); render(); break;
     }
