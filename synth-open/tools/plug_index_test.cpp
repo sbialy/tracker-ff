@@ -299,7 +299,7 @@ int main(int argc, char** argv)
         printf("      pair matrix (insert 1 down, insert 2 across, image + bss in B, 8,192 B shared):\n      %-8s %5s", "", "");
         for (const M& b : m) printf(" %7s", b.name.c_str());
         printf("\n");
-        int fit = 0, all = 0, alone = 0, distinctNo = 0;
+        int fit = 0, all = 0, alone = 0, distinctNo = 0, glueNo = 0, gluePairs = 0;
         std::string refused;
         uint32_t most = 0;
         for (const M& a : m)
@@ -311,7 +311,11 @@ int main(int argc, char** argv)
                 const bool ok = insertPairFits(a.foot, b.foot);
                 fit += ok;
                 all++;
-                if (!ok && &a != &b) distinctNo++;
+                // Glue and Phaser are a refused pair (user decision 2026-11-10, "Full:<name>" like Phaser + Phaser): 5,096 + 4,384 B
+                const bool knownRefused = (a.file == "glue.plg" && b.file == "phaser.plg") || (a.file == "phaser.plg" && b.file == "glue.plg");
+                if (!ok && &a != &b && !knownRefused) distinctNo++;
+                if (knownRefused) glueNo += ok ? 0 : 1;
+                if (knownRefused) gluePairs++;
                 if (!ok && &a <= &b) refused += " " + a.name + "+" + b.name;
                 most = a.foot + b.foot > most ? a.foot + b.foot : most;
                 printf(" %7s", ok ? "fits" : "NO");
@@ -321,8 +325,11 @@ int main(int argc, char** argv)
         printf("      %d of %d ordered pairs fit (the same plugin twice included), largest pair %u B, %d of %zu fit alone, refused:%s\n", fit,
                all, most, alone, m.size(), refused.empty() ? " none" : refused.c_str());
         char what[128];
-        snprintf(what, sizeof(what), "the %zu master inserts in the folder: every one fits alone, every pair of two different ones fits", m.size());
+        snprintf(what, sizeof(what), "the %zu master inserts in the folder: every one fits alone, every pair of two different ones fits but Glue + Phaser", m.size());
         check(m.size() >= 3 && alone == int(m.size()) && distinctNo == 0, what);
+        // the one refused pair stays refused in both orders (it is the user's accepted limit, not a hole of the check above)
+        if (gluePairs > 0)
+            check(gluePairs == 2 && glueNo == 2, "Glue + Phaser is refused in both orders, no other pair of two different inserts is");
     }
 
     // ---- the user's card: /plugins (lowercase, from the spike) with the new Master inside, "._" twins everywhere
