@@ -7,7 +7,7 @@
 static uint16_t internalRamReverbBuff[16384] __attribute__((section(".noinit")));
 #elif defined(FW_REVERB_SRAM) && FW_REVERB_SRAM >= 1
 // SYNTH_OPEN images: the line buffer in internal SRAM, not in the 90 MHz SDRAM (no data cache on the MK66). The half rate reverb
-// (Polyverb/reverb.h) keeps both line sets back to back in this one buffer, as short as the wrap allows (27,426 B), the
+// (Polyverb/reverb.h) keeps both line sets back to back in this one buffer, as short as the wrap allows (27,456 B), the
 // second SDRAM buffer (externalRamReverbBuff, .reverb_memory) of the full rate reverb is gone.
 static uint16_t internalRamReverbBuff[Reverb::kBufferSamples] __attribute__((section(".noinit")));
 #else
