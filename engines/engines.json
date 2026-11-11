@@ -266,6 +266,14 @@
    "visibility": "private",
    "repo": "poly-effects",
    "licence": "Proprietary freeware, MIT parts"
+  },
+  {
+   "id": "glue",
+   "plug_id": "ff.glue",
+   "version": "1.0.0",
+   "visibility": "private",
+   "repo": "poly-effects",
+   "licence": "Proprietary freeware, MIT parts"
   }
  ]
 }
