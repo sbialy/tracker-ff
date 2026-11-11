@@ -14,6 +14,7 @@ Version 1.3.0 of the tracker-ff firmware for the original Tracker. The Tracker+ 
 2. **USB audio.** Built in. With USB audio on, the unit shows up as an audio input on a computer after the next start. With it off, the unit presents only the stock USB interfaces.
 3. **Restart mode.** Power button: turn off as usual, or restart the unit at a power off. Power return: stay off, or start by itself when power comes back after a cut while the unit was on. Holding Record at start switches the mode on and Record with the power button switches it off, and the Record shortcut can be turned off on its page.
 4. **Developer mode.** A row of the Features page, listed once `/.develop` exists on the card. It shows the CPU readouts and loads an optional extension module from `/Plugins/Ext/` at start. A module that crashed is skipped at the next start and its fault record is written to `/Plugins/Ext/crash.txt`. Holding Shift in the first 4 seconds after power on starts without it.
+5. **Glue master insert.** `glue.plg` in `/Plugins/Master/`, a bus compressor with Auto makeup and a Character setting (Clean, Glue, Smooth, Punch or Colour). There are eight inserts now. Glue and Phaser do not fit the insert memory together, the second of the two shows `Full`.
 
 ### Changed
 
@@ -21,11 +22,13 @@ Version 1.3.0 of the tracker-ff firmware for the original Tracker. The Tracker+ 
 2. **Add to Empty Slot.** With files selected in the Sample Loader, Shift with the add button adds the selection and does not jump to the first empty slot. After a jump the instrument list and the memory bar refresh.
 3. **CHIP is an installable engine.** CHIP is no longer built into the image. It is `chip.plg` in `/Plugins/Synth/` like the other plugin engines, and it frees about 15 KB of flash. The sound, the parameters and the numbers are unchanged, so old projects and `.patch` files open on it as before. A part on CHIP shows `Missing: CHIP` on a card without the plugin.
 4. **Patch FX.** `O - Patch` now applies the macros and the automation of the slot it switches to, together with its values. An LFO or envelope that sits on the same slot type in both patches keeps running, one that changes type starts new and an automation slot that is Off reads zero.
+5. **Short delay.** The delay runs only the lines of the mode that is on (mono or ping pong), which uses less audio CPU. The sound is unchanged while the mode stays. Switching the mode with echoes ringing now crossfades over about 90 ms and carries the echoes over, where it used to cut to unrelated echoes with a click.
 
 ### Fixed
 
 1. Installing a synth plugin into the data flash no longer makes the audio crackle. The audio output renders ahead into a deeper buffer while the flash erases, and the erase works in short slices.
 2. A power off or a restart with an extension module loaded no longer ends in a lockup.
+3. The delay feedback and the reverb damping are set the same way at the start as a project load sets them. Before, they started from the raw project values and the first project load corrected them.
 
 ---
 
@@ -40,7 +43,7 @@ Version 1.2.0 of the tracker-ff firmware for the original Tracker. The Tracker+ 
 3. **Synth engines as plugins.** ACD, FAT, VAP, WTFM, PERC and CHIP are built in. JU6, PHZ, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type, Arc-Type and PLK are `.plg` files in `/Plugins/Synth/`, up to 256 files with names of up to 23 characters. A part shows `Missing: <NAME>` and keeps its settings when its engine is not on the card.
 4. **Synth Automation.** Four LFO or envelope slots per patch, each on one engine parameter or macro, saved in the `.patch` file. The Params button cycles Synth Parameters, Synth Macros and Synth Automation.
 5. **Patch FX.** A bank of 16 patch slots per synth part and the `O - Patch` step FX that switches between them.
-6. **Sample editor effects.** Plate Reverb, Transient Shaper, Tape Saturation, Lo-Fi Chip, Dirt Drive, BBD Chorus, Dub Echo and Reverb join the existing effects, fifteen `.ptfx` files in all.
+6. **Sample editor effects.** Transient Shaper, Tape Saturation, Lo-Fi Chip, Dirt Drive, BBD Chorus, Dub Echo and Reverb join the existing effects, fourteen `.ptfx` files in all.
 7. **Workflow.** Add to Empty Slot in the Sample Loader, per-track MIDI-in (Config > MIDI, tracks 1 to 8), RAM or streaming mode per sample, Synth FX performance control from MIDI CC, and a project load that ends in the pattern editor.
 
 ### Changed
@@ -56,6 +59,9 @@ Version 1.2.0 of the tracker-ff firmware for the original Tracker. The Tracker+ 
 3. An unreadable folder no longer breaks the file lists, a corrupt `.it` module cannot overflow the stack on import and an out of range audio connection index is rejected.
 4. The playhead stays inside very short backward, ping-pong and granular loops, wavetable and granular position modulation clamps at 0, and song blocks smaller than 32 steps copy and paste correctly.
 5. The CHIP engine no longer overloads the audio interrupt with many voices.
+6. Changing the engine of a synth part, loading a project, saving a recording, listing a folder and opening the value list of a synth parameter no longer write through a null pointer when the heap is short. Large synth blocks come from the external memory and a failed allocation ends the action with an error.
+7. The synth patch editor refuses a parameter or macro index outside the patch.
+8. Power off always switches the Tracker off. Before, it could hang at the end with the screen on and every key dead. The wait for a running card operation is now bounded, a short heap no longer faults while the shutdown bar is created and a software deadline switches the Tracker off if the sequence stalls.
 
 ---
 
