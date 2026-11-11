@@ -12,7 +12,7 @@
 #
 # DEVTOOLS_DIR defaults to poly-devtools next to this checkout (../poly-devtools). Without it a console build stops here with a
 # message. Default, release and stock builds never read this file's second half and need nothing from poly-devtools.
-# The checkout must implement the hook set of core/include/devhooks.h (DEVHOOKS_API): tracker-ff 1.2.0 goes with poly-devtools v1.2.0.
+# The checkout must implement the hook set of core/include/devhooks.h (DEVHOOKS_API): tracker-ff 1.3.0 goes with poly-devtools rel-1.3.0 (DEVHOOKS_API 4).
 
 DEVTOOLS_TREE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 DEVHOOKS_API := $(shell sed -n 's/^\#define DEVHOOKS_API //p' $(DEVTOOLS_TREE)/core/include/devhooks.h)

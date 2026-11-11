@@ -7,7 +7,7 @@
    "visibility": "public",
    "kind": "synth",
    "tag": "v1.3.0",
-   "tag_commit": "d8726067751cdb388568c0f54c407175adbf10a0",
+   "tag_commit": "91fca2d53de92fdc24b182ea62b18b940bd0366d",
    "local_repo": "../poly-engines-os",
    "local_dirs": [
     "../poly-engines-os/build/engines-autof",

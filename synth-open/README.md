@@ -1,10 +1,10 @@
-# tracker-ff 1.2.0 - synth-open, the open PolySynth shim for the original Tracker (MK66)
+# tracker-ff 1.3.0 - synth-open, the open PolySynth shim for the original Tracker (MK66)
 
 tracker-ff is a fork of Polyend's Tracker CE firmware (FF as in 0xFF). `synth-open/` is the directory and the make flag (`SYNTH_OPEN=1`) of its synth layer. The repository README is `../README.md`. This file is the technical description of the shim and of the build.
 
 The shim is built only with `make original SYNTH_OPEN=1`. It replaces the closed `libPolySynth.a` and `libPolyDSP.a` (Cortex-M7 only, the licence forbids reverse engineering) on the original Tracker. The closed libraries are never linked here and nothing in this directory was derived from them. Everything is written from the open headers in `synth/include/PolySynth` and from OpenTracker (Apache-2.0).
 
-What 1.2.0 has:
+What 1.3.0 has:
 
 - Synth engines chosen at build time (see "Engine picker") plus synth plugins at run time. The PLUGS configuration has five built in (ACD, FAT, VAP, WTFM, PERC) and a library of thirteen plugins in `/Plugins/Synth/` (JU6, PHZ, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type, Arc-Type, PLK, CHIP). ACD, FAT, VAP and WTFM are the Polyend engines as OpenTracker re-implements them. PERC is OpenTracker's drum engine, CHIP is Polyend's own open Chiptune voice, PHZ (phase distortion) and PLK (Karplus-Strong) are our own, the rest are OpenTracker 3.x modules. Other built-in sets still build, for example the 16 engine 1.1.0 image. MIDI registers by name only and Shaping has no engine.
 - Up to 4 voices per instrument, a shared voice pool and OpenTracker's governor.
@@ -543,13 +543,13 @@ make package-release SYNTH_OPEN=1 TRIM=1
 
 ### Release 1.2.0 lines (Arm GNU 12.3.rel1)
 
-The 1.2.0 release compiler is Arm GNU Toolchain 12.3.rel1 (`TOOLCHAIN=/path/to/agt/12.3.rel1/bin/arm-none-eabi-`). `SYNTH_OPEN_VER` in `version.mk` is 1.2.0, so the images are `PolyendTracker_<TAG>_1.2.0.ptf` (AUTOF 30 chars, AUTO 29, the bootloader reads at most 31). BUILD_TAG has no dirty marker, so commit first. `make` does not track compiler flags: delete `core/build-*` and `platforms/mk66/build-trim` between variants.
+The 1.2.0 release compiler is Arm GNU Toolchain 12.3.rel1 (`TOOLCHAIN=/path/to/agt/12.3.rel1/bin/arm-none-eabi-`). `SYNTH_OPEN_VER` in `version.mk` is 1.3.0, so the images are `PolyendTracker_<TAG>_1.3.0.ptf` (AUTOF 30 chars, AUTO 29, the bootloader reads at most 31). BUILD_TAG has no dirty marker, so commit first. `make` does not track compiler flags: delete `core/build-*` and `platforms/mk66/build-trim` between variants.
 
 The release image is **AUTOF**: five built in engines (ACD FAT VAP WTFM PERC), the plugin host, the other thirteen engines as card plugins, engine DSP at `-O2` (FM4 and B-Type `-O3`) with `-ffp-contract=off` on every engine and every plugin, WTFM included. The flag stops GCC from fusing a multiply and an add into a `vfma` (3 cycles on the M4F against 2 for a multiply followed by an add). It goes on the OpenTracker modules, FAT, CHIP, FM4 and B-Type (PHZ, PLK and Dirt already have it), the plugins take it from `SYNTH_PLUG_OPT_ENGINES` and `SYNTH_PLUG_OPT_O3`, and the render compare passes the same values to the firmware's `make -n`:
 
 ```
 E=-EACD_FAT_VAP_WTFM_PERC_CHIP
-# the release image, build/PolyendTracker_AUTOF_1.2.0.ptf
+# the release image, build/PolyendTracker_AUTOF_1.3.0.ptf
 make original SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTOF SYNTH_TAG=-fpc SYNTH_ENGINES="ACD FAT VAP WTFM PERC" SYNTH_ENGINES_TAG=$E \
   SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
   SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off" BUILD_TAG=$(git rev-parse --short HEAD) TOOLCHAIN=...
@@ -560,7 +560,7 @@ TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/rebuild_pinned.sh OUT autof
 
 Against the plain AUTO build the default patch differs by at most -103 dBFS on every engine except A-Type (-80 dBFS), and the all-parameters-max scenarios of Arc-Type, WTFM and Hand-Type differ far more (Arc-Type -7 dBFS, WTFM -44, Hand-Type -69), measured on the 12.3.rel1 bench dumps. The user listened to both and chose AUTOF for all engines. Its CPU saving is an emulated figure, not device calibrated.
 
-The release package (zip) is made from the image and the pinned modules (`Plugins/Synth/` with the thirteen `.plg` and `.plgi`, `Plugins/Master/` with the seven inserts, `Effects/` with the `.ptfx` files, `licenses/plugins/` with the notices of the module repositories): `synth-open/tools/package_release.sh build/PolyendTracker_AUTOF_1.2.0.ptf OUT --zip --modules OUT/modules --effects PTFX_DIR` (`--card CARD_DIR` takes a ready card layout instead).
+The release package (zip) is made from the image and the pinned modules (`Plugins/Synth/` with the thirteen `.plg` and `.plgi`, `Plugins/Master/` with the seven inserts, `Effects/` with the `.ptfx` files, `licenses/plugins/` with the notices of the module repositories): `synth-open/tools/package_release.sh build/PolyendTracker_AUTOF_1.3.0.ptf OUT --zip --modules OUT/modules --effects PTFX_DIR` (`--card CARD_DIR` takes a ready card layout instead).
 
 The plain **AUTO** build stays buildable as an unpublished fallback: the same two lines without the `-ffp-contract=off` flags (engine DSP `-O2`, FM4 and B-Type `-O3`, the OpenTracker modules fused as the compiler defaults). It is not part of the release package.
 
