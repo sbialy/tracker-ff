@@ -1,5 +1,6 @@
 #include "Audio.h"
 #include "play_memory.h"
+#include "play_memory_read.h"
 #include "utility/dspinst.h"
 #include <cmath>
 #include <cr_section_macros.h>
@@ -183,11 +184,8 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopForwardNormal
 
             for (int i = 0; i < AUDIO_BLOCK_SAMPLES; i++)
             {
-                currentSampelValue = *(in + iPitchCounter);
-                if (interpolationCondition)
-                    interpolationDif = 0;
-                else
-                    interpolationDif = (*(in_interpolation + iPitchCounter) - currentSampelValue);
+                // in_interpolation is in + 1 in this variant (also after refreshGranularPosition)
+                pm_read::readForward(in, iPitchCounter, interpolationCondition, currentSampelValue, interpolationDif);
                 int32_t interpSample =
                   currentSampelValue +
                   (int32_t)(((currentFractionPitchCounter >> 2) * interpolationDif) >> 14);
