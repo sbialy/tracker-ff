@@ -10,6 +10,7 @@
 #include <span>
 #ifdef FEATURE_SYNTH_OPEN
 #include "open_load.h"
+#include "synth_part_clip.h"
 #endif
 //#include "Audio.h"
 //#include "dspinst.h'
@@ -124,6 +125,37 @@ AUDIO_CORE_RAM void PolySynth::update(void)
           { tempBufSendsCommonLeft, tempBufSendsCommonRight },
           std::span<polysynth::AudioBufferRef>(tempSendsBufArray),
           partIdx);
+
+#ifdef FEATURE_SYNTH_OPEN
+        if (!hasSends && !isStereo)
+        {
+            // Mono part: soft clip and int16 in one pass straight from the render buffer (synth_part_clip.h), no float copy for the post
+            // fader, no second pass, no memcpy of the int16 block. Same blocks as the general path below.
+            static_assert(kSynthParts == 3, "the gain cache is initialised for 3 parts");
+            static part_clip::GainCache<kSynthParts> gainCache = { { __builtin_nanf(""), __builtin_nanf(""), __builtin_nanf("") },
+                                                                   { 0.0f, 0.0f, 0.0f } };
+            const float postGainAmp =
+              reuseUnmodifiedMono
+                ? 1.0f
+                : gainCache.get(partIdx, gainDB[partIdx], [](float db) { return polysynth::sdk::dbToAmplitude(db); });
+            part_clip::monoPart<polysynth::kAudioBufferSize>(tempBufSendsCommonLeft.begin(),
+                                                             postGainAmp,
+                                                             reuseUnmodifiedMono,
+                                                             skipSendBlocks,
+                                                             skipSendBlocks ? nullptr : blockSendsCommonOrSend1->data,
+                                                             blockPostFaderLeft->data);
+            if (!skipSendBlocks)
+            {
+                transmit(blockSendsCommonOrSend1, kSend1Offset + partIdx);
+                transmit(blockSendsCommonOrSend1, kSend2Offset + partIdx);
+                release(blockSendsCommonOrSend1);
+            }
+            transmit(blockPostFaderLeft, partIdx);
+            transmit(blockPostFaderLeft, kRightChannelOffset + partIdx);
+            release(blockPostFaderLeft);
+            continue;
+        }
+#endif
 
         if (!reuseUnmodifiedMono)
         {
