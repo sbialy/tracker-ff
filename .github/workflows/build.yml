@@ -81,11 +81,13 @@ jobs:
         run: make stack-ratchet-autof BUILD_TAG="$(git rev-parse --short=7 HEAD)"
 
       # Lint delta: array-bounds, null-dereference, overflow and file manager / plugin host -Wconversion warnings, and a short list of cppcheck
-      # ids, on lines added since the merge-base with origin/main only. Reviewed false positives: synth-open/tools/lint_delta_allow.txt.
-      - name: Lint delta against origin/main
+      # ids, on lines added since the merge-base with the upstream polyend/tracker-ce main only (origin here is this fork, whose main has
+      # other history, so the base is fetched explicitly). Reviewed false positives: synth-open/tools/lint_delta_allow.txt.
+      - name: Lint delta against upstream main
         run: |
           sudo apt-get install -y cppcheck
-          make lint-delta-autof
+          git fetch --no-tags https://github.com/polyend/tracker-ce main:refs/remotes/upstream/main
+          make lint-delta-autof LINT_BASE=upstream/main
 
       - name: Build Original Tracker, Tracker+, and Tracker Mini firmware
         run: |

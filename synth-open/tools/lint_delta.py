@@ -38,9 +38,12 @@ CPPCHECK_IDS = {'nullPointer', 'nullPointerRedundantCheck', 'nullPointerArithmet
 CPPCHECK_BAD = {'unknownMacro', 'syntaxError'}
 CPPCHECK_DIRS = ('core/', 'synth-open/')
 CPPCHECK_SKIP = ('core/include/', 'core/libs/FT812/', 'core/libs/fonts/', 'synth-open/tools/', 'synth-open/plug/')
+# core/AudioEngine is left out on purpose: with it on the include path cppcheck 2.7 (ubuntu 22.04) reports a syntaxError at the enum class in
+# plug_host.h when it analyses plug_ui.cpp (found by bisecting the include dirs in CI), 2.22 does not. The headers there stay unresolved,
+# which cppcheck tolerates.
 CPPCHECK_INC = ['core/include', 'core/config', 'core/source', 'core/synth', 'core/libs', 'core/libs/Audio', 'core/libs/ElapsedMillis',
                 'core/libs/SerialFlash', 'core/libs/SPI', 'core/libs/Audio/utility', 'core/libs/FT812', 'core/libs/fonts',
-                'core/libs/NewDisplay', 'core/interface', 'core/effector', 'core/FileManager', 'core/Exporter', 'core/AudioEngine',
+                'core/libs/NewDisplay', 'core/interface', 'core/effector', 'core/FileManager', 'core/Exporter',
                 'core/AudioEngine/ConstantValues', 'core/AudioEngine/MasterEnhancer', 'util/include', 'util/3rdparty', 'synth/include',
                 'synth-open', 'synth-open/ot', 'synth-open/plug']
 
