@@ -35,6 +35,7 @@
 // leave the device on the bootloader's "100" (f563f27). synth-open/tools/check_static_init.py checks the linked image for it.
 #define OPEN_EXTERNAL_RAM __attribute__((section(".noinit.$EXTERNAL_RAM")))
 #include "interruptsControl.h"
+#include "log.h"
 #define OPEN_LOCK_AUDIO()   DISABLE_AUDIO_INTERRUPTS()
 #define OPEN_UNLOCK_AUDIO() ENABLE_AUDIO_INTERRUPTS()
 #endif
@@ -773,6 +774,21 @@ Patch::Metadata::Macro::ParamModifier* OpenPatch::modifier(int macroId, int idx)
 
 // ---------------------------------------------------------------- .patch transfer
 
+// A file from a newer release of the engine than the .plg on the card: what did not fit the bounded tail (open_patchdata.h) is dropped on the
+// next save. Counted on the host, logged (LOGE) on the unit.
+#ifdef OPEN_HOST_TEST
+int gPatchTailDropped = 0;
+static void patchTailLog(int values, int targets)
+{
+    gPatchTailDropped += values + targets;
+}
+#else
+static void patchTailLog([[maybe_unused]] int values, [[maybe_unused]] int targets) // unused when LOGEF is compiled out
+{
+    LOGEF("patch tail dropped %d values %d targets", values, targets);
+}
+#endif
+
 void OpenPatch::exportData(PatchData& d) const
 {
     d.engine = engineIdForType(metadata.instrumentTypeId);
@@ -782,6 +798,12 @@ void OpenPatch::exportData(PatchData& d) const
         const auto& p = metadata.params[i];
         d.values[i] = float(p.minValue) == float(p.maxValue) ? NAN : values[i]; // unused slot: absent
     }
+    // Values of a newer release of the engine, written back as they were read (none for a patch of this release)
+    for (int k = 0; k < tail.nValues && count + k < kMaxParams; k++)
+    {
+        d.values[count + k] = tail.values[k];
+        d.nParams = count + k + 1;
+    }
     d.nMacros = kPatchMacros;
     for (int m = 0; m < kPatchMacros; m++)
     {
@@ -789,17 +811,40 @@ void OpenPatch::exportData(PatchData& d) const
         PatchMacroData& dst = d.macros[m];
         std::strncpy(dst.name, src.displayName.c_str(), kMacroNameMax);
         dst.bipolar = src.bipolar;
+        // Targets on parameters this engine does not know keep their slot, the known ones fill the others in order. A patch without such
+        // targets takes the old path: slots 0.. in order.
+        bool taken[kMacroTargets] = {};
+        int live = 0;
+        for (int k = 0; k < tail.nTargets; k++)
+        {
+            const PatchTail::Target& t = tail.target[k];
+            if (t.macro == m && t.slot < kMacroTargets && !taken[t.slot])
+            {
+                dst.param[t.slot] = t.param;
+                dst.amount[t.slot] = t.amount;
+                taken[t.slot] = true;
+                live++;
+            }
+        }
         int n = 0;
         for (const auto& mod : src.modifiers)
         {
-            if (mod.paramId.has_value() && n < kMacroTargets)
+            if (mod.paramId.has_value())
             {
-                dst.param[n] = int16_t(*mod.paramId);
-                dst.amount[n] = mod.amount;
-                n++;
+                while (n < kMacroTargets && taken[n])
+                {
+                    n++;
+                }
+                if (n < kMacroTargets)
+                {
+                    dst.param[n] = int16_t(*mod.paramId);
+                    dst.amount[n] = mod.amount;
+                    n++;
+                    live++;
+                }
             }
         }
-        dst.count = int8_t(n);
+        dst.count = int8_t(live);
     }
     for (int i = 0; i < kModSlots; i++)
     {
@@ -875,6 +920,22 @@ void OpenPatch::importData(const PatchData& d)
         wasBipolar[m] = cfg->macro[m].bipolar;
     }
     valuesFromData(d, values);
+    tail = PatchTail{};
+    {
+        // A file from a newer release of the engine: the values past this engine's table are kept for exportData, bounded
+        const int unknown = std::max(0, d.nParams - count);
+        const int keep = std::min({ unknown, kTailParams, kMaxParams - count });
+        for (int k = 0; k < keep; k++)
+        {
+            tail.values[k] = d.values[count + k];
+        }
+        tail.nValues = uint8_t(std::max(0, keep));
+        if (unknown > keep)
+        {
+            patchTailLog(unknown - keep, 0);
+        }
+    }
+    int targetsDropped = 0;
     for (int m = 0; m < kPatchMacros; m++)
     {
         const bool inFile = m < d.nMacros;
@@ -896,7 +957,22 @@ void OpenPatch::importData(const PatchData& d)
             {
                 dst.modifiers.push_back({ src.param[t], std::clamp(src.amount[t], -2.0f, 2.0f) });
             }
+            else if (src.param[t] >= count && src.param[t] < count + tail.nValues)
+            {
+                if (tail.nTargets < kTailTargets)
+                {
+                    tail.target[tail.nTargets++] = { src.param[t], uint8_t(m), uint8_t(t), src.amount[t] };
+                }
+                else
+                {
+                    targetsDropped++;
+                }
+            }
         }
+    }
+    if (targetsDropped)
+    {
+        patchTailLog(0, targetsDropped);
     }
     // Automation: range checks, then each destination is looked up in this engine's table (open_mod.h modResolve). A param found under
     // another index (a plugin update moved it) follows the param. The slot state of the instrument starts over (serial).

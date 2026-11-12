@@ -195,6 +195,7 @@ class OpenPatch final : public Patch
     SlotCfg own;                         // macros and slots of this patch in the form the render path reads (rebuildOwn)
     const SlotCfg* cfg = &own;           // the live one: own, or a row of the Patch FX bank
     PatchExtra extra;                    // raw .patch fields kept for the round trip
+    PatchTail tail;                      // values and macro targets of a newer engine release kept for the round trip (open_patchdata.h)
 };
 
 // The data of a new patch of the engine (what exportData of a fresh OpenPatch gives, cold), made from the engine definition alone: no

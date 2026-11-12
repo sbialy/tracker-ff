@@ -43,6 +43,28 @@ struct PatchExtra
     uint8_t bytes[kRawMax] = {};
 };
 
+// What a file has beyond the engine in the firmware: a patch saved with a newer release of the engine has more parameters than the older
+// engine .plg reports (PLK 1.1 appended Vel Bright and Body to PLK 1.0). The values past the engine's table, and the macro targets that point
+// at them, are kept as they were read and written back by exportData, so an older engine saving the patch does not cut them off (the same
+// idea as PatchExtra for the unknown fields). Loading is not affected, the engine never sees them. Bounded: the first kTailParams unknown
+// values and kTailTargets targets are kept, the rest is dropped and logged (LOGE, "patch tail dropped").
+constexpr int kTailParams = 8;           // unknown trailing parameter values kept (32 B)
+constexpr int kTailTargets = 8;          // macro targets on unknown parameters kept (64 B)
+
+struct PatchTail
+{
+    uint8_t nValues = 0;                 // file parameter count - engine parameter count, at most kTailParams
+    uint8_t nTargets = 0;
+    float values[kTailParams] = {};      // parameters count .. count + nValues - 1, NaN = absent
+    struct Target
+    {
+        int16_t param = 0;               // index in the file, count .. count + nValues - 1
+        uint8_t macro = 0;
+        uint8_t slot = 0;                // position in the macro's target list
+        float amount = 0.0f;             // as read, not clamped
+    } target[kTailTargets];
+};
+
 // ---- synth automation (.patch field 64, synth-open/open_mod.h has the run time and the rules)
 
 constexpr uint32_t kModField = 64;       // top level field of the block: stock uses 1..9, OpenTracker 2-5, 10, 11, 16
@@ -108,6 +130,7 @@ size_t encodePatch(const PatchData& p, uint8_t* out, size_t cap);    // bytes wr
 bool modAnyOn(const ModSlot* slots);    // some slot is not Off
 #ifdef OPEN_HOST_TEST
 extern bool gModDecodeOff;              // host test: decode as an image without automation (field 64 stays raw)
+extern int gPatchTailDropped;           // host test: values and targets that did not fit the PatchTail (the unit logs them)
 #endif
 
 } // namespace polysynth::open

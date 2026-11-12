@@ -1900,6 +1900,70 @@ int main() {
     auto initData = [&](int typeId) { auto p = store->createPatch(typeId); auto d = std::make_unique<PatchData>(); static_cast<open::OpenPatch&>(*p).exportData(*d); return d; };
     const open::EngineDef* leadDef = open::engineDefForType(kLead);
 
+    // F5, a patch with more parameters than the engine reports (an older engine .plg saving a patch of a newer release): the trailing values and
+    // the macro targets on them are kept and written back byte for byte, a normal patch saves as before, loading is not changed
+    {
+      const int N = leadDef->paramCount;
+      auto filled = [&](int extra) {                  // a file of an engine with N + extra parameters, a macro with a target on the last one
+        auto d = initData(kLead); d->nParams = N + extra;
+        for (int k = 0; k < extra; k++) d->values[N + k] = (k == 1 ? NAN : 0.125f + 0.5f * float(k));
+        open::PatchMacroData& m = d->macros[0]; m = open::PatchMacroData{}; std::strcpy(m.name, "Tail");
+        m.param[0] = 2; m.amount[0] = 0.25f; m.param[1] = int16_t(N + extra - 1); m.amount[1] = -0.75f; m.param[2] = 5; m.amount[2] = 0.5f; m.count = 3;
+        return d; };
+      if (N + 10 <= open::kMaxParams)
+      {
+        // a normal patch: nothing is carried, the save is what it was
+        auto n0 = initData(kLead); const auto b0 = encode(*n0);
+        auto pn = store->createPatch(kLead); auto& opn = static_cast<open::OpenPatch&>(*pn);
+        auto dn = std::make_unique<PatchData>(); open::decodePatch(b0.data(), b0.size(), *dn); opn.importData(*dn);
+        auto en = std::make_unique<PatchData>(); opn.exportData(*en);
+        check(en->nParams == N && encode(*en) == b0, "F5: a normal patch (parameter count = the engine's) saves byte identical, no tail");
+
+        const auto want = encode(*filled(2));
+        auto pd = std::make_unique<PatchData>(); const bool dec = open::decodePatch(want.data(), want.size(), *pd);
+        auto pl = store->createPatch(kLead); auto& opl = static_cast<open::OpenPatch&>(*pl);
+        opl.importData(*pd);
+        auto ed = std::make_unique<PatchData>(); opl.exportData(*ed);
+        const auto got = encode(*ed);
+        check(dec && pd->nParams == N + 2 && ed->nParams == N + 2 && got == want,
+              "F5: a patch with N+2 parameters saved through an engine that reports N keeps the 2 extra values and the macro target on them byte identical");
+        check(ed->values[N] == 0.125f && std::isnan(ed->values[N + 1]) && ed->macros[0].param[1] == N + 1 && ed->macros[0].amount[1] == -0.75f && ed->macros[0].count == 3,
+              "F5: the kept tail has the values, the absent slot and the target at its slot");
+
+        // loading is unchanged: the engine sees the same values and macro targets as from the file cut to N parameters
+        auto cut = filled(2); cut->nParams = N; cut->macros[0].param[1] = 0; cut->macros[0].amount[1] = 0; cut->macros[0].count = 2;
+        auto pc = store->createPatch(kLead); auto& opc = static_cast<open::OpenPatch&>(*pc);
+        const auto cutBytes = encode(*cut); auto dc = std::make_unique<PatchData>(); open::decodePatch(cutBytes.data(), cutBytes.size(), *dc); opc.importData(*dc);
+        float va[open::kMaxParams], vb[open::kMaxParams]; opl.getValuesRaw(va); opc.getValuesRaw(vb);
+        check(std::memcmp(va, vb, sizeof(float) * N) == 0 && opl.paramCount() == N && pl->getMetadata().params.size() == size_t(N) &&
+              pl->getMetadata().macros[0].modifiers.size() == pc->getMetadata().macros[0].modifiers.size() && pl->getMetadata().macros[0].modifiers.size() == 2,
+              "F5: loading is unchanged: same values, same parameter table and only the known macro targets for the engine");
+        // a second import of a normal file replaces the tail (a patch select must not carry the last file's tail)
+        opl.importData(*dn); auto er = std::make_unique<PatchData>(); opl.exportData(*er);
+        check(er->nParams == N && encode(*er) == b0, "F5: importing a normal file after one with a tail drops the tail");
+
+        // bounded: 8 values and 8 targets at most, the rest is dropped and logged, what fits is kept
+        auto big = filled(10); for (int t = 3; t < 6; t++) { big->macros[0].param[t] = int16_t(N + 2 + t); big->macros[0].amount[t] = 0.5f; }
+        big->macros[0].count = 6;
+        for (int mm = 1; mm < 4; mm++) { big->macros[mm] = open::PatchMacroData{}; for (int t = 0; t < 3; t++) { big->macros[mm].param[t] = int16_t(N + t); big->macros[mm].amount[t] = 0.25f; } big->macros[mm].count = 3; }
+        const auto bigBytes = encode(*big);
+        auto pb = std::make_unique<PatchData>(); open::decodePatch(bigBytes.data(), bigBytes.size(), *pb);
+        auto pbp = store->createPatch(kLead); auto& opb = static_cast<open::OpenPatch&>(*pbp);
+#ifndef TAIL_RED_BASELINE
+        const int dropped0 = open::gPatchTailDropped;
+#endif
+        opb.importData(*pb); auto eb = std::make_unique<PatchData>(); opb.exportData(*eb);
+        bool firstKept = eb->nParams == N + open::kTailParams;
+        for (int k = 0; k < open::kTailParams; k++) firstKept = firstKept && (std::isnan(eb->values[N + k]) ? std::isnan(big->values[N + k]) : eb->values[N + k] == big->values[N + k]);
+        int carried = 0; for (int mm = 0; mm < 4; mm++) for (int t = 0; t < 6; t++) carried += eb->macros[mm].param[t] >= N;
+        check(firstKept && carried <= open::kTailTargets && carried >= 1,
+              "F5: past the cap (8 values, 8 targets) the first 8 values and the targets that fit are kept, the rest is dropped");
+#ifndef TAIL_RED_BASELINE
+        check(open::gPatchTailDropped - dropped0 >= 2, "F5: what is dropped past the cap is logged (counted on the host)");
+#endif
+      }
+    }
+
     // codec
     {
       auto d = initData(kLead);
