@@ -149,7 +149,7 @@ NOTICE.md     third-party notices and attributions
 licenses/     the full license text of every bundled third-party component (OpenTracker Apache-2.0, opentracker-synths MIT, opentracker-fx MIT, ...)
 ${plugnotes}
 This image links neither libPolySynth.a nor libPolyDSP.a. $nofactory
-Copy the .ptf to /Firmware on the SD card (Config > Firmware, the file name must stay as it is) and keep only one .ptf there.
+Copy the .ptf to /Firmware on the SD card (Config > Firmware, the file name must stay as it is).
 Plugins/Synth/ goes to /Plugins/Synth/ and Plugins/Master/ goes to /Plugins/Master/ on the card. Without the synth plugins the projects that use the $nword plugin engines show Missing on those parts.
 Effects/ (optional) goes to /Effects/ on the card.${patchesline}
 EOF
