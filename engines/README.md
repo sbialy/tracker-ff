@@ -47,6 +47,10 @@ repository in `build/modules/<set>/` (every repository has its own `NOTICE.md`; 
 3. The package: `synth-open/tools/package_release.sh <image.ptf> OUT --modules build/modules --effects <ptfx dir> --zip` lays the
    engines out in `Plugins/Synth/`, the inserts in `Plugins/Master/` and the notices of every module repository in
    `licenses/plugins/<repository>/`, after `external.py check` and `verify-external`.
+   The package step first runs the mismatch gate, `synth-open/tools/release_gate.sh` (also `make release-gate PLG_DIR=build/modules`): the simulator
+   `fw_engine_mismatch_sim.sh` for this tree and the new plugins against the latest published `tracker-ff-v<A.B.C>` tag (`OLD_REF=<ref>` picks another), which
+   makes no package when a check goes RED that is not in `synth-open/tools/ui_shot/mismatch_known_findings.txt`. Every entry there states its reason, so a new RED
+   check blocks the release until it is fixed or listed with a reason (`MISMATCH_GATE=skip` skips the gate for a layout test and says so).
 
 ## FORM and FLUX: an optional group, off in the 1.2.0 package
 

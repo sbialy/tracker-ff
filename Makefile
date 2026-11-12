@@ -86,7 +86,7 @@ MINI_POSTFIX     ?= $(EDITION_NAME)_$(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_V
 
 .DEFAULT_GOAL := all
 
-.PHONY: all original plus mini ptfx ptfx-check clean version bump-patch bump-minor synth-engines package-release lint-original
+.PHONY: all original plus mini ptfx ptfx-check clean version bump-patch bump-minor synth-engines package-release lint-original release-gate
 
 # Lint only, the original (MK66) target: -Wconversion scoped to the file manager and plugin host, format and bounds checks with builtins on.
 # Prints warnings, builds nothing, never fails. Same variables as `make original` (SYNTH_OPEN=1 PLUG_HOST=1 adds the plugin host files).
@@ -159,6 +159,11 @@ ifneq ($(SYNTH_OPEN),1)
 endif
 	@test -f "$(OUT_DIR)/$(SYNTH_PTF)" || { echo "build/$(SYNTH_PTF) is missing, run make original SYNTH_OPEN=1 first"; exit 1; }
 	@"$(SYNTH_OPEN_DIR)/tools/package_release.sh" "$(OUT_DIR)/$(SYNTH_PTF)" "$(OUT_DIR)/release" --zip
+
+# make release-gate PLG_DIR=<flat folder of the new .plg and .plgi> [OLD_REF=<ref>]: the firmware and engine mismatch simulator against the latest
+# published release tag, fails on a RED check that is not in synth-open/tools/ui_shot/mismatch_known_findings.txt. package_release.sh runs it too.
+release-gate:
+	@PLG_DIR="$(PLG_DIR)" OLD_REF="$(OLD_REF)" "$(SYNTH_OPEN_DIR)/tools/release_gate.sh"
 
 # make synth-engines [SYNTH_ENGINES="ACD VAP WTFM CHIP"]: flash cost of every engine and the budget left for the selection
 synth-engines:

@@ -19,6 +19,10 @@
 # FLUX (Plugins/Synth) and their 11 factory presets (Patches/FORM, Patches/FLUX, from MODULES_DIR/Patches, fetch it with the same
 # --with). Off by default: the package is then byte for byte what it was before the switch existed. The firmware image is the same.
 # PKG_REV=<commit> names that commit in README-RELEASE.txt instead of the HEAD of this repository (to rebuild an old package).
+# A package with plugins (--modules or --card) is a release package: it first runs the release gate, synth-open/tools/release_gate.sh (the
+# firmware and engine mismatch simulator against the latest published release tag, known findings in ui_shot/mismatch_known_findings.txt), and
+# makes nothing when a check that is not on that list is RED. OLD_REF=<ref> picks another old release, MISMATCH_GATE=skip skips the gate (a
+# layout test, never a release) and says so.
 # With --zip the folder is also zipped next to itself (<name>.zip, needs zip). The zip has no wrapper directory: its root is the card root,
 # so it unzips straight onto the SD card. The bare .ptf and a standalone SHA256SUMS are published as separate release assets.
 set -euo pipefail
@@ -43,6 +47,19 @@ case "$(basename "$ptf")" in *.ptf) ;; *) echo "not a .ptf: $ptf" >&2; exit 2 ;;
 [ ${#groups[@]} = 0 ] || [ -n "$modules" ] || { echo "--with needs --modules" >&2; exit 2; }
 name="$(basename "$ptf" .ptf)"
 dest="$out/$name"
+
+if [ -n "$modules" ] || [ -n "$card" ]; then
+  if [ "${MISMATCH_GATE:-}" = skip ]; then
+    echo "WARNING: MISMATCH_GATE=skip, the firmware and engine mismatch gate was NOT run for this package" >&2
+  else
+    gate_plg="$modules"
+    if [ -z "$gate_plg" ]; then   # --card: the gate wants one flat folder of the plugins
+      gate_plg="$(mktemp -d)"; trap 'rm -rf "$gate_plg"' EXIT
+      cp "$card"/Plugins/Synth/*.pl* "$card"/Plugins/Master/*.pl* "$gate_plg"/ 2>/dev/null || true
+    fi
+    PLG_DIR="$gate_plg" "$root/synth-open/tools/release_gate.sh" >&2 || { echo "package_release: the release gate failed, no package made (MISMATCH_GATE=skip only for a layout test)" >&2; exit 1; }
+  fi
+fi
 rm -rf "$dest"
 docs="$dest/tracker-ff"
 mkdir -p "$docs/licenses" "$dest/Firmware"

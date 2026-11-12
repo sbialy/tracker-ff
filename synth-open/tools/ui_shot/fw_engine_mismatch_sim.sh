@@ -17,13 +17,17 @@
 # (a plugin that calls a service the host does not have) is proven by comparing the ABI structs and the service table of both trees, not
 # by running. Nothing touches a device. Every scenario has its own card folder.
 #
+# The release gate (synth-open/tools/release_gate.sh) runs this script against the previous release tag and fails the release on any RED
+# check whose F<n> tag is not in synth-open/tools/ui_shot/mismatch_known_findings.txt. Name a new finding check "F<n>: ..." so it can be listed.
+#
 # Ends with "RESULT: GREEN" (exit 0) or "RESULT: RED (n failing of m)" (exit 1). A RED check is a finding about the release pair, see
 # ~/prj/poly/ref/hide-and-legacy-engines.md section 5 for what each one means. A KNOWN line is a finding the project accepted (F1: a
 # 1.3.0 Scale patch with a macro amount plays as Add on 1.2.x): it is listed and never makes the result RED.
 #
 #   synth-open/tools/ui_shot/fw_engine_mismatch_sim.sh [PNG_DIR]
 #   PLG_DIR        the 1.3.0 plugin set, flat folder of .plg and .plgi (default ~/prj/poly/build/release-1.3.0-rc/modules)
-#   FW12_REF       git ref of the old firmware in this repository (default release-1.2.0-pub6, else release-1.2.0)
+#   FW12_REF       git ref of the old firmware in this repository (default release-1.2.0-pub6, else release-1.2.0, the gate passes the latest
+#                  published release tag)
 #   TOOLCHAIN      arm-none-eabi- prefix of Arm GNU 12.3.rel1 (default ~/prj/poly/agt/12.3.rel1/bin/arm-none-eabi-), builds the 1.2.0 plugins
 #   PLG12_DIR      a flat folder of the 1.2.0 .plg and .plgi instead of building them (still checked against the 1.2.0 lock)
 #   ENGINES_OS_REPO EFFECTS_OS_REPO ENGINES_REPO   module repositories (default ~/prj/poly-engines-os, poly-effects-os, poly-engines), the
@@ -629,6 +633,19 @@ echo "### scenario C3: 1.3.0 inserts that do not fit beside each other (Glue is 
 py pairs "$FX13" >"$WORK/pairs13.txt"
 note "$(grep '^sizes' "$WORK/pairs13.txt" | cut -c1-200)"
 expect "F3: every pair of the 1.3.0 inserts fits the shared 8 KB slot (else the second one is NoRoom, audio passes)" "nofit -" "$(grep '^nofit' "$WORK/pairs13.txt")"
+
+# ------------------------------------------------------------------------------------------------------------------ F5
+# A .plg never runs on the Mac, so an OLDER engine file cannot be run here. What decides F5 is the firmware's save path (OpenPatch::importData
+# and exportData in open_cold.cpp), which is the same code for a built in and a plugin engine: it gets the parameter count from the engine
+# definition. The smoke test (host_smoke_test.cpp, section "F5") links that real code with the definition of a real engine (N parameters,
+# the "engine reports fewer params" stub) and saves a file with N+2 parameters and a macro target on the last one. Its F5 lines must all be OK.
+echo "### F5: a patch with more parameters than the engine reports, saved by the firmware (host test of the real save path)"
+SMOKE_ARCH="${SMOKE_ARCH:-arm64}" sh "$ROOT/synth-open/tools/run_smoke.sh" "ACD FAT VAP WTFM PERC" >"$WORK/smoke_f5.log" 2>&1
+f5ok="$(grep -c '^  F5: .* OK$' "$WORK/smoke_f5.log" || true)"; f5bad="$(grep -c '^  F5: .* FAIL$' "$WORK/smoke_f5.log" || true)"
+grep '^  F5:' "$WORK/smoke_f5.log" | sed 's/^ */      /'
+f5got="ok=$f5ok fail=$f5bad"; { [ "$f5bad" -eq 0 ] && [ "$f5ok" -ge 7 ]; } && f5got="fine"
+expect "F5: an older engine saving a patch with more parameters than it knows keeps the extra values and their macro targets byte for byte (bounded: 8 values, 8 targets, the rest logged)" "fine" "$f5got"
+[ "$f5got" = fine ] || tail -5 "$WORK/smoke_f5.log" | sed 's/^/      smoke: /'
 
 echo
 echo "     the hosts: new = $(git -C "$ROOT" rev-parse --short HEAD), old = $FW12_REF ($(git -C "$ROOT" rev-parse --short "$FW12_REF"))"

@@ -1,0 +1,8 @@
+# Known findings of fw_engine_mismatch_sim.sh that do not stop a release (read by release_gate.sh).
+# One finding per line: <id> | <reason>. The id is the F<n> a RED check starts with ("F2 (edge): ..." is F2). A RED check with no id, or with
+# an id that is not listed here, fails the release gate. Lines starting with # and empty lines are ignored.
+# Remove a line when its finding is fixed: the gate says so when a listed finding turns GREEN. Details: ~/prj/poly/ref/hide-and-legacy-engines.md section 5.5.
+# F1 is not listed on purpose: it is a permanently accepted finding (user decision 2026-11-12: a 1.3 Scale patch with a macro amount plays as Add on
+# 1.2.x, documented in the CHANGELOG). The simulator reports it as a KNOWN line, never as a RED one, and the gate prints it as accepted.
+F2 | edge case, nothing to fix in 1.3.0: the 1.2.0 decoder keeps unknown fields in 768 B (kRawMax), a patch with over 765 B of unknown fields fails there. Real patches have 8 to 52 B. A 1.2.1 could raise kRawMax.
+F3 | Glue (5,104 B) plus Phaser (4,384 B) do not fit the shared 8 KB insert slot together, the second one shows NoRoom and the audio passes. Glue is new in 1.3.0 so no 1.2.x project names it. Fix is a smaller insert or a line in the manual.
