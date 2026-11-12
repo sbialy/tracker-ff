@@ -575,6 +575,16 @@ TOOLCHAIN=... PY=/tmp/phzvenv/bin/python engines/rebuild_pinned.sh OUT fused
 - `make clean` at the top level removes everything in `build/`, so keep copies of the images you want.
 - Host checks that need no device: `synth-open/tools/run_smoke.sh "<engines>"` (smoke test), `make synth-engines` (flash budget), `tools/phz_cycles/run_bench.sh` (engine cycles), `tools/idle_cycles/run_bench.sh` and `tools/audio_opt/run_graph.sh` (audio graph), `tools/dirt_cycles/run_bench.sh` and `tools/dirt_render.sh` (Dirt insert). The emulated benches need a Python with `unicorn` and `capstone`.
 
+### Quality gates
+
+Three gates, none of them changes the image (AUTOF is byte identical with and without them, on 12.3 and on 10.3). Details and the measurements behind them: `ref/code-quality-proposal.md`.
+
+- **`-Werror` on `synth-open/`** (`core/makefile`, `SYNTH_OPEN_WERROR`): every warning in our objects is an error, `-Wstack-usage=` stays a warning. A new compiler that adds a warning breaks the build there: fix the code or demote that one class with `-Wno-error=<class>`. Stock code (`core/`, the platform) is untouched. `make` does not track flags, wipe `core/build-*` and `platforms/mk66/build-trim` when you change them.
+- **Stack ratchet** (`make stack-ratchet-autof`, `tools/stack_ratchet.py`): reads the `-fstack-usage` `.su` files of the AUTOF build against `tools/stack_baseline_gcc12.txt` (12.3) or `stack_baseline_gcc10.txt` (10.3), picked from `$(TOOLCHAIN)gcc`. It fails on a new frame of 512 B or more, a new function with a dynamic frame (VLA, alloca), a grown frame, a new `-Wvla` variable (from the build log, `STACK_LOG`) and on the hard cap for the audio chain (engine render frames, `open_synth.cpp`, the mixer: at most 7 frames, none over 1792 B, constants in the script). Frames that shrink pass, `make stack-ratchet-update-autof` locks the gain in. A reviewed new frame goes in by an edited baseline in the same commit, with the reason in the message. The baselines are compiler specific, regenerate both when the frame sizes move.
+- **Lint delta** (`make lint-delta-autof`, `tools/lint_delta.py`): runs `make lint-original` and keeps the warnings on lines added since the merge-base with `origin/main` (`LINT_BASE=` to change): `-Warray-bounds`, `-Wnull-dereference`, every `*overflow` class, and `-Wconversion` and `-Wfloat-conversion` in `core/FileManager`, `core/source/File*` and `synth-open/plug_*`. With cppcheck installed it also checks the changed files for a short id list (null pointer, array index, uninitvar, incorrect logic operator, printf types, lifetime), always with `-D'__NOINIT(x)='` (without it cppcheck skips files silently, `unknownMacro` and `syntaxError` fail the run). Reviewed false positives are in `tools/lint_delta_allow.txt`, matched on the text of the line. Not a pre-commit hook: 20 s and it needs the toolchain.
+
+The fork CI (`.github/workflows/build.yml`) runs on `main` and `release-*` pushes and on pull requests to them, and builds the AUTOF original with `-Werror` plus the stack ratchet and the lint delta on the pinned 10.3 before `make all`.
+
 ## Scope and licences
 
 - Unofficial, noncommercial community work. Not affiliated with, endorsed by or supported by Polyend.
