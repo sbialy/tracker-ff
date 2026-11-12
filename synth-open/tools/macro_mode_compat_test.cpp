@@ -1,7 +1,7 @@
 // Patch codec check for the macro depth mode (field 100), built once against the 1.3.0 tree (-DTREE13) and once against the 1.2.x tree
 // (macro_mode_compat_check.sh). Both codecs are the real open_patchio.cpp of their release.
 //   enc CASE OUT    write a patch of CASE: old (Add, macro amount 0.5, as 1.2.x writes it), old0 (Add, no amount), new0 (Scale, no macro amount, a new patch),
-//                   newN (Scale, macro amount 0.5, 1.3.0 only)
+//                   newN (Scale, macro amount 0.5), new0 and newN 1.3.0 only
 //   dec IN          decode IN, print what this codec reads and whether its re-encoded bytes equal the input
 #include "open_patchdata.h"
 #include <cstdio>
@@ -56,7 +56,7 @@ int main(int argc, char** argv)
         const bool same = m == in.size() && !memcmp(out.data(), in.data(), m);
         const char* play;
 #ifdef TREE13
-        play = macroModeOnLoad(*pd) == kMacroModeScale ? "Scale" : "Add";
+        play = pd->macroMode == kMacroModeScale ? "Scale" : "Add";
 #else
         play = "Add"; // 1.2.x has one rule
 #endif
