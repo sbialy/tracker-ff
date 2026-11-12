@@ -87,6 +87,7 @@ MINI_POSTFIX     ?= $(EDITION_NAME)_$(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_V
 .DEFAULT_GOAL := all
 
 .PHONY: all original plus mini ptfx ptfx-check clean version bump-patch bump-minor synth-engines package-release lint-original release-gate
+.PHONY: original-autof stack-ratchet stack-ratchet-update stack-ratchet-autof stack-ratchet-update-autof lint-delta lint-delta-autof
 
 # Lint only, the original (MK66) target: -Wconversion scoped to the file manager and plugin host, format and bounds checks with builtins on.
 # Prints warnings, builds nothing, never fails. Same variables as `make original` (SYNTH_OPEN=1 PLUG_HOST=1 adds the plugin host files).
@@ -96,6 +97,55 @@ lint-original:
 		POLYUTIL_DIR="$(UTIL_DIR)" POLYSYNTH_DIR="$(SYNTH_DIR)" \
 		SYNTH_OPEN="$(SYNTH_OPEN)" SYNTH_OPEN_DIR="$(SYNTH_OPEN_DIR)" $(if $(filter 1,$(TRIM)),TRIM=1) \
 		$(if $(SYNTH_ENGINES_SEL),SYNTH_ENGINES="$(SYNTH_ENGINES_SEL)") SYNTH_TAG="$(SYNTH_TAG)"
+
+# Quality gates (synth-open/tools/stack_ratchet.py, lint_delta.py). They read the build or the lint output and change nothing in the image.
+# AUTOF is the release flavour (synth-open/README.md, release image recipe, five built in engines since CHIP became a plugin), the stack baseline is the frame list of this flavour.
+# Pass TOOLCHAIN=... as for make original. make does not track flags: wipe core/build-* and platforms/mk66/build-trim between compilers.
+AUTOF_ARGS := SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 PTF_TAG=AUTOF SYNTH_TAG=-fpc SYNTH_ENGINES="ACD FAT VAP WTFM PERC" \
+	SYNTH_ENGINES_TAG=-EACD_FAT_VAP_WTFM_PERC_CHIP SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
+	SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off"
+STACK_GCC_MAJOR = $(shell $(TOOLCHAIN)gcc -dumpversion 2>/dev/null | cut -d. -f1)
+STACK_BASELINE ?= $(SYNTH_OPEN_DIR)/tools/stack_baseline_gcc$(STACK_GCC_MAJOR).txt
+STACK_LOG ?=
+STACK_RATCHET = python3 -I "$(SYNTH_OPEN_DIR)/tools/stack_ratchet.py" --root "$(ROOT_DIR)" --baseline "$(STACK_BASELINE)" \
+	--su-dir "$(ORIGINAL_CORE_BUILD)" --su-dir "$(MK66_BUILD)" $(if $(STACK_LOG),--log "$(STACK_LOG)")
+LINT_BASE ?= origin/main
+
+# make original-autof: the release image, build/PolyendTracker_AUTOF_<ver>.ptf
+original-autof:
+	$(MAKE) original $(AUTOF_ARGS)
+
+# Stack ratchet: the -fstack-usage .su files of the last build against the committed baseline. Fails on a new frame of 512 B or more, a
+# new VLA function, a grown frame, and on the hard cap for the audio chain. STACK_LOG=build.log also checks the -Wvla variables.
+# Run it after the same make original (same variables) or use stack-ratchet-autof.
+stack-ratchet:
+	$(STACK_RATCHET)
+
+# Lock a gain in, or take a reviewed new frame into the baseline (the commit must say why)
+stack-ratchet-update:
+	$(STACK_RATCHET) --update --tag "AUTOF image on GCC $(STACK_GCC_MAJOR)"
+
+# Build the AUTOF flavour with the log kept, then the ratchet with the VLA check. The log is $(OUT_DIR)/stack-ratchet-build.log
+stack-ratchet-autof:
+	@mkdir -p "$(OUT_DIR)"
+	$(MAKE) original $(AUTOF_ARGS) > "$(OUT_DIR)/stack-ratchet-build.log" 2>&1 || { tail -n 60 "$(OUT_DIR)/stack-ratchet-build.log"; exit 1; }
+	$(MAKE) --no-print-directory stack-ratchet $(AUTOF_ARGS) STACK_LOG="$(OUT_DIR)/stack-ratchet-build.log"
+
+# The same for the AUTOF flavour, from the build and log of the last make stack-ratchet-autof (it fails on the new frame, this takes it in)
+stack-ratchet-update-autof:
+	$(MAKE) --no-print-directory stack-ratchet-update $(AUTOF_ARGS) STACK_LOG="$(OUT_DIR)/stack-ratchet-build.log"
+
+# Lint delta: make lint-original, kept to the warnings on lines added since the merge-base with $(LINT_BASE) in the classes that matched the
+# device crashes (array-bounds, null-dereference, *-overflow, and -Wconversion in the file manager and plugin host), plus cppcheck on the
+# changed files when it is installed. Reviewed false positives: synth-open/tools/lint_delta_allow.txt. Same variables as lint-original.
+lint-delta:
+	@mkdir -p "$(OUT_DIR)"
+	$(MAKE) --no-print-directory lint-original > "$(OUT_DIR)/lint-original.log" 2>&1
+	python3 -I "$(SYNTH_OPEN_DIR)/tools/lint_delta.py" --root "$(ROOT_DIR)" --base "$(LINT_BASE)" \
+		--allow "$(SYNTH_OPEN_DIR)/tools/lint_delta_allow.txt" --cppcheck "$(OUT_DIR)/lint-original.log"
+
+lint-delta-autof:
+	$(MAKE) --no-print-directory lint-delta $(AUTOF_ARGS)
 
 all: original plus mini
 

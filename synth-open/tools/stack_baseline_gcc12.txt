@@ -1,0 +1,50 @@
+# Stack ratchet baseline, written by stack_ratchet.py --update. Frames of 512 B or more, and every function with a dynamic
+# frame (VLA, alloca), in the AUTOF image on GCC 12.3. Columns: frame, bytes, qualifier, file, signature. vla: file, variable, count (from -Wvla).
+# Lower a number or drop a line any time. Raising one or adding one is a review decision: say why in the commit.
+frame	1768	static	synth-open/ot/audio/engines/perc.cpp	virtual bool ot::audio::perc::{anonymous}::PercEngine::render(ot::audio::SynthVoice&, const ot::audio::SynthParams&, float, float, float*, float*)
+frame	1328	static	synth-open/ot/audio/engines/fat.cpp	virtual bool ot::audio::fat::{anonymous}::FatEngine::render(ot::audio::SynthVoice&, const ot::audio::SynthParams&, float, float, float*, float*)
+frame	1312	dynamic	core/FileManager/fileManagerExportToMod.cpp	void cFileManager::exportItFile_InitHeader()
+frame	1160	static	synth-open/open_synth.cpp	0(float*, float*)
+frame	1112	static	core/FileManager/ProjectSave.cpp	bool ProjectSave::copyInstruments(int, uint8_t&)
+frame	1016	static	synth-open/ot/audio/engines/wtfm.cpp	virtual bool ot::audio::wtfm::{anonymous}::WtfmEngine::render(ot::audio::SynthVoice&, const ot::audio::SynthParams&, float, float, float*, float*)
+frame	944	static	synth-open/ot/audio/engines/vap.cpp	virtual bool ot::audio::vap::{anonymous}::VapEngine::render(ot::audio::SynthVoice&, const ot::audio::SynthParams&, float, float, float*, float*)
+frame	928	static	core/source/mtSliceDetector.cpp	uint32_t mtSliceDetector::preciseDetect(uint32_t)
+frame	800	static	core/FileManager/fileManagerPattern.cpp	void cFileManager::translatePatternFromFileVersion5ToFileVersion6(Sequencer::strPattern*)
+frame	776	static	core/FileManager/SampleImport.cpp	void SampleImport::loadImportingSamplesData(FileManagerOperation::SampleLoadData*, char*, char**)
+frame	760	static	synth-open/ot/audio/engines/acd.cpp	virtual bool ot::audio::{anonymous}::AcdEngine::render(ot::audio::SynthVoice&, const ot::audio::SynthParams&, float, float, float*, float*)
+frame	696	static	core/FileManager/WorkspaceProjectLoad.cpp	bool WorkspaceProjectLoad::loadInstrStruct(int, uint32_t&)
+frame	688	static	core/FileManager/fileManagerImportIt.cpp	void cFileManager::importItFile_LoadSamples()
+frame	680	static	core/FileManager/fileManagerInstrument.cpp	bool cFileManager::saveInstrumentStructToWorkspace(int)
+frame	672	static	core/FileManager/fileManagerInstrument.cpp	uint8_t cFileManager::saveInstrument(uint8_t)
+frame	624	static	core/libs/Audio/mixer.cpp	void AudioMixerBase::mix(int, int32_t*, int32_t*, SaturationType)
+frame	616	static	core/effector/ptfx_manager.cpp	static void PtfxManager::scanEffects(bool)
+frame	584	static	core/FileManager/fileManagerProject.cpp	bool cFileManager::openRecentProject(int)
+frame	584	static	platforms/mk66/source/FileSystemImpl.cpp	virtual void FileSystemImpl::listDirContents(const char*, FileSystem::DirContentType, std::function<bool(const char*)>, char*, int, int, int&, char**)
+frame	568	static	core/FileManager/fileManagerExportToMod.cpp	void cFileManager::exportItFile_ProcessWaves()
+frame	560	static	core/FileManager/ProjectOpen.cpp	uint32_t ProjectOpen::calcProjectInstrumentsSize()
+frame	560	static	platforms/mk66/3rdparty/SD/SD.cpp	bool SdCard::removeOnlyDirFiles(const char*)
+frame	552	static	core/FileManager/ProjectOpen.cpp	bool ProjectOpen::copyPaterns(int&)
+frame	552	static	core/FileManager/ProjectSave.cpp	bool ProjectSave::copyPaterns(int&)
+frame	552	static	core/FileManager/SampleImport.cpp	bool SampleImport::saveStreamedImportSampleToWorkspace(int, FileManagerOperation::SampleLoadData*)
+frame	552	static	core/FileManager/WorkspaceProjectLoad.cpp	uint32_t WorkspaceProjectLoad::calcWorkspaceInstrumentsSize()
+frame	552	static	platforms/mk66/3rdparty/SD/SD.cpp	bool SdCard::removeDirWithFiles(const char*)
+frame	544	static	core/FileManager/ProjectOpen.cpp	bool ProjectOpen::copySamples(int, uint8_t&)
+frame	536	static	core/FileManager/fileManagerProject.cpp	void cFileManager::createCurrentProjectFolderTree()
+frame	536	static	core/effector/ptfx_loader.cpp	static bool PtfxLoader::readHeader(const char*, PtfxHeader&)
+frame	528	static	core/interface/projectEditor/fProjEdit.cpp	0()
+frame	320	dynamic	core/FileManager/fileManagerImportMod.cpp	void cFileManager::importModFile_Patterns()
+frame	64	dynamic	core/libs/NewDisplay/tracker.cpp	void cTracker::tracksNumbers()
+frame	32	dynamic	core/FileManager/fileManagerImportIt.cpp	uint32_t cFileManager::getFileVariable(uint32_t, uint32_t, uint8_t)
+frame	32	dynamic	core/FileManager/fileManagerImportMod.cpp	void cFileManager::importModFile_GetInstrumentData()
+frame	32	dynamic	core/FileManager/fileManagerImportMod.cpp	void cFileManager::importModFile_SongInit()
+frame	32	dynamic	core/libs/NewDisplay/tracker.cpp	virtual void cTracker::update()
+frame	24	dynamic	core/source/mtSequencer_patternEdit.cpp	uint8_t Sequencer::changeInstrumentInSpecificOrder(int8_t, int16_t, bool)
+vla	core/FileManager/fileManagerExportToMod.cpp	buffInstruments	1
+vla	core/FileManager/fileManagerExportToMod.cpp	buffPatterns	1
+vla	core/FileManager/fileManagerExportToMod.cpp	buffPlaylist	1
+vla	core/FileManager/fileManagerExportToMod.cpp	buffSamples	1
+vla	core/FileManager/fileManagerImportIt.cpp	byteBuffer	1
+vla	core/FileManager/fileManagerImportMod.cpp	byteBuffer	3
+vla	core/libs/NewDisplay/tracker.cpp	rowNumbers	1
+vla	core/libs/NewDisplay/tracker.cpp	textLetersCount	1
+vla	core/source/mtSequencer_patternEdit.cpp	uiChangeInstrumentOrder	1
