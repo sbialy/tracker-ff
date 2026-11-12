@@ -1,5 +1,6 @@
 #include "Audio.h"
 #include "play_memory.h"
+#include "play_memory_read.h"
 #include "utility/dspinst.h"
 #include <cmath>
 
@@ -72,12 +73,7 @@ AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateLoopPingPongNormal()
             {
                 if ((int32_t)length > iPitchCounter)
                 {
-                    currentSampelValue = readRaw(in, iPitchCounter);
-                    if (interpolationCondition)
-                        interpolationDif = 0;
-                    else
-                        interpolationDif =
-                          (readRaw(in, iPitchCounter + interpOffset) - currentSampelValue);
+                    pm_read::readPingPong(in, iPitchCounter, interpOffset, interpolationCondition, currentSampelValue, interpolationDif);
                     currentInterpolationFraction = (currentFractionPitchCounter < 0)
                                                      ? -currentFractionPitchCounter
                                                      : currentFractionPitchCounter;

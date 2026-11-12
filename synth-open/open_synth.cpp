@@ -1429,9 +1429,22 @@ class OpenSynth final
   private:
     static void clear(AudioBufferStereoRef buffer)
     {
+        // 8 stores per turn (std::fill compiled to one store per loop turn)
+        static_assert(kAudioBufferSize % 8 == 0);
         for (auto& channel : buffer)
         {
-            std::fill(channel.begin(), channel.end(), 0.0f);
+            float* p = channel.data();
+            for (int i = 0; i < kAudioBufferSize; i += 8)
+            {
+                p[i] = 0.0f;
+                p[i + 1] = 0.0f;
+                p[i + 2] = 0.0f;
+                p[i + 3] = 0.0f;
+                p[i + 4] = 0.0f;
+                p[i + 5] = 0.0f;
+                p[i + 6] = 0.0f;
+                p[i + 7] = 0.0f;
+            }
         }
     }
 

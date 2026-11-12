@@ -2,7 +2,7 @@
 # The host test suite of a tracker-ff tree (Mac or Linux, nothing here touches a device or builds a firmware image):
 #   - run_smoke.sh in 5 variants (the five built-in engines, TRIM=1, PLUGENG=1: a run time plugin engine stand-in)
 #   - plug/build_plugs.sh: the two worked examples of docs/plugin_sdk.md, built and run in the emulator
-#   - the plugin host unit tests (plug_*_test.cpp, sat_softknee_test.cpp, seq_tick_test.cpp), the index and logo tests against the pinned modules
+#   - the plugin host unit tests (plug_*_test.cpp, sat_softknee_test.cpp, seq_tick_test.cpp, kern_*_test.cpp), the index and logo tests against the pinned modules
 # Ends with one verdict line: "RESULT: GREEN" (exit 0) or "RESULT: RED (...)" (exit 1). Logs in OUTDIR/logs.
 #
 #   synth-open/tools/run_tests.sh [WORKTREE [OUTDIR]]
@@ -104,6 +104,15 @@ c++ -std=c++20 -O1 -Wall -I synth-open -I synth-open/tools/plug_stub synth-open/
 # the integer sequencer clock against the stock double accumulator (core/source/internalTickClock.h), 1 simulated minute per run here
 c++ -std=c++20 -O2 -Wall -I core/source synth-open/tools/seq_tick_test.cpp -o "$T/seq_tick_test" > "$L/seq_tick_test.build.log" 2>&1 \
   || echo "BUILD FAIL seq_tick_test"
+# the CPU kernels of core/libs/Audio (the firmware includes the very headers the tests include): old loop against new loop, bit for bit
+c++ -std=c++20 -O2 -Wall -I core/libs/Audio synth-open/tools/kern_sample_read_test.cpp -o "$T/kern_sample_read_test" \
+  > "$L/kern_sample_read_test.build.log" 2>&1 || echo "BUILD FAIL kern_sample_read_test"
+c++ -std=c++20 -O2 -Wall -I synth-open/tools/kern_host -I core/libs/Audio synth-open/tools/kern_env_steady_test.cpp -o "$T/kern_env_steady_test" \
+  > "$L/kern_env_steady_test.build.log" 2>&1 || echo "BUILD FAIL kern_env_steady_test"
+c++ -std=c++20 -O2 -Wall -I synth-open/tools/kern_host -I core/libs/Audio synth-open/tools/kern_gain_copy_test.cpp -o "$T/kern_gain_copy_test" \
+  > "$L/kern_gain_copy_test.build.log" 2>&1 || echo "BUILD FAIL kern_gain_copy_test"
+c++ -std=c++20 -O2 -ffp-contract=fast -Wall -I core/libs/Audio synth-open/tools/kern_synth_part_test.cpp -o "$T/kern_synth_part_test" \
+  > "$L/kern_synth_part_test.build.log" 2>&1 || echo "BUILD FAIL kern_synth_part_test"
 c++ -std=c++20 -O1 -Wall -I synth-open -I core/include synth-open/tools/ext_loader_test.cpp -o "$T/ext_loader_test" \
   > "$L/ext_loader_test.build.log" 2>&1 || echo "BUILD FAIL ext_loader_test"
 # the Features registry and its file parser (core/source/features.cpp), plain and with ASan/UBSan
@@ -120,6 +129,15 @@ c++ -g -fsanitize=address,undefined -fno-sanitize-recover=all "${FT[@]}" -o "$T/
  echo "### run ext_loader_test"; "$T/ext_loader_test" ${ext_args[@]+"${ext_args[@]}"}; echo "### rc=$?"
  echo "### run plug_index_test"; "$T/plug_index_test" "$PLUGDIR"; echo "### rc=$?"
  echo "### run seq_tick_test"; "$T/seq_tick_test" 1; echo "### rc=$?"
+ echo "### run kern_sample_read_test"; "$T/kern_sample_read_test"; echo "### rc=$?"
+ echo "### run kern_env_steady_test"; "$T/kern_env_steady_test"; echo "### rc=$?"
+ echo "### run kern_gain_copy_test"; "$T/kern_gain_copy_test"; echo "### rc=$?"
+ echo "### run kern_record_queue_test"; sh synth-open/tools/kern_record_queue_test.sh; echo "### rc=$?"
+ echo "### run kern_synth_part_test"; "$T/kern_synth_part_test" full; echo "### rc=$?"
+ # the same part path as Cortex-M4 code in the emulator (the soft clip is a fused multiply-add: the compiler decides the last bit)
+ if [ -n "$TOOLCHAIN" ] && "$PY" -c 'import unicorn' 2> /dev/null; then
+   echo "### run synth_part_arm"; PYTHON=$PY sh synth-open/tools/audio_opt/run_synth_part_arm.sh 3000; echo "### rc=$?"
+ else echo "synth_part_arm: skipped (no TOOLCHAIN or no unicorn module in $PY)"; fi
  echo "### run features_test"; "$T/features_test"; echo "### rc=$?"
  echo "### run features_test_san"; "$T/features_test_san"; echo "### rc=$?"
  # USB audio (Config > Features): the ring, and the descriptors served with the switch off (= the image without it) and on

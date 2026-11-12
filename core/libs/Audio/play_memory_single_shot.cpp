@@ -1,5 +1,6 @@
 #include "Audio.h"
 #include "play_memory.h"
+#include "play_memory_read.h"
 #include "utility/dspinst.h"
 
 AUDIO_CORE_FLASH void AudioPlayMemory::playSingleShot(uint8_t instrIdx, int8_t note)
@@ -140,35 +141,19 @@ AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateSingleShotNormal()
             const uint32_t interpolationCondition = this->interpolationCondition;
             uint8_t playing = this->playing;
 
-            for (int i = 0; i < AUDIO_BLOCK_SAMPLES; i++)
-            {
-                if ((int32_t)length > iPitchCounter)
-                {
-                    currentSampelValue = readRaw(in, iPitchCounter);
-                    if (interpolationCondition)
-                        interpolationDif = 0;
-                    else
-                        interpolationDif = (readRaw(in, iPitchCounter + 1) - currentSampelValue);
-                    *out++ = currentSampelValue +
-                             (int32_t)(((currentFractionPitchCounter >> 2) * interpolationDif) >> 14);
-                    iPitchCounter += castPitchControl;
-                    currentFractionPitchCounter += currentFractionPitchControl;
-                    if (currentFractionPitchCounter >= MAX_16BIT)
-                    {
-                        currentFractionPitchCounter -= MAX_16BIT;
-                        iPitchCounter++;
-                    }
-                    if (iPitchCounter >= (int32_t)(constrainsInSamples.endPoint))
-                    {
-                        iPitchCounter = length;
-                    }
-                }
-                else
-                {
-                    *out++ = 0;
-                    playing = 0;
-                }
-            }
+            // the read paths (integer pitch, pitch 1.0, interpolation with one word load) are in play_memory_read.h
+            pm_read::singleShotBlock<AUDIO_BLOCK_SAMPLES>(out,
+                                                          in,
+                                                          length,
+                                                          (int32_t)constrainsInSamples.endPoint,
+                                                          castPitchControl,
+                                                          currentFractionPitchControl,
+                                                          interpolationCondition,
+                                                          iPitchCounter,
+                                                          currentFractionPitchCounter,
+                                                          interpolationDif,
+                                                          currentSampelValue,
+                                                          playing);
 
             this->iPitchCounter = iPitchCounter;
             this->interpolationDif = interpolationDif;
