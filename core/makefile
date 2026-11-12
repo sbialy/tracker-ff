@@ -89,10 +89,14 @@ $(OBJ_DIR)/synth-open/plug_insert.o $(OBJ_DIR)/synth-open/plug_dirt_inimage.o: E
 $(OBJ_DIR)/synth-open/open_cold.o $(OBJ_DIR)/synth-open/open_patchio.o $(OBJ_DIR)/synth-open/stub_fmt.o: EXTRA_OPT := $(SYNTH_OPT_COLD)
 $(OBJ_DIR)/synth-open/ot/audio/engines/fat.o: EXTRA_OPT := $(SYNTH_OPT_FAT)
 # FM4 and B-Type (-O3) are plugins built in poly-engines-os, SYNTH_OPT_FM4 and SYNTH_OPT_BTYPE are accepted and unused.
-# Our code under synth-open/ builds warning free with -Wall -Wextra, so the warning classes that found the real bugs in the stock
-# code (wrapped unsigned clamps, a missing return, an uninitialised read) are errors there and only there (not core/, not the platform).
+# Our code under synth-open/ builds warning free with -Wall -Wextra on 10.3 and 12.3, so every warning there is an error, and only there
+# (not core/, not the platform). The first six classes are named so they stay errors even if someone adds -Wno-error later: they found the
+# real bugs in the stock code (wrapped unsigned clamps, a missing return, an uninitialised read). -Wstack-usage= stays a warning, the stack
+# ratchet (synth-open/tools/stack_ratchet.py, make stack-ratchet) judges frame sizes against a committed baseline.
+# A new compiler that adds a warning breaks the build here: fix the code, or demote the one class with -Wno-error=<class> below.
 # make does not track flags: after changing this delete the core build dir of the SYNTH_TAG and platforms/mk66/build-trim.
 SYNTH_OPEN_WERROR := -Werror=return-type -Werror=uninitialized -Werror=maybe-uninitialized -Werror=implicit-fallthrough -Werror=sign-compare -Werror=type-limits -Werror=unused-variable
+SYNTH_OPEN_WERROR += -Werror -Wno-error=stack-usage=
 $(SYNTH_OPEN_OBJS): COMPILER_OPTIONS += $(SYNTH_OPEN_WERROR)
 
 # TRIM=1: no-feature-loss flash trims for the SYNTH_OPEN image (synth-open/README.md, Flash trim).

@@ -25,7 +25,11 @@
 #include "plug_ui.h"
 #include "plug_ui_nav.h"
 
+// interfaceMenuPopup.h (stock) has three unused parameters in empty inline bodies, everything else in synth-open is -Werror
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "core/interface.h"
+#pragma GCC diagnostic pop
 #include "fileManager.h"
 #include "masterParams/masterParams.h"
 #include "mtAudioEngine.h"

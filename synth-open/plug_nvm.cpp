@@ -115,8 +115,11 @@ void backToHsrun(const Clocks& c)
 void flushCaches()
 {
     syncCode();   // LMEM code cache
-    *reinterpret_cast<volatile uint32_t*>(0x4001F004) |= 0x00F80000u;   // FMC_PFB01CR CINV_WAY | S_B_INV
-    *reinterpret_cast<volatile uint32_t*>(0x4001F008) |= 0x00F80000u;   // FMC_PFB23CR
+    // read, or, write: a compound assignment on a volatile is deprecated in C++20 (-Wvolatile on GCC 10), same load, orr, store
+    volatile uint32_t* const pfb01 = reinterpret_cast<volatile uint32_t*>(0x4001F004);   // FMC_PFB01CR CINV_WAY | S_B_INV
+    volatile uint32_t* const pfb23 = reinterpret_cast<volatile uint32_t*>(0x4001F008);   // FMC_PFB23CR
+    *pfb01 = *pfb01 | 0x00F80000u;
+    *pfb23 = *pfb23 | 0x00F80000u;
     asm volatile("dsb 0xf\n isb 0xf" ::: "memory");
 }
 
