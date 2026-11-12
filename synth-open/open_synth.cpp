@@ -68,7 +68,8 @@ constexpr float kBendRange = 1.0f;
 
 } // namespace
 
-// Values with macros M1..M6 and the automation slots applied (additive, scaled by the param range, clamped once).
+// Values with macros M1..M6 and the automation slots applied (additive, clamped once). Macro depth: Add scales by the param range,
+// Scale by the headroom above (amount * macro > 0) or below (< 0) the base value.
 void open::OpenPatch::effective(float* out, const float* modOut) const
 {
     std::memcpy(out, values, sizeof(float) * count);
@@ -110,7 +111,15 @@ void open::OpenPatch::effective(float* out, const float* modOut) const
         {
             const int id = macro.param[t];
             const auto& p = metadata.params[id];
-            add[id] += macro.amount[t] * mv * (float(p.maxValue) - float(p.minValue));
+            if (live.macroScale)
+            {
+                const float v = macro.amount[t] * mv;
+                add[id] += v > 0.0f ? v * (float(p.maxValue) - values[id]) : v * (values[id] - float(p.minValue));
+            }
+            else
+            {
+                add[id] += macro.amount[t] * mv * (float(p.maxValue) - float(p.minValue));
+            }
             hit[id] = true;
         }
     }

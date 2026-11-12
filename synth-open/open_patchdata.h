@@ -28,6 +28,14 @@ struct PatchMacroData
     float amount[kMacroTargets] = {};
 };
 
+// Macro depth mode (per patch). Add: a macro moves a parameter by amount * macro * (max - min). Scale: the depth is
+// relative to the headroom, +100 % sweeps base -> max and -100 % base -> min over the full macro travel.
+// File: top-level field 100 (varint), 1 = Scale. Absent = Add, so every existing file loads as Add and an Add patch
+// is written without the field (byte identical to what older firmware wrote).
+constexpr uint32_t kMacroModeField = 100;
+constexpr uint8_t kMacroModeAdd = 0;
+constexpr uint8_t kMacroModeScale = 1;
+
 struct PatchExtra
 {
     uint16_t len = 0;
@@ -87,6 +95,7 @@ struct PatchData
     int nParams = 0;
     float values[kMaxParams] = {};       // NaN = absent (the parameter default)
     int nMacros = 0;
+    uint8_t macroMode = kMacroModeAdd;   // field 100, absent = Add
     PatchMacroData macros[kPatchMacros];
     ModSlot mod[kModSlots];              // all Off: field 64 is not written (a patch without automation is as before)
     PatchExtra extra;

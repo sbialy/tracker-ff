@@ -114,6 +114,7 @@ struct SlotCfg
     MacroRun macro[kPatchMacros];        // M1..M6, Velocity, Pressure
     ModRun mod[kModSlots];
     uint8_t modOn;                       // some slot is not Off
+    uint8_t macroScale;                  // macro depth mode of the patch file: 1 Scale (headroom), 0 Add (range)
 };
 
 // Run time state of one slot (instrument, internal RAM, touched every block)

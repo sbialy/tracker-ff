@@ -476,6 +476,73 @@ int main() {
     check(allSame, "save -> load gives equal params and macros (all engines of this build)");
     check(allIdem, "load -> save writes the identical bytes (all engines of this build)");
     check(allList, "patch browser lists the saved patches, sorted, without the extension");
+    // ---- macro depth mode: Add (legacy, bit identical) and Scale (headroom relative), flag in the .patch (field 100)
+    {
+      auto mp1 = ps->createPatch(int(kinds[0].id));
+      auto& op = static_cast<open::OpenPatch&>(*mp1); const auto& mmd = mp1->getMetadata();
+      check(op.macroScale(), "a new patch defaults to Scale");
+      int pid = -1; for (size_t i = 0; i < mmd.params.size(); i++) if (float(mmd.params[i].maxValue) - float(mmd.params[i].minValue) >= 1.0f) { pid = int(i); break; }
+      check(pid >= 0, "macro depth: found a parameter with a usable range");
+      const float lo = float(mmd.params[pid].minValue), hi = float(mmd.params[pid].maxValue);
+      mp1->setParamValue(pid, lo + 0.69f * (hi - lo), Patch::ParamChangeSource::kKnob);
+      const float base = *mp1->getParamValue(pid);
+      for (int m = 0; m < int(kMacroCount); m++) { mp1->setMacroBipolar(m, false); }
+      mp1->clearMacroModifiers();
+      mp1->setMacroModifier(0, 0, pid);
+      auto pct = [&](int cc) { op.setMacroCC(0, uint8_t(cc)); return (*mp1->getParamFinalValue(pid) - lo) / (hi - lo) * 100.0f; };
+      auto near = [](float a, float b) { return std::fabs(a - b) < 0.05f; };
+      printf("  macro depth test param %d (%s) range %g..%g base %.2f%%\n", pid, mmd.params[pid].displayName.c_str(), double(lo), double(hi), double((base - lo) / (hi - lo) * 100.0f));
+      // Add: exactly the old arithmetic
+      mp1->setMacroModifierAmount(0, 0, 1.0f); op.setMacroScale(false);
+      bool addExact = true;
+      for (int cc = 0; cc < 128; cc++) { op.setMacroCC(0, uint8_t(cc)); const float want = std::clamp(base + 1.0f * (float(cc) * (1.0f / 127.0f)) * (hi - lo), lo, hi); addExact = addExact && *mp1->getParamFinalValue(pid) == want; }
+      check(addExact, "Add: all 128 CC values bit identical to the old formula");
+      const float a39 = pct(39), a40 = pct(40), a127 = pct(127);
+      printf("  Add   base 69 amount +1.0: cc39 %.2f cc40 %.2f cc127 %.2f\n", double(a39), double(a40), double(a127));
+      check(near(a39, 99.71f) && near(a40, 100.0f) && near(a127, 100.0f), "Add: base 69 +1.0, cc 39 -> 99.71, cc 40 clamps at 100");
+      // Scale, positive
+      op.setMacroScale(true);
+      const float s0 = pct(0), s64 = pct(64), s127 = pct(127);
+      printf("  Scale base 69 amount +1.0: cc0 %.2f cc64 %.2f cc127 %.2f\n", double(s0), double(s64), double(s127));
+      check(near(s0, 69.0f) && near(s64, 84.62f) && near(s127, 100.0f), "Scale: base 69 +1.0, cc 64 -> 84.6, cc 127 -> 100");
+      mp1->setMacroModifierAmount(0, 0, 0.5f);
+      check(near(pct(127), 84.5f) && near(pct(64), 76.8f), "Scale: +0.5 sweeps half the headroom (cc 127 -> 84.5)");
+      // Scale, negative
+      mp1->setMacroModifierAmount(0, 0, -1.0f);
+      const float n64 = pct(64), n127 = pct(127);
+      printf("  Scale base 69 amount -1.0: cc64 %.2f cc127 %.2f\n", double(n64), double(n127));
+      check(near(n64, 34.2f) && near(n127, 0.0f) && near(pct(0), 69.0f), "Scale: base 69 -1.0, cc 64 -> 34.2, cc 127 -> 0 (min)");
+      // Scale, bipolar: sign of amount * mv picks the headroom
+      mp1->setMacroModifierAmount(0, 0, 1.0f); mp1->setMacroBipolar(0, true);
+      check(near(pct(63), 69.0f) && near(pct(127), 100.0f) && near(pct(0), 1.08f), "Scale bipolar +1.0: cc 63 -> base, 127 -> max, 0 -> 1.08");
+      mp1->setMacroModifierAmount(0, 0, -1.0f);
+      check(near(pct(127), 0.0f) && near(pct(0), 99.52f) && near(pct(63), 69.0f), "Scale bipolar -1.0: cc 127 -> min, cc 0 -> 99.52, cc 63 -> base");
+      // Two macros on the same param add their offsets, final clamp keeps the range
+      mp1->setMacroBipolar(0, false); mp1->setMacroModifierAmount(0, 0, 1.0f);
+      mp1->setMacroModifier(1, 0, pid); mp1->setMacroModifierAmount(1, 0, 1.0f); op.setMacroCC(1, 127);
+      check(near(pct(127), 100.0f), "Scale: two macros on one parameter stay clamped to max");
+      op.setMacroCC(1, 0); mp1->setMacroModifier(1, 0, std::nullopt);
+      // Codec: flag round trip, legacy file, byte layout
+      mp1->setMacroModifierAmount(0, 0, 0.75f);
+      op.setMacroScale(true); ps->savePatch("ms", *mp1);
+      op.setMacroScale(false); ps->savePatch("ma", *mp1);
+      const auto scaleBytes = mp->files[std::string(kinds[0].name) + "/ms.patch"], addBytes = mp->files[std::string(kinds[0].name) + "/ma.patch"];
+      const uint8_t tail[] = { 0xA0, 0x06, 0x01 };
+      check(scaleBytes.size() == addBytes.size() + 3 && std::equal(scaleBytes.end() - 3, scaleBytes.end(), tail) && std::equal(addBytes.begin(), addBytes.end(), scaleBytes.begin()),
+            "codec: Scale file = Add file + 3 bytes (field 100 varint 1), Add writes no flag");
+      auto ld = ps->createPatch(int(kinds[0].id)); auto& lop = static_cast<open::OpenPatch&>(*ld);
+      check(lop.macroScale() && ps->loadPatch("ma", *ld, true) && !lop.macroScale(), "codec: a file without the flag loads as Add (into a default Scale patch)");
+      check(ps->loadPatch("ms", *ld, true) && lop.macroScale(), "codec: a file with the flag loads as Scale");
+      ps->savePatch("ms2", *ld); ps->loadPatch("ma", *ld, true); ps->savePatch("ma2", *ld);
+      check(mp->files[std::string(kinds[0].name) + "/ms2.patch"] == scaleBytes && mp->files[std::string(kinds[0].name) + "/ma2.patch"] == addBytes, "codec: load -> save keeps the mode and the exact bytes, both modes");
+      // A pre-flag file: Add bytes with the engine's real legacy layout (no field 100 anywhere) and one with an unknown mode value
+      open::PatchData pd, ps2; check(open::decodePatch(addBytes.data(), addBytes.size(), pd) && open::decodePatch(scaleBytes.data(), scaleBytes.size(), ps2) && pd.macroMode == open::kMacroModeAdd && ps2.macroMode == open::kMacroModeScale && pd.extra.len == ps2.extra.len, "codec: legacy bytes decode as Add, field 100 is not kept as a raw field");
+      auto bad = scaleBytes; bad.back() = 7; open::PatchData pb; check(open::decodePatch(bad.data(), bad.size(), pb) && pb.macroMode == open::kMacroModeAdd, "codec: an unknown mode value reads as Add");
+      // Param/macro data is not touched by the mode
+      auto cmpm = ps->createPatch(int(kinds[0].id)); ps->loadPatch("ms", *cmpm, true);
+      check(*cmpm->getMacroModifierAmount(0, 0) == 0.75f && *cmpm->getParamValue(pid) == base, "codec: macro amount and parameter survive in Scale mode");
+      // Persistence into project / patch FX copies: every patch is built by createPatch + loadPatch, so the default (Scale) only applies to new ones
+    }
     // wrong engine, damaged file, missing file: load fails and leaves the patch alone
     const auto& kLast = kinds[nKinds - 1]; const std::string lastName = kLast.name, firstName = kinds[0].name;
     auto fat = ps->createPatch(int(kLast.id)); const float before = *fat->getParamValue(0);
@@ -1836,6 +1903,7 @@ int main() {
     // codec
     {
       auto d = initData(kLead);
+      d->macroMode = open::kMacroModeAdd; // the Add form: field 64 is then the last field (Scale appends field 100, checked below)
       const auto plain = encode(*d);
       bool no64 = !plain.empty(); for (const auto& f : fields(plain.data(), plain.size())) no64 = no64 && f.f != open::kModField;
       check(no64, "automation: a patch with every slot Off has no field 64");
@@ -1853,6 +1921,12 @@ int main() {
       size_t block = 0; bool last64 = false; std::vector<FieldAt> ff = fields(full.data(), full.size());
       for (size_t k = 0; k < ff.size(); k++) if (ff[k].f == open::kModField) { block = ff[k].n; last64 = k + 1 == ff.size(); }
       check(block > 0 && last64 && full[ff.back().at] == 0x82 && full[ff.back().at + 1] == 0x04, "automation codec: field 64 (tag 82 04) after Extra, the last field");
+      {
+        auto ds = std::make_unique<PatchData>(*d); ds->macroMode = open::kMacroModeScale; const auto fs = encode(*ds); const auto ffs = fields(fs.data(), fs.size());
+        check(ffs.size() >= 2 && ffs.back().f == open::kMacroModeField && ffs[ffs.size() - 2].f == open::kModField && ffs.back().n == 3 &&
+                fs[ffs.back().at] == 0xA0 && fs[ffs.back().at + 1] == 0x06 && fs.size() == full.size() + 3,
+              "automation codec: with Scale, field 100 (a0 06 01) follows field 64 as the last field");
+      }
       // an Off slot between two active ones is an empty slot, trailing Off slots are not written
       auto d2 = initData(kLead); d2->mod[0] = a[0]; d2->mod[2] = a[1];
       const auto mid = encode(*d2); auto b2 = std::make_unique<PatchData>();
@@ -2017,6 +2091,7 @@ int main() {
       auto endOf = [&](int i) { return open::testParams(0)->end[i]; };
       auto toIdle = [&]() { for (int b = 0; b < 3000 && !open::partIdle(0); b++) blk7(); };
       const float rng = float(acd.params[cutoff].max - acd.params[cutoff].min);
+      op.setMacroScale(false); // these cases pin the Add arithmetic (amount * macro * range), Scale has its own cases further up
       // LFO on Cutoff, base in the middle so the sweep never clamps (a clamped value does not change, so serial would not move)
       p7->setParamValue(cutoff, 10000.0f, Patch::ParamChangeSource::kKnob);
       float raw0[open::kMaxParams]; op.getValuesRaw(raw0);

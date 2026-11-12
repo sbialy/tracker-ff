@@ -805,6 +805,7 @@ void OpenPatch::exportData(PatchData& d) const
     {
         d.mod[i] = mod[i]; // the stored identity, so an unresolved destination is written back as it was read
     }
+    d.macroMode = macroScaleMode ? kMacroModeScale : kMacroModeAdd;
     d.extra = extra;
 }
 
@@ -819,6 +820,7 @@ void initPatchData(const EngineDef& def, PatchData& d)
         const ParamDef& p = def.params[i];
         d.values[i] = p.min == p.max ? NAN : p.def; // unused slot: absent
     }
+    d.macroMode = kMacroModeScale; // a new patch is Scale
     d.nMacros = kPatchMacros;
     for (int m = 0; m < kPatchMacros; m++)
     {
@@ -903,6 +905,7 @@ void OpenPatch::importData(const PatchData& d)
         mod[i] = resolveMod(d.mod[i]);
     }
     modSer++;
+    macroScaleMode = d.macroMode == kMacroModeScale;
     extra = d.extra;
     rebuildOwn();
     for (int m = 0; m < kPatchMacros; m++)
@@ -954,6 +957,7 @@ void OpenPatch::cfgFromData(const PatchData& d, SlotCfg& out) const
         out.mod[i] = { c.type, c.kind, c.shape, c.speed, c.dest, c.amount, c.sustain, c.attack, c.decay, c.release };
     }
     out.modOn = modAnyOn(d.mod) ? 1 : 0;
+    out.macroScale = d.macroMode == kMacroModeScale ? 1 : 0;
 }
 
 void OpenPatch::setModSlot(int s, const ModSlot& v)
@@ -989,6 +993,7 @@ void OpenPatch::buildCfg(SlotCfg& out) const
         out.mod[s] = { c.type, c.kind, c.shape, c.speed, c.dest, c.amount, c.sustain, c.attack, c.decay, c.release };
     }
     out.modOn = modAnyOn(mod) ? 1 : 0;
+    out.macroScale = macroScaleMode ? 1 : 0;
 }
 
 void OpenPatch::rebuildOwn()

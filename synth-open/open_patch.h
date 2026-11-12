@@ -65,7 +65,8 @@ class OpenPatch final : public Patch
         effSer++;
     }
 
-    // Values with macros M1..M6 applied (additive, scaled by the param range, clamped). Render path. `modOut` (kModSlots values, the
+    // Values with macros M1..M6 applied and clamped. Render path. Macro depth, Add mode: amount * macro * (max - min). Scale mode:
+    // amount * macro * headroom, headroom = (max - base) for a positive product, (base - min) for a negative one. `modOut` (kModSlots values, the
     // instrument's automation outputs of this block) adds the slots on top: a macro slot moves its macro, a param slot adds
     // out * range to the param, every hit param is clamped once. nullptr: no automation (the editor's final value).
     void effective(float* out, const float* modOut = nullptr) const;
@@ -115,6 +116,14 @@ class OpenPatch final : public Patch
     void useOwnCfg() { adoptCfg(&own); }
     // The config a .patch file gives this patch, exactly what importData would make of it (cold, no allocation). `out` is overwritten.
     void cfgFromData(const PatchData& d, SlotCfg& out) const;
+
+    // Macro depth mode: Add for every patch loaded from a file without the flag, Scale for a new patch.
+    bool macroScale() const { return macroScaleMode; }
+    void setMacroScale(bool scale)       // audio interrupts disabled by the caller, like the other setters
+    {
+        macroScaleMode = scale;
+        rebuildOwn();
+    }
 
     // Gain slope of Macro 7 (velocity) on the Volume param: gain = vol * (1 + k * (vel - 1))
     float velocityAmount() const
@@ -182,6 +191,7 @@ class OpenPatch final : public Patch
     uint8_t modSer = 0;
     uint8_t cfgSer = 0;
     uint32_t effSer = 0;                 // see effSerial()
+    bool macroScaleMode = true;          // new patches Scale, importData sets it from the file (own.macroScale follows, buildCfg)
     SlotCfg own;                         // macros and slots of this patch in the form the render path reads (rebuildOwn)
     const SlotCfg* cfg = &own;           // the live one: own, or a row of the Patch FX bank
     PatchExtra extra;                    // raw .patch fields kept for the round trip
