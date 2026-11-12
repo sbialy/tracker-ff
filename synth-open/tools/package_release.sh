@@ -159,6 +159,7 @@ ${plugnotes}
 This image links neither libPolySynth.a nor libPolyDSP.a. $nofactory
 Unzip to the root of the SD card, then Config > Firmware (the file name of the .ptf must stay as it is).
 Firmware/ holds the image and Plugins/ the plugins. Without the synth plugins the projects that use the $nword plugin engines show Missing on those parts.
+When you update from 1.2.x, copy Plugins/Synth/chip.plg to the card as well: CHIP is no longer in the image, and without chip.plg the CHIP parts show Missing.
 Effects/ holds the optional effects.${patchesline}
 EOF
 else
