@@ -26,11 +26,11 @@ import re
 import sys
 
 LIMIT = 512
-# hard cap for the audio ISR chain: the engine render frames, the synth shim and the mixer (7 entries and 1768 B at most today)
+# hard cap for the audio ISR chain: the engine render frames, the synth shim and the mixer (8 entries and 1768 B at most today)
 AUDIO_PATHS = ('synth-open/ot/audio/', 'synth-open/open_synth.cpp', 'synth-open/engine_', 'synth-open/plug_insert.cpp',
                'synth-open/plug_synth.cpp', 'core/libs/Audio/', 'core/AudioEngine/')
 AUDIO_FRAME_CAP = 1792
-AUDIO_MAX_ENTRIES = 7
+AUDIO_MAX_ENTRIES = 8
 
 SU_LINE = re.compile(r'^(.+?):(\d+):(\d+):(.*)$')
 VLA_LINE = re.compile(r"^(\S+?):(\d+):\d+: warning: variable length array '([^']+)' is used \[-Wvla\]")

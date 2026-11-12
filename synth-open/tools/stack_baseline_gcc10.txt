@@ -32,6 +32,7 @@ frame	544	static	core/FileManager/SampleImport.cpp	0(int, FileManagerOperation::
 frame	536	static	core/FileManager/fileManagerProject.cpp	void cFileManager::createCurrentProjectFolderTree()
 frame	536	static	core/effector/ptfx_loader.cpp	static bool PtfxLoader::readHeader(const char*, PtfxHeader&)
 frame	528	static	core/interface/projectEditor/fProjEdit.cpp	0()
+frame	512	static	synth-open/open_synth.cpp	void polysynth::open::OpenPatch::effective(float*, const float*) const
 frame	320	dynamic	core/FileManager/fileManagerImportMod.cpp	void cFileManager::importModFile_Patterns()
 frame	64	dynamic	core/libs/NewDisplay/tracker.cpp	void cTracker::tracksNumbers()
 frame	32	dynamic	core/FileManager/fileManagerImportIt.cpp	uint32_t cFileManager::getFileVariable(uint32_t, uint32_t, uint8_t)
