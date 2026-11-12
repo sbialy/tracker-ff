@@ -66,6 +66,20 @@ namespace
 // cents) sends the full 14 bit range, so 1 semitone makes the FX read in cents. Own choice.
 constexpr float kBendRange = 1.0f;
 
+// std::bit_cast needs GCC 11, the pinned 10.3 has none: the same bits through memcpy, which compiles to the same register move
+template <class To, class From>
+inline To bitCast(const From& from)
+{
+#if defined(__cpp_lib_bit_cast)
+    return std::bit_cast<To>(from);
+#else
+    static_assert(sizeof(To) == sizeof(From));
+    To to;
+    std::memcpy(&to, &from, sizeof(To));
+    return to;
+#endif
+}
+
 } // namespace
 
 // Values with macros M1..M6 and the automation slots applied (additive, clamped once). Macro depth: Add scales by the param range,
@@ -588,8 +602,8 @@ class OpenInstrument final : public Instrument
         bool ok = pr.count == params.count && pr.serial == params.serial && pr.moving == params.moving;
         for (int i = 0; ok && i < params.count; i++)
         {
-            ok = std::bit_cast<uint32_t>(pr.start[i]) == std::bit_cast<uint32_t>(params.start[i]) &&
-                 std::bit_cast<uint32_t>(pr.end[i]) == std::bit_cast<uint32_t>(params.end[i]);
+            ok = bitCast<uint32_t>(pr.start[i]) == bitCast<uint32_t>(params.start[i]) &&
+                 bitCast<uint32_t>(pr.end[i]) == bitCast<uint32_t>(params.end[i]);
         }
         if (!ok)
         {
@@ -655,7 +669,7 @@ class OpenInstrument final : public Instrument
                     changed = true;
                     moving = true;
                 }
-                if (std::bit_cast<uint32_t>(e) != std::bit_cast<uint32_t>(v))
+                if (bitCast<uint32_t>(e) != bitCast<uint32_t>(v))
                 {
                     params.end[i] = v;
                     same = false;
@@ -674,7 +688,7 @@ class OpenInstrument final : public Instrument
                 changed |= params.end[i] != v;
                 params.end[i] = v;
                 moving |= params.start[i] != v;
-                same &= std::bit_cast<uint32_t>(params.start[i]) == std::bit_cast<uint32_t>(v);
+                same &= bitCast<uint32_t>(params.start[i]) == bitCast<uint32_t>(v);
             }
         }
         params.moving = moving;
