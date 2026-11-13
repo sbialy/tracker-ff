@@ -37,8 +37,9 @@ SYNTH_ENGINE_SECTIONS_PERC := perc_mini_nomark perc_med_
 
 SYNTH_ENGINES ?= $(SYNTH_ENGINES_DEFAULT)
 
-_se_space :=
-_se_space +=
+# A single space, written so every GNU make reads it the same way (make 3.81 reads "+=" of nothing as a space, make 4.x as nothing)
+_se_empty :=
+_se_space := $(_se_empty) $(_se_empty)
 _se_req := $(strip $(shell printf '%s' '$(SYNTH_ENGINES)' | tr 'a-z,' 'A-Z '))
 # SYNTH_ENGINES=stock (alone or among names) stands for the six stock engines
 _se_req := $(strip $(foreach w,$(_se_req),$(if $(filter STOCK,$(w)),$(SYNTH_ENGINES_STOCK),$(w))))
