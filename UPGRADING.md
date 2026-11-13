@@ -37,7 +37,7 @@ Plate Reverb was never in a public release. If a test build left a Plate Reverb 
 
 - Open a project that has a CHIP part. The first time a plugin engine is needed it is copied into the data flash, you see `Loading CHIP` and the part plays. The first install can cost a short audio gap in a busy project.
 - Open the **Inserts** page (Master button, then cycle). Glue is in the list.
-- If a part shows `Missing: CHIP` after all, `chip.plg` or `chip.plgi` is not in `/Plugins/Synth/` on the card. Copy it and the part comes back with its settings. A Missing part keeps its settings, its patch file and its stored engine number, so nothing is lost. Do not change the Model of such a part before you have copied the plugin, and do not rely on its Macros and Automation pages (see the known issues in the release notes).
+- If a part shows `Missing: CHIP` after all, `chip.plg` or `chip.plgi` is not in `/Plugins/Synth/` on the card. Copy it and the part comes back with its settings. A Missing part keeps its settings, its patch file and its stored engine number, so nothing is lost. To use another engine on such a part, pick it in the Model list: the part changes to that engine after the list has rested for 1 s and its old patch is kept as `<P>-b.patch`, so copy the plugin first if you want to keep playing the old engine. Its Macros and Automation pages are closed while the engine is missing (1.3.1 and later, 1.3.0 let you open them but did not keep what you edited there).
 
 ### New files the Tracker makes
 

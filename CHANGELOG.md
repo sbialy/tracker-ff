@@ -4,6 +4,13 @@ All notable changes to the **Polyend Tracker Community Edition (CE)** firmware a
 
 ---
 
+## [Unreleased] - 1.3.1
+
+### Fixed
+
+1. A part on an engine that is not on the card (for example CHIP without `chip.plg`) can be switched to an installed engine again. 1.3.0 refused every change of its Model list with the `<name> not installed` popup, so the part stayed on the missing engine until the plugin was copied or another project was opened. Now the Model list of such a part works like the list of any part: no row is highlighted, the first step puts the list on a row and the engine of that row is picked after the list has rested for 1 s. The part keeps its stored engine and its patch files until then, slot 0 is kept as `<P>-b.patch` when the engine changes, and picking the old engine again brings the patch back.
+2. The Macros and Automation pages of a part whose engine is not installed stay closed. The Params key shows the `<name> not installed` popup and stays on the Synth page, and picking such a part while a Macros or Automation page is open shows the Synth page. Before, the pages opened and edits made there were lost.
+
 ## [1.3.0] - 2026-11-13 - tracker-ff 1.3.0 (original Tracker, MK66)
 
 Version 1.3.0 of the tracker-ff firmware for the original Tracker. The Tracker+ and the Mini are not part of it.

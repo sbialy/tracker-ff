@@ -107,6 +107,6 @@ The list moves at once, but the engine is picked only after the list has rested 
 | Length of an engine name in the file | 23 characters |
 | Hide | The Model list only. A hidden engine still plays where a project uses it |
 
-- A part whose engine is not installed (`Missing: <NAME>`) has no row in the list. In the edit mode the cursor starts on no row, and Shift + Up, Shift + Down and Delete do nothing until Up, Down or the encoder put the cursor on an engine.
+- A part whose engine is not installed (`Missing: <NAME>`) has no row in the list. A step in the list (encoder, Up, Down, F1) puts it on a row and that engine is picked after the rest of the list, as for any part, so such a part can always be switched to an installed engine. In the edit mode the cursor starts on no row, and Shift + Up, Shift + Down and Delete do nothing until Up, Down or the encoder put the cursor on an engine.
 - Hiding an engine does not remove its plugin. Delete the `.plg` and `.plgi` from the card for that.
 - If you edit the file on a computer while the Tracker is on, open the Synth screen again to see the change.
