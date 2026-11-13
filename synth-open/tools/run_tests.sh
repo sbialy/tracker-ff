@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The host test suite of a tracker-ff tree (Mac or Linux, nothing here touches a device or builds a firmware image):
-#   - run_smoke.sh in 5 variants (the six built-in engines, TRIM=1, PLUGENG=1: a run time plugin engine stand-in)
+#   - run_smoke.sh in 5 variants (the five built-in engines, TRIM=1, PLUGENG=1: a run time plugin engine stand-in)
 #   - plug/build_plugs.sh: the two worked examples of docs/plugin_sdk.md, built and run in the emulator
-#   - the plugin host unit tests (plug_*_test.cpp, sat_softknee_test.cpp), the index and logo tests against the pinned modules
+#   - the plugin host unit tests (plug_*_test.cpp, sat_softknee_test.cpp, seq_tick_test.cpp, kern_*_test.cpp), the index and logo tests against the pinned modules
 # Ends with one verdict line: "RESULT: GREEN" (exit 0) or "RESULT: RED (...)" (exit 1). Logs in OUTDIR/logs.
 #
 #   synth-open/tools/run_tests.sh [WORKTREE [OUTDIR]]
@@ -12,9 +12,15 @@
 #     TOOLCHAIN       Arm GNU prefix (.../bin/arm-none-eabi-) for build_plugs.sh. Default: WORKTREE/agt/12.3.rel1/bin/arm-none-eabi-
 #                     when it is there, else arm-none-eabi-gcc on PATH
 #     PY              a python3 with the unicorn module (the emulator of build_plugs.sh). Default python3
+#                     (python3 -m venv .venv && .venv/bin/pip install unicorn, then PY=.venv/bin/python)
 #     PLUGDIR         the shipped plugins (.plg, .plgi) for the index and logo tests. Default: the pinned modules of
 #                     engines/external.lock.json, fetched into OUTDIR/modules from the local module builds (external.py fetch --from-local)
 #     NO_BUILD_PLUGS  set: skip build_plugs.sh (run_host_tests.sh)
+#     CHIP_PLUGIN_SRC engine_chip.cpp of tracker-engines-os (CHIP is chip.plg): adds smoke variants that link that engine and the Polyend
+#                     voice natively and list CHIP as a plugin engine at stored 6 (the engine tests of CHIP, all-engine loops with it).
+#                     Default: the file at the pinned tag of the engines-os set (external.py source). Without a checkout of that
+#                     repository the CHIP variants are skipped and the run says so
+#     EXT_MODULE      "module.plg IMAGE_CRC RUN_ADDRESS": ext_loader_test also loads that extension module (pack_ext.py output)
 #     SMOKE_ARCH      run_smoke.sh architecture, default arm64 here (native on Apple silicon). x86_64 runs under Rosetta
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -30,6 +36,11 @@ if [ -z "${TOOLCHAIN:-}" ]; then
   fi
 fi
 export TOOLCHAIN=${TOOLCHAIN:-}
+if [ -z "${CHIP_PLUGIN_SRC:-}" ]; then
+  if python3 -I engines/external.py source engines-os "$out/src" engine_chip.cpp > "$out/chip_src.log" 2>&1; then CHIP_PLUGIN_SRC=$out/src/engine_chip.cpp
+  else echo "CHIP plugin source: not available, the CHIP smoke variants are skipped ($(tail -1 "$out/chip_src.log"))"; fi
+fi
+export CHIP_PLUGIN_SRC=${CHIP_PLUGIN_SRC:-}
 export PY=${PY:-python3}
 export SMOKE_ARCH=${SMOKE_ARCH:-arm64}
 echo "tree $wt ($(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
@@ -42,17 +53,27 @@ T=$(mktemp -d "${TMPDIR:-/tmp}/tff_tests.XXXXXX")
 trap 'rm -rf "$T"' EXIT
 bad=0
 
+echo "### firmware names"
+bash synth-open/tools/check_ptf_name_test.sh | tail -1 || bad=$((bad+1))
+bash synth-open/tools/release_gate_tail_test.sh | tail -1 || bad=$((bad+1))
+
 echo "### smoke"
 {
-# Only the six built-in engines can be linked in (engines.mk), every other engine is a plugin since the five repository split.
+# Only the five built-in engines can be linked in (engines.mk), every other engine is a plugin (CHIP too since 1.3.0).
 # PLUGENG=1 adds a run time plugin engine (a 100 engine library, missing numbers, names.txt).
 for v in \
- "|ACD FAT VAP WTFM" "TRIM=1|ACD FAT VAP WTFM PERC CHIP" "TRIM=1 PLUGENG=1|ACD FAT VAP WTFM PERC CHIP" \
- "|ACD FAT VAP WTFM PERC CHIP" "PLUGENG=1|ACD FAT VAP WTFM PERC CHIP" ; do
+ "|ACD FAT VAP WTFM" "TRIM=1|ACD FAT VAP WTFM PERC" "TRIM=1 PLUGENG=1|ACD FAT VAP WTFM PERC" \
+ "|ACD FAT VAP WTFM PERC" "PLUGENG=1|ACD FAT VAP WTFM PERC" ; do
   e=${v%%|*}; s=${v#*|}
   echo "### env $e | $s"
   env $e sh synth-open/tools/run_smoke.sh "$s"; echo "### rc=$?"
-done; } > "$L/smoke.log" 2>&1
+done
+if [ -n "${CHIP_PLUGIN_SRC:-}" ]; then
+  for e in "TRIM=1" "TRIM=1 PLUGENG=1"; do
+    echo "### env $e CHIP_PLUGIN_SRC | ACD FAT VAP WTFM PERC"
+    env $e CHIP_PLUGIN_SRC="$CHIP_PLUGIN_SRC" sh synth-open/tools/run_smoke.sh "ACD FAT VAP WTFM PERC"; echo "### rc=$?"
+  done
+fi; } > "$L/smoke.log" 2>&1
 grep -c '^### rc=0' "$L/smoke.log" | sed 's/^/smoke variants rc=0: /'; grep '^### rc=' "$L/smoke.log" | grep -v 'rc=0' | sed 's/^/smoke NONZERO /'
 
 if [ -z "${NO_BUILD_PLUGS:-}" ]; then
@@ -78,17 +99,71 @@ fi
 echo "plugins for the index and logo tests: $PLUGDIR"
 
 echo "### host unit tests"
-TESTS="plug_bank_test plug_index_test plug_logo_test plug_ui_nav_test sat_softknee_test plug_work_test plug_scan_cache_test"
+TESTS="plug_bank_test plug_index_test plug_logo_test plug_ui_nav_test plug_defer_test sat_softknee_test plug_work_test plug_scan_cache_test synth_order_test"
 for t in $TESTS; do
   c++ -std=c++20 -O1 -Wall -I synth-open synth-open/tools/$t.cpp -o "$T/$t" > "$L/$t.build.log" 2>&1 || echo "BUILD FAIL $t"
 done
 c++ -std=c++20 -O1 -Wall -I synth-open -I synth-open/tools/plug_stub synth-open/tools/plug_sidecar_test.cpp -o "$T/plug_sidecar_test" \
   > "$L/plug_sidecar_test.build.log" 2>&1 || echo "BUILD FAIL plug_sidecar_test"
+# the integer sequencer clock against the stock double accumulator (core/source/internalTickClock.h), 1 simulated minute per run here
+c++ -std=c++20 -O2 -Wall -I core/source synth-open/tools/seq_tick_test.cpp -o "$T/seq_tick_test" > "$L/seq_tick_test.build.log" 2>&1 \
+  || echo "BUILD FAIL seq_tick_test"
+# the CPU kernels of core/libs/Audio (the firmware includes the very headers the tests include): old loop against new loop, bit for bit
+c++ -std=c++20 -O2 -Wall -I core/libs/Audio synth-open/tools/kern_sample_read_test.cpp -o "$T/kern_sample_read_test" \
+  > "$L/kern_sample_read_test.build.log" 2>&1 || echo "BUILD FAIL kern_sample_read_test"
+c++ -std=c++20 -O2 -Wall -I synth-open/tools/kern_host -I core/libs/Audio synth-open/tools/kern_env_steady_test.cpp -o "$T/kern_env_steady_test" \
+  > "$L/kern_env_steady_test.build.log" 2>&1 || echo "BUILD FAIL kern_env_steady_test"
+c++ -std=c++20 -O2 -Wall -I synth-open/tools/kern_host -I core/libs/Audio synth-open/tools/kern_gain_copy_test.cpp -o "$T/kern_gain_copy_test" \
+  > "$L/kern_gain_copy_test.build.log" 2>&1 || echo "BUILD FAIL kern_gain_copy_test"
+c++ -std=c++20 -O2 -ffp-contract=fast -Wall -I core/libs/Audio synth-open/tools/kern_synth_part_test.cpp -o "$T/kern_synth_part_test" \
+  > "$L/kern_synth_part_test.build.log" 2>&1 || echo "BUILD FAIL kern_synth_part_test"
+c++ -std=c++20 -O1 -Wall -I synth-open -I core/include synth-open/tools/ext_loader_test.cpp -o "$T/ext_loader_test" \
+  > "$L/ext_loader_test.build.log" 2>&1 || echo "BUILD FAIL ext_loader_test"
+c++ -std=c++20 -O1 -Wall -Wextra -I synth-open -I core/include synth-open/tools/ext_recovery_test.cpp -o "$T/ext_recovery_test" \
+  > "$L/ext_recovery_test.build.log" 2>&1 || echo "BUILD FAIL ext_recovery_test"
+# the chord matcher and the chord names of the chord capture (core/source/mtChord.cpp), plain and with ASan/UBSan
+CM=(-std=c++20 -O1 -Wall -I core/source synth-open/tools/chord_match_test.cpp core/source/mtChord.cpp)
+c++ "${CM[@]}" -o "$T/chord_match_test" > "$L/chord_match_test.build.log" 2>&1 || echo "BUILD FAIL chord_match_test"
+c++ -g -fsanitize=address,undefined -fno-sanitize-recover=all "${CM[@]}" -o "$T/chord_match_test_san" > "$L/chord_match_test_san.build.log" 2>&1 \
+  || echo "BUILD FAIL chord_match_test_san"
+# the extension ids of the plugin ABI: all distinct, PLUG_EXT_CHORD off the 5 of PLUG_EXT_FILES (host level 2 line)
+c++ -std=c++20 -O1 -Wall -I synth-open synth-open/tools/plug_abi_ids_test.cpp -o "$T/plug_abi_ids_test" \
+  > "$L/plug_abi_ids_test.build.log" 2>&1 || echo "BUILD FAIL plug_abi_ids_test"
+# the Features registry and its file parser (core/source/features.cpp), plain and with ASan/UBSan
+FT=(-std=c++20 -O1 -Wall -DFEATURE_EXT_HOOKS -DFEATURES_TEST -I core/source -I core/include synth-open/tools/features_test.cpp core/source/features.cpp)
+c++ "${FT[@]}" -o "$T/features_test" > "$L/features_test.build.log" 2>&1 || echo "BUILD FAIL features_test"
+c++ -g -fsanitize=address,undefined -fno-sanitize-recover=all "${FT[@]}" -o "$T/features_test_san" > "$L/features_test_san.build.log" 2>&1 \
+  || echo "BUILD FAIL features_test_san"
 {
- for t in plug_bank_test plug_ui_nav_test sat_softknee_test plug_sidecar_test plug_work_test plug_scan_cache_test; do
+ for t in plug_bank_test plug_ui_nav_test plug_defer_test sat_softknee_test plug_sidecar_test plug_work_test plug_scan_cache_test synth_order_test; do
    echo "### run $t"; "$T/$t"; echo "### rc=$?"
  done
+ # EXT_MODULE="module.plg IMAGE_CRC RUN_ADDRESS" (synth-open/plug/pack_ext.py prints them) adds the real module checks
+ read -r -a ext_args <<< "${EXT_MODULE:-}"
+ echo "### run ext_loader_test"; "$T/ext_loader_test" ${ext_args[@]+"${ext_args[@]}"}; echo "### rc=$?"
+ # the recovery console and the status line of a refused module (with EXT_MODULE also over the real file)
+ echo "### run ext_recovery_test"; "$T/ext_recovery_test" ${ext_args[@]+"${ext_args[@]}"}; echo "### rc=$?"
  echo "### run plug_index_test"; "$T/plug_index_test" "$PLUGDIR"; echo "### rc=$?"
+ echo "### run seq_tick_test"; "$T/seq_tick_test" 1; echo "### rc=$?"
+ echo "### run kern_sample_read_test"; "$T/kern_sample_read_test"; echo "### rc=$?"
+ echo "### run kern_env_steady_test"; "$T/kern_env_steady_test"; echo "### rc=$?"
+ echo "### run kern_gain_copy_test"; "$T/kern_gain_copy_test"; echo "### rc=$?"
+ echo "### run kern_record_queue_test"; sh synth-open/tools/kern_record_queue_test.sh; echo "### rc=$?"
+ echo "### run kern_synth_part_test"; "$T/kern_synth_part_test" full; echo "### rc=$?"
+ # the same part path as Cortex-M4 code in the emulator (the soft clip is a fused multiply-add: the compiler decides the last bit)
+ if [ -n "$TOOLCHAIN" ] && "$PY" -c 'import unicorn' 2> /dev/null; then
+   echo "### run synth_part_arm"; PYTHON=$PY sh synth-open/tools/audio_opt/run_synth_part_arm.sh 3000; echo "### rc=$?"
+ else echo "synth_part_arm: skipped (no TOOLCHAIN or no unicorn module in $PY)"; fi
+ echo "### run chord_match_test"; "$T/chord_match_test"; echo "### rc=$?"
+ echo "### run chord_match_test_san"; "$T/chord_match_test_san"; echo "### rc=$?"
+ echo "### run plug_abi_ids_test"; "$T/plug_abi_ids_test"; echo "### rc=$?"
+ echo "### run features_test"; "$T/features_test"; echo "### rc=$?"
+ echo "### run features_test_san"; "$T/features_test_san"; echo "### rc=$?"
+ # USB audio (Config > Features): the ring, and the descriptors served with the switch off (= the image without it) and on
+ echo "### run usb_audio_out_test"; bash platforms/mk66/usbaudio/test/run.sh; echo "### rc=$?"
+ echo "### run usb_desc_test"; bash platforms/mk66/usbaudio/test/usb_desc_test.sh; echo "### rc=$?"
+ # a read of uninitialised stack in the synth path (render fuzz, zero against pattern stack init, 40,000 steps): the two hashes must be equal
+ echo "### run uninit_equiv"; ZEROPAT=1 sh synth-open/tools/run_refresh_equiv.sh "ACD FAT VAP WTFM PERC" 40000; echo "### rc=$?"
  echo "### run plug_logo_test"; "$T/plug_logo_test" "$PLUGDIR"/*.plgi; echo "### rc=$?"
 } > "$L/plug_tests.log" 2>&1
 grep -E '^### (run|rc)' "$L/plug_tests.log" | paste - -
@@ -97,6 +172,7 @@ grep -E '^### (run|rc)' "$L/plug_tests.log" | paste - -
 bad=$((bad + $(grep -h '^### rc=' "$L/smoke.log" "$L/plug_tests.log" | grep -vc '^### rc=0$')))
 nb=$(grep -c '^### rc=' "$L/plug_tests.log")
 for f in "$L"/*.build.log; do [ -s "$f" ] && grep -q 'error' "$f" && { echo "BUILD ERROR $f"; bad=$((bad+1)); }; done
-[ "$(grep -c '^### rc=0$' "$L/smoke.log")" -eq 5 ] || { echo "smoke: not 5 variants"; bad=$((bad+1)); }
-if [ "$bad" -eq 0 ] && [ "$nb" -ge 8 ]; then echo "RESULT: GREEN"; exit 0; fi
+nsmoke=5; [ -z "${CHIP_PLUGIN_SRC:-}" ] || nsmoke=7
+[ "$(grep -c '^### rc=0$' "$L/smoke.log")" -eq "$nsmoke" ] || { echo "smoke: not $nsmoke variants"; bad=$((bad+1)); }
+if [ "$bad" -eq 0 ] && [ "$nb" -ge 10 ]; then echo "RESULT: GREEN"; exit 0; fi
 echo "RESULT: RED ($bad failing, $nb tests ran)"; exit 1

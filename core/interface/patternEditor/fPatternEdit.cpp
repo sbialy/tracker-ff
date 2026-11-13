@@ -29,6 +29,14 @@ static cPatternEditor* PTE = &patternEditor;
 
 extern strMtProject mtProject;
 
+// Only the 48 sample instruments have a play mode. lastUsedInstrument also holds MIDI (48..) and
+// synth (64..) instruments, and mtProject.instrument[] has kSampleInstrumentsCount entries.
+static bool lastUsedInstrumentIsBeatSlice()
+{
+    uint8_t idx = mtProject.values.lastUsedInstrument;
+    return idx < kSampleInstrumentsCount && mtProject.instrument[idx].playMode == playModeBeatSlice;
+}
+
 // pod ekranem
 static void functChangePattern(uint8_t state);
 static void functChangePatternLength(uint8_t state);
@@ -1652,8 +1660,7 @@ void cPatternEditor::changneFillDataByPad(uint8_t pad)
             if (editParam == EditNote)
             {
                 bool isBeatSlice =
-                  mtProject.instrument[mtProject.values.lastUsedInstrument].playMode ==
-                  playModeBeatSlice;
+                  lastUsedInstrumentIsBeatSlice();
 
                 fillData[fillIdx].from = mtPadBoard.getNoteFromPad(pad, isBeatSlice);
             }
@@ -1682,8 +1689,7 @@ void cPatternEditor::changneFillDataByPad(uint8_t pad)
             if (editParam == EditNote)
             {
                 bool isBeatSlice =
-                  mtProject.instrument[mtProject.values.lastUsedInstrument].playMode ==
-                  playModeBeatSlice;
+                  lastUsedInstrumentIsBeatSlice();
 
                 fillData[fillIdx].to = mtPadBoard.getNoteFromPad(pad, isBeatSlice);
             }
@@ -4117,6 +4123,7 @@ static void functUndoRedo(uint8_t state, bool undo)
         PTE->refreshPattern();
         PTE->showPattern();
         PTE->showLength();
+        PTE->showFxInfo(); // the title bar names the FX of the step the undo brought back
     }
 }
 
@@ -4136,6 +4143,7 @@ static void functUndoRedoOnLeftRight(int8_t dir)
     PTE->refreshPattern();
     PTE->showPattern();
     PTE->showLength();
+    PTE->showFxInfo();
 }
 
 // ##############################################################################################
@@ -4230,8 +4238,7 @@ void cPatternEditor::lightUpPadBoard()
             case EditNote:
             {
                 bool isBeatSlice =
-                  mtProject.instrument[mtProject.values.lastUsedInstrument].playMode ==
-                  playModeBeatSlice;
+                  lastUsedInstrumentIsBeatSlice();
 
                 if (isBeatSlice)
                 {
@@ -4460,8 +4467,7 @@ static void functMiniMiddle(uint8_t state)
         case cPatternEditor::EditNote: // nuta
         {
             // xxx niedorobione
-            bool isBeatSlice = mtProject.instrument[mtProject.values.lastUsedInstrument].playMode ==
-                               playModeBeatSlice;
+            bool isBeatSlice = lastUsedInstrumentIsBeatSlice();
             uint8_t noteFromPad = isBeatSlice
                                     ? /*padToBeatNoteConverter.getNoteFromPad(pad)*/ mtProject
                                         .values.lastUsedNote // <<<< tu moze byc zle
@@ -4625,7 +4631,7 @@ static void functPads(uint8_t pad, uint8_t state, int16_t velo)
         sendSelection();
 
         bool isBeatSlice =
-          mtProject.instrument[mtProject.values.lastUsedInstrument].playMode == playModeBeatSlice;
+          lastUsedInstrumentIsBeatSlice();
 
         uint8_t noteToPlay = mtPadBoard.getNoteFromPad(pad, isBeatSlice);
 
@@ -4672,8 +4678,7 @@ static void functPads(uint8_t pad, uint8_t state, int16_t velo)
             case cPatternEditor::EditNote: // nuta
             {
                 bool isBeatSlice =
-                  mtProject.instrument[mtProject.values.lastUsedInstrument].playMode ==
-                  playModeBeatSlice;
+                  lastUsedInstrumentIsBeatSlice();
                 uint8_t noteFromPad = mtPadBoard.getNoteFromPad(pad, isBeatSlice);
                 if (sequencer.isRec())
                 {
@@ -4759,6 +4764,32 @@ static void functPads(uint8_t pad, uint8_t state, int16_t velo)
             case cPatternEditor::EditFx1: // fx1
             case cPatternEditor::EditFx2: // fx2
             {
+                // chord capture: on a MIDI Chord cell of a MIDI or synth step the pads play notes, the held chord becomes the step's
+                // note and chord (mtSequencer_chord.cpp), the cursor moves on when the last pad comes up
+                if (!PTE->isMicVolView &&
+                    (state != buttonPress || (!PTE->buttons->isButtonPressed(interfaceButtonFx1) &&
+                                              !PTE->buttons->isButtonPressed(interfaceButtonFx2))))
+                {
+                    if (state == buttonPress)
+                    {
+                        sendSelection();
+                    }
+                    const Sequencer::enChordPad r =
+                      sequencer.chordCapturePad(PTE->editParam == cPatternEditor::EditFx1 ? 1 : 0,
+                                                mtPadBoard.getNoteFromPad(pad, false),
+                                                state == buttonPress);
+                    if (r != Sequencer::chordPad_notMine)
+                    {
+                        if (r == Sequencer::chordPad_done)
+                        {
+                            PTE->moveCursorByStep();
+                        }
+                        PTE->lightUpPadBoard();
+                        PTE->refreshPattern();
+                        PTE->showActualParamOnBar(true);
+                        return;
+                    }
+                }
                 if (state == buttonPress)
                 {
                     sendSelection();

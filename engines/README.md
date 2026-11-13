@@ -1,17 +1,17 @@
 # engines/ - the plugin modules of tracker-ff
 
 tracker-ff 1.2.0 is split into five repositories. This one is the firmware: the plugin host, the plugin SDK, the built-in engines
-(ACD FAT VAP WTFM PERC from OpenTracker, CHIP from Polyend's open Chiptune voice) and the `.ptfx` Sample Editor effects. It holds no
+(ACD FAT VAP WTFM PERC from OpenTracker) and the `.ptfx` Sample Editor effects. It holds no
 plugin module source. Every synth engine plugin and master insert plugin is built in a module repository, and this folder pins and
 checks what they publish.
 
 | Repository | Visibility | Lock set | Modules |
 |---|---|---|---|
 | tracker-ff (this one) | public | | host, SDK, built-in engines, `.ptfx` |
-| [tracker-engines-os](https://github.com/sbialy/tracker-engines-os) | public | `engines-os` | the OpenTracker 3.x module engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type (`.plg`, `.plgi`, `.wasm`, `.json`) |
+| [tracker-engines-os](https://github.com/sbialy/tracker-engines-os) | public | `engines-os` | CHIP (Polyend's open Chiptune voice, `.plg` and `.plgi` only) and the OpenTracker 3.x module engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type (`.plg`, `.plgi`, `.wasm`, `.json`) |
 | tracker-engines | private | `engines` | our own engines PHZ and PLK, freeware binaries only |
 | [tracker-effects-os](https://github.com/sbialy/tracker-effects-os) | public | `effects-os` | the OpenTracker fx ports Dirt, Tape, Lo-Fi, BBD, Phaser (`.plg`, `.wasm`, `.json`) |
-| tracker-effects | private | `effects` | our own inserts Console and Tube, freeware binaries only |
+| tracker-effects | private | `effects` | our own inserts Console, Tube and Glue, freeware binaries only |
 
 ## Files
 
@@ -46,8 +46,12 @@ repository in `build/modules/<set>/` (every repository has its own `NOTICE.md`; 
    `synth-open/README.md`). It never reads a module repository.
 2. The modules: `engines/rebuild_pinned.sh OUT autof` (from source, checked against the lock) or `external.py fetch` (the published files).
 3. The package: `synth-open/tools/package_release.sh <image.ptf> OUT --modules build/modules --effects <ptfx dir> --zip` lays the
-   engines out in `Plugins/Synth/`, the inserts in `Plugins/Master/` and the notices of every module repository in
-   `licenses/plugins/<repository>/`, after `external.py check` and `verify-external`.
+   engines out in `Plugins/Synth/`, the inserts in `Plugins/Master/` and the notices of every module set in
+   `tracker-ff/licenses/plugins/<public name>/` (tracker-engines, tracker-effects, tracker-engines-os, tracker-effects-os), after `external.py check` and `verify-external`.
+   The package step first runs the mismatch gate, `synth-open/tools/release_gate.sh` (also `make release-gate PLG_DIR=build/modules`): the simulator
+   `fw_engine_mismatch_sim.sh` for this tree and the new plugins against the latest published `tracker-ff-v<A.B.C>` tag (`OLD_REF=<ref>` picks another), which
+   makes no package when a check goes RED that is not in `synth-open/tools/ui_shot/mismatch_known_findings.txt`. Every entry there states its reason, so a new RED
+   check blocks the release until it is fixed or listed with a reason (`MISMATCH_GATE=skip` skips the gate for a layout test and says so).
 
 ## Build order for a new release
 
@@ -68,7 +72,7 @@ takes the checkout's files. The firmware stays the owner of these files: an SDK 
 
 ## What the firmware lost with the module sources
 
-- `SYNTH_ENGINES` accepts only the built-in six. A plugin engine name stops the build with a pointer here. The flash report
+- `SYNTH_ENGINES` accepts only the built-in five. A plugin engine name stops the build with a pointer here. The flash report
   (`make synth-engines`) and `tools/phz_cycles` cover the built-in engines only.
 - The render compare of each engine plugin against the same engine linked into the firmware (`synth_render_compare.sh`) is gone:
   the linked-in reference no longer exists. The engine builds keep their own render checksums (`SET.json` of tracker-engines-os) and the

@@ -1,5 +1,5 @@
 // Copied from OpenTracker (https://github.com/sandlbn/polyend-tracker-re, commit 927b1516385e), Apache-2.0,
-// see licenses/LICENSE-OpenTracker-Apache-2.0.txt. Not modified, except this notice (Apache-2.0 section 4b).
+// see licenses/LICENSE-OpenTracker-Apache-2.0.txt. Modified by tracker-ff: paraphony only, every change is marked PARA.
 // ACD synth engine (see acd.h) [OT clean-room DSP].
 //
 // Signal path per voice and block (all passes over one 128-frame buffer):
@@ -42,6 +42,7 @@
 #include <cstring>
 
 #include "fastrun.h"
+#include "plug/plug_chord.h"
 
 namespace ot {
 namespace audio {
@@ -51,6 +52,7 @@ namespace {
 using namespace acd;
 
 constexpr float kBlockSec = float(kBlock) / kSampleRate;
+constexpr uint32_t kBlockUs = 2901;   // PARA strum: one block in us (128 / 44,117.647 Hz = 2,901.3 us)
 constexpr float kPiF = 3.14159265f;
 constexpr float kOscGain = 0.5f;       // oscillator sum headroom
 constexpr float kPostNoise = 0.35f;    // post-filter noise level at |Noise Mix| = 1
@@ -183,6 +185,15 @@ struct Voice {
     uint32_t rng;
     uint8_t ampSt, modSt, ft, flags;
     uint32_t sub;   // octave counter of the sub oscillator
+    // PARA: the extra oscillators of a paraphonic chord (Chord Mode Para): how many (0 = a plain voice), their phase and pitch ratio
+    // to the note. They are saw + pulse like the main one (the sub stays on the note) and share its filter, envelopes and LFO.
+    uint32_t nChord;
+    float cph[3];
+    float cratio[3];
+    // PARA strum: the block each note starts in (0 the note, 1..3 the chord oscillators), counted from the note-on in strumBlk.
+    // All 0 without a strum, so an unstrummed voice renders as before.
+    uint8_t onset[4];
+    uint8_t strumBlk;
 };
 static_assert(sizeof(Voice) <= kSynthVoiceStateBytes, "ACD voice state too large");
 
@@ -267,6 +278,31 @@ void oscLoop(Osc& o, float* out) {
     }
     o.ph = ph;
     o.cnt = cnt;
+}
+
+// PARA: one extra chord oscillator (saw + optional pulse, no sub) ADDED into out, in its own pass after the main oscillator (one
+// pass per note keeps the FPU registers of the loop free, the JU6 prototype lost 15 % of the gain with the copies in one loop).
+// The weights and the pulse width are the main oscillator's ramps.
+template <bool kPulse>
+float chordLoop(float ph, float inc, float dInc, float idt, const Osc& o, float* out) {
+    float duty = o.duty, wSaw = o.wSaw, wSq = o.wSq;
+    const float dDuty = o.dDuty, dSaw = o.dSaw, dSq = o.dSq;
+    for (uint32_t i = 0; i < kBlock; ++i) {
+        ph += inc;
+        if (ph >= 1.0f) ph -= 1.0f;
+        float y = wSaw * (ph + ph - 1.0f - blep(ph, inc, idt));
+        if (kPulse) {
+            float t2 = ph + 1.0f - duty;
+            if (t2 >= 1.0f) t2 -= 1.0f;
+            y += wSq * (t2 + t2 - 1.0f - blep(t2, inc, idt));
+            duty += dDuty;
+            wSq += dSq;
+        }
+        out[i] += y;
+        inc += dInc;
+        wSaw += dSaw;
+    }
+    return ph;
 }
 
 using OscFn = void (*)(Osc&, float*);
@@ -465,6 +501,29 @@ public:
                 a.lfoSh = lcgFloat(a.rng);
             }
         }
+        // PARA: Chord Mode Para latches the Chord (the host may have put a MIDI Chord step's value there for this note-on only)
+        uint32_t nc = 0;
+        if (p.end[kChordMode] >= 0.5f) {
+            const int ci = int(clampf(p.end[kChord], 0.0f, float(PLUG_CHORD_COUNT - 1)) + 0.5f);
+            for (uint32_t b = 1, m = plugchord::kMasks[ci]; b < PLUG_CHORD_SPAN && nc < 3; ++b) {
+                if (m >> b & 1u) a.cratio[nc++] = exp2Fast(float(b) * (1.0f / 12.0f));
+            }
+        }
+        if (!n.reused || nc != a.nChord) {
+            for (uint32_t i = 0; i < 3; ++i) a.cph[i] = 0.0f;
+        }
+        a.nChord = nc;
+        // PARA strum: note k of n starts after k (up) or n-1-k (down) strum gaps, in whole blocks from the note-on (the sequencer's
+        // strum starts its notes on block boundaries too). A late note starts its saw at phase 0.5 (output 0, no step).
+        const int st = nc ? int(clampf(p.end[kStrum], -63.0f, 63.0f) + (p.end[kStrum] < 0.0f ? -0.5f : 0.5f)) : 0;
+        const uint32_t gapUs = uint32_t(st < 0 ? -st : st) * 2000u;
+        for (uint32_t k = 0; k <= 3; ++k) {
+            const uint32_t order = st >= 0 ? k : nc - k;
+            a.onset[k] = k <= nc ? uint8_t((order * gapUs + kBlockUs / 2) / kBlockUs) : 0;
+            if (k && a.onset[k]) a.cph[k - 1] = 0.5f;
+        }
+        if (a.onset[0]) a.phase = 0.5f;
+        a.strumBlk = 0;
         s.lastPitch = n.pitch;
         s.hasLast = 1;
         v.level = a.amp;
@@ -608,7 +667,21 @@ OT_FASTRUN_FN bool AcdEngine::render(SynthVoice& v, const SynthParams& p, float 
     const bool pulse = sq0 != 0.0f || sq1 != 0.0f;
     const int subKind = (sub0 != 0.0f || sub1 != 0.0f) ? ((subMode % 3) == 2 ? 2 : (subMode == 1 ? 3 : 1)) : 0;
     if (subKind) subTables(subMode, o);
-    kOscFns[pulse ? 1 : 0][subKind](o, buf);
+    // PARA strum: a note sounds from its onset block on (a down strum holds the note itself back, its phase waits)
+    const uint32_t sb = a.strumBlk;
+    if (a.onset[0] <= sb) {
+        kOscFns[pulse ? 1 : 0][subKind](o, buf);
+    } else {
+        std::memset(buf, 0, sizeof(buf));
+    }
+    if (sb < 255u) a.strumBlk = uint8_t(sb + 1u);
+    // PARA: the chord's other notes, each in its own pass, into the same buffer before the one filter
+    for (uint32_t k = 0; k < a.nChord; ++k) {
+        if (a.onset[k + 1] > sb) continue;
+        const float r = a.cratio[k];
+        const float i0 = clampf(a.inc * r, 1.0e-7f, kMaxInc), i1 = clampf(inc1 * r, 1.0e-7f, kMaxInc);
+        a.cph[k] = (pulse ? chordLoop<true> : chordLoop<false>)(a.cph[k], i0, (i1 - i0) * kInv, 2.0f / (i0 + i1), o, buf);
+    }
     a.phase = o.ph;
     a.sub = o.cnt & 3u;
     a.inc = inc1;

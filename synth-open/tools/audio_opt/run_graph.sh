@@ -14,7 +14,8 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT0=$(cd "$HERE/../../.." && pwd)
 PY=${PYTHON:-python3}
-TC=$ROOT0/agt/10.3/bin/arm-none-eabi
+TC=${TOOLCHAIN:+${TOOLCHAIN%-}}      # TOOLCHAIN=.../bin/arm-none-eabi- (as for make) picks the compiler, else agt/10.3 of the tree
+TC=${TC:-$ROOT0/agt/10.3/bin/arm-none-eabi}
 OUT=${OUT:-/tmp/audio_opt}
 mkdir -p "$OUT"
 cmd=$1; shift

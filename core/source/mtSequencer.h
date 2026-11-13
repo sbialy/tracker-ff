@@ -2,6 +2,7 @@
 #define _MTSEQUENCER_H_
 
 #include "Platform.h"
+#include "internalTickClock.h"
 #include "mtChordDefs.h"
 #include "mtMidi.h"
 #include "mtStructs.h"
@@ -180,6 +181,7 @@ class Sequencer
             FX_TYPE_R2,
             FX_TYPE_PATCH_CHANGE = FX_TYPE_R2, // SYNTH_OPEN: one-shot synth patch change (bank slot)
             FX_TYPE_R3,
+            FX_TYPE_STRUM = FX_TYPE_R3, // tracker-ff: strum of the MIDI Chord in the other slot (1..63 up, 65..127 down, 2 ms a unit)
             FX_TYPE_R7,
             FX_TYPE_R8,
             FX_TYPE_R9,
@@ -906,6 +908,29 @@ class Sequencer
     void handleNoteOn(byte channel, byte pitch, int8_t volume, int16_t source);
     void handleNoteOff(byte channel, byte pitch, byte volume, int16_t source);
 
+    // Chord capture (tracker-ff, mtSequencer_chord.cpp): a chord held on the pads or a MIDI keyboard in the pattern editor becomes the
+    // cursor step's note (the lowest held note) and a MIDI Chord FX value (mtChord.h chordMatch). Pads: only with the cursor in an FX
+    // column whose cell is MIDI Chord (or empty while MIDI Chord is the last used FX). MIDI: a note that comes while the first one
+    // of a step entry is still held joins it, in any column. Only on MIDI and synth instrument steps, sample steps keep stock.
+    enum enChordPad : uint8_t
+    {
+        chordPad_notMine = 0, // not a capture: the stock pad action
+        chordPad_held,        // taken, the cursor stays
+        chordPad_done,        // taken, the last held pad came up: the cursor moves on
+    };
+    enChordPad chordCapturePad(uint8_t fxIndex, uint8_t note, bool press);
+    void chordCaptureMidiOn(uint8_t note, bool firstWritten);
+    void chordCaptureMidiOff(uint8_t note);
+
+    // Strum FX (tracker-ff, FX_TYPE_STRUM): the value as signed units, + up (lowest note first), - down, 0 off (values 0 and 64).
+    // A unit is kStrumUnitUs between two successive chord notes. The notes start on audio block boundaries (2,902 us on MK66),
+    // the due time of each note is exact, so the error never adds up over a chord.
+    static constexpr uint32_t kStrumUnitUs = 2000;
+    static int8_t strumUnits(uint8_t v)
+    {
+        return (v > 0 && v < 64) ? int8_t(v) : (v > 64 && v <= 127) ? int8_t(64 - int(v)) : int8_t(0);
+    }
+
     // Per-track MIDI in: play/stop a note directly on a track's voice using the
     // instrument that last sounded on that track.
     void handleTrackMidiNoteOn(uint8_t track, uint8_t note, uint8_t velocity);
@@ -952,6 +977,66 @@ class Sequencer
     };
 
   private:
+    struct strChordCapture
+    {
+        uint8_t notes[8];
+        uint8_t count;   // held notes of the open group, 0 = no group
+        uint8_t track;
+        uint8_t step;
+        uint8_t fromPads; // the group is the pads' (else MIDI's)
+        int8_t fxIndex;   // pads: the FX slot under the cursor
+        int8_t origNote;  // the step before the group (No chord puts it back)
+        uint8_t origInstr;
+        uint8_t origFx[2][2];
+    } chordCap = {};
+    void chordCaptureSnapshot(bool restore);
+    uint32_t chordParaTracks = 0; // tracks whose MIDI Chord note-on went out as one paraphonic note (sendMidiChordOn / Off)
+
+    // Strum FX: the delayed note-ons of strummed chords (MIDI out and Poly synth parts). Filled and served in the audio callback
+    // (sendMidiChordOn, tick), a note-off of the track drops its pending notes, Stop drops all. Full: the note starts at once.
+    struct strStrumNote
+    {
+        uint32_t dueUs;    // seqClockUs when it starts
+        uint8_t track;
+        uint8_t note;
+        uint8_t velocity;
+        uint8_t channel;   // 1..16, bit 7: synth part. 0: a free slot
+    };
+    static constexpr uint8_t kStrumSlots = 12;
+    strStrumNote strumQ[kStrumSlots] = {};
+    uint8_t strumPending = 0;   // used slots
+    uint32_t seqClockUs = 0;    // audio time, advanced by every tick (strum due times, the record join window)
+    int8_t stepStrum(const strPlayer::strPlayerTrack::strSendStep* step);
+    void strumQueue(uint8_t track, uint8_t note, uint8_t velocity, uint8_t channel, bool synth, uint32_t delayUs);
+    void strumService();
+    void strumCancel(int track);   // -1: every track
+
+    // Record join: while recording on ONE armed track, a note that starts within
+    // kRecJoinWindowUs of the group's previous note (kRecJoinSpanUs of its first), while the first note is still held, joins the
+    // step as a MIDI Chord FX. The window slides with every joined note: the USB MIDI path of the unit spread notes sent 13 ms
+    // apart over 40 to 70 ms (device test, J1), a 60 ms window from the first note lost them
+    static constexpr uint32_t kRecJoinWindowUs = 100000;
+    static constexpr uint32_t kRecJoinSpanUs = 300000;
+    struct strRecJoin
+    {
+        uint8_t notes[8];
+        uint8_t count;    // 0: no group
+        uint8_t track;
+        uint8_t step;
+        uint8_t first;    // the group's first note (the one the stock path wrote and previews)
+        uint32_t t0;      // seqClockUs of the first note
+        uint32_t tLast;   // seqClockUs of the latest note that joined (or of the first)
+    } recJoin = {};
+    void recJoinStart(uint8_t track, uint8_t step, uint8_t note);
+    bool recJoinTry(uint8_t track, uint8_t note, uint8_t velocity);
+    bool recJoinOff(uint8_t track, uint8_t note);
+    // several tracks armed: the track under the cursor when it is armed records alone, as if it were the only armed one (-1: cursor track not armed or Instr pads, the stock spread)
+    int8_t recJoinCursorTrack(bool padInstrumentEdit);
+    void recHeldAdd(int16_t source, uint8_t note);
+    bool recHeldRemove(int16_t source, uint8_t note);   // true: the note was in the list
+    bool recGroupOff(uint8_t track, bool padInstrumentEdit);   // the end of a recorded group on a track, true: the pattern changed
+    bool chordCaptureWrite();
+    bool chordCaptureContext(int instrument);
     static constexpr int kTicksInStep = 576;
     static constexpr size_t kExternalTempoCounterSize = 24 * 2;
     static constexpr int kExternalClockPpqn = 24;
@@ -1055,7 +1140,7 @@ class Sequencer
     int externalClockPulses = 0;
     int externalClocksToPlay = 0;
 
-    double internalTickAccumulatorUs = 0.0;
+    InternalTickClock internalTickClock;
 
     seqtimesec_t timeWithoutClockPulse = 0;
     int16_t externalClockCompensation_clockSignals = 0;

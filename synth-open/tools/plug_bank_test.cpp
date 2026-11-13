@@ -8,7 +8,7 @@
 //   - boot (bankOpen): no index and no plugin writes nothing, a damaged entry and the entry of a .plg that left the card or
 //     changed are dropped, never a flash command
 //   - install on demand: every engine starts on a sector boundary and shares no sector, an engine already there costs nothing
-//   - the 12 plugins at their pinned sizes: how many fit at once (30 sectors), LRU eviction when the bank is full,
+//   - 14 plugins (12 shipped, 2 made-up large ones) at their sizes: how many fit at once (32 sectors), LRU eviction when the bank is full,
 //     the engines the parts use (pinned) are never evicted and their bytes never change while the others come and go
 //   - an engine that comes back to the sectors it left finds its bytes there: only what another engine overwrote is written
 //   - a project whose engines do not fit together: the one that does not fit fails (kBankNoRoom), nothing else changes
@@ -17,7 +17,7 @@
 //     pinned engines are intact, the install then completes; a journal that cannot be written issues no command
 //   - wear: the "c" counters equal the erases the flash really did (never fewer after a cut), installs spread over the free
 //     sectors, worst case erases per pick for a user cycling through more engines than the bank holds (printed)
-//   - insert 2's sectors (0x1E000..) are never erased or programmed
+//   - the index migration of insert2-sram: 30 counters (1.2.0) and 30 + 2 (wear-fixes) onto the 32 sector bank
 #include "plug_bank.h"
 
 #include <cstdio>
@@ -44,7 +44,7 @@ void check(bool ok, const char* what)
 }
 
 constexpr uintptr_t kPool = 0x20027000;
-constexpr uint32_t kPoolBytes = 3072;   // plug_synth.cpp
+constexpr uint32_t kPoolBytes = 7680;   // plug_synth.cpp
 
 struct Flash
 {
@@ -242,13 +242,6 @@ bool layoutOk(const Bank& b, uint32_t pool = kPoolBytes)
     return true;
 }
 
-bool insert2Blank(const Flash& f)
-{
-    for (uint32_t i = kBankBytes; i < 0x20000; i++)
-        if (f.m[i] != 0xFF) return false;
-    return true;
-}
-
 int find(const Bank& b, uint32_t uid)
 {
     for (int i = 0; i < b.n; i++)
@@ -281,6 +274,9 @@ const P kAll[] = {
     {"arc.plg", 0xc66464e9, 19472, 19464, 120},
     {"pluck.plg", 0xb4a152b0, 6196, 6192, 120},
     {"eight.plg", 0x9d7c57e2, 21160, 21152, 120},
+    {"big1.plg", 0xdbc3be3d, 22148, 22144, 112},   // two made-up large engines, keep the bank as full as 1.3.0 tests it
+    {"big2.plg", 0x28785da0, 21868, 21864, 120},
+    {"chip.plg", 0xb16d36ed, 13328, 13320, 4200},   // last: the indices above are used by the tests below
 };
 constexpr int kN = int(sizeof(kAll) / sizeof(kAll[0]));
 
@@ -329,6 +325,102 @@ int main()
         check(bankWrite(b, t, 40) < 0, "a full buffer is refused");
     }
 
+    // ---- index migration (insert2-sram): the bank grew from 30 to 32 sectors, the last two were master insert 2's
+    {
+        Bank b = {};
+        b.n = 1;
+        b.e[0] = {0x73ac7ee0, 0x10000, 0x1234, 0, 6952, 6944, 0x20027000, 1648, 0, 0xdeadbeef, 'o', "ju6.plg"};
+        for (int k = 0; k < kBankSectors; k++) b.wear[k] = uint32_t(k + 1);
+        b.wear[4] = 0x40;   // the most worn of the first 30
+        char t[2048];
+        int n = bankWrite(b, t, sizeof(t));
+        Bank r;
+        bankRead(t, n, r);
+        check(kBankSectors == 32 && kBankBytes == 0x20000u, "the bank is the whole 128 KB data flash, 32 sectors");
+        check(n > 0 && memcmp(r.wear, b.wear, sizeof(b.wear)) == 0 && r.n == 1, "32 counters round trip, the entry unchanged");
+        // what wear-fixes (b2a24e3) wrote: the 30 bank counters, then insert 2's two (sectors 0x1001E000, 0x1001F000). The same
+        // text as a 32 counter line: the two land on bank sectors 30 and 31, the same physical sectors
+        {
+            std::string wf = "tffbank 1\r\nc";
+            for (int k = 0; k < 30; k++) wf += " " + std::to_string(k + 1);
+            wf += " 7 1234\r\no 73ac7ee0 10000 1234 0 1b28 1b20 20027000 670 0 deadbeef ju6.plg\r\n";
+            bankRead(wf.data(), int(wf.size()), r);
+            check(r.n == 1 && r.wear[0] == 1 && r.wear[29] == 0x30 && r.wear[30] == 7 && r.wear[31] == 0x1234,
+                  "a wear-fixes index: its insert 2 counters become bank sectors 30 and 31 (0x1001E000, 0x1001F000)");
+        }
+        // what 1.2.0 wrote: 30 counters. Insert 2 erased sectors 30 and 31 without counting: they start at the most worn of the 30
+        std::string s30(t, size_t(n));
+        {
+            const size_t c0 = s30.find("\r\nc") + 3;
+            const size_t cEnd = s30.find("\r\n", c0);
+            size_t cut = c0;
+            for (int k = 0; k < 30; k++) cut = s30.find(' ', cut + 1);   // the space before the 31st
+            s30.erase(cut, cEnd - cut);
+        }
+        bankRead(s30.data(), int(s30.size()), r);
+        check(r.n == 1 && r.wear[29] == 30 && r.wear[4] == 0x40 && r.wear[30] == 0x40 && r.wear[31] == 0x40,
+              "a 1.2.0 index (30 counters): kept, sectors 30 and 31 start as worn as the most worn (0x40)");
+        {   // a lone 31st counter (damaged end): not trusted, the same seed
+            std::string s31(t, size_t(n));
+            s31.replace(s31.find("\r\n", s31.find("\r\nc") + 3) - 8, 8, "zz");   // the 32nd counter, 8 digits
+            bankRead(s31.data(), int(s31.size()), r);
+            check(r.n == 1 && r.wear[29] == 30 && r.wear[30] == 0x40 && r.wear[31] == 0x40, "a damaged 32nd counter: 30 kept, 30 and 31 seeded");
+            std::string s29 = s30;
+            s29.erase(s29.rfind(' ', s29.find("\r\n", s29.find("\r\nc") + 3)), 9);   // 29 counters
+            bankRead(s29.data(), int(s29.size()), r);
+            uint32_t sum = 0;
+            for (uint32_t w : r.wear) sum += w;
+            check(r.n == 1 && sum == 0, "fewer than 30 counters: none taken, the entry stays");
+        }
+        // what an older host makes of the new line: 1.2.0's parser reads 30 and ignores the rest
+        {
+            const char* q = t + 12;   // after "tffbank 1\r\nc"
+            const char* e = t + n;
+            bool ok = true;
+            uint32_t w[30];
+            for (int k = 0; k < 30 && ok; k++) ok = q < e && *q++ == ' ' && sc::getHex(q, e, w[k]);
+            check(ok && w[0] == 1 && w[4] == 0x40 && w[29] == 30, "the 1.2.0 parser (30 only) still reads the first 30 counters of the new line");
+        }
+        {   // an older host's bankCheck (bank 0x1E000): an entry in sectors 30 and 31 is outside its bank and dropped, never run
+            const uint32_t oldBytes = 0x1E000u;
+            BankEntry x = {1, 1, 1, 0x1E000u, 6000, 5990, kPool, 120, 0, 0, 'o', "x.plg"};
+            check(!(x.len <= oldBytes && x.off <= oldBytes - x.len), "downgrade: an engine in sectors 30 and 31 fails the old bank bound");
+        }
+        // the worst index still fits the 2,048 B buffer of plug_synth.cpp: 12 entries with the longest file name, all counters at 8 digits
+        Bank big = {};
+        big.n = kBankMax;
+        for (int i = 0; i < kBankMax; i++)
+        {
+            big.e[i] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFF8u, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu,
+                        0xFFFFFFFFu, 'o', "abcdefghijklmnopqrstuvw"};
+        }
+        for (uint32_t& w : big.wear) w = 0xFFFFFFFFu;
+        const int nb = bankWrite(big, t, 2048);
+        check(nb > 0 && nb < 2048, "the largest possible index (12 entries, longest names, 8 digit counters) fits 2,048 B");
+        printf("      largest installed.txt %d of 2048 B\n", nb);
+
+        // upgrade on a unit whose sectors 30 and 31 still hold insert 2's last plugin: an install placed there erases them first,
+        // counted, and the engine is exact. The least worn policy picks them when they are the least worn
+        Flash f;
+        for (uint32_t a = 0x1E000u; a < 0x20000u; a++) f.m[a] = uint8_t(a * 13u);   // old insert 2 text, not blank
+        Io io = allPlugins();
+        Bank b2;
+        Cache cache;
+        open(f, io, b2);
+        for (int k = 0; k < 30; k++) b2.wear[k] = 9;
+        b2.wear[30] = b2.wear[31] = 2;
+        BankInstallStatus st = install(f, io, b2, "pluck.plg", cache);
+        const int at = find(b2, kAll[10].uid);
+        check(st.err == kBankOk && at >= 0 && b2.e[at].off == 0x1E000u && exact(f, io, b2) && b2.wear[30] == 3 && b2.wear[31] == 3 &&
+                  f.erased[30] == 1 && f.erased[31] == 1,
+              "upgrade: an engine goes into the old insert 2 sectors (least worn), both erased once and counted, the bytes exact");
+        Bank rb;
+        BankOpenStatus os = open(f, io, rb);
+        check(os.indexRead && rb.n == 1 && rb.e[0].off == 0x1E000u && rb.wear[31] == 3, "reboot: the engine at 0x1001E000 and the 32 counters come back");
+        Io none;
+        check(!open(f, none, rb).indexRead, "no index on the card: indexRead is false");
+    }
+
     // ---- boot: no plugin, no index: nothing written. Stale and damaged entries dropped without a flash command.
     {
         Flash f;
@@ -354,7 +446,6 @@ int main()
         f.m[b.e[0].off + 100] ^= 0x10;   // a damaged JU6
         o = open(f, io, b);
         check(o.dropped == 1 && b.n == 0, "a damaged entry is dropped at boot");
-        check(insert2Blank(f), "boot: insert 2 sectors untouched");
     }
 
     // ---- install on demand: sector aligned, nothing shared, an installed engine costs nothing
@@ -438,7 +529,7 @@ int main()
             failed += st.err != 0;
             if (st.evicted && firstEvict < 0) firstEvict = i;
         }
-        check(failed == 0 && exact(f, io, b) && layoutOk(b) && insert2Blank(f), "every plugin picked in turn: every install works");
+        check(failed == 0 && exact(f, io, b) && layoutOk(b), "every plugin picked in turn: every install works");
         check(firstEvict > 0 && !c.evicted.empty() && c.evicted[0] == kAll[0].uid, "the bank fills, then the least recently used goes first (JU6)");
         printf("info  %d in card order: %d resident before the first eviction, %d resident at the end, %zu evicted\n", kN, firstEvict, b.n,
                c.evicted.size());
@@ -474,7 +565,6 @@ int main()
         }
         check(bad == 0 && !c.evicted.empty(), "40 picks with three engines pinned: all installs work, evictions happen");
         check(!pinnedEvicted && !pinnedChanged, "the pinned engines are never evicted, their bytes never change (never erased)");
-        check(insert2Blank(f), "all plugins: insert 2 sectors untouched");
     }
 
     // ---- an engine that comes back to the sectors it left
@@ -483,14 +573,14 @@ int main()
         Io io;
         io.card["a.plg"] = plg("a.plg", 0xA, 40000, 39992, 64);
         io.card["b.plg"] = plg("b.plg", 0xB, 40000, 39992, 64);
-        io.card["c.plg"] = plg("c.plg", 0xC, 40000, 39992, 64);
+        io.card["c.plg"] = plg("c.plg", 0xC, 49000, 48992, 64);   // 12 sectors: A, B and C fill the 32
         io.card["d.plg"] = plg("d.plg", 0xD, 4000, 3992, 64);
         Bank b;
         Cache c;
         open(f, io, b);
         install(f, io, b, "a.plg", c);
         install(f, io, b, "b.plg", c);
-        install(f, io, b, "c.plg", c);   // 3 x 10 sectors: the bank is full
+        install(f, io, b, "c.plg", c);   // 10 + 10 + 12 sectors: the bank is full
         const uint32_t aOff = b.e[find(b, 0xA)].off;
         BankInstallStatus d = install(f, io, b, "d.plg", c);   // evicts A (least recent)
         check(d.err == 0 && d.evicted == 1 && find(b, 0xA) < 0, "a small engine evicts the least recently used big one");
@@ -510,10 +600,10 @@ int main()
         Io io;
         io.card["a.plg"] = plg("a.plg", 0xA, 40000, 39992, 64);
         io.card["b.plg"] = plg("b.plg", 0xB, 40000, 39992, 64);
-        io.card["c.plg"] = plg("c.plg", 0xC, 40000, 39992, 64);
+        io.card["c.plg"] = plg("c.plg", 0xC, 49000, 48992, 64);   // 12 sectors: A, B and C fill the 32
         io.card["d.plg"] = plg("d.plg", 0xD, 5000, 4992, 64);
-        io.card["huge.plg"] = plg("huge.plg", 0xE, 130000, 129992, 64);
-        io.card["fat.plg"] = plg("fat.plg", 0xF, 4000, 3992, 4000);
+        io.card["huge.plg"] = plg("huge.plg", 0xE, 140000, 139992, 64);   // bigger than the 32 sectors (131,072 B)
+        io.card["fat.plg"] = plg("fat.plg", 0xF, 4000, 3992, kPoolBytes + 8);
         Bank b;
         Cache c;
         open(f, io, b);
@@ -534,9 +624,10 @@ int main()
     {
         Flash f;
         Io io;
-        io.card["r1.plg"] = plg("r1.plg", 0x11, 3000, 2000, 1500);
-        io.card["r2.plg"] = plg("r2.plg", 0x12, 3000, 2000, 1500);
-        io.card["r3.plg"] = plg("r3.plg", 0x13, 3000, 2000, 1500);
+        const uint32_t third = kPoolBytes / 2 - 8;   // two of them fit the pool, three do not
+        io.card["r1.plg"] = plg("r1.plg", 0x11, 3000, 2000, third);
+        io.card["r2.plg"] = plg("r2.plg", 0x12, 3000, 2000, third);
+        io.card["r3.plg"] = plg("r3.plg", 0x13, 3000, 2000, third);
         Bank b;
         Cache c;
         open(f, io, b);
@@ -544,7 +635,7 @@ int main()
         install(f, io, b, "r2.plg", c);
         BankInstallStatus r = install(f, io, b, "r3.plg", c);
         check(r.err == 0 && r.evicted == 1 && find(b, 0x11) < 0 && layoutOk(b) && exact(f, io, b),
-              "3 x 1,500 B rw in a 3,072 B pool: the third evicts the oldest by rw, with sectors to spare");
+              "3 x 3,832 B rw in a 7,680 B pool: the third evicts the oldest by rw, with sectors to spare");
     }
 
     // ---- power cut after every command of an install that evicts and erases, and a journal that cannot be written
@@ -582,7 +673,7 @@ int main()
                 if (find(nb, u) < 0) pinnedLost++;
             for (int k = 0; k < kBankSectors; k++)
                 if (nb.wear[k] < f.erased[k] - f0.erased[k] + b0.wear[k]) underCounted++;
-            if (install(f, io, nb, "eight.plg", c).err || !exact(f, io, nb) || find(nb, kAll[11].uid) < 0 || !insert2Blank(f)) notDone++;
+            if (install(f, io, nb, "eight.plg", c).err || !exact(f, io, nb) || find(nb, kAll[11].uid) < 0) notDone++;
         }
         char what[160];
         snprintf(what, sizeof(what), "cut after each of %d commands: nothing inexact survives the next boot", rs.commands);
@@ -637,7 +728,7 @@ int main()
             }
         }
         check(same, "the c counters equal the erases the flash did, sector by sector");
-        check(exact(f, io, b) && insert2Blank(f), "after 900 picks: exact, insert 2 untouched");
+        check(exact(f, io, b), "after 900 picks: exact, insert 2 untouched");
         const double perPick = double(maxW) / picks;
         printf("info  wear, 900 picks cycling 9 engines past 3 pinned: %d misses, %d erases, %d sectors erased, per sector min %u max %u "
                "(%.3f erases of the worst sector per pick)\n",
@@ -706,7 +797,7 @@ int main()
         char what[220];
         snprintf(what, sizeof(what), "%d engine library: %d loads all succeed, the pinned engines stay, at most %d installed at once (kBankMax %d), "
                  "installed.txt at most %d B (2,048)", nLib, loads + 6, maxN, kBankMax, maxIndex);
-        check(ok && pinnedThere && maxN <= kBankMax && maxIndex <= 2048 && exact(f, io, b) && layoutOk(b) && insert2Blank(f), what);
+        check(ok && pinnedThere && maxN <= kBankMax && maxIndex <= 2048 && exact(f, io, b) && layoutOk(b), what);
         snprintf(what, sizeof(what), "%d engine library: the reboot keeps the %d installed engines, no flash command, nothing stale", nLib, b.n);
         check(r.n == b.n && os.stale == 0 && os.dropped == 0 && f.commands == cmd, what);
         printf("info  %d engine library: %d picker loads, %d needed the flash (the rest were cached)\n", nLib, loads, misses);

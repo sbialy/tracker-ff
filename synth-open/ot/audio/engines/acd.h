@@ -1,5 +1,5 @@
 // Copied from OpenTracker (https://github.com/sandlbn/polyend-tracker-re, commit 927b1516385e), Apache-2.0,
-// see licenses/LICENSE-OpenTracker-Apache-2.0.txt. Not modified, except this notice (Apache-2.0 section 4b).
+// see licenses/LICENSE-OpenTracker-Apache-2.0.txt. Modified by tracker-ff: paraphony (kChordMode, kChord, kStrum), marked PARA.
 // ACD synth engine (2.x WP-F, docs/MINI_PLAN.md §3; spec 21 §8.2 parameter
 // table; Tracker Mini manual p.146, p.154) [OT clean-room DSP].
 //
@@ -62,7 +62,11 @@ enum Param : int {
     kGlideMode,
     kGlideTime,
     kVolume,
-    kParamCount   // 29
+    // tracker-ff addition (paraphony, not in OpenTracker): appended, so every older patch keeps its values and plays as before
+    kChordMode,   // 0 Poly (the engine as it was), 1 Para: the voice sounds the Chord (the note and up to 3 more oscillators)
+    kChord,       // the MIDI Chord FX table (synth-open/plug/plug_chord.h, 68 entries, 0 = the note alone)
+    kStrum,       // Para: -63..63, 2 ms between successive chord notes, + up (the note first), - down (the top first), 0 together
+    kParamCount   // 32
 };
 
 enum FilterType : int { kSvf12 = 0, kSvf24 = 1, kRd3 = 2 };

@@ -18,8 +18,9 @@ const plug_host* plug_rt_host;   // the plugin runtime's host pointer (plug_rt.c
 const plug_desc* plug_entry_dirt(const plug_host*, uint32_t);
 const plug_desc* plug_entry_ot_tape_plug(const plug_host*, uint32_t);
 const plug_desc* plug_entry_ot_lofi_plug(const plug_host*, uint32_t);
-const plug_desc* plug_entry_ff_console_plug(const plug_host*, uint32_t);   // Console and Tube: private source, see the Makefile (EXT)
+const plug_desc* plug_entry_ff_console_plug(const plug_host*, uint32_t);   // Console, Tube and Glue: private source, see the Makefile (EXT)
 const plug_desc* plug_entry_ff_tube_plug(const plug_host*, uint32_t);
+const plug_desc* plug_entry_ff_glue_plug(const plug_host*, uint32_t);
 const plug_desc* plug_entry_ot_bbd_plug(const plug_host*, uint32_t);
 const plug_desc* plug_entry_ot_phaser_plug(const plug_host*, uint32_t);
 
@@ -45,11 +46,12 @@ const plug_desc* uishot_twin(uint32_t uid, const plug_host* host)
         {"org.opentracker.fx.lofi", plug_entry_ot_lofi_plug},
         {"ff.console", plug_entry_ff_console_plug},
         {"ff.tube", plug_entry_ff_tube_plug},
+        {"ff.glue", plug_entry_ff_glue_plug},
         {"org.opentracker.fx.bbd", plug_entry_ot_bbd_plug},
         {"org.opentracker.fx.phaser", plug_entry_ot_phaser_plug},
     };
     for (const auto& t : kTwins)
         if (fnv1a(t.id) == uid) return t.entry(host, (PLUG_ABI_MAJOR << 16) | PLUG_ABI_MINOR);
-    return nullptr;   // a plugin with no twin (the synth engines: never run on the host, and Console and Tube when their private source was not available, their stub entry returns nullptr) fails to load, "Failed" on the page
+    return nullptr;   // a plugin with no twin (the synth engines: never run on the host, and Console, Tube and Glue when their private source was not available, their stub entry returns nullptr) fails to load, "Failed" on the page
 }
 }

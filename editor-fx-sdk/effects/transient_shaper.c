@@ -49,9 +49,9 @@ void plugin_init(void* scratch_mem, uint32_t scratch_size, const PtfxHostApi* ho
     s_host = host;
     float sample_rate = (host && host->sample_rate) ? (float)host->sample_rate : 44100.0f;
     s_fast_rise_coeff = smoothing_coeff(0.001f, sample_rate);
-    s_fast_fall_coeff = smoothing_coeff(0.050f, sample_rate);
-    s_slow_rise_coeff = smoothing_coeff(0.010f, sample_rate);
-    s_slow_fall_coeff = s_fast_fall_coeff;
+    s_fast_fall_coeff = smoothing_coeff(0.020f, sample_rate);
+    s_slow_rise_coeff = smoothing_coeff(0.015f, sample_rate);
+    s_slow_fall_coeff = smoothing_coeff(0.100f, sample_rate);
     s_transient_rise_coeff = smoothing_coeff(0.0005f, sample_rate);
     s_transient_fall_coeff = smoothing_coeff(0.008f, sample_rate);
     s_attack_gain = 1.0f;
@@ -115,10 +115,7 @@ int32_t plugin_process_block(const int16_t** in, int16_t** out, uint32_t samples
         float active = (s_slow - SUSTAIN_GATE_LOW) * (1.0f / (SUSTAIN_GATE_HIGH - SUSTAIN_GATE_LOW));
         if (active < 0.0f) active = 0.0f;
         if (active > 1.0f) active = 1.0f;
-        // Hold Sustain back while the fast envelope is rising above the slow
-        // one (the raw, unsmoothed measure), so it does not leak onto a hit
-        // during the first moments before the smoothed transient has caught up.
-        float sustain = 1.0f + active * (1.0f - transient) * (s_sustain_gain - 1.0f);
+        float sustain = 1.0f + active * (s_sustain_gain - 1.0f);
         float gain = sustain + s_transient * (s_attack_gain - sustain);
 
         for (uint8_t ch = 0; ch < nch; ch++) {

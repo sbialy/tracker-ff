@@ -1,0 +1,18 @@
+# Reviewed false positives of the lint delta gate (lint_delta.py), 2026-11-12. Columns: file, warning class, the source line (stripped).
+# Matched on the line text so a line that moves stays allowed. Every entry needs a reason here, an edited line is a new hit again.
+#
+# plug_host.cpp dirtMigrate: indexAt(ix) is only evaluated when ix >= 0, GCC loses that across the inlined indexFind
+# plug_ui_nav.h label copy: the loop is bounded by kLabelChars and tag[n] is tested first, GCC unrolls it past the guard
+# plug_ui.cpp s_bound[col]: callers iterate columns 3..6 of s_bound[7] (plug_ui_nav.h:17-18), the 7 comes from loop unrolling
+# plug_insert.cpp transmit(.., ch): ch is the loop index 0..1 of the stereo pair, the AudioStream index is an unsigned char
+synth-open/plug_host.cpp	-Wnull-dereference	const int r = dirtMigrate(sat, s_side, ix >= 0, ix >= 0 ? indexAt(ix)->version : 0);
+synth-open/plug_insert.cpp	-Wconversion	transmit(b, ch);
+synth-open/plug_insert.cpp	-Wconversion	transmit(blk[ch], ch);
+synth-open/plug_ui.cpp	-Warray-bounds	s_bound[col] = nullptr;
+synth-open/plug_ui_nav.h	-Wnull-dereference	for (; tag[n] && n < kLabelChars; n++) out[n] = tag[n];
+#
+# cppcheck uninitvar on out parameters, all reviewed 2026-11-12:
+# acd.cpp buf: the render function fills the block, the filter function only writes it (the ladder and svf24 take it as an output)
+# plug_synth.cpp ks[]: only the first m entries are read, and exactly m were written
+synth-open/ot/audio/engines/acd.cpp	cppcheck:uninitvar	(pre ? ladder<true> : ladder<false>)(buf, a.s, a.c, dc, nz);
+synth-open/plug_synth.cpp	cppcheck:uninitvar	logoPrefetch(s_logo, ks, m, [](int k) { logoSlot(k, false); });   // (synth.txt counts the loads at its next write, no card write here)

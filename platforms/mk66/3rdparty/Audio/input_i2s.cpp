@@ -67,6 +67,16 @@ void AudioInputI2S::begin(void (*updateBuffersFunc)(void* data))
     dma.setInterruptPriority(kAudioInputInterruptLevel);
 }
 
+// Power off (hardware.cpp disableHardware): the recorder and the USB capture behind the interrupt write the SDRAM, which is
+// unpowered right after this. Request and interrupt off, a start brings both back.
+void AudioInputI2S::stop(void)
+{
+    if (dma.channel >= DMA_NUM_CHANNELS) return;   // never begun
+    dma.disable();
+    NVIC_DISABLE_IRQ(IRQ_DMA_CH0 + (dma.channel & 15));
+    NVIC_CLEAR_PENDING(IRQ_DMA_CH0 + (dma.channel & 15));
+}
+
 void AudioInputI2S::isr(void)
 {
     uint32_t daddr, offset;

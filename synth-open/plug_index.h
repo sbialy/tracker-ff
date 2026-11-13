@@ -29,6 +29,7 @@ enum Err : int32_t
     kCommit,     // Place::commit failed (the flash erase, program or verify of a FlexNVM text segment)
     kInit,       // no memory for the instance or init() failed
     kStale,      // the file is not the one the index listed (Place::wantUid / wantCrc): the folder changed since the scan
+    kNoRoom,     // fits the slot alone, not beside the plugin the other insert runs (the two share the 8 KB slot)
 };
 
 inline uint32_t crc32(uint32_t c, const uint8_t* p, uint32_t n)
@@ -64,6 +65,74 @@ inline Err checkLayout(const plug_file_header& h, uint32_t textLen, uint32_t rwL
         return kTooBig;
     return kOk;
 }
+
+// ---- the two master inserts share one 8 KB SRAM_L slot (plug_host.cpp): insert 1 from the bottom, insert 2 from the top, each
+// image + bss in one piece (text, then rw, then bss). Neither ever touches the flash. A pair fits when insert 1's bytes end at or
+// below the start of insert 2's, which is 16 byte aligned (down) so its rw and bss stay aligned like at the slot start.
+constexpr uint32_t kInsertRoom = 8192;
+inline uint32_t insertFoot(const plug_file_header& h)
+{
+    return h.image_size + h.bss_size;
+}
+inline uint32_t insertFoot(uint32_t imageSize, uint32_t bssSize)
+{
+    return imageSize + bssSize;
+}
+// Start of insert 2's bytes in the slot (foot <= room)
+inline uint32_t insertTopAt(uint32_t foot, uint32_t room = kInsertRoom)
+{
+    return (room - foot) & ~15u;
+}
+// Where insert k (0 or 1) goes for foot bytes while the other insert holds otherFoot bytes (0: nothing loaded). at: offset in
+// the slot, len: the room the loader may fill from there. False: no room beside the other one (or more than the slot).
+inline bool insertPlace(int k, uint32_t foot, uint32_t otherFoot, uint32_t& at, uint32_t& len, uint32_t room = kInsertRoom)
+{
+    at = len = 0;
+    if (!foot || foot > room || otherFoot > room) return false;
+    if (k == 0)
+    {
+        const uint32_t end = otherFoot ? insertTopAt(otherFoot, room) : room;
+        if (foot > end) return false;
+        len = end;
+        return true;
+    }
+    at = insertTopAt(foot, room);
+    if (at < otherFoot) return false;
+    len = room - at;
+    return true;
+}
+inline bool insertPairFits(uint32_t foot1, uint32_t foot2, uint32_t room = kInsertRoom)
+{
+    uint32_t at, len;
+    return insertPlace(0, foot1, 0, at, len, room) && insertPlace(1, foot2, foot1, at, len, room);
+}
+
+// What the host keeps of the shared slot (plug_host.cpp apply, unload and tick), the refuse and retry rules in one place:
+//   place():  before any card read. False: no room beside the other insert, the slot shows Full and remembers the size.
+//   loaded(): the load went through: insert 1 holds [0, its file's image + bss), insert 2 [at, end of slot).
+//   freed():  unloaded (the audio interrupt no longer runs it): its bytes are free.
+//   retry():  a refused insert that fits now (tick sets it pending, it loads like a pick).
+struct InsertPair
+{
+    uint32_t foot[2];       // bytes held from the bottom (insert 1) or from the top (insert 2), 0: nothing loaded
+    uint32_t want[2];       // a refused insert's image + bss
+    bool noRoom[2];
+
+    bool place(int k, uint32_t f, uint32_t& at, uint32_t& len)
+    {
+        noRoom[k] = !insertPlace(k, f, foot[1 - k], at, len);
+        want[k] = noRoom[k] ? f : 0;
+        return !noRoom[k];
+    }
+    void loaded(int k, uint32_t at, uint32_t fileFoot) { foot[k] = k == 0 ? fileFoot : kInsertRoom - at; }
+    void freed(int k) { foot[k] = 0; }
+    void clearRefusal(int k) { noRoom[k] = false; want[k] = 0; }
+    bool retry(int k) const
+    {
+        uint32_t at, len;
+        return noRoom[k] && insertPlace(k, want[k], foot[1 - k], at, len);
+    }
+};
 
 // A rebase table word: the offset of a whole aligned word inside the image. By subtraction: off + 4 wraps for 0xFFFFFFFC
 inline bool rebaseOffsetOk(uint32_t off, uint32_t imageSize)

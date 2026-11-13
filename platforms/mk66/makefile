@@ -46,6 +46,10 @@ endif
 CPP_SRCS	:= $(patsubst $(DEVTOOLS_MK66_AFTER),$(DEVTOOLS_MK66_AFTER) $(addprefix ./source/,$(DEVTOOLS_MK66_SRCS)),$(CPP_SRCS))
 endif
 C_SRCS 	 	+= $(shell find ./3rdparty/ -name *.c)
+# USB_AUDIO=1 (see DEFINES below): the platform side of the USB audio input
+ifeq ($(USB_AUDIO),1)
+CPP_SRCS	+= $(wildcard ./usbaudio/*.cpp)
+endif
 ASM_SRCS 	+= $(shell find ./3rdparty/ -name *.S)
 # TRIM=1 only: word-wise memcpy / memset, newlib-nano's are byte loops (about 8 cycles per byte) and the audio interrupt uses them
 # every block. TRIM_FASTMEM=0 leaves them out (A/B builds that isolate the nano link)
@@ -77,6 +81,15 @@ DEFINES=-D__NEWLIB__ -D__MK66FX1M0__ -DF_CPU=180000000 -DUSB_MIDI -DTEENSYDUINO=
 # console checkout (../../devtools.mk, core/include/devhooks.h).
 # make does not track flags: wipe the core build dir of the SYNTH_TAG and platforms/mk66/build* when it changes.
 DEFINES+=$(CUSTOM_DEFINES)
+
+# USB_AUDIO=1: the image can also be a USB audio input for the computer (UAC 1.0, 44.1 kHz stereo, Tracker -> computer).
+# Compiled in, switched at start: the descriptor set and the USB interrupt level are picked in usb_init from the EEPROM boot
+# flag the Features page writes (Config > Features > USB audio, off by default). Off enumerates exactly like a build without it.
+USB_AUDIO	?= 0
+ifeq ($(USB_AUDIO),1)
+DEFINES+=-DFEATURE_USB_AUDIO
+INCLUDES+=-I./usbaudio
+endif
 
 COMPILER_OPTIONS=-fno-common -g -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -fstack-usage -specs=nano.specs -Wall -Wextra -c -ffunction-sections -fdata-sections -ffreestanding -fno-builtin 
 # Crash-class warnings, warn only, see core/makefile (CRASH_WARN= switches them off)

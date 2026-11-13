@@ -173,6 +173,27 @@ audioEngine::audioEngine()
 
 }
 
+void audioEngine::beginDelay()
+{
+    // the same values a project load sets (setDelayFeedback takes percent)
+    delay->begin(mtProject.values.delayFeedback / 100.0,
+                 mtProject.values.delayTime,
+                 mtProject.values.delayParams & 0b10000000,
+                 mtProject.values.delayParams & 0b01000000,
+                 mtProject.values.delayParams & 0b00111111,
+                 mtProject.values.delayFilterFrequency);
+}
+
+void audioEngine::beginReverb()
+{
+    polyverb->reset();
+    polyverb->setTime(mtProject.values.reverb.size);
+    polyverb->setDamp(1.0f - mtProject.values.reverb.damp); // as setReverbDamp
+    polyverb->SetPredelayLength(mtProject.values.reverb.predelay);
+    polyverb->SetDiffusion(mtProject.values.reverb.diffusion);
+    polyverb->unblockUpdate();
+}
+
 void audioEngine::init(Platform* platform, [[maybe_unused]] Synth* synth)
 {
     codec = platform->getCodecAudio();
@@ -225,12 +246,7 @@ void audioEngine::init(Platform* platform, [[maybe_unused]] Synth* synth)
     //	filterReverbOut.setType(filterType::lowPass);
     //	filterReverbOut.setCutoff(1.0);
     //	filterReverbOut.connect();
-    delay->begin(mtProject.values.delayFeedback,
-                 mtProject.values.delayTime,
-                 mtProject.values.delayParams & 0b10000000,
-                 mtProject.values.delayParams & 0b01000000,
-                 mtProject.values.delayParams & 0b00111111,
-                 mtProject.values.delayFilterFrequency);
+    beginDelay();
 
     AudioPlayMemory::enableHeadroom((bool)mtProject.values.isHeadroomEnabled);
     AudioPlayMemory::enableSnapToZero((bool)mtProject.values.isSnapToZeroEnabled);
@@ -253,12 +269,7 @@ void audioEngine::init(Platform* platform, [[maybe_unused]] Synth* synth)
     //	updateTimer.priority(255);
     attachUpdateTimer();
 
-    polyverb->reset();
-    polyverb->setTime(mtProject.values.reverb.size);
-    polyverb->setDamp(mtProject.values.reverb.damp);
-    polyverb->SetPredelayLength(mtProject.values.reverb.predelay);
-    polyverb->SetDiffusion(mtProject.values.reverb.diffusion);
-    polyverb->unblockUpdate();
+    beginReverb();
 
     masterEnhancer.setCodec(codec);
     codec->enableHardwareProcessor(true);
@@ -426,6 +437,20 @@ void audioEngine::connectInputToMixer(AudioInput* input, MixerAndFxs<kVoices>* m
                           0,
                           mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb),
                           kRightInputMixerChannel));
+
+#ifdef AUDIO_NULL_IS_SILENCE
+    // the gates feed exactly these two mixer inputs each: with both muted a gate only tracks its state (effect_dynamics.h)
+    input->getGate(AudioInput::InputChannels::kLeft)
+      ->setSilenceWatch(mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kDelay),
+                        kLeftInputMixerChannel,
+                        mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb),
+                        kLeftInputMixerChannel);
+    input->getGate(AudioInput::InputChannels::kRight)
+      ->setSilenceWatch(mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kDelay),
+                        kRightInputMixerChannel,
+                        mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb),
+                        kRightInputMixerChannel);
+#endif
 
     constexpr int kTracksAndSendsMixerInputIdx = 3;
 
@@ -601,6 +626,12 @@ void audioEngine::connectSynthToMixer(MixerAndFxs<kVoices>* mixerAndFxs, SynthVo
     constexpr int kFirstSynthMixerChannel = MixerAndFxs<kVoices>::kFirstSynthSendInput;
     static_assert(kFirstSynthMixerChannel + kSynthParts <= MixerAndFxs<kVoices>::kSendsInputsCount,
                   "a synth send input is outside the pre fx mixers");
+
+#ifdef AUDIO_NULL_IS_SILENCE
+    synth->getPolySynth()->setSendMixers(mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kDelay),
+                                         mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb),
+                                         kFirstSynthMixerChannel);
+#endif
 
     for (int synthChannel = 0; synthChannel < kSynthParts; synthChannel++)
     {

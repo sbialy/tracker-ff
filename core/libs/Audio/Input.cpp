@@ -1,7 +1,12 @@
 #include "Input.h"
+#include "utility/dspinst.h"
 
 AUDIO_CORE_FLASH void AudioInputStream::update()
 {
+#ifdef AUDIO_NULL_IS_SILENCE
+    if (data == nullptr && silentWithoutData)
+        return;
+#endif
     audio_block_t* blockLeft = allocate();
     audio_block_t* blockRight = allocate();
 
@@ -30,14 +35,34 @@ AUDIO_CORE_FLASH void AudioInputStream::update()
     }
     else
     {
-        int16_t* inputData = (int16_t*)data;
-        int16_t* leftData = blockLeft->data;
-        int16_t* rightData = blockRight->data;
-
-        for (int idx = 0; idx < AUDIO_BLOCK_SAMPLES; idx++)
+#if defined(KINETISK)
+        if ((reinterpret_cast<uintptr_t>(data) & 3) == 0)
         {
-            *leftData++ = *inputData++;
-            *rightData++ = *inputData++;
+            // two frames per round: the two left samples and the two right samples are packed into one word each
+            const uint32_t* inputWords = static_cast<const uint32_t*>(data);
+            uint32_t* leftWords = reinterpret_cast<uint32_t*>(blockLeft->data);
+            uint32_t* rightWords = reinterpret_cast<uint32_t*>(blockRight->data);
+            for (int idx = 0; idx < AUDIO_BLOCK_SAMPLES / 2; idx++)
+            {
+                const uint32_t frame0 = inputWords[0]; // L0 | R0 << 16
+                const uint32_t frame1 = inputWords[1];
+                inputWords += 2;
+                *leftWords++ = pack_16b_16b(frame1, frame0);  // L1 << 16 | L0
+                *rightWords++ = pack_16t_16t(frame1, frame0); // R1 << 16 | R0
+            }
+        }
+        else
+#endif
+        {
+            int16_t* inputData = (int16_t*)data;
+            int16_t* leftData = blockLeft->data;
+            int16_t* rightData = blockRight->data;
+
+            for (int idx = 0; idx < AUDIO_BLOCK_SAMPLES; idx++)
+            {
+                *leftData++ = *inputData++;
+                *rightData++ = *inputData++;
+            }
         }
     }
 

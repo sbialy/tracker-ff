@@ -2,6 +2,7 @@
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
+#include "plug_defer.h"
 #include "log.h"
 #include "plug_sidecar_io.h"
 
@@ -32,14 +33,15 @@ namespace plug
 namespace
 {
 // ------------------------------------------------------------------------------------------------ memory homes
-// SRAM_L, NOLOAD: .dmabuffers is the first RAM output section of mk66fx1m0.ld after the USB descriptor table
+// SRAM_L, NOLOAD: .dmabuffers is the first RAM output section of mk66fx1m0.ld after the USB descriptor table. Both inserts run
+// from it, insert 1 from the bottom and insert 2 from the top (plug_index.h insertPlace): no flash command for either
 __attribute__((section(".dmabuffers.plugslot"), aligned(16))) uint8_t s_slot[kSlotBytes];
+static_assert(kSlotBytes == kInsertRoom, "the pair rule of plug_index.h is the slot");
 
 constexpr uint32_t kArenaPerSlot = 32 * 1024;   // SDRAM for plugin delay lines and tables (alloc flag 1), per slot
 // SDRAM globals are never constructed (no static constructor may touch the SDRAM, f563f27): plain arrays and PODs only,
 // boot() clears what needs clearing
 __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_arena[kSlots][kArenaPerSlot];
-__NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_stage[kNvmBytes];   // insert 2 text, rebased for the flash
 __NOINIT(EXTERNAL_RAM) Sidecar s_side;                                            // the project's references and values
 __NOINIT(EXTERNAL_RAM) char s_text[kSidecarMax];                                  // sidecar file text
 SidecarState s_sideState;   // what the project load found (plug_sidecar_io.h): a card error blocks every write of the file
@@ -49,10 +51,6 @@ __NOINIT(EXTERNAL_RAM) char* s_nameList[kScanMax];
 __NOINIT(EXTERNAL_RAM) ScanStats s_scan;
 ScanCache s_scanCache;   // SRAM .bss, zero at boot: the first rescan() reads every file (plug_index.h)
 bool s_staleRetry;       // one reload after a kStale install (the forced rescan made the index match the folder)
-// insert 2's rw and bss at a fixed SRAM address: its text (rebased against this address) is then the same bytes on every
-// load and a reload issues no flash command. Plugins with more rw + bss than this are refused for insert 2.
-constexpr uint32_t kRw2Bytes = 1024;
-__attribute__((aligned(8))) uint8_t s_rw2[kRw2Bytes];
 
 constexpr const char* kDir = "/Plugins/Master";
 constexpr uint32_t kBudget = 60000;         // cycles per block and slot: 11.5 % of a 522,240 cycle block, then bypass
@@ -74,6 +72,7 @@ struct Slot
     float val[kMaxParams];
 };
 Slot s_slots[kSlots];
+InsertPair s_pair;   // who holds which bytes of s_slot, and a refused insert's size (plug_index.h)
 int s_allocSlot = -1;
 int s_count;
 FileSystem* s_fs;
@@ -82,6 +81,7 @@ char s_reason[48];
 char s_note[96];   // what the last project load changed (a Dirt entry migrated), host.txt line 3
 Timer* s_timer;
 uint32_t s_bootMs, s_pickMs, s_markerMs;
+OpenGate s_openGate;   // plug_defer.h: the loads that come from a project load wait their turn
 bool s_markerSet;
 uint32_t now()
 {
@@ -252,7 +252,16 @@ void writeStatus()
                       k + 1, r.uid ? r.name : "-", (unsigned long)r.uid, int(slotState(k)), long(s.err),
                       (unsigned long)(s.desc ? uintptr_t(s.desc->process) & ~1u : 0), (unsigned long)uintptr_t(s.inst),
                       (unsigned long)slotCycles(k), (unsigned long)slotMaxCycles(k));
+        if (s.state == SlotState::kNoRoom && n < int(sizeof(t)))
+            n += snprintf(t + n, sizeof(t) - size_t(n),
+                          "insert %d: %s needs %lu B, %lu B free beside insert %d %s (both inserts share the %lu B SRAM slot)\r\n",
+                          k + 1, r.name, (unsigned long)s_pair.want[k],
+                          (unsigned long)(kSlotBytes - s_pair.foot[1 - k]), 2 - k,
+                          s_side.slot[1 - k].uid ? s_side.slot[1 - k].name : "-", (unsigned long)kSlotBytes);
     }
+    if (n < int(sizeof(t)))
+        n += snprintf(t + n, sizeof(t) - size_t(n), "slot %lu B: insert 1 %lu B, insert 2 %lu B, no flash\r\n", (unsigned long)kSlotBytes,
+                      (unsigned long)s_pair.foot[0], (unsigned long)s_pair.foot[1]);
     if (n >= int(sizeof(t))) n = int(sizeof(t)) - 1;
     writeText("/Plugins/host.txt", t, n);
 }
@@ -266,6 +275,8 @@ void unload(int k)
     for (uint8_t i = 0; i < s.nHeap; i++) free(s.heap[i]);
     s.nHeap = 0;
     s.arenaUsed = 0;
+    s_pair.freed(k);   // its part of the slot is free (detached above, the audio interrupt no longer runs it)
+    s_pair.clearRefusal(k);
     s.desc = nullptr;
     s.inst = nullptr;
     s.err = kOk;
@@ -313,28 +324,29 @@ void apply(int k)
         return;
     }
     const IndexEntry& e = s_index[ix];
+    // Both inserts share the SRAM_L slot (plug_index.h insertPlace): insert 1 from the bottom, insert 2 from the top, image and bss
+    // in one piece. The other insert keeps playing from its own bytes, which this load never writes. A plugin that fits the slot
+    // alone but not beside the other one is refused here, before any card read, and tick() loads it once the other one leaves room.
+    // There is no other home: no insert ever writes the flash.
+    const uint32_t foot = insertFoot(e.imageSize, e.bssSize);
+    uint32_t at = 0, room = 0;
+    Err err = kOk;
+    if (foot > kSlotBytes)
+        err = kTooBig;   // not even alone
+    else if (!s_pair.place(k, foot, at, room))
+    {
+        s.err = kNoRoom;
+        s.state = SlotState::kNoRoom;
+        LOGEF("plg%d %s no room %lu", k + 1, ref.name, (unsigned long)foot);
+        writeStatus();
+        return;
+    }
     char p[64];
     path(p, sizeof(p), kDir, e.file);
-    Place pl;
-    Err err = kOk;
-    if (k == 0)
-    {   // insert 1: text and rw in the SRAM_L slot
-        pl.textDst = s_slot;
-        pl.textLen = kSlotBytes;
-        pl.textRun = uintptr_t(s_slot);
-    }
-    else
-    {   // insert 2: text staged in SDRAM, rebased for and programmed into the data flash, rw on the heap
-        pl.textDst = s_stage;
-        pl.textLen = kNvmBytes;
-        pl.textRun = kNvmRun;
-        pl.rwLen = (e.imageSize - (e.rwOffset ? e.rwOffset : e.imageSize)) + e.bssSize;
-        pl.rwDst = s_rw2;
-        pl.rwRun = uintptr_t(s_rw2);
-        pl.commit = nvmInstall;
-        if (pl.rwLen > kRw2Bytes) err = kTooBig;
-        pl.rwLen = kRw2Bytes;
-    }
+    Place pl;   // text, rw and bss from slot offset at, at most room bytes (load() checks the file's own sizes against room)
+    pl.textDst = s_slot + at;
+    pl.textLen = room;
+    pl.textRun = uintptr_t(s_slot + at);
     // crash marker first: a plugin that hangs init or its first block leaves it behind, the next boot runs in safe mode
     writeText(kMarker, ref.name, int(strlen(ref.name)));
     s_markerSet = true;
@@ -372,6 +384,8 @@ void apply(int k)
         return;
     }
     s.desc = l.desc;
+    // insert 2 holds [at, end of slot), whatever the file's own size is (load() kept it inside room)
+    s_pair.loaded(k, at, insertFoot(l.hdr));
     // the project's values by name, defaults for the rest; init left the plugin at its defaults
     for (uint32_t i = 0; i < l.desc->num_params; i++)
     {
@@ -461,6 +475,13 @@ Err checkDesc(const plug_desc* d, uintptr_t base, uint32_t size, uint32_t wantKi
              !inImage(uintptr_t(pp.enum_names + pp.enum_count) - 1u, base, size)))
             return kDesc;
         for (uint32_t e = 0; e < pp.enum_count; e++)
+            if (!inImage(uintptr_t(pp.enum_names[e]), base, size)) return kDesc;
+        // a numeric parameter that names its ends (PLUG_PARAM_NAME_*): the names must be in the image like an enum's
+        const uint32_t nn = plug_param_name_count(&pp);
+        if (nn && (!pp.enum_names || !inImage(uintptr_t(pp.enum_names), base, size) ||
+                   !inImage(uintptr_t(pp.enum_names + nn) - 1u, base, size)))
+            return kDesc;
+        for (uint32_t e = 0; e < nn; e++)
             if (!inImage(uintptr_t(pp.enum_names[e]), base, size)) return kDesc;
     }
     if (d->instance_size > 16384) return kDesc;
@@ -784,9 +805,10 @@ void projectLoaded(const char* dir, bool newProject)
     {
         unload(k);
         s_slots[k].state = SlotState::kEmpty;
-        s_slots[k].pending = s_side.slot[k].uid != 0;   // loads in tick(), after the boot key window
+        s_slots[k].pending = s_side.slot[k].uid != 0;   // loads in tick(), after the boot key window and the rest of plug_defer.h
         s_slots[k].manual = false;
     }
+    s_openGate.arm(now());
     if (s_note[0]) writeStatus();
 }
 
@@ -829,6 +851,7 @@ void boot(Platform* platform)
     s_timer = platform->getTimer();
     memset(&s_side, 0, sizeof(s_side));
     memset(s_slots, 0, sizeof(s_slots));
+    memset(&s_pair, 0, sizeof(s_pair));
     memset(&s_scan, 0, sizeof(s_scan));
 #ifdef FEATURE_PLUG_BENCH
     if (fs->exists("/plugbench.plg")) bench(fs);
@@ -865,7 +888,26 @@ void tick()
         s_windowOpen = false;
     }
     for (int k = 0; k < kSlots; k++)
-        if (s_slots[k].pending && (!s_slots[k].manual || now() - s_pickMs >= kDebounceMs)) apply(k);
+    {   // a plugin refused for room loads once the other insert leaves it room (another pick, None, a missing or failed one)
+        Slot& s = s_slots[k];
+        if (s.state == SlotState::kNoRoom && !s.pending && s_pair.retry(k)) s.pending = true;
+    }
+    bool openLoaded = false;   // one load that comes from a project load per pass (plug_defer.h)
+    for (int k = 0; k < kSlots; k++)
+    {
+        Slot& s = s_slots[k];
+        if (!s.pending) continue;
+        if (s.manual)
+        {   // a pick on the Inserts page: its own short debounce
+            if (now() - s_pickMs >= kDebounceMs) apply(k);
+        }
+        else if (!openLoaded && s_openGate.ready(now()))
+        {
+            apply(k);
+            s_openGate.took(now());
+            openLoaded = true;
+        }
+    }
     if (s_markerSet && now() - s_markerMs >= kMarkerMs)
     {
         s_fs->remove(kMarker);

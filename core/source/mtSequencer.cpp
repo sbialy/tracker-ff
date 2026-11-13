@@ -1,8 +1,12 @@
 #include <algorithm>
 #include <numeric>
 
+#include "Profiler.h"
 #ifdef FEATURE_SYNTH
 #include "Synth.h"
+#ifdef FEATURE_SYNTH_OPEN
+#include "open_load.h"
+#endif
 #endif
 #include "fileManager.h"
 #include "log.h"
@@ -91,24 +95,27 @@ void Sequencer::clearAllPatternSlots()
 
 AUDIO_CORE_RAM void Sequencer::tick(float intervalSeconds)
 {
+    seqClockUs += uint32_t(intervalSeconds * 1.0e6f + 0.5f);
+    if (strumPending)
+    {
+        strumService();
+    }
 
     updateExternalClockTempo((seqtimesec_t)intervalSeconds);
 
     if (isSetInternalClock() || player.selectionMode)
     {
-        double uStepPeriod_us = static_cast<double>(getTimerPeriod_us());
-        double blockDurationUs = static_cast<double>(intervalSeconds) * 1000000.0;
-
-        internalTickAccumulatorUs += blockDurationUs;
-
-        while (internalTickAccumulatorUs >= uStepPeriod_us)
-        {
-            internalTickAccumulatorUs -= uStepPeriod_us;
-            double offsetUs = blockDurationUs - internalTickAccumulatorUs;
-            midiSetClockSubBlockOffsetUs(
-              offsetUs > 0.0 ? static_cast<uint32_t>(offsetUs + 0.5) : 0U);
-            tick_uStep();
-        }
+        // Integer clock, same ticks and offsets as the double accumulator it replaced (internalTickClock.h)
+        internalTickClock.advance(
+          intervalSeconds,
+          getCurrentTempo(),
+          player.swing.isActive ? player.swing.getTempoCorrection() : 0.0f,
+          [this]() { return getTimerPeriod_us(); },
+          [this](uint32_t offsetUs)
+          {
+              midiSetClockSubBlockOffsetUs(offsetUs);
+              tick_uStep();
+          });
     }
     else
     {
@@ -1334,6 +1341,12 @@ AUDIO_CORE_RAM void Sequencer::play(uint8_t fromPos)
 
     songTimer.start();
 
+    // every Play starts a fresh audio load reading (max, overruns, the synth's governor and admission counters)
+    Profiler::getInstance()->resetMeasuringAudio();
+#ifdef FEATURE_SYNTH_OPEN
+    polysynth::open::resetLoadStats();
+#endif
+
     engine.endAllFx();
 
     reset_actual_pos();
@@ -1342,7 +1355,7 @@ AUDIO_CORE_RAM void Sequencer::play(uint8_t fromPos)
     player.isStop = 0;
     player.isPlay = 1;
     timerTicks = 1;
-    internalTickAccumulatorUs = 0.0;
+    internalTickClock.reset();
 
     player.uStep = 1;
     player.globalPos = fromPos;
@@ -1515,6 +1528,7 @@ void Sequencer::stopAllOpenNotes(void)
         stopOpenNoteOnTrack(trackIdx);
     }
     liveRecHeldNotesCount = 0;
+    recJoin.count = 0;
 }
 
 void Sequencer::stopOpenNoteOnTrack(int track, bool leaveStepOpen)
@@ -1569,6 +1583,7 @@ void Sequencer::stop(StopContext context)
     LOG("sequencer stop");
 
     songTimer.stop();
+    strumCancel(-1); // before the note-offs: no strummed note may start after them
     stopAllOpenNotes();
     cancelFxes();
 
@@ -1588,7 +1603,7 @@ void Sequencer::stop(StopContext context)
     player.breakPattern = 0;
 
     timerTicks = 0;
-    internalTickAccumulatorUs = 0.0;
+    internalTickClock.reset();
 
     if (player.onPatternOrSelectionEnd == cbkTurnOffPerformanceMode)
     {
@@ -1732,6 +1747,7 @@ void Sequencer::recEnable(bool enable)
     if (!enable)
     {
         liveRecHeldNotesCount = 0;
+        recJoin.count = 0;
     }
 }
 
@@ -2407,6 +2423,36 @@ AUDIO_CORE_RAM void Sequencer::sendMidiChordOn(uint8_t track,
     uint8_t instrumentVelo = getInstrumentVelo(step->instrument);
     int16_t chordBitmask = getChordBitmask(chordNumber);
 
+#ifdef FEATURE_SYNTH_OPEN
+    // Paraphony (PLUG_EXT_CHORD): a synth part whose patch is at Para plays the whole chord as ONE note-on of the step note, the
+    // chord value rides with it into the engine's Chord parameter. The note-off then is the step note's alone (sendMidiChordOff).
+    const uint32_t trackBit = track < 32 ? (1u << track) : 0u;
+    chordParaTracks &= ~trackBit;
+    if (isSynthInstrument(step->instrument) && trackBit)
+    {
+        const int part = instrumentIdxToMidiChannel(step->instrument) - 1;
+        if (polysynth::open::partChordPara(part) && step->note >= STEP_NOTE_MIN)
+        {
+            chordParaTracks |= trackBit;
+            polysynth::open::partNoteChord(
+              part, uint8_t(step->note), chordNumber > MAX_CHORD ? MIN_CHORD : chordNumber, stepStrum(step));
+            chordBitmask = 0x0001;
+        }
+    }
+#endif
+
+    // Strum FX in the other slot: the notes start one after another (bottom up, or top down for a negative strum)
+    const int8_t strum = stepStrum(step);
+    uint8_t nNotes = 0, k = 0;
+    if (strum != 0)
+    {
+        for (uint8_t a = 0; a < CHORD_FOR_MAX; a++)
+        {
+            const int16_t n = step->note + a;
+            nNotes += (chordBitmask & (0x0001 << a)) && n <= STEP_NOTE_MAX && n >= STEP_NOTE_MIN;
+        }
+    }
+
     for (uint8_t a = 0; a < CHORD_FOR_MAX; a++)
     {
         int16_t noteToSend = step->note + a;
@@ -2426,6 +2472,19 @@ AUDIO_CORE_RAM void Sequencer::sendMidiChordOn(uint8_t track,
                          kMaxMidiVelocity);
             velocity = clamp(velocity + deltaPerformanceVelocityFx, 0, kMaxMidiVelocity);
 
+            const uint8_t order = strum > 0 ? k : uint8_t(nNotes - 1 - k);
+            k++;
+            if (strum != 0 && order > 0)
+            {
+                strumQueue(track,
+                           uint8_t(noteToSend),
+                           uint8_t(velocity),
+                           instrumentIdxToMidiChannel(step->instrument),
+                           isSynthInstrument(step->instrument),
+                           uint32_t(order) * uint32_t(strum > 0 ? strum : -strum) * kStrumUnitUs);
+                continue;
+            }
+
             sendMidiNoteOn(noteToSend,
                            velocity,
                            instrumentIdxToMidiChannel(step->instrument),
@@ -2434,7 +2493,7 @@ AUDIO_CORE_RAM void Sequencer::sendMidiChordOn(uint8_t track,
     }
 }
 
-void Sequencer::sendMidiChordOff([[maybe_unused]] uint8_t track,
+void Sequencer::sendMidiChordOff(uint8_t track,
                                  strPlayer::strPlayerTrack::strSendStep* step)
 {
     uint8_t chordNumber = 0;
@@ -2450,6 +2509,18 @@ void Sequencer::sendMidiChordOff([[maybe_unused]] uint8_t track,
         return;
 
     int16_t chordBitmask = getChordBitmask(chordNumber);
+    if (strumPending)
+    {
+        strumCancel(track); // strummed notes that have not started yet never start
+    }
+#ifdef FEATURE_SYNTH_OPEN
+    // the note-on went out as one paraphonic note (sendMidiChordOn): only the step note is sounding
+    if (track < 32 && (chordParaTracks & (1u << track)))
+    {
+        chordParaTracks &= ~(1u << track);
+        chordBitmask = 0x0001;
+    }
+#endif
 
     for (uint8_t a = 0; a < CHORD_FOR_MAX; a++)
     {
@@ -2462,6 +2533,72 @@ void Sequencer::sendMidiChordOff([[maybe_unused]] uint8_t track,
                             0,
                             instrumentIdxToMidiChannel(step->instrument),
                             isSynthInstrument(step->instrument));
+        }
+    }
+}
+
+// The Strum FX of a MIDI Chord step: the other slot's value as signed units (0 none)
+int8_t Sequencer::stepStrum(const strPlayer::strPlayerTrack::strSendStep* step)
+{
+    const uint8_t strumType = fx.FX_TYPE_STRUM;
+    for (int i = 0; i < 2; i++)
+    {
+        if (step->fx[i].type == strumType && step->fx[i ^ 1].type == fx.FX_TYPE_MIDI_CHORD)
+        {
+            return strumUnits(step->fx[i].value);
+        }
+    }
+    return 0;
+}
+
+void Sequencer::strumQueue(uint8_t track, uint8_t note, uint8_t velocity, uint8_t channel, bool synth, uint32_t delayUs)
+{
+    for (strStrumNote& q : strumQ)
+    {
+        if (q.channel == 0)
+        {
+            q.dueUs = seqClockUs + delayUs;
+            q.track = track;
+            q.note = note;
+            q.velocity = velocity;
+            q.channel = uint8_t((channel & 0x7F) | (synth ? 0x80 : 0)); // last: the slot is live from here on
+            strumPending++;
+            return;
+        }
+    }
+    sendMidiNoteOn(note, velocity, channel, synth); // no room: unstrummed
+}
+
+// Audio callback, every block while a strummed note waits: start the notes that are due. Not playing: drop them.
+void Sequencer::strumService()
+{
+    for (strStrumNote& q : strumQ)
+    {
+        if (q.channel == 0)
+        {
+            continue;
+        }
+        if (!player.isPlay || int32_t(seqClockUs - q.dueUs) >= 0)
+        {
+            const uint8_t ch = q.channel;
+            q.channel = 0;
+            strumPending = strumPending ? uint8_t(strumPending - 1) : 0;
+            if (player.isPlay)
+            {
+                sendMidiNoteOn(q.note, q.velocity, ch & 0x7F, (ch & 0x80) != 0);
+            }
+        }
+    }
+}
+
+void Sequencer::strumCancel(int track)
+{
+    for (strStrumNote& q : strumQ)
+    {
+        if (q.channel != 0 && (track < 0 || q.track == track))
+        {
+            q.channel = 0;
+            strumPending = strumPending ? uint8_t(strumPending - 1) : 0;
         }
     }
 }
@@ -2676,25 +2813,22 @@ AUDIO_CORE_FLASH void Sequencer::handleNoteOn(
     }
     else if (isRec())
     {
+        // one armed track records there. Several armed: when the cursor track is armed it is the only recording track, exactly as if it
+        // were the only armed one (a note that does not join is never given to another armed track). Cursor track not armed, or Instr pads: stock spread
         int8_t singleArmedTrack = getSingleArmedTrack();
-        int startTrack = (singleArmedTrack >= 0) ? singleArmedTrack : getActualTrack();
-        int endTrack = (singleArmedTrack >= 0) ? (singleArmedTrack + 1) : kAllTracks;
+        const int8_t armedTrack = (singleArmedTrack >= 0) ? singleArmedTrack : recJoinCursorTrack(padInstrumentEdit);
+        int startTrack = (armedTrack >= 0) ? armedTrack : getActualTrack();
+        int endTrack = (armedTrack >= 0) ? (armedTrack + 1) : kAllTracks;
 
-        if (singleArmedTrack >= 0)
+        if (armedTrack >= 0)
         {
-            bool found = false;
-            for (uint8_t i = 0; i < liveRecHeldNotesCount; i++)
+            recHeldAdd(source, note);
+
+            // record join: a note within the window of the group's first (still held) note becomes part of its step's chord
+            if (recJoinTry(uint8_t(armedTrack), note, velocity))
             {
-                if (liveRecHeldNotes[i].source == source)
-                {
-                    liveRecHeldNotes[i].note = note;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found && liveRecHeldNotesCount < kMaxLiveRecHeldNotes)
-            {
-                liveRecHeldNotes[liveRecHeldNotesCount++] = {source, note};
+                newFileManager.setActualPatternStructChanged();
+                return;
             }
         }
 
@@ -2737,14 +2871,14 @@ AUDIO_CORE_FLASH void Sequencer::handleNoteOn(
             bool isPrerollPreviewOnly = player.preRecMetronomeActive && !isAnticipatedBeat1;
             if ((isPrerollPreviewOnly || (step->isNoteEmpty() && !step->hasAnyFx())) && isRecArmedOnTrack(tr))
             {
-                if (singleArmedTrack < 0 && player.track[tr].noteOpen && !padInstrumentEdit)
+                if (armedTrack < 0 && player.track[tr].noteOpen && !padInstrumentEdit)
                 {
                     // jezeli ten track jest zajety to omijamy go,
                     // chyba, ze nagrywamy instrumenty padami
                     continue;
                 }
 
-                if (singleArmedTrack >= 0 && doPreview && player.track[tr].noteOpen)
+                if (armedTrack >= 0 && doPreview && player.track[tr].noteOpen)
                 {
                     int prevInstrument = player.track[tr].stepSent.instrument;
                     bool isMidi = isMidiInstrument(prevInstrument);
@@ -2779,6 +2913,10 @@ AUDIO_CORE_FLASH void Sequencer::handleNoteOn(
 
                     player.track[tr].recOpen = 1;
                     player.track[tr].recNoteOnStepIdx = destinationStep;
+                    if (armedTrack >= 0)
+                    {
+                        recJoinStart(uint8_t(tr), destinationStep, note);
+                    }
 
                     if (recMicrotiming())
                     {
@@ -2913,6 +3051,12 @@ AUDIO_CORE_FLASH void Sequencer::handleNoteOn(
         }
     }
 
+    // chord capture: a MIDI note that comes while the first note of this step entry is still held joins it (mtSequencer_chord.cpp)
+    if (channel == GRID_OUTSIDE_PATTERN && source >= 100 && isEditMode() && !isRec())
+    {
+        chordCaptureMidiOn(note, wasChangeInPattern);
+    }
+
     if (wasChangeInPattern)
     {
         newFileManager.setActualPatternStructChanged();
@@ -2977,11 +3121,79 @@ void Sequencer::handleTrackMidiNoteOff(uint8_t track)
     }
 }
 
+// the end of a group recorded on one track: its preview stops and the pattern gets the OFF (the body of the single armed release)
+bool Sequencer::recGroupOff(uint8_t tr, bool padInstrumentEdit)
+{
+    bool wasChangeInPattern = false;
+    bool shouldOff = player.track[tr].recOpen || player.track[tr].noteOpen;
+    if (shouldOff)
+    {
+        bool wasRecOpen = player.track[tr].recOpen;
+        player.track[tr].recOpen = 0;
+
+        bool doPreview = true;
+
+        if (!isPlay() && !player.preRecMetronomeActive)
+        {
+            doPreview = false;
+        }
+
+        if (doPreview)
+        {
+            int instrument = player.track[tr].stepSent.instrument;
+            bool isMidi = isMidiInstrument(instrument);
+            bool isSynth = isSynthInstrument(instrument);
+
+            if (isMidi || isSynth)
+            {
+                sendMidiNoteOff(player.track[tr].stepSent.note,
+                                0,
+                                instrumentIdxToMidiChannel(instrument),
+                                isSynth);
+            }
+            else if (isSampleTrack(tr))
+            {
+                instrumentPlayer[tr].noteOff();
+            }
+
+            player.track[tr].noteOpen = 0;
+        }
+
+        if (wasRecOpen && !padInstrumentEdit && !player.preRecMetronomeActive)
+        {
+            uint8_t destinationStep = getDestRecordingStep(tr, !recMicrotiming(), true);
+            strPattern::strTrack::strStep* step =
+              &currentPattern->track[tr].step[destinationStep];
+
+            if (step->isNoteEmpty())
+            {
+                wasChangeInPattern = true;
+
+                step->note = STEP_NOTE_OFF_DEFAULT;
+
+                if (recMicrotiming() && destinationStep == player.track[tr].actual_pos)
+                {
+                    step->micromove =
+                      clamp<int>(mapClamped<int>(player.uStep, 1, 48, 0, 100),
+                                 getFxMin(fx.FX_TYPE_MICROMOVE),
+                                 getFxMax(fx.FX_TYPE_MICROMOVE));
+                }
+            }
+        }
+    }
+    return wasChangeInPattern;
+}
+
 void Sequencer::handleNoteOff(byte channel, // pochodzenie grida np. GRID_OUTSIDE_PATTERN itd
                               byte note,
                               [[maybe_unused]] byte velocity,
                               int16_t source) // nr pada, jesli midi to source = nuta+100,
 {
+    if (source >= 100)
+    {
+        chordCaptureMidiOff(note);
+    }
+
     strSelection* sel = &selection;
     if (!isSelectionCorrect(sel))
         return;
@@ -3021,86 +3233,36 @@ void Sequencer::handleNoteOff(byte channel, // pochodzenie grida np. GRID_OUTSID
         int8_t singleArmedTrack = getSingleArmedTrack();
         if (singleArmedTrack >= 0)
         {
-            for (uint8_t i = 0; i < liveRecHeldNotesCount; i++)
-            {
-                if ((source >= 0 && liveRecHeldNotes[i].source == source) ||
-                    (source < 0 && liveRecHeldNotes[i].note == note))
-                {
-                    for (uint8_t j = i; j < liveRecHeldNotesCount - 1; j++)
-                    {
-                        liveRecHeldNotes[j] = liveRecHeldNotes[j + 1];
-                    }
-                    liveRecHeldNotesCount--;
-                    break;
-                }
-            }
+            recJoinOff(uint8_t(singleArmedTrack), note); // a joined note's preview ends with its own release
+            recHeldRemove(source, note);
 
             // Only write the OFF once the last pad is released
             if (liveRecHeldNotesCount == 0)
             {
-                uint8_t tr = singleArmedTrack;
-                bool shouldOff = player.track[tr].recOpen || player.track[tr].noteOpen;
-                if (shouldOff)
-                {
-                    bool wasRecOpen = player.track[tr].recOpen;
-                    player.track[tr].recOpen = 0;
-
-                    bool doPreview = true;
-
-                    if (!isPlay() && !player.preRecMetronomeActive)
-                    {
-                        doPreview = false;
-                    }
-
-                    if (doPreview)
-                    {
-                        int instrument = player.track[tr].stepSent.instrument;
-                        bool isMidi = isMidiInstrument(instrument);
-                        bool isSynth = isSynthInstrument(instrument);
-
-                        if (isMidi || isSynth)
-                        {
-                            sendMidiNoteOff(player.track[tr].stepSent.note,
-                                            0,
-                                            instrumentIdxToMidiChannel(instrument),
-                                            isSynth);
-                        }
-                        else if (isSampleTrack(tr))
-                        {
-                            instrumentPlayer[tr].noteOff();
-                        }
-
-                        player.track[tr].noteOpen = 0;
-                    }
-
-                    if (wasRecOpen && !padInstrumentEdit && !player.preRecMetronomeActive)
-                    {
-                        uint8_t destinationStep = getDestRecordingStep(tr, !recMicrotiming(), true);
-                        strPattern::strTrack::strStep* step =
-                          &currentPattern->track[tr].step[destinationStep];
-
-                        if (step->isNoteEmpty())
-                        {
-                            wasChangeInPattern = true;
-
-                            step->note = STEP_NOTE_OFF_DEFAULT;
-
-                            if (recMicrotiming() && destinationStep == player.track[tr].actual_pos)
-                            {
-                                step->micromove =
-                                  clamp<int>(mapClamped<int>(player.uStep, 1, 48, 0, 100),
-                                             getFxMin(fx.FX_TYPE_MICROMOVE),
-                                             getFxMax(fx.FX_TYPE_MICROMOVE));
-                            }
-                        }
-                    }
-                }
+                recJoin.count = 0;
+                wasChangeInPattern |= recGroupOff(uint8_t(singleArmedTrack), padInstrumentEdit);
             }
         }
         else
         {
-            liveRecHeldNotesCount = 0;
-            for (uint8_t tr = 0; tr < kAllTracks; tr++)
+            // several armed: a note held on the cursor track (recHeldAdd at its note on) ends like the single armed one, its group's OFF waits
+            // for the last release. Every other release (cursor track not armed, Instr pads) is the stock one
+            bool groupDone = false;
+            if (!padInstrumentEdit && recHeldRemove(source, note))
+            {
+                if (recJoin.count > 0)   // a group really started (not in the pre-roll, not a dropped note): it closes here, else the stock release below
+                {
+                    groupDone = true;
+                    const uint8_t groupTrack = recJoin.track;
+                    recJoinOff(groupTrack, note);
+                    if (liveRecHeldNotesCount == 0)
+                    {
+                        recJoin.count = 0;
+                        wasChangeInPattern |= recGroupOff(groupTrack, false);
+                    }
+                }
+            }
+            for (uint8_t tr = 0; tr < kAllTracks && !groupDone; tr++)
             {
                 uint8_t destinationStep = getDestRecordingStep(tr, !recMicrotiming(), true);
                 bool shouldOff = (player.track[tr].recOpen || player.track[tr].noteOpen) &&

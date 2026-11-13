@@ -59,13 +59,8 @@ extern "C"
         return p;
     }
 }
-// the firmware's SDRAM objects (Tracker.cpp). The second reverb buffer is SDRAM or SRAM like in the firmware (FW_REVERB_SRAM >= 2)
+// the firmware's SDRAM objects (Tracker.cpp)
 __attribute__((section(".sdram"), aligned(4))) int16_t externalRamDelayBuff[3 * MAX_DELAYLINE_LENGTH];
-#if defined(FW_REVERB_SRAM) && FW_REVERB_SRAM >= 2
-uint16_t externalRamReverbBuff[REVERB_MEMORY_SIZE / 2] __attribute__((section(".noinit")));
-#else
-__attribute__((section(".sdram"), aligned(4))) uint16_t externalRamReverbBuff[REVERB_MEMORY_SIZE / 2];
-#endif
 
 namespace
 {
@@ -196,6 +191,7 @@ void con(AudioStream* s, AudioStream* d)
 
 AudioRecordQueue* gStem[kStemQueues];
 int gScenario;
+int gPpMode = -1;
 
 uint32_t mix32(uint32_t x)
 {
@@ -230,6 +226,11 @@ extern "C"
             for (auto f = __init_array_start; f < __init_array_end; f++)
                 (*f)();
         }
+        // 10: scenario 0 with mono fixed, 11: scenario 0 with ping pong fixed (no mode switch at all), 20 + k: scenario k with ping pong fixed,
+        // 30 + k: scenario k (steady) that asks for ping pong at block 20 (cycles of the mode switch, measure with warm-up 40 and 80)
+        gPpMode = sc >= 30 ? 2 : sc >= 20 ? 1 : sc >= 10 ? sc - 10 : -1;
+        if (sc >= 10)
+            sc = sc >= 20 ? sc % 10 : 0;
         gScenario = sc;
         AudioStream::initialize_memory(gPool, 70);
         AudioFilterStateVariable::initCutoffLookup();
@@ -290,7 +291,7 @@ extern "C"
         gLim[1].begin();
         gOut.setOutBuffers(gOutBuf[0], gOutBuf[1]);
 
-        gDelay.setPingpongEnable(false);
+        gDelay.setPingpongEnable(gPpMode == 1);
         gDelay.setSyncEnable(false);
         gDelay.setTime(sc == 1 ? 60.0f : 300.0f);
         gDelay.setFeedback(sc == 1 ? 0.2f : 0.45f);
@@ -416,6 +417,8 @@ extern "C"
             }
             return;
         }
+        if (gPpMode == 2 && b == 20)
+            gDelay.setPingpongEnable(true);
         if (sc >= 2)
             return; // steady scenarios for the cycle numbers: no events
         const int phase = (sc == 1) ? (b % 700) : b;
@@ -518,9 +521,9 @@ extern "C"
                     gTs[c].setSaturationType(st);
                 }
             }
-            if (b == 300)
+            if (gPpMode < 0 && b == 300)
                 gDelay.setPingpongEnable(true);
-            if (b == 700 || b == 1700)
+            if (gPpMode < 0 && (b == 700 || b == 1700))
                 gDelay.setPingpongEnable(false);
             if (b == 500)
                 gDelay.setTime(120.0f);

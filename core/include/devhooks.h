@@ -29,6 +29,10 @@
 #define DEVHOOKS 1
 #include "devhooks_impl.h" // the console checkout: firmware/include
 
+#elif defined(FEATURE_EXT_HOOKS) && !defined(PLATFORM_IMX)
+
+#include "ext_hooks.h" // runtime hooks: an extension module from the card fills them in develop mode
+
 #else
 
 // Definitions at file scope, one line each: #include DEVHOOK_DEFS(name)

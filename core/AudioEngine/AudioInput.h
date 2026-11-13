@@ -27,7 +27,7 @@ class AudioInput
 
   private:
     AudioInputStream i2sStream;
-    AudioInputStream usbStream;
+    AudioInputStream usbStream{ true }; // no buffer on the original (mtAudioEngine::updateInputAudioBuffers): no blocks
     AudioAmplifier usbRecordingAmplifier[InputChannels::kChannelsCount];
     AudioRecordQueue recordingQueueI2s[InputChannels::kChannelsCount];
     AudioAnalyzeRMS recordingRmsI2s[InputChannels::kChannelsCount];

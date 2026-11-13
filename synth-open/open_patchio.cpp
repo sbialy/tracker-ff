@@ -13,6 +13,7 @@
 // 7 shape, 8 speed, 9 attack ms, 10 decay ms, 11 sustain %, 12 release ms}}, varints, zero omitted, an Off slot is empty, trailing Off
 // slots are not written, the whole field is left out when every slot is Off. A version above 1 is kept raw (a later image's block), a
 // malformed block is dropped (automation Off, the sound still loads). Ranges are checked at import (open_cold.cpp).
+// Field 100: macro depth mode (varint, 1 = Scale, absent = Add; written after the automation block and only for Scale).
 // Built at -Os (cold code).
 #include "open_patchdata.h"
 
@@ -525,6 +526,14 @@ bool decodePatch(const uint8_t* data, size_t len, PatchData& out)
                 }
             }
         }
+        else if (f == kMacroModeField && wt == 0)
+        {
+            if (!r.varint(v))
+            {
+                return false;
+            }
+            out.macroMode = v == kMacroModeScale ? kMacroModeScale : kMacroModeAdd; // unknown modes read as Add
+        }
         else if (f == 8 && wt == 2)
         {
             if (nMacros >= kPatchMacros || !r.len(s) || !decodeMacro(s, out.macros[nMacros++]))
@@ -688,6 +697,12 @@ size_t encodePatch(const PatchData& p, uint8_t* out, size_t cap)
     writeExtra(w);
     flush(kModField);
     writeMod(w, p.mod);
+    flush(kMacroModeField);
+    if (p.macroMode == kMacroModeScale)
+    {
+        w.tag(kMacroModeField, 0);
+        w.byte(kMacroModeScale);
+    }
     flush(0xFFFFFFFFu);
     return w.ok && pos == p.extra.len ? size_t(w.p - out) : 0;
 }

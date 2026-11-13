@@ -4,7 +4,7 @@
 # this repository pins their releases (engines/external.lock.json) and checks them (engines/crosscheck.sh), see engines/README.md.
 #   - tilt (examples/tilt.c, a master insert): no R_ARM_GOT* relocation in the linked ELF, the rebase table holds every R_ARM_ABS32
 #     word (count equal, > 0), emu_plug.py gives the same output checksum at the insert 1 home (SRAM_L 0x1FFF0BD0), the insert 2
-#     home (text at 0x1001E000 in the FlexNVM, rw at 0x20026C00 on the heap) and in SDRAM, and again with one non-default setting
+#     home (the top of the same slot, 0x1FFF1BA0: both inserts share it) and in SDRAM, and again with one non-default setting
 #   - sawf (examples/saw_synth.cpp, a synth): the firmware's own attach check (tools/validate_synth.py runs the real checkSynth) and
 #     the emulator at two homes
 #
@@ -39,16 +39,16 @@ for p in examples/tilt; do
     abs=$("${TOOLCHAIN}objdump" -r "$OUT/$p.elf" | grep -c 'R_ARM_ABS32' || true)
     reb=$(python3 -c "import struct,sys; print(struct.unpack_from('<I', open(sys.argv[1],'rb').read(), 32)[0])" "$OUT/$p.plg")
     l=$(emu "$OUT/$p.plg" --base 0x1FFF0BD0)
-    n=$(emu "$OUT/$p.plg" --base 0x1001E000 --rw-base 0x20026C00)
+    n=$(emu "$OUT/$p.plg" --base 0x1FFF1BA0)
     d=$(emu "$OUT/$p.plg" --base 0x70000000)
     nl=$(emu "$OUT/$p.plg" --base 0x1FFF0BD0 $(nd $p))
-    nn=$(emu "$OUT/$p.plg" --base 0x1001E000 --rw-base 0x20026C00 $(nd $p))
+    nn=$(emu "$OUT/$p.plg" --base 0x1FFF1BA0 $(nd $p))
     nd_=$(emu "$OUT/$p.plg" --base 0x70000000 $(nd $p))
     ok=ok
     [ -n "$nl" ] && [ "$nl" = "$nn" ] && [ "$nl" = "$nd_" ] && [ "$nl" != "$l" ] || ok=FAIL
     [ "$got" = 0 ] && [ "$reb" -gt 0 ] && [ "$reb" = "$abs" ] && [ -n "$l" ] && [ "$l" = "$n" ] && [ "$l" = "$d" ] || ok=FAIL
     [ "$ok" = ok ] || fail=1
-    printf "%-13s %s  GOT relocs %s, ABS32 relocs %s, rebase words %s, checksum SRAM_L %s FlexNVM+heap %s SDRAM %s, non-default %s %s %s, sha256 %s\n" \
+    printf "%-13s %s  GOT relocs %s, ABS32 relocs %s, rebase words %s, checksum SRAM_L %s SRAM_L top %s SDRAM %s, non-default %s %s %s, sha256 %s\n" \
         "$p" "$ok" "$got" "$abs" "$reb" "$l" "$n" "$d" "$nl" "$nn" "$nd_" "$(shasum -a 256 "$OUT/$p.plg" | cut -c1-16)"
 done
 # the worked synth example: the same attach check, no GOT, a full rebase table, and the same render at two homes

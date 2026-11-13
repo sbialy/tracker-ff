@@ -2,6 +2,9 @@
 #include "Profiler.h"
 #include "TrackerImpl.h"
 #include "devhooks.h"
+#ifdef FEATURE_EXT_HOOKS
+#include "features.h"
+#endif
 #include "mtWavetableEnvelopes.h"
 #ifdef FEATURE_PLUG_HOST
 #include "plug_host.h"
@@ -25,12 +28,6 @@
 // clang-format off
 __attribute__((section(".sample_memory"), used)) int16_t externalRamSampleMemory[SAMPLE_MEMORY_SIZE / 2];
 __attribute__((section(".delay_memory"), used)) int16_t externalRamDelayBuff[DELAY_MEMORY_SIZE / 2];
-#if defined(FW_REVERB_SRAM) && FW_REVERB_SRAM >= 2
-// SYNTH_OPEN, REVERB_SRAM=2: the second reverb buffer in SRAM as well (64 KB of heap), see effect_polyverb.cpp
-__attribute__((section(".noinit"), used)) uint16_t externalRamReverbBuff[REVERB_MEMORY_SIZE / 2];
-#else
-__attribute__((section(".reverb_memory"), used)) uint16_t externalRamReverbBuff[REVERB_MEMORY_SIZE / 2];
-#endif
 __attribute__((section(".scratch_memory"), aligned(32), used)) uint8_t externalRamScratchBuff[SHARED_SCRATCH_MEMORY_SIZE];
 
 // clang-format on
@@ -159,12 +156,40 @@ void TrackerImpl::init(Platform* platform)
     newFileManager.init(platform->getFileSystem(), nullptr, stereoSampleMode);
 #endif
 
+#ifdef FEATURE_EXT_HOOKS
+    plug::useFs(platform->getFileSystem()); // features read and write their files through plug::readText / writeText
+    features::boot(platform);               // Config > Features: restart mode, developer mode, USB audio, module features
+    const int develop = features::find("develop");
+    // /.develop stays an override: a card can always reach develop mode without the menu
+    interfaceGlobals.devMode = platform->getFileSystem()->exists("/.develop") || features::on(develop);
+    const bool extLoad = interfaceGlobals.devMode && (!features::on(develop) || features::value(develop, 0) != 0);
+#else
     interfaceGlobals.devMode = platform->getFileSystem()->exists("/.develop");
+#endif
+    lowPower.initRestartMode();
+#ifdef FEATURE_EXT_HOOKS
+    {
+        // a reset sent the unit into the off state since the last start that ran (a power off that did not end in the sleep, or a
+        // reset while off): what reset it, for the device rows of the power off test. Develop mode only, one small file.
+        uint32_t srs = 0, marker = 0, count = 0;
+        if (platform->takeOffStartRecord(srs, marker, count) && interfaceGlobals.devMode)
+        {
+            char t[96];
+            const int n = snprintf(t, sizeof t, "off starts %lu, last: srs %04lx marker %s\n", (unsigned long)count,
+                                   (unsigned long)srs, marker == 1 ? "off" : marker == 2 ? "restart" : "none");
+            plug::writeText("/Plugins/Ext/offstart.txt", t, n > 0 && n < int(sizeof t) ? n : 0);
+        }
+    }
+#endif
 #ifdef FEATURE_PLUG_HOST
     plug::boot(platform);
 #endif
 
+#ifdef FEATURE_EXT_HOOKS
+    DEVHOOK_TRACKER_INIT(platform, extLoad);
+#else
     DEVHOOK_TRACKER_INIT(platform, interfaceGlobals.devMode);
+#endif
 
 #if defined(PLATFORM_IMX) && defined(ENABLE_DEV_CONSOLE)
     if (interfaceGlobals.devMode)
@@ -202,6 +227,9 @@ void TrackerImpl::update()
 #endif
     engine.updateSdStream();
     sequencer.update();
+#ifdef FEATURE_EXT_HOOKS
+    features::tick();
+#endif
     DEVHOOK_TRACKER_UPDATE();
 }
 

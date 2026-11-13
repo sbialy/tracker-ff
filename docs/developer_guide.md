@@ -213,6 +213,17 @@ The makefiles do not track compiler flags, so run `make clean` when switching `C
 
 On the original Tracker (MK66, `make original`) the same flag builds a different development console, a USB test console for scripted UI tests. Its code is kept in a separate repository that is not published, and this tree only has the one-line hooks of [`core/include/devhooks.h`](../core/include/devhooks.h), which compile to nothing without the flag. An MK66 build with `-DENABLE_DEV_CONSOLE` therefore needs a checkout of it (`DEVTOOLS_DIR`, default `../devtools` next to this repository) and stops with a message without it, see [`devtools.mk`](../devtools.mk). Default and release builds and every Tracker+ and Mini build never need it.
 
+### USB audio input (MK66, `USB_AUDIO=1`)
+
+`make original ... USB_AUDIO=1` compiles a USB audio input into the original Tracker: the computer can record the Tracker's output (UAC 1.0, 44.1 kHz nominal, stereo, 16 bit) next to the MIDI port. It is switched in Config > Features > USB audio and takes effect at the next start, because `usb_init` runs before the card is mounted: the switch is mirrored into EEPROM byte 9 (`0x5A` on, anything else off, only read when the config id at byte 10 is valid). What it changes while on:
+
+- The USB configuration gains interfaces 4 (audio control) and 5 (audio streaming) with the isochronous IN endpoint 8, described after the existing ones. The computer sees a different device than with the switch off (it may cache the old one).
+- The USB interrupt moves from level 7 to level 4, above the audio output block (`platforms/mk66/config/interruptsConfig.h`), so a long audio block cannot starve the endpoint.
+- The computer gets the block the codec gets (after master volume). The codec runs at 44,117.647 Hz, the endpoint is asynchronous and sends 43 to 45 frames per USB frame to follow it. The 2 KB ring lives in SDRAM.
+- Code: `platforms/mk66/usbaudio/` (ported from OpenTracker, NOTICE.md item 23), host tests `platforms/mk66/usbaudio/test/run.sh`.
+
+With the switch off the configuration descriptor is cut back to the stock length and interface count, endpoint 8 stays disabled and every audio request stalls as before, so the unit enumerates exactly like a build without the flag. make does not track the flag: wipe `platforms/mk66/build*` when you switch it.
+
 ### Logging
 
 ```cpp

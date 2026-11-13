@@ -11,5 +11,6 @@ synth-open/ot/audio/va_dsp.h
 synth-open/ot/fastrun.h
 synth-open/ot/model/synth_patch.h
 synth-open/plug/plug_abi.h
+synth-open/plug/plug_chord.h
 synth-open/plug/synth_plug.h
 synth/include/PolySynth/config.h

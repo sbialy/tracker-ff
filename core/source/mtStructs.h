@@ -71,7 +71,6 @@ const uint32_t SAMPLE_MEMORY_SIZE = ((60 * 1024 - 64) * 1024); // ~60 MB minus 6
 #endif
 
 const uint32_t DELAY_MEMORY_SIZE = (3 * 512 * 1024);               // 1,5 MB
-const uint32_t REVERB_MEMORY_SIZE = 32768;                         // 32 KB
 const uint32_t SHARED_SCRATCH_MEMORY_SIZE = 768 * 1024; // 768 KB shared external scratch (.scratch_memory)
 
 const uint32_t EDIT_BUFF_SIZE = (15 * 256 * 1024); // 3,75 MB
@@ -125,9 +124,9 @@ const uint8_t PATTERN_INDEX_MAX = 255;
 
 const uint8_t FX_MAX = 49;
 #ifdef FEATURE_SYNTH_OPEN
-const uint8_t FX_COUNT = 47; // + "Patch" (FX_TYPE_PATCH_CHANGE), SYNTH_OPEN only
+const uint8_t FX_COUNT = 48; // + "Patch" (FX_TYPE_PATCH_CHANGE), SYNTH_OPEN only, + "Strum" (FX_TYPE_STRUM)
 #else
-const uint8_t FX_COUNT = 46;
+const uint8_t FX_COUNT = 47; // + "Strum" (FX_TYPE_STRUM)
 #endif
 const uint8_t FX_COUNT_HIDDEN_FXes = 1; // ile fxów na końcu listy jest ukrytych
 

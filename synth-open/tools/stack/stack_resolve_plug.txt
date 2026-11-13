@@ -1,0 +1,3 @@
+# plugin ELFs: every indirect call may reach any address-taken function of the plugin, vtable entries included (virtual
+# calls of the plugsynth wrappers into the engine), except the wrappers and the entry (only the host calls those)
+. => &VT:^(?!plugsynth::|plug_entry)

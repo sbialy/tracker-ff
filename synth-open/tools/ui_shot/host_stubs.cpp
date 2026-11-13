@@ -22,6 +22,11 @@ uint8_t isAudioOutMuted() { return s_muted; }
 // ---- Teensy core
 extern "C" volatile uint32_t systick_millis_count;
 volatile uint32_t systick_millis_count = 0;
+// output_i2s.cpp on the device: the audio block counters plug_synth.cpp logs per install (no audio interrupt on the host)
+extern "C" volatile uint32_t ff_audio_late;
+extern "C" volatile uint32_t ff_audio_gap_max;
+volatile uint32_t ff_audio_late = 0;
+volatile uint32_t ff_audio_gap_max = 0;
 
 // ---- platform_math.cpp (CMSIS arm_sin_q15)
 int16_t sin_q15(int16_t value) { return int16_t(lrintf(sinf(float(uint16_t(value)) * 6.2831853f / 32768.0f) * 32767.0f)); }
@@ -32,6 +37,7 @@ extern "C" unsigned f_stat(const char* path, void*)
     HostFaultSuspend keep;   // the device's FatFs f_stat does not allocate
     struct stat st;
     std::string p = path ? path : "";
+    for (char& c : p) if (c == '\\') c = '/';   // FatFs takes '\\' as a separator too (IsSeparator), the firmware's paths use it (bank copy)
     while (!p.empty() && p[0] == '/') p.erase(0, 1);
     extern std::string g_sdRootForStat;
     return stat((g_sdRootForStat + "/" + p).c_str(), &st) == 0 ? 0u : 4u;
@@ -40,7 +46,8 @@ extern "C" unsigned f_stat(const char* path, void*)
 // ---- Profiler.cpp (stack watermark and CPU meter of the device)
 Profiler* Profiler::instance = nullptr;
 void Profiler::init() {}
-size_t Profiler::freeRamBytes() { return 40000; }
+long hostHeapFreeBytes();   // host_heapmodel.cpp: free bytes of the device heap model, -1 when it is off
+size_t Profiler::freeRamBytes() { const long f = hostHeapFreeBytes(); return f >= 0 ? size_t(f) : 40000; }
 size_t Profiler::maxStackBytes() { return 3000; }
 // The host has no audio interrupt. The development console's cpu command (CONSOLE=1) gets fixed numbers, UISHOT_FAKE_CPU=avg,max (us) changes them
 // (that is how the runner's threshold check is exercised without a device)
@@ -79,9 +86,30 @@ void Profiler::resetMeasuringAudio() {}
 // ---- plug_nvm.cpp: the FlexNVM flash controller. The host has no flash, nothing is installed, plug_synth sees an empty bank
 namespace plug
 {
-bool nvmInstall(const uint8_t*, uintptr_t, uint32_t) { return true; }   // the host has no flash to program: the plugin "runs from" its staging copy
 uint32_t nvmCommands() { return 0; }
 uint64_t nvmCommandCycles() { return 0; }
 bool nvmErase(uint32_t) { return false; }
 bool nvmProgram(uint32_t, const uint8_t*) { return false; }
+const NvmStats& nvmStats() { static NvmStats s{}; return s; }
+void nvmStatsReset() {}
+void nvmLegacy(bool) {}
 }   // namespace plug
+
+#if defined(FEATURE_EXT_HOOKS) && !defined(ENABLE_DEV_CONSOLE)
+// EXTHOOKS=1: LOGE is compiled in (core/source/log.h) and goes to a loaded module, as platforms/mk66/source/util.cpp does
+#include <stdarg.h>
+#include "ext_abi.h"
+extern "C" ext_hooks_t ext_hooks;
+void _debuglog(const char* msg)
+{
+    if (ext_hooks.log) ext_hooks.log(msg);
+}
+void _debuglogf(const char* format, ...)
+{
+    if (!ext_hooks.logv) return;
+    va_list args;
+    va_start(args, format);
+    ext_hooks.logv(format, args);
+    va_end(args);
+}
+#endif

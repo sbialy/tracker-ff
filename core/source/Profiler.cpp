@@ -23,6 +23,14 @@ extern "C"
 }
 Profiler* Profiler::instance = nullptr;
 
+#ifdef FEATURE_SYNTH_OPEN
+// The cycle counter of the open synth's note-on admission (the same clock as the audio readout)
+static uint32_t profilerCycles()
+{
+    return Tracker::getInstance()->getPlatform()->getTimer()->clockCycles();
+}
+#endif
+
 void Profiler::init()
 {
     // allocate and then free all available memory for malloc to claim all space
@@ -103,6 +111,7 @@ void Profiler::resetMeasuringAudio()
     maxSampleUs = 0;
     samples = 0;
     tempMaxSampleUs = 0;
+    overrunBlocks = 0;
 }
 
 void Profiler::startMeasuringAudio()
@@ -113,6 +122,10 @@ void Profiler::startMeasuringAudio()
     }
 
     audioUpdateTimer = Tracker::getInstance()->getPlatform()->getTimer()->clockCycles();
+#ifdef FEATURE_SYNTH_OPEN
+    // Note-on admission of the open synth: when this block started (the sequencer's note-ons come after it)
+    polysynth::open::reportBlockStart(audioUpdateTimer, profilerCycles);
+#endif
 }
 
 void Profiler::stopMeasuringAudio()
@@ -130,6 +143,10 @@ void Profiler::stopMeasuringAudio()
     minSampleUs = std::min(minSampleUs, lastSampleUs);
     maxSampleUs = std::max(maxSampleUs, lastSampleUs);
     tempMaxSampleUs = std::max(tempMaxSampleUs, lastSampleUs);
+    if (lastSampleUs >= kMaxAudioUpdateTime)
+    {
+        overrunBlocks++; // the block took longer than its 128 frames play: a late half buffer
+    }
 
     sumOfSamples += lastSampleUs;
     samples++;

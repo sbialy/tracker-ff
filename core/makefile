@@ -37,8 +37,9 @@ CPP_SRCS 	+= $(shell find ./Exporter/ -name *.cpp)
 CPP_SRCS 	+= $(shell find ./AudioEngine/ -name *.cpp)
 CPP_SRCS 	+= $(shell find ./synth/ -name *.cpp)
 ifeq ($(SYNTH_OPEN),1)
-# Engine sources that live in core/ (Polyend's open Chiptune voice) are compiled only when their engine is picked
-CPP_SRCS 	:= $(filter-out $(addprefix ./,$(foreach e,$(filter-out $(SYNTH_ENGINES_SEL),$(SYNTH_ENGINES_ALL)),$(SYNTH_ENGINE_CORE_SRCS_$(e)))),$(CPP_SRCS))
+# Engine sources that live in core/ (Polyend's open Chiptune voice) are compiled only when their engine is picked, and CHIP is a
+# plugin (chip.plg of tracker-engines-os) now, so a SYNTH_OPEN image never compiles it
+CPP_SRCS 	:= $(filter-out $(addprefix ./,$(foreach e,$(filter-out $(SYNTH_ENGINES_SEL),$(SYNTH_ENGINES_ALL) CHIP),$(SYNTH_ENGINE_CORE_SRCS_$(e)))),$(CPP_SRCS))
 endif
 C_SRCS 	 	+= $(shell find ./libs/ -name *.c)
 
@@ -71,11 +72,9 @@ SYNTH_OPT_SHIM ?=
 SYNTH_OPT_COLD ?=
 SYNTH_OPT_FAT ?= $(SYNTH_OPT_ENGINES)
 SYNTH_GUI_OBJS := $(addprefix $(OBJ_DIR)/,interface/instrumentEditor/SynthEditor.o interface/instrumentEditor/SynthPatchEditor.o interface/instrumentEditor/SynthMacros.o interface/instrumentEditor/SynthAutomation.o synth/Synth.o synth/FileSystemAdapter.o synth/MidiAdapter.o synth/registry.o)
-$(filter $(OBJ_DIR)/synth-open/ot/% $(OBJ_DIR)/synth-open/engine_chip.o,$(SYNTH_OPEN_OBJS)): EXTRA_OPT := $(SYNTH_OPT_ENGINES)
-# CHIP (the voice and its glue) has its own knob, default the engines' flag. -O2 makes a voice about 12 % cheaper (12.7 % of a
-# block instead of 14.4 %, default patch, synth-open/tools/phz_cycles/run_bench.sh -O2 CHIP) for +3.6 KB in the image
+$(filter $(OBJ_DIR)/synth-open/ot/%,$(SYNTH_OPEN_OBJS)): EXTRA_OPT := $(SYNTH_OPT_ENGINES)
+# SYNTH_OPT_CHIP is accepted and unused: CHIP is chip.plg, built in tracker-engines-os with the engines' flags
 SYNTH_OPT_CHIP ?= $(SYNTH_OPT_ENGINES)
-$(OBJ_DIR)/synth/engines/ChiptuneSynthVoice.o $(OBJ_DIR)/synth-open/engine_chip.o: EXTRA_OPT := $(SYNTH_OPT_CHIP)
 # PHZ: -O2 and no fused multiply add. On the Cortex-M4F a VFMA / VMLA takes 3 cycles, a VMUL + VADD pair 2, and that is
 # worth 20 % of the voice (synth-open/tools/phz_cycles). Measured: worst case 5.8 % of a block at these flags, 7.3 % at -Os
 $(SYNTH_GUI_OBJS): EXTRA_OPT := $(SYNTH_OPT_GUI)
@@ -85,15 +84,19 @@ SYNTH_OPT_DIRT ?= -O2 -ffp-contract=off
 $(OBJ_DIR)/synth-open/ff_dirt.o: EXTRA_OPT := $(SYNTH_OPT_DIRT)
 $(OBJ_DIR)/synth-open/ff_dirt_ctl.o: EXTRA_OPT := -Os
 # plugin host: loader and bench are cold (-Os), the insert's per block path and the in-image Dirt plugin as the .plg build
-$(OBJ_DIR)/synth-open/plug_host.o $(OBJ_DIR)/synth-open/plug_bench.o $(OBJ_DIR)/synth-open/plug_nvm.o $(OBJ_DIR)/synth-open/plug_ui.o $(OBJ_DIR)/synth-open/plug_synth.o: EXTRA_OPT := -Os
+$(OBJ_DIR)/synth-open/plug_host.o $(OBJ_DIR)/synth-open/plug_bench.o $(OBJ_DIR)/synth-open/plug_nvm.o $(OBJ_DIR)/synth-open/plug_ui.o $(OBJ_DIR)/synth-open/plug_synth.o $(OBJ_DIR)/synth-open/ext_module.o: EXTRA_OPT := -Os
 $(OBJ_DIR)/synth-open/plug_insert.o $(OBJ_DIR)/synth-open/plug_dirt_inimage.o: EXTRA_OPT := -O2 -ffp-contract=off
 $(OBJ_DIR)/synth-open/open_cold.o $(OBJ_DIR)/synth-open/open_patchio.o $(OBJ_DIR)/synth-open/stub_fmt.o: EXTRA_OPT := $(SYNTH_OPT_COLD)
 $(OBJ_DIR)/synth-open/ot/audio/engines/fat.o: EXTRA_OPT := $(SYNTH_OPT_FAT)
 # FM4 and B-Type (-O3) are plugins built in tracker-engines-os, SYNTH_OPT_FM4 and SYNTH_OPT_BTYPE are accepted and unused.
-# Our code under synth-open/ builds warning free with -Wall -Wextra, so the warning classes that found the real bugs in the stock
-# code (wrapped unsigned clamps, a missing return, an uninitialised read) are errors there and only there (not core/, not the platform).
+# Our code under synth-open/ builds warning free with -Wall -Wextra on 10.3 and 12.3, so every warning there is an error, and only there
+# (not core/, not the platform). The first six classes are named so they stay errors even if someone adds -Wno-error later: they found the
+# real bugs in the stock code (wrapped unsigned clamps, a missing return, an uninitialised read). -Wstack-usage= stays a warning, the stack
+# ratchet (synth-open/tools/stack_ratchet.py, make stack-ratchet) judges frame sizes against a committed baseline.
+# A new compiler that adds a warning breaks the build here: fix the code, or demote the one class with -Wno-error=<class> below.
 # make does not track flags: after changing this delete the core build dir of the SYNTH_TAG and platforms/mk66/build-trim.
 SYNTH_OPEN_WERROR := -Werror=return-type -Werror=uninitialized -Werror=maybe-uninitialized -Werror=implicit-fallthrough -Werror=sign-compare -Werror=type-limits -Werror=unused-variable
+SYNTH_OPEN_WERROR += -Werror -Wno-error=stack-usage=
 $(SYNTH_OPEN_OBJS): COMPILER_OPTIONS += $(SYNTH_OPEN_WERROR)
 
 # TRIM=1: no-feature-loss flash trims for the SYNTH_OPEN image (synth-open/README.md, Flash trim).

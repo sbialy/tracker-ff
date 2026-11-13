@@ -572,7 +572,14 @@ static uint8_t flightsim_report_desc[] = {
 #define MULTITOUCH_INTERFACE_DESC_SIZE	0
 #endif
 
+#ifdef FF_USB_AUDIO_TX
+// tracker-ff USB_AUDIO=1: the audio input after the last interface (see usb_desc.h).
+#define FF_AUDIO_DESC_POS		MULTITOUCH_INTERFACE_DESC_POS+MULTITOUCH_INTERFACE_DESC_SIZE
+#define FF_AUDIO_DESC_SIZE		8 + 9+9+12+9 + 9+9+7+11+9+7
+#define CONFIG_DESC_SIZE		FF_AUDIO_DESC_POS+FF_AUDIO_DESC_SIZE
+#else
 #define CONFIG_DESC_SIZE		MULTITOUCH_INTERFACE_DESC_POS+MULTITOUCH_INTERFACE_DESC_SIZE
+#endif
 
 
 
@@ -1401,6 +1408,112 @@ static uint8_t config_descriptor[CONFIG_DESC_SIZE] = {
         MULTITOUCH_SIZE, 0,                     // wMaxPacketSize
         1,                                      // bInterval
 #endif // KEYMEDIA_INTERFACE
+
+#ifdef FF_USB_AUDIO_TX
+        // tracker-ff USB_AUDIO=1: Tracker -> computer audio, interfaces 4 and 5. Ported from OpenTracker's
+        // OT_USB_AUDIO_LAST block (Apache-2.0, https://github.com/syamajala/polyend-tracker-re, commit
+        // ef7a4bbce247, third_party/teensy3/usb_desc.c), changed: no receive interface and no feedback endpoint.
+        // Interface association descriptor, USB ECN, Table 9-Z
+        8,                                      // bLength
+        11,                                     // bDescriptorType
+        FF_AUDIO_INTERFACE,                     // bFirstInterface
+        2,                                      // bInterfaceCount
+        0x01,                                   // bFunctionClass
+        0x01,                                   // bFunctionSubClass
+        0x00,                                   // bFunctionProtocol
+        0,                                      // iFunction
+        // Standard AudioControl (AC) Interface Descriptor, USB DCD for Audio Devices 1.0, Table 4-1
+        9,                                      // bLength
+        4,                                      // bDescriptorType, 4 = INTERFACE
+        FF_AUDIO_INTERFACE,                     // bInterfaceNumber
+        0,                                      // bAlternateSetting
+        0,                                      // bNumEndpoints
+        1,                                      // bInterfaceClass, 1 = AUDIO
+        1,                                      // bInterfaceSubclass, 1 = AUDIO_CONTROL
+        0,                                      // bInterfaceProtocol
+        0,                                      // iInterface
+        // Class-specific AC Interface Header Descriptor, Table 4-2
+        9,                                      // bLength
+        0x24,                                   // bDescriptorType, 0x24 = CS_INTERFACE
+        0x01,                                   // bDescriptorSubtype, 1 = HEADER
+        0x00, 0x01,                             // bcdADC (version 1.0)
+        LSB(9+12+9), MSB(9+12+9),               // wTotalLength
+        1,                                      // bInCollection
+        FF_AUDIO_INTERFACE+1,                   // baInterfaceNr(1) - Transmit to PC
+        // Input Terminal Descriptor, Table 4-3
+        12,                                     // bLength
+        0x24,                                   // bDescriptorType, 0x24 = CS_INTERFACE
+        0x02,                                   // bDescriptorSubType, 2 = INPUT_TERMINAL
+        1,                                      // bTerminalID
+        0x02, 0x06,                             // wTerminalType, 0x0602 = Digital Audio
+        0,                                      // bAssocTerminal, 0 = unidirectional
+        2,                                      // bNrChannels
+        0x03, 0x00,                             // wChannelConfig, 0x0003 = Left & Right Front
+        0,                                      // iChannelNames
+        0,                                      // iTerminal
+        // Output Terminal Descriptor, Table 4-4
+        9,                                      // bLength
+        0x24,                                   // bDescriptorType, 0x24 = CS_INTERFACE
+        3,                                      // bDescriptorSubtype, 3 = OUTPUT_TERMINAL
+        2,                                      // bTerminalID
+        0x01, 0x01,                             // wTerminalType, 0x0101 = USB_STREAMING
+        0,                                      // bAssocTerminal, 0 = unidirectional
+        1,                                      // bCSourceID, connected to input terminal, ID=1
+        0,                                      // iTerminal
+        // Standard AS Interface Descriptor, Table 4-18. Alternate 0: zero bandwidth
+        9,                                      // bLength
+        4,                                      // bDescriptorType = INTERFACE
+        FF_AUDIO_INTERFACE+1,                   // bInterfaceNumber
+        0,                                      // bAlternateSetting
+        0,                                      // bNumEndpoints
+        1,                                      // bInterfaceClass, 1 = AUDIO
+        2,                                      // bInterfaceSubclass, 2 = AUDIO_STREAMING
+        0,                                      // bInterfaceProtocol
+        0,                                      // iInterface
+        // Alternate 1: streaming data
+        9,                                      // bLength
+        4,                                      // bDescriptorType = INTERFACE
+        FF_AUDIO_INTERFACE+1,                   // bInterfaceNumber
+        1,                                      // bAlternateSetting
+        1,                                      // bNumEndpoints
+        1,                                      // bInterfaceClass, 1 = AUDIO
+        2,                                      // bInterfaceSubclass, 2 = AUDIO_STREAMING
+        0,                                      // bInterfaceProtocol
+        0,                                      // iInterface
+        // Class-Specific AS Interface Descriptor, Table 4-19
+        7,                                      // bLength
+        0x24,                                   // bDescriptorType = CS_INTERFACE
+        1,                                      // bDescriptorSubtype, 1 = AS_GENERAL
+        2,                                      // bTerminalLink: Terminal ID = 2
+        3,                                      // bDelay (approx 3 ms)
+        0x01, 0x00,                             // wFormatTag, 0x0001 = PCM
+        // Type I Format Descriptor, USB DCD for Audio Data Formats 1.0, Table 2-1
+        11,                                     // bLength
+        0x24,                                   // bDescriptorType = CS_INTERFACE
+        2,                                      // bDescriptorSubtype = FORMAT_TYPE
+        1,                                      // bFormatType = FORMAT_TYPE_I
+        2,                                      // bNrChannels = 2
+        2,                                      // bSubFrameSize = 2 byte
+        16,                                     // bBitResolution = 16 bits
+        1,                                      // bSamFreqType = 1 frequency
+        LSB(44100), MSB(44100), 0,              // tSamFreq
+        // Standard AS Isochronous Audio Data Endpoint Descriptor, Table 4-20
+        9,                                      // bLength
+        5,                                      // bDescriptorType, 5 = ENDPOINT_DESCRIPTOR
+        AUDIO_TX_ENDPOINT | 0x80,               // bEndpointAddress
+        0x05,                                   // bmAttributes = isochronous, asynchronous (the codec sets the pace)
+        LSB(AUDIO_TX_SIZE), MSB(AUDIO_TX_SIZE), // wMaxPacketSize
+        1,                                      // bInterval, 1 = every frame
+        0,                                      // bRefresh
+        0,                                      // bSynchAddress
+        // Class-Specific AS Isochronous Audio Data Endpoint Descriptor, Table 4-21
+        7,                                      // bLength
+        0x25,                                   // bDescriptorType, 0x25 = CS_ENDPOINT
+        1,                                      // bDescriptorSubtype, 1 = EP_GENERAL
+        0x00,                                   // bmAttributes
+        0,                                      // bLockDelayUnits
+        0x00, 0x00,                             // wLockDelay
+#endif // FF_USB_AUDIO_TX
 };
 
 
@@ -1490,6 +1603,22 @@ void usb_init_serialnumber(void)
 	usb_string_serial_number_default.bLength = i * 2 + 2;
 }
 
+
+#ifdef FF_USB_AUDIO_TX
+// tracker-ff USB_AUDIO=1: the audio function is compiled in and picked at start. Off: wTotalLength and bNumInterfaces of
+// the stock configuration (interfaces 0..3, the bytes after FF_AUDIO_DESC_POS are never sent, see GET_DESCRIPTOR in
+// usb_dev.c), so the unit enumerates exactly like an image without the flag. Called by usb_init before the pull-up.
+uint8_t ff_usb_audio_on;
+
+void ff_usb_audio_select(int on)
+{
+	const unsigned len = on ? (CONFIG_DESC_SIZE) : (FF_AUDIO_DESC_POS);
+	ff_usb_audio_on = on ? 1 : 0;
+	config_descriptor[2] = LSB(len);
+	config_descriptor[3] = MSB(len);
+	config_descriptor[4] = on ? NUM_INTERFACE : FF_AUDIO_INTERFACE;
+}
+#endif
 
 // **************************************************************
 //   Descriptors List

@@ -559,6 +559,27 @@ void MCU_set_sleepMode(void)
     //     MCU_PDlow();
 }
 
+// The off start after a reset (PowerControl.cpp checkPowerState): the FT812 has its own supply and clock, an MCU reset leaves it
+// running with its last frame and backlight. Turn the panel off the way the power off does (MCU_set_sleepMode: backlight 0, DISP
+// low), with PD# held high: PD# low tri-states the FT812 outputs, DISP and the backlight float and the panel shows white (the stock
+// code has MCU_PDlow commented out above for that). No PD# cycle, so a controller that is still asleep after a power-up (it takes
+// no register writes before its ACTIVE command) stays as it is, dark. The next start runs FT812_Init, which cycles PD#.
+void MCU_panelOffAtOffStart(void)
+{
+    GPIOD->PSOR = 1 << 15; // CS# high
+    GPIOD->PSOR = 1 << 11; // PD# high
+    GPIOD->PDDR |= 1 << 15;
+    GPIOD->PDDR |= 1 << 11;
+    PORTD->PCR[15] = PORT_PCR_MUX(1) | PORT_PCR_SRE_MASK | PORT_PCR_DSE_MASK;
+    PORTD->PCR[11] = PORT_PCR_MUX(1) | PORT_PCR_SRE_MASK | PORT_PCR_DSE_MASK;
+    PORTD->PCR[12] = PORT_PCR_MUX(2);
+    PORTD->PCR[13] = PORT_PCR_MUX(2);
+    PORTD->PCR[14] = PORT_PCR_MUX(2);
+
+    MCU_InitSpi(baudrateSlow, spiSourceClock);
+    MCU_set_sleepMode();
+}
+
 void MCU_set_runMode(void)
 {
     // EVE_CmdWrite(FT81x_ACTIVE, 0x00);

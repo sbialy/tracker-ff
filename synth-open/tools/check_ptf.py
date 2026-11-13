@@ -10,12 +10,15 @@ Modelled on tools/check_image.py of OpenTracker. Checks an Intel HEX .ptf for:
   * Flash configuration field (0x400-0x40F) identical to stock: FSEC 0xDE, FOPT 0xF9.
   * A sane vector table: SP inside SRAM, Thumb reset vector inside the image.
   * Valid record checksums and lengths.
-Usage: check_ptf.py [--max 0xFF000] <image.ptf>
+  * Last 4 KB sector: fewer than 0x800 B in it is a warning. With --min-tail N (the release gate passes 0x800) fewer than N B
+    is an error. A tail of 0 (the image ends on a sector line) is a full last sector and passes.
+Usage: check_ptf.py [--max 0xFF000] [--min-tail 0x800] <image.ptf>
 """
 import sys
 
 FLASH_IMG_MAX = 0xFF000
 ALLOWED_RECORDS = {0, 1, 2}
+SHORT_TAIL = 0x800   # a last 4 KB sector with fewer bytes than this is suspect
 STOCK_CFG = bytes([0xFF] * 12 + [0xDE, 0xF9, 0xFF, 0xFF])
 
 
@@ -48,9 +51,13 @@ def load_ihex(path):
 
 def main(argv):
     limit = FLASH_IMG_MAX
+    min_tail = 0
     args = argv[1:]
-    if len(args) >= 2 and args[0] == "--max":
-        limit = int(args[1], 0)
+    while len(args) >= 2 and args[0] in ("--max", "--min-tail"):
+        if args[0] == "--max":
+            limit = int(args[1], 0)
+        else:
+            min_tail = int(args[1], 0)
         args = args[2:]
     if len(args) != 1:
         sys.exit(__doc__)
@@ -78,6 +85,11 @@ def main(argv):
         errors.append(f"reset vector 0x{reset:08X} not a Thumb address inside the image")
     if min(mem) != 0:
         errors.append(f"image starts at 0x{min(mem):X}, expected 0")
+    last = top % 4096
+    if min_tail and 0 < last < min_tail:
+        errors.append(f"the image ends {last} B (0x{last:X}) into its last 4 KB sector at 0x{top - last:X}, the release needs at least 0x{min_tail:X} B "
+                      f"there: the unit's bootloader is suspected of leaving a short tail erased. "
+                      f"Grow the image by {min_tail - last} B or more (FF_TAIL_PAD in synth-open/ext_module.cpp)")
     name = path.rsplit("/", 1)[-1]
     if errors:
         print(f"PTF CHECK FAILED: {name}\n  " + "\n  ".join(errors))
@@ -85,6 +97,11 @@ def main(argv):
         return 1
     print(f"ptf ok: {name}: highest address 0x{top:X} ({limit - top} B under 0x{limit:X}), "
           f"record types {sorted(types)}, SP=0x{sp:08X}, reset=0x{reset:08X}, flash config = stock")
+    if 0 < last < SHORT_TAIL:
+        # not an error for a stock style image (they ended anywhere), but an image bound to a module must not (pack_ext.py refuses)
+        print(f"  WARNING short last sector: the image ends {last} B into the 4 KB sector at 0x{top - last:X}. The unit's bootloader is "
+              f"suspected of leaving such a tail erased: the data there reads 0xFF, a module "
+              f"bound to this image is refused. Grow the image by {SHORT_TAIL - last} B or more (FF_TAIL_PAD in synth-open/ext_module.cpp).")
     return 0
 
 

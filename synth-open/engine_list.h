@@ -10,7 +10,8 @@
 //                 FM4 (9) D-Type (10) CS-Type (11) A-Type (12) T-Type (13) 8-Type (14) Hand-Type (15) B-Type (16) Arc-Type (17), then our own PLK (18), the same
 //                 numbers as the editor stores. DIRT (5) has no open
 //                 engine, and PERC (4) has one only when it is picked: a project that uses an engine this build lacks
-//                 falls back to a default part. STORED is not the PATCH_ENGINE number (PERC is 4 stored but 6 in a
+//                 (or a plugin engine that is not on the card) keeps the part and shows it as Missing, only a number
+//                 no engine can have (DIRT 5, over 255) falls back to a default part. STORED is not the PATCH_ENGINE number (PERC is 4 stored but 6 in a
 //                 .patch, CHIP is 6 stored but 8 in a .patch). The number never depends on which engines are built in
 //                 (Synth::kSynthTypes only lists the built ones, in this order)
 //   TYPE_ID       polysynth::InstrumentTypeId. JU6 has no Polyend id, it uses its OpenTracker engine id 0x81,

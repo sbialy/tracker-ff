@@ -1,6 +1,7 @@
 #include "core/interfaceDefs.h"
 #include "fileManager.h"
 #include "mtAudioEngine.h"
+#include "mtChord.h"
 #include "mtSequencer.h"
 #include "mtStructs.h"
 #include "patternEditor/patternEditor.h"
@@ -189,10 +190,9 @@ uint8_t Sequencer::generateRandomFx()
     {
         retVal = utilMathRandom::random(fx.FX_TYPE_OFF + 1, FX_COUNT - FX_COUNT_HIDDEN_FXes + 1);
         if (retVal != fx.FX_TYPE_TEMPO && retVal != fx.FX_TYPE_BREAK_PATTERN // breaka nie chcemy
-#ifdef FEATURE_SYNTH_OPEN
-            && retVal != fx.FX_TYPE_PATCH_CHANGE // a random patch switch is never wanted from the picker
-#endif
-        )
+            && retVal != fx.FX_TYPE_PATCH_CHANGE // a random patch switch is never wanted from the picker (no-op id in stock)
+            && retVal != fx.FX_TYPE_STRUM)      // a strum needs a MIDI Chord in the other slot
+
             break;
     }
     return retVal;
@@ -1781,6 +1781,7 @@ AUDIO_CORE_RAM int16_t Sequencer::getFxMax(uint8_t fxID, bool forRandom)
 
         case fx.FX_TYPE_ARP: return 33;
         case fx.FX_TYPE_MIDI_CHORD: return MAX_CHORD;
+        case fx.FX_TYPE_STRUM: return FX_VALUE_MAX;
 #ifdef FEATURE_SYNTH_OPEN
         case fx.FX_TYPE_PATCH_CHANGE: return 15;
 #endif
@@ -1827,6 +1828,7 @@ int16_t Sequencer::getFxDefault(uint8_t fxID)
         case fx.FX_TYPE_PANNING: return 50;
         case fx.FX_TYPE_MICROTUNING: return 99;
         case fx.FX_TYPE_MIDI_CHORD: return MIN_CHORD;
+        case fx.FX_TYPE_STRUM: return 8; // up, 16 ms between notes
 
         default: return 0;
     }
@@ -2024,7 +2026,32 @@ void Sequencer::makeFxValLabelWithAlgin(char* ptr,
             }
             break;
         }
-        case fx.FX_TYPE_MIDI_CHORD: strncpy(ptr, chordDefName[valAfterCorrection], len); break;
+        case fx.FX_TYPE_MIDI_CHORD:
+            // a centred label with room (the Fill popup) shows the readable name, the 3 character grid cell the short name
+            // (Config > Features > Chord names, on by default) or the stock interval digits
+            valAfterCorrection = valAfterCorrection > MAX_CHORD ? MIN_CHORD : valAfterCorrection;
+            if (align == fxValLabelAlign_center && len > 4)
+            {
+                chordName(ptr, len, uint8_t(valAfterCorrection), -1);
+            }
+            else
+            {
+                strncpy(ptr, chordShortNamesOn ? chordShortName[valAfterCorrection] : chordDefName[valAfterCorrection], len);
+            }
+            break;
+        case fx.FX_TYPE_STRUM:
+        {   // +n up, -n down (n x 2 ms between notes), off at 0 and 64
+            const int s = strumUnits(uint8_t(valueFromFx));
+            if (s == 0)
+            {
+                strncpy(ptr, "off", len);
+            }
+            else
+            {
+                snprintf(ptr, len, align == fxValLabelAlign_right ? "%+3i" : "%+i", s);
+            }
+            break;
+        }
         case fx.FX_TYPE_TEMPO:
         {
             if (valueFromFx == getFxMin(fxType))

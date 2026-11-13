@@ -28,6 +28,14 @@ class PlatformImpl final : public Platform
     virtual void resetMCU() override;
     virtual void setPowerOffGuard(bool armed) override;
     virtual void kickPowerOffGuard() override;
+    virtual void setRestartOnPowerOff(bool on) override;
+    virtual void setStartOnPowerReturn(bool on) override;
+    virtual bool takeOffStartRecord(uint32_t& srs, uint32_t& marker, uint32_t& count) override;
+#ifdef FEATURE_USB_AUDIO
+    virtual bool usbAudioBuilt() override { return true; }
+    virtual bool usbAudioRunning() override;
+    virtual void setUsbAudioBoot(bool on) override;
+#endif
     virtual void runBootloader(char* fileName) override;
     virtual void setPowerButtonCallback(PowerButtonCallback) override;
     virtual bool getPowerButtonState() override;
@@ -65,6 +73,7 @@ class PlatformImpl final : public Platform
     bool configValid();
     bool powerOffGuardArmed() const;
     void saveStartState(uint8_t state);
+    bool readPowerReturnMirror(); // the Power return option of the restart mode feature, read by checkPowerState
     PowerButtonCallback getPowerButtonCallback();
 
   protected:

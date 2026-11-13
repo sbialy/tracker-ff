@@ -41,6 +41,15 @@ class AudioMixerBase : public AudioStream
     {
     }
     void mix(int size, int32_t* multiplier, int32_t* previousMultiplier, SaturationType saturationType);
+
+  public:
+    // The input adds nothing: its gain is 0 now and was 0 in the previous block, so mix() releases whatever arrives there unread
+    // (a missing block ends the gain ramp the same way). A sender may skip building the block.
+    virtual bool isInputSilenced(unsigned int channel) const
+    {
+        (void)channel;
+        return false;
+    }
 };
 #define AUDIO_MIXER_PARENT AudioMixerBase
 #else
@@ -81,6 +90,13 @@ class AudioMixer : public AUDIO_MIXER_PARENT
     }
 
     void setSaturationType(SaturationType type) { saturationType = type; }
+
+#ifdef AUDIO_NULL_IS_SILENCE
+    bool isInputSilenced(unsigned int channel) const override
+    {
+        return channel < mixerSize && multiplier[channel] == 0 && previousMultiplier[channel] == 0;
+    }
+#endif
 
   private:
     SaturationType saturationType;

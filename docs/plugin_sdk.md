@@ -36,7 +36,7 @@ Two kinds of plugin are loaded:
 
 | Kind | `PLUG_KIND_*` | What it does | Where it runs | Folder |
 | :--- | :--- | :--- | :--- | :--- |
-| **Master insert** | `PLUG_KIND_MASTER_INSERT` (1) | Processes the stereo master bus in place, after the tracks and sends mixer and before the stock limiters | Insert 1: 8 KB SRAM_L slot. Insert 2: code in FlexNVM at `0x1001E000` | `/Plugins/Master/` |
+| **Master insert** | `PLUG_KIND_MASTER_INSERT` (1) | Processes the stereo master bus in place, after the tracks and sends mixer and before the stock limiters | Both inserts share one 8 KB SRAM_L slot (insert 1 from the bottom, insert 2 from the top) | `/Plugins/Master/` |
 | **Synth engine** | `PLUG_KIND_SYNTH` (4) | Adds a model to the synth model list. The shim's voice pool, macros, patch slots and governor treat it like a built-in engine | Code in the FlexNVM bank, data in an SRAM pool | `/Plugins/Synth/` |
 
 `plug_abi.h` also declares `PLUG_KIND_SEND_FX`, `PLUG_KIND_TRACK_FX` and `PLUG_KIND_OFFLINE`. The current host does not load them.
@@ -91,7 +91,7 @@ SD Card Root/
 - The host reads only the header and manifest of each insert file at boot and when the Inserts page opens, and of each engine file at boot. Nothing executes until a plugin is picked or a project needs it.
 - A rejected file is listed in `/Plugins/host.txt` (inserts) with its error number. See [section 13](#13-validation-safe-mode-and-the-crash-marker).
 
-**Using a plugin.** Master inserts: on the Master screen, **Shift + Saturation** opens the Master Inserts page. Columns 2 and 3 pick the plugin of insert 1 and insert 2. Columns 4 to 7 are the parameters of the focused insert, four at a time. Picking a plugin while a built-in Saturation entry is on switches the Saturation to `Inserts`. Synth engines: the engine appears in the synth model list from boot, installed or not. When the list rests on it for 500 ms the host installs it and shows the popup `Loading <NAME>`.
+**Using a plugin.** Master inserts: on the Master screen, **Shift + Saturation** opens the Master Inserts page. Columns 2 and 3 pick the plugin of insert 1 and insert 2. Columns 4 to 7 are the parameters of the focused insert, four at a time. Picking a plugin while a built-in Saturation entry is on switches the Saturation to `Inserts`. Synth engines: the engine appears in the synth model list from boot, installed or not. When the list rests on it for 1 s the host installs it and shows the popup `Loading <NAME>`.
 
 ---
 
@@ -167,7 +167,7 @@ synth-open/plug/build_plugs.sh build/plugins
 It builds the two examples of this guide and checks each one (the shipped plugins are built and checked the same way in their module repositories, section 18):
 
 - no `R_ARM_GOT*` relocation, and the rebase table holds exactly the `R_ARM_ABS32` words of the ELF
-- the insert renders to the same checksum at the SRAM_L home, the FlexNVM home with rw on the heap and in SDRAM, with default settings and again with every parameter moved and one more change in block 5
+- the insert renders to the same checksum at the SRAM_L home, at the top of the slot (insert 2's home) and in SDRAM, with default settings and again with every parameter moved and one more change in block 5
 - the synth example passes the firmware's own attach check ([`validate_synth.py`](#13-validation-safe-mode-and-the-crash-marker)) and renders to the same checksum at two homes
 
 The examples build into `build/plugins/examples/`. The script prints `PASSED` or `FAILED` last.
@@ -250,8 +250,8 @@ The host lists a synth engine before it is installed from these numbers alone. A
 | `header_size` | 1,024 | `checkHeader` |
 | `image_size`, `bss_size` | 65,536 each | `checkHeader` |
 | `rebase_count` | 16,384 and at most `image_size / 4` | `checkHeader`, `checkLayout` |
-| Insert 1 | `image + bss` up to 8,192 | the SRAM_L slot |
-| Insert 2 | text up to 8,192, `rw + bss` up to 1,024 | FlexNVM and a fixed SRAM buffer |
+| One insert | `image + bss` up to 8,192 | the SRAM_L slot, either insert |
+| Two inserts | both `image + bss` together up to 8,192 (less up to 15 B, insert 2 starts 16 B aligned) | the same slot, shared |
 | Synth engine | `image + bss` up to 32,768 and `rw + bss` within the 3,072 byte pool | staging buffer and rw pool |
 | Insert instance | `instance_size` up to 16,384 | `checkDesc` |
 
@@ -294,7 +294,7 @@ struct plug_host {
 ### Compatibility
 
 - `abi_major` must equal the host's (1). `abi_minor` and the host level only grow.
-- Optional features are queries: `desc->query(PLUG_EXT_*)` and `host->query(...)` return `NULL` or a struct with its own `struct_size`. Only `PLUG_EXT_SYNTH` is used by the host today. `PLUG_EXT_STATE`, `PLUG_EXT_TAIL` and `PLUG_EXT_TEMPO` are declared and the host does not ask for them.
+- Optional features are queries: `desc->query(PLUG_EXT_*)` and `host->query(...)` return `NULL` or a struct with its own `struct_size`. The host asks for `PLUG_EXT_SYNTH` and, since ABI 1.2, `PLUG_EXT_CHORD` (paraphony, section 7). `PLUG_EXT_STATE`, `PLUG_EXT_TAIL` and `PLUG_EXT_TEMPO` are declared and the host does not ask for them.
 - A host skips a kind, cpu or role it does not know and refuses a plugin whose `min_host` is above its level, before any code runs.
 
 ---
@@ -328,11 +328,12 @@ typedef struct {
     const char* unit;      // "", "%", "Hz", "dB", "ms"
     float min, max, def, step;
     uint16_t enum_count;   // > 0: an enum with enum_count names, min 0, max enum_count - 1
-    uint16_t flags;        // reserved, 0
+    uint16_t flags;        // PLUG_PARAM_NAME_MIN (1) / PLUG_PARAM_NAME_MAX (2), else 0
     const char* const* enum_names;
 } plug_param;
 ```
 
+- A numeric parameter may name its end values (for example Glue's Makeup, whose bottom step means `Auto`): set `PLUG_PARAM_NAME_MIN` and/or `PLUG_PARAM_NAME_MAX` in `flags` and point `enum_names` at one string for min, then one for max (`enum_count` stays 0). The Inserts page shows the name instead of the number and the unit while the value sits at that end, the bar and the stored float do not change, and a host without the flags shows the number.
 - A numeric parameter shows its value and a bar. An enum shows all its names in the stock list control with the current one highlighted.
 - The host rounds a value to `step` and clamps it to `[min, max]` before it reaches you. Enums arrive as indices `0 .. enum_count - 1`.
 - A project stores values **by name**. Renaming a parameter loses its stored value. Reordering is harmless. A value that is missing takes the default.
@@ -372,7 +373,7 @@ The Inserts page has a first column, **Mixer**, that does not belong to any plug
 
 ### Picking and the status line
 
-Picking waits until the selection rests for 400 ms, then loads. The value line of an insert column is at most 9 characters: the plugin name, `None`, `Loading`, `Bypassed` or a tag and as much of the name as fits (`Safe:BBD`, `Miss:Lo-Fi`, `Fail:Dirt`, `CPU:Phase`). A built-in Saturation entry bypasses both slots and keeps them loaded.
+Picking waits until the selection rests for 400 ms, then loads. The inserts of a project load (an opened project, or the one that is up at power on) take the road of the synth engines instead: they wait 1 s after the load finished (the rest of the synth model list), then load one per main loop pass, 250 ms apart, insert 1 first, and not before the 4 s key window of the boot has closed. Until then the column shows `Loading` and the audio passes. The value line of an insert column is at most 9 characters: the plugin name, `None`, `Loading`, `Bypassed` or a tag and as much of the name as fits (`Safe:BBD`, `Miss:Lo-Fi`, `Fail:Dirt`, `CPU:Phase`). A built-in Saturation entry bypasses both slots and keeps them loaded.
 
 The plugin list comes from the last scan of `/Plugins/Master`. Opening the page reads only the folder's directory entries (the names and sizes of the `.plg` files) and scans the files again when they differ from the last scan, so the page opens without a card read per plugin. Every USB storage session and every card change makes the next open scan all files. A file rewritten in place at the same name and size is not seen until then, and picking it is safe: the loader checks that the file still has the `uid` and CRC the list showed, and when it does not the host scans the folder and loads again from the new list.
 
@@ -406,7 +407,7 @@ PLUG_SYNTH_PLUGIN("JU6", polysynth::open::kJu6Def, 7, 0x81)   // name, definitio
 
 All three must be unique among built-in engines and among the engines on the card. If a number is taken, the engine is not listed (`synth.txt` shows `err 6`). The ABI note says a new engine uses its uid for all three, and the example does that: `0x64880b9c` is the FNV-1a hash of `org.example.synth.sawf`. The same three numbers go to `build_plug.py --synth STORED,PATCH,TYPE` so the manifest carries them. They must equal the numbers in the plugin line and the definition's `typeId`, or attach fails with error 8.
 
-The twelve shipped engines keep the numbers they had when they were built in, so old projects and patches find them: JU6 7 / `0x81`, PHZ 8 / `0x82`, FM4 9 / `0x80`, D-Type 10 / `0xA2`, CS-Type 11 / `0x83`, A-Type 12 / `0x84`, T-Type 13 / `0x85`, 8-Type 14 / `0x86`, Hand-Type 15 / `0x87`, B-Type 16 / `0x88`, Arc-Type 17 / `0x89`, PLK 18 / `0x8A`. PHZ and PLK are private modules (source in the private repository `tracker-engines`), this repository keeps their numbers.
+The thirteen shipped engines keep the numbers they had when they were built in, so old projects and patches find them: CHIP 6 / `0x08`, JU6 7 / `0x81`, PHZ 8 / `0x82`, FM4 9 / `0x80`, D-Type 10 / `0xA2`, CS-Type 11 / `0x83`, A-Type 12 / `0x84`, T-Type 13 / `0x85`, 8-Type 14 / `0x86`, Hand-Type 15 / `0x87`, B-Type 16 / `0x88`, Arc-Type 17 / `0x89`, PLK 18 / `0x8A`. PHZ and PLK are private modules (source in the private repository `tracker-engines`), this repository keeps their numbers.
 
 The engine `name` is 1 to 8 printable characters with no `/`. It is the on-screen name and the `Patches/<name>/` folder.
 
@@ -525,7 +526,7 @@ An engine cannot call `alloc`. Large state (a delay line pool) comes from the ho
 - A **patch** is a `.patch` file (a protobuf `Patch` message, the format the Tracker Mini and OpenTracker use). The engine id in field 1 is your `patch_engine`. Library patches go to `Patches/<NAME>/<name>.patch`. Each synth part has 16 patch slots in the project (`<N>.patch` and `<N>-<n>.patch` in the Workspace and the project folder).
 - Parameters are stored **by index**. A parameter that is missing, not finite or out of range takes its default. **Append new parameters at the end. Do not reorder or remove parameters in a released engine**, or old patches change meaning.
 - The Init patch and the default macros come from your tables (`initPatchData` builds Init data from the engine definition).
-- A part whose engine is not on the card shows `Missing: <NAME>` and stays silent. Its project values and patch files are never rewritten, and installing the plugin brings it back. This holds for any stored number from 7 to 255 (and `.patch` ids from 0x80 up), there is no list of known engines: the name is the one the card's plugin had when the firmware last listed it (`/Plugins/names.txt`), else `Missing: #<stored>`.
+- A part whose engine is not on the card shows `Missing: <NAME>` and stays silent. Its project values and patch files are never rewritten, and installing the plugin brings it back. This holds for any stored number from 6 to 255 (and `.patch` ids from 0x80 up), there is no list of known engines: the name is the one the card's plugin had when the firmware last listed it (`/Plugins/names.txt`), else `Missing: #<stored>`.
 - A patch file also carries the synth automation block (field 64). It is the host's, not yours.
 
 ### Automation exposure
@@ -537,6 +538,24 @@ Each patch has **4 automation slots** (Synth Automation, page 3 of 3 of the Synt
 - **Identity**: a slot stores the parameter's index, its **name** (up to 20 characters) and which occurrence of that name it is (`nth`: WTFM has three `Attack` parameters). On load the index, name and occurrence must match. If not, the nth parameter of that name is taken, so a plugin update that reordered its table is followed. If the name is gone the slot shows `? <name>`, drives nothing and is written back as it was read. **Keep parameter names stable between versions.** Renaming a parameter orphans the automation slots that point to it.
 - **List order**: the wave and position like parameters come first (a word of the name starts with `Shape`, `Wave`, `Pos`, `PW`, `Timbre`, `Morph`, `Table`, `Duty`, `XMod` or `YMod`), then Macro 1 to 6, then everything else in engine order. Name your wave parameter with one of these words to have it first.
 - The automation runs at part level, one gate for the part, never per voice.
+
+### Paraphony and the chord table (`PLUG_EXT_CHORD`, ABI 1.2)
+
+A paraphonic engine sounds a whole chord in **one voice**: one filter, one set of envelopes and LFOs for every chord note, only the oscillators run per note. It takes one pool voice and one note-on instead of four. The built-in ACD does it (`Chord Mode` Para, up to 3 more oscillators). An engine opts in with two parameters and one query, nothing else changes:
+
+- **`Chord Mode`**, an enum with at least two values: 0 Poly (the engine as it was, the Chord is not sounded) and 1 Para. It is the patch's choice, so poly and paraphonic patches of one engine coexist.
+- **`Chord`**, an enum of exactly `PLUG_CHORD_COUNT` (68) values in the order of [`plug_chord.h`](../synth-open/plug/plug_chord.h). In Para every note plays this chord on top of itself.
+- **Latch the chord in `note_on`.** Read `p->end[chord]` there and keep what it means in the voice. The host may change the value right after `note_on` returns, so never read it again in `render`.
+- Answer the query: build the plugin with `PLUG_SYNTH_PLUGIN_CHORD(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, CHORD_PARAM, MODE_PARAM)` instead of `PLUG_SYNTH_PLUGIN_WORK`. It answers `query(PLUG_EXT_CHORD)` with `plug_ext_chord { struct_size, param_index, mode_param, strum_param }` (`strum_param` = `PLUG_CHORD_NO_STRUM`). A plugin built with the old macros answers `NULL` and is unchanged byte for byte.
+- **Strum (optional).** An integer parameter from -63 to 63 (`PLUG_FMT_INT`): the time between two successive chord notes in units of 2 ms, positive up (the step note first), negative down (the top note first), 0 all together. Build with `PLUG_SYNTH_PLUGIN_CHORD_STRUM(..., CHORD_PARAM, MODE_PARAM, STRUM_PARAM)`. A step with the `u - Strum` FX next to its MIDI Chord puts its strum into this parameter for that note-on only, like the chord (latch it in `note_on`). The host reads `strum_param` only when `struct_size` covers it, so a 12 byte answer of an earlier ABI 1.2 plugin stays valid and plays every chord unstrummed. The built-in ACD starts each chord note in its own block (2.9 ms steps), the JU6 plugin does the same.
+
+What the host does with it: a step with the stock **`0 - MIDI Chord` FX** on a part whose patch is at Para goes out as **one note-on** of the step note, and the host puts the step's chord value into `Chord` for that note-on only (a note-on that the CPU admission queues to the next block keeps its value). The note-off is the step note's alone. With Chord Mode at Poly, with `Arp` in the other FX slot, or for an engine without the query, the step keeps the stock path: one note-on per chord note. Live pads and MIDI in play one note-on per key as always, in Para each key sounds the patch's Chord. At attach the host checks the answer (`checkChord` in `plug_synth.cpp`): both indices in range and different, `Chord` an enum or integer from 0 to 67, `Chord Mode` an enum, integer or on/off from 0 with a maximum of at least 1. A failed check only switches the routing off, the engine still attaches.
+
+**The 68 entry order is a contract.** Value `i` is `PLUG_CHORD_MASKS[i]`: bit `k` set means a note `k` semitones above the step note, bit 0 is set in every entry, so the step note is the **lowest** note (the bass) and the inversion is part of the entry. Entry 0 is the note alone, 1 to 29 are the upstream (Polyend) chords in root position, 30 to 67 the inversions the community fork added. The order never changes and new entries may only be appended. `PLUG_CHORD_ROOT[i]` is the distance from the bass up to the chord root and `PLUG_CHORD_NAMES[i]` the name the firmware shows ("maj7 inv2", with the bass known "Fmaj7/C"). The firmware checks at compile time that its MIDI Chord table (`core/source/mtChordDefs.h`) is this one. The header is plain C with the tables as macros, so a plugin pays only for the tables it instantiates (`plugchord::kMasks`, `kRoot`, `kNames` in C++).
+
+**Id 6, not 5.** `PLUG_EXT_CHORD` is 6. It was 5 in the first developer builds, which clashed with `PLUG_EXT_FILES = 5` of the host level 2 line (user wave files, `plug_host.query`). A plugin built before the renumbering answers on 5 only, so a host that asks for 6 gets `NULL` from it and plays its chords polyphonically until the plugin is rebuilt against the current `plug_abi.h` (the macros pick the id up, no source change).
+
+**Older hosts.** A host of ABI 1.1 (firmware 1.3.0 and before) never asks for the query, so the MIDI Chord step plays polyphonically there and the song still sounds right. It also refuses an enum parameter with more than 65 values (the ABI 1.2 host takes up to 128). A plugin that must load on those hosts declares `Chord` as a number (`PLUG_FMT_INT`, 0 to 67). It reads the same value and the ABI 1.2 host routes it the same way, only the editor shows the number instead of the name.
 
 ---
 
@@ -832,24 +851,24 @@ $PY -I synth-open/plug/emu_synth.py my.plg h.plg --scenario 1   # worst block, e
 
 The firmware's own engine bench (`synth-open/tools/phz_cycles/run_bench.sh`) uses an instruction cost table instead and reads about 5 percent above the device (Dirt block 21,786 emulated, 20,685 on the device). It is built for the engines listed in `engines.mk`, not for external plugins.
 
-**On the device.** Create an empty file named `/.develop` in the SD card root. The Inserts page title then shows `Inserts a.b% c.d%`, the cycles of the last block of insert 1 and insert 2 as a percent of 522,240. The Config screen shows the min, max, avg and last audio load of the whole block. A synth engine has no readout of its own, so measure it with the Config screen: note the figure with the part silent and with 4 voices held.
+**On the device.** Compare against the emulator figures above. The firmware has no readout for a single plugin in a release build, so judge a plugin by ear and by the load bar at the top of the screen: note whether it turns yellow with the part silent and with 4 voices held.
 
 ### Memory
 
 | Resource | Insert 1 | Insert 2 | Synth engine |
 | :--- | :--- | :--- | :--- |
-| **Code** | SRAM_L slot, 8,192 B for image + bss. No wait states | FlexNVM `0x1001E000`, text up to 8,192 B (the last two 4 KB sectors of the 128 KB data flash). Erased and programmed when a different plugin is loaded there. No flash command when the bytes are already there | FlexNVM bank `0x10000000` to `0x1001E000`: 120 KB, 30 sectors of 4 KB |
-| **Writable data** | in the same slot | `rw + bss` up to **1,024 B**, fixed SRAM buffer. More is refused (error 4) | rw + bss from a **3,072 B** SRAM pool shared by the installed engines |
+| **Code** | the bottom of the 8,192 B SRAM_L slot, image + bss. No wait states | the top of the same slot. Both together up to 8,192 B. Never written to flash | FlexNVM bank `0x10000000` to `0x10020000`: 128 KB, 32 sectors of 4 KB |
+| **Writable data** | in the same slot, after the text | the same | rw + bss from a **3,072 B** SRAM pool shared by the installed engines |
 | **Instance** | up to 16 KB from the SRAM heap | same | none (an 8 byte scratch). Per voice 128 B, per part 384 B |
 | **Big tables, delay lines** | `alloc(bytes, 1)`: SDRAM arena, 32 KB per slot | same | `work_bytes`: 16 KB SDRAM arena shared by the engines in use at the same time |
-| **Limit on the file** | `image + bss` 8,192 | text 8,192 | `image + bss` 32,768 (staging buffer) |
+| **Limit on the file** | `image + bss` 8,192, less what insert 2 holds | `image + bss` 8,192, less what insert 1 holds | `image + bss` 32,768 (staging buffer) |
 
 Notes:
 
 - **FlexNVM and SRAM_L run code at flash speed** (device bench). The host runs code only from these two. SDRAM is for data: an uncached access costs about 20 to 30 cycles on the MK66.
-- **Whole sectors.** An engine takes whole 4 KB sectors, and a sector never holds two engines, so an install never erases a sector of an engine that may be playing. The twelve shipped engines need 43 whole sectors (156,304 B packed) and the bank has 30 (122,880 B), so the bank is a **cache** (library of up to 16 files in `/Plugins/Synth`, up to 12 installed at once, least recently used engines out first, never an engine a part plays). At most 3 engines play at once (3 parts).
+- **Whole sectors.** An engine takes whole 4 KB sectors, and a sector never holds two engines, so an install never erases a sector of an engine that may be playing. The thirteen shipped engines need 50 whole sectors (173,428 B packed) and the bank has 32 (131,072 B, the whole data flash), so the bank is a **cache** (library of up to 16 files in `/Plugins/Synth`, up to 12 installed at once, least recently used engines out first, never an engine a part plays). At most 3 engines play at once (3 parts).
 - **Install cost.** Each flash erase runs with interrupts off and can drop a few audio blocks. An engine of 5 sectors needs up to 5 erases, none on blank sectors. One erase plus 282 phrase programs took about 15.4 ms. The biggest engine (8-Type, 5 sectors) is estimated at 0.1 to 0.2 s including the card read. An engine that returns to the sectors it left only writes what another engine overwrote.
-- **Flash wear.** Every build with changed bytes erases the sectors it lands in. `installed.txt` keeps an erase counter per sector. While developing, test an insert in **insert 1** (SRAM_L, no flash writes) and test the DSP on the Mac before you copy it to the card.
+- **Flash wear.** Every build with changed bytes erases the sectors it lands in. `installed.txt` keeps an erase counter per sector. Master inserts never write the flash, in either slot. Test the DSP on the Mac before you copy an engine to the card.
 - **SRAM heap** is shared with the rest of the firmware. Keep instances small and put large tables in SDRAM.
 
 ### Stack
@@ -945,6 +964,7 @@ White (or opaque, for a PNG with alpha) is drawn in the theme colour. Black (or 
 | `/Plugins/Synth/<name>.plgi` | you | A logo ([section 11](#11-engine-logos-plgi)) |
 | `/Plugins/host.txt` | the host, after every insert load | Index size, scan result, rejected files with error numbers, the plugin list with uid and version, each insert's state, error, text and instance address, cycles and max cycles |
 | `/Plugins/synth.txt` | the host | Library and bank counts, then one line per file with its name, stored number, state (`on card`, `installed`, `attached`, `not listed`), flash address and `err` code, the erase count of every sector, the last 8 installs (ms, flash commands, erases, evicted) and the logo source and RAM_G use |
+| `/Plugins/synth-order.txt` | you, and the unit (Synth screen, Model, Shift + F1) | Which engines the Model list shows and in which order: one engine name per line, a leading `-` hides it, `#` starts a comment. Engines it does not list are shown at the end |
 | `/Plugins/installed.txt` | the host | The index of the FlexNVM engine bank, with CRCs and erase counters. A damaged line is dropped and the engine is installed again |
 | `/Plugins/.loading` | the host | The crash marker, [section 13](#13-validation-safe-mode-and-the-crash-marker) |
 | `Patches/<NAME>/*.patch`, `<N>-<n>.patch`, `<N>.names` | the host | Synth patches ([section 7](#presets-and-patches)) |
@@ -989,7 +1009,7 @@ p Tilt=3
 
 ### Insert error numbers (`host.txt`, `Fail:`)
 
-1 no file, 2 header (magic or header size), 3 ABI (major, `min_host`, cpu, kind or flags), 4 too big (image, bss or layout against the slot), 5 read, 6 CRC, 7 rebase, 8 entry returned `NULL`, 9 descriptor, 10 commit (FlexNVM write failed), 11 init.
+1 no file, 2 header (magic or header size), 3 ABI (major, `min_host`, cpu, kind or flags), 4 too big (image, bss or layout against the slot), 5 read, 6 CRC, 7 rebase, 8 entry returned `NULL`, 9 descriptor, 10 commit (not used by inserts since they run from SRAM), 11 init, 12 stale (the file changed since the scan, reloaded once), 13 no room (fits alone, not beside the other insert's plugin: `Full:<name>`, it loads once the other one leaves room).
 
 ---
 
@@ -1037,7 +1057,7 @@ You can test almost everything without a device. The tools need `unicorn` for th
 | Tool | What it does |
 | :--- | :--- |
 | `plug/build_plugs.sh` | Builds the examples and runs every check below that applies. The module repositories run the same checks on the shipped plugins |
-| `plug/emu_plug.py` | The firmware's loader in Python and your insert's ARM code in Unicorn. Checks the header, CRC and descriptor, runs `init` and `process` on 128 frame blocks, prints instructions per block and an output checksum, writes a wav (`--wav`), reads a wav (`--inwav`, 16 bit stereo 44.1 kHz). `--base` picks the home (SRAM_L `0x1FFF0BD0`, FlexNVM `0x1001E000` with `--rw-base 0x20026C00`, SDRAM `0x70000000`). The checksum **must not depend on `--base`**. `--param I=V` sets a parameter after `init`, `--param-at BLOCK:I=V` sets one just before that block to test ramps and crossfades |
+| `plug/emu_plug.py` | The firmware's loader in Python and your insert's ARM code in Unicorn. Checks the header, CRC and descriptor, runs `init` and `process` on 128 frame blocks, prints instructions per block and an output checksum, writes a wav (`--wav`), reads a wav (`--inwav`, 16 bit stereo 44.1 kHz). `--base` picks the home (SRAM_L `0x1FFF0BD0` for insert 1, a higher SRAM_L address such as `0x1FFF1BA0` for insert 2 at the top of the slot, SDRAM `0x70000000`). The checksum **must not depend on `--base`**. `--param I=V` sets a parameter after `init`, `--param-at BLOCK:I=V` sets one just before that block to test ramps and crossfades |
 | `plug/emu_synth.py` | Renders an engine plugin through `synth/synth_harness.cpp` (a fixed chord, a parameter script) and prints a checksum, the libm calls, the worst block and the manifest numbers. `--scenario 0` is the defaults, `1` has every parameter moved and ramped. Same checksum at the FlexNVM and SRAM homes |
 | `tools/validate_synth.py` | The firmware's `checkSynth`, [section 13](#13-validation-safe-mode-and-the-crash-marker) |
 | `tools/plug_index_test.cpp` | The `/Plugins/Master` scan and the header, layout and CRC checks on a folder of real `.plg` files |
@@ -1055,9 +1075,9 @@ A plugin that is correct on the Mac can still fail on the device in ways the emu
 
 ## 15. Pitfalls from Real Bugs
 
-**Stale pointers after a plugin is unloaded.** An insert's parameter names and enum names live in the plugin's text segment. The Inserts page keeps lists that point at them. Insert 2's text is in FlexNVM and a reload **erases the sector**, so a hidden list read `0xFFFFFFFF` on the next redraw and the Tracker faulted. The host now notifies the UI from its unload path before the slot memory is reused and the labels copy their strings. For you: keep every table `const` in the text segment, never point the host at strings built in rw and never keep a pointer into another plugin or into host memory across calls. Synth engines are detached (parts cut, parameters removed) before their flash or rw bytes change, because the host points at your arrays directly.
+**Stale pointers after a plugin is unloaded.** An insert's parameter names and enum names live in the plugin's text segment. The Inserts page keeps lists that point at them. A reload copies the next plugin over the old text (insert 2 ran from FlexNVM then, and a reload **erased the sector**), so a hidden list read garbage on the next redraw and the Tracker faulted. The host now notifies the UI from its unload path before the slot memory is reused and the labels copy their strings. For you: keep every table `const` in the text segment, never point the host at strings built in rw and never keep a pointer into another plugin or into host memory across calls. Synth engines are detached (parts cut, parameters removed) before their flash or rw bytes change, because the host points at your arrays directly.
 
-**Writable data in insert 2.** Insert 2 has only 1,024 B for `rw + bss`. A plugin with a larger writable table is refused for insert 2 (error 4, `kTooBig`) and loads fine in insert 1, which is easy to miss. Declare tables `const` so they stay in the text segment, and keep state in the instance (up to 16 KB from the heap, not counted against the 1 KB). Read the `rw` and `bss` sizes `build_plug.py` prints, and test your plugin in both slots (`build_plugs.sh` runs the emulator at both homes).
+**Two inserts share 8 KB.** Insert 1 and insert 2 run from the same 8,192 B SRAM_L slot, so a plugin that fits alone can be refused beside a large one (`Full:<name>`, error 13). It loads by itself once the other insert leaves room. Every pair of two different shipped inserts fits (Phaser twice does not, 8,768 B). Keep `image + bss` small: declare tables `const`, keep state in the instance (up to 16 KB from the heap, not counted against the slot) and put delay lines in the SDRAM arena (`alloc(bytes, 1)`). Read the `image` and `bss` sizes `build_plug.py` prints.
 
 **A PC-relative reference between the text and rw segments** does not survive the copy to different addresses. The builder refuses it and names the relocation. The ordinary absolute addresses in the literal pool are fine, they are in the rebase table.
 
@@ -1065,7 +1085,7 @@ A plugin that is correct on the Mac can still fail on the device in ways the emu
 
 **`-Os` versus `-O2`, and stale objects.** `make` does not track compiler flags. A build folder from before a default flag change keeps old `-Os` objects, and the image then comes out smaller than it should (one of our first builds ended 0xEB0C4, smaller than the build it was meant to be larger than). After changing a flag default, delete the `core/build-*` folder for that `SYNTH_TAG` and `platforms/mk66/build-trim`, then rebuild. `build_plug.py` always recompiles from source, so a plugin is not affected. A **port of firmware code** is: it must be built with the flags of the firmware object it is compared with ([section 3](#ports-of-firmware-code)).
 
-**Work in `set_param` runs in the audio interrupt.** It runs before the cycle counter starts, so the readout on the Inserts page does not include it, but the audio block does. Several host libm calls in `set_param` still add up. Compute only what the changed parameter needs.
+**Work in `set_param` runs in the audio interrupt.** It runs before the cycle counter starts, so the cycle count of the insert does not include it, but the audio block does. Several host libm calls in `set_param` still add up. Compute only what the changed parameter needs.
 
 **A silent bus is not an input.** `process` is not called while the bus is silent, so a delay line keeps its old content and an LFO keeps its phase across the silence. A plugin whose state persists resumes from where it stopped, and the shipped BBD and Phaser do. Do not assume the first block after silence starts from a cleared state, and do not use a long tail you cannot afford to cut.
 
@@ -1117,7 +1137,7 @@ This repository holds the plugin host and this SDK, but no plugin module. tracke
 | [tracker-engines-os](https://github.com/sbialy/tracker-engines-os) | public | the synth engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type |
 | tracker-engines | private | the synth engines PHZ and PLK (freeware binaries) |
 | [tracker-effects-os](https://github.com/sbialy/tracker-effects-os) | public | the master inserts Dirt, Tape, Lo-Fi, BBD, Phaser |
-| tracker-effects | private | the master inserts Console and Tube (freeware binaries) |
+| tracker-effects | private | the master inserts Console, Tube and Glue (freeware binaries) |
 
 [`engines/engines.json`](../engines/engines.json) keeps the identity of every shipped module (file id, name, engine numbers, version, repository), [`engines/external.lock.json`](../engines/external.lock.json) pins a release of each repository by tag, commit and the sha256 of every file, and [`engines/README.md`](../engines/README.md) shows how to fetch, check and package them.
 

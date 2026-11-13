@@ -27,6 +27,7 @@
 #include "Audio.h"
 #include "Platform.h"
 #include "dspinst.h"
+#include "effect_envelope_steady.h"
 #include "mtSequencer.h"
 #include "play_memory.h"
 #include "util_math.h"
@@ -499,6 +500,20 @@ AUDIO_CORE_RAM void AudioPlayMemory::envelopeUpdate(audio_block_t* block)
     {
         wtStep = (envelope.attack_count > 0) ? (65536u / envelope.attack_count) : 65536u;
         if (wtStep == 0) wtStep = 1;
+    }
+
+    // steady segment: the whole block with the gain in registers (effect_envelope_steady.h), the loop below keeps every other case
+    if (envelope.wtMode < 2 &&
+        env_steady::processBlock<AUDIO_BLOCK_SAMPLES>(p,
+                                                      envelope.mult_hires,
+                                                      envelope.inc_hires,
+                                                      envelope.count,
+                                                      envelope.state == envelopePhaseSustain && envelope.loopFlag &&
+                                                        envelope.pressedFlag))
+    {
+        transmit(block);
+        AudioStream::release(block);
+        return;
     }
 
     while (p < end)

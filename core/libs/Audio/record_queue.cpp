@@ -92,7 +92,10 @@ AUDIO_CORE_FLASH void AudioRecordQueue::update(void)
 #ifdef AUDIO_NULL_IS_SILENCE
         // the exporter counts blocks (a missing one ends a render), so a silent block is queued like a block of zeros was
         if (!enabled)
+        {
+            sleepIfIdle();
             return;
+        }
         block = allocate();
         if (!block)
             return;
@@ -104,6 +107,7 @@ AUDIO_CORE_FLASH void AudioRecordQueue::update(void)
     if (!enabled)
     {
         release(block);
+        sleepIfIdle();
         return;
     }
     h = head + 1;

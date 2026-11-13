@@ -29,7 +29,7 @@ const char creditsText[] = {
     "\n(No Wholesale Commercial Clones; see LICENSE)."
 #ifdef FEATURE_SYNTH_OPEN
     "\n"
-    "\ntracker-ff 1.2.0: unofficial community firmware,"
+    "\ntracker-ff 1.3.0: unofficial community firmware,"
     "\nnot affiliated with Polyend."
     "\nSynth engines: OpenTracker (Apache-2.0),"
     "\ngithub.com/sandlbn/polyend-tracker-re"
@@ -929,9 +929,9 @@ void cConfigEditor::showDiagnosticInfo()
 
     snprintf(audioPerformanceText,
              sizeof(audioPerformanceText),
-             "min: %d%%, max: %d%%",
-             usage.minimum,
-             usage.maximum);
+             "max: %d%%, ovr: %d",
+             usage.maximum,
+             Profiler::getInstance()->audioOverruns()); // blocks over 100 % since the last Play
 
     display.setControlText(audioPerformanceLabelControl, audioPerformanceText);
 

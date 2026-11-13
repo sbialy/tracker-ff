@@ -65,9 +65,9 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Note**: none of them is built into the firmware image any more, they ship as `.plg` plugins. They need the 3.x `synth_engine.h` and `bbd_chorus.h` from item 10 and, for FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, B-Type and Arc-Type, the DSP headers `chip_dsp.h`, `fm_dsp.h` and `va_dsp.h` from item 10 (Apache-2.0).
 * **Note**: D-Type's OpenTracker engine id (0x82) is the id of this project's own PHZ engine, so D-Type is keyed 0xA2 in the picker and in `.patch` files, the same as the browser editor stores it (the engine code itself is unchanged).
 
-## 12. Polyend Chiptune (CHIP engine for the `SYNTH_OPEN=1` build, optional)
-* **Location**: `core/synth/engines/ChiptuneSynthVoice.cpp` is Polyend's own open Chiptune voice from this repository (the repository licence applies, see LICENSE). The only change is a small block of hooks marked `FEATURE_SYNTH_OPEN` (parameter switch, bend, reset, create) that `synth-open/engine_chip.cpp` calls. Its parameter table follows the same file.
-* **Note**: compiled only when `CHIP` is in `SYNTH_ENGINES`. Nothing here uses `libPolySynth.a` or `libPolyDSP.a`.
+## 12. Polyend Chiptune (the CHIP engine, a plugin since 1.3.0)
+* **Location**: `core/synth/engines/ChiptuneSynthVoice.cpp` is Polyend's own open Chiptune voice from this repository (the repository licence applies, see LICENSE). The only change is a small block of hooks marked `FEATURE_SYNTH_OPEN` (parameter switch, bend, reset, create, construct in caller storage) that the CHIP plugin calls. The plugin `chip.plg` is built in the public module repository tracker-engines-os (`engine_chip.cpp`, which follows the voice's parameter table, and a vendored copy of this file and the PolySynth headers it needs).
+* **Note**: a `SYNTH_OPEN=1` image does not compile this file (`CHIP` is not a built-in engine name). Nothing here uses `libPolySynth.a` or `libPolyDSP.a`.
 
 ## 13. PHZ (clean-room phase distortion engine, source in the private repository tracker-engines)
 * **Location**: the source is not in this repository any more. It lives in the private repository `tracker-engines` (`src/synth-open/phz/`). This repository keeps the engine's public identity (stored number, type id and name in `synth-open/engine_list.h` and `engines/engines.json`) and loads the built plugin from the SD card like any other engine plugin. The PHZ icons are Polyend's (already in `core/libs/images`).
@@ -79,9 +79,12 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Source**: written for this project from the published Karplus-Strong algorithm (Karplus and Strong, CMJ 1983) and its extensions (Jaffe and Smith, CMJ 1983). No third-party code was read or adapted. Only the `ISynthEngine` interface (item 10, Apache-2.0) is shared, and the headers of the PLK source keep that attribution. The published `pluck.plg`, `pluck.plgi` and `pluck.wasm` ship with our notice. The PLK source and binaries are proprietary freeware, the terms are in `LICENSE.md` of the private repository `tracker-engines`.
 * **Note**: the engine is no longer built here. It borrows the VAP list icons.
 
-## 13b. Console and Tube (original master inserts, source in the private repository tracker-effects)
-* **Location**: the source is not in this repository. It lives in the private repository `tracker-effects`. This repository keeps only the public identity of the two inserts (plugin ids `ff.console` and `ff.tube`).
-* **Source**: written for this project, no third-party code. The published `console.plg`, `tube.plg` and their `.wasm` files are proprietary freeware (free use with the Polyend Tracker and tracker-ff, unmodified redistribution, all rights reserved), the terms are in `LICENSE.md` of the private repository `tracker-effects`. The plugin runtime built into them stays MIT.
+## 13b. Console, Tube and Glue (original master inserts, source in the private repository tracker-effects)
+* **Location**: the source is not in this repository. It lives in the private repository `tracker-effects`. This repository keeps only the public identity of the three inserts (plugin ids `ff.console`, `ff.tube` and `ff.glue`).
+* **Source**: written for this project, no third-party code. The published `console.plg`, `tube.plg`, `glue.plg` and their `.wasm` files are proprietary freeware (free use with the Polyend Tracker and tracker-ff, unmodified redistribution, all rights reserved), the terms are in `LICENSE.md` of the private repository `tracker-effects`. The plugin runtime built into them stays MIT.
+
+## 13c. Names
+* ACD, FAT, VAP, WTFM, PERC, PHZ, DIRT and the Polyend Tracker and Synth names belong to Polyend Sp. z o.o. The other engine names (JU6, FM4, D-Type, CS-Type, A-Type, T-Type, 8-Type, B-Type, Hand-Type, Arc-Type) come from OpenTracker's opentracker-synths. tracker-ff is not affiliated with or endorsed by Polyend. These names are used to identify engines, not to suggest that Polyend made them.
 
 ## 14. Mutable Instruments Polyverb sources (reverb code from Mutable Instruments Clouds and Rings)
 * **Location**: `core/libs/Audio/Polyverb/{reverb,fx_engine,util,cosine_oscillator}.h`
@@ -132,6 +135,12 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Source**: https://github.com/emanlapponi/tracker-ce (branch `feature/transient-shaper`, commits b170f11 to 95fbe30, upstream pull request 48 of polyend/tracker-ce). Squashed to the final file with the original author kept.
 * **Author**: Emanuele Lapponi.
 * **License**: MIT. Contributed under the contribution terms of `CONTRIBUTING.md`. The `editor-fx-sdk/` folder is MIT under Part 1 of `LICENSE`.
+
+## 22. OpenTracker USB audio (`USB_AUDIO=1` images, Config > Features > USB audio)
+* **Location**: `platforms/mk66/usbaudio/` (`UsbAudioOut.{h,cpp}`, `usb_audio_hooks.cpp`, `test/usb_audio_out_test.cpp`) and the blocks marked `FF_USB_AUDIO_TX` in `platforms/mk66/3rdparty/teensy_core/usb_desc.{h,c}`, `usb_dev.{c,h}`. Each file says what was changed (Apache-2.0 section 4b): Tracker to computer only (no OUT and no feedback endpoint), our namespace, the ring in SDRAM, the audio function switched on or off at start, a statistics hook for the development console.
+* **Source**: https://github.com/syamajala/polyend-tracker-re (commit ef7a4bbce247: `src/core/usb/usb_audio_out.{h,cpp}`, `src/hal/usb_audio.cpp`, `tests/usb_audio_out_test.cpp`, the `OPENTRACKER PATCH` audio parts of `third_party/teensy3/usb_desc.{h,c}` and `usb_dev.c`).
+* **License**: Apache License 2.0, text in `licenses/LICENSE-OpenTracker-Apache-2.0.txt` (the upstream project ships no NOTICE file). The Teensy core files they patch stay under item 4.
+* **Note**: compiled only with `USB_AUDIO=1` on the make line. Images built without it contain none of this code. With it, the audio function is off until it is switched on in Config > Features and the unit restarts.
 
 ## Release packages
 

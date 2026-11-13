@@ -46,18 +46,31 @@ SYNTH_TAG_NAME := FF
 else
 SYNTH_TAG_NAME := SO
 endif
-# PTF_TAG=PLUGH: another TAG in the .ptf name for a dev image (the name checks below still apply)
+# PTF_TAG=PLUGH: another TAG in the .ptf name for a dev image (the name checks below still apply: 1 to 4 chars unless RELEASE=1)
 ifneq ($(PTF_TAG),)
 SYNTH_TAG_NAME := $(PTF_TAG)
 endif
-# Device-facing .ptf name, same shape as stock: PolyendTracker_<TAG>_<A.B.C>.ptf with TAG = SO. The numeric
-# part is SYNTH_OPEN_VER without any dash suffix, so a plain SYNTH_OPEN build is PolyendTracker_SO_1.0.0.ptf (26 chars) and a TRIM build
-# PolyendTracker_FF_1.0.0.ptf (27 chars).
+# Device-facing .ptf name, two shapes, both start with PolyendTracker_ like stock (rules in synth-open/tools/check_ptf_name.sh):
+#   build image (the default: rc, dev, test, console)  PolyendTracker_<TAG>_<sha7>.ptf
+#       sha7 = BUILD_TAG, the string baked into the image (BUILD_ID) and reported by the console ping, so file name, ping and
+#       commit match (PolyendTracker_FF_1234567.ptf, 29 chars). TAG is 1 to 4 chars (a test or development image tag).
+#   public release (RELEASE=1)                         PolyendTracker_<TAG>_<A.B.C>.ptf
+#       A.B.C is SYNTH_OPEN_VER without any dash suffix (PolyendTracker_FF_1.3.0.ptf, 27 chars).
+# RELEASE=1 is the only switch. Nothing else tells a release apart: package_release.sh packages the .ptf it is given and accepts
+# both shapes, build_module.sh (the console repository) globs PolyendTracker_*.ptf in the image dir. Give RELEASE=1 to every make call of
+# a public release (make original and make package-release). The name never reaches the image, the bytes are the same either way.
 # Config > Firmware on MK66 lists only names that start with PolyendTrac and are >= 15 chars
-# (platforms/mk66/3rdparty/SD/SD.cpp:590), and the bootloader reads the name into char[32], so <= 31 chars.
-# The commit hash is not in the name, it is embedded in the image (BUILD_ID).
+# (platforms/mk66/3rdparty/SD/SD.cpp:590), and the bootloader reads the name into char[32], so <= 31 chars:
+# 15 + 4 (TAG) + 1 + 7 (sha7) + 4 (.ptf) = 31, hence at most 4 chars of TAG in a build image name. BUILD.txt keeps the full record.
 SYNTH_OPEN_VER_NUM := $(firstword $(subst -, ,$(SYNTH_OPEN_VER)))
-SYNTH_PTF := PolyendTracker_$(SYNTH_TAG_NAME)_$(SYNTH_OPEN_VER_NUM).ptf
+ifeq ($(RELEASE),1)
+SYNTH_PTF_VER := $(SYNTH_OPEN_VER_NUM)
+PTF_NAME_MODE := --release
+else
+SYNTH_PTF_VER := $(BUILD_TAG)
+PTF_NAME_MODE := --build
+endif
+SYNTH_PTF := PolyendTracker_$(SYNTH_TAG_NAME)_$(SYNTH_PTF_VER).ptf
 ORIGINAL_CORE_BUILD := $(CORE_DIR)/build-MK66-ORIGINAL-SYNTHOPEN$(SYNTH_TAG)$(SYNTH_ENGINES_TAG)$(TRIM_TAG)
 # True flash image cap, text+data of the axf (platforms/mk66/makefile has the same default), and the link map used for
 # the per-engine report in build/BUILD.txt
@@ -86,7 +99,8 @@ MINI_POSTFIX     ?= $(EDITION_NAME)_$(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_V
 
 .DEFAULT_GOAL := all
 
-.PHONY: all original plus mini ptfx ptfx-check clean version bump-patch bump-minor synth-engines package-release lint-original
+.PHONY: all original plus mini ptfx ptfx-check clean version bump-patch bump-minor synth-engines package-release lint-original release-gate
+.PHONY: original-release stack-ratchet stack-ratchet-update stack-ratchet-release stack-ratchet-update-release lint-delta lint-delta-release
 
 # Lint only, the original (MK66) target: -Wconversion scoped to the file manager and plugin host, format and bounds checks with builtins on.
 # Prints warnings, builds nothing, never fails. Same variables as `make original` (SYNTH_OPEN=1 PLUG_HOST=1 adds the plugin host files).
@@ -96,6 +110,59 @@ lint-original:
 		POLYUTIL_DIR="$(UTIL_DIR)" POLYSYNTH_DIR="$(SYNTH_DIR)" \
 		SYNTH_OPEN="$(SYNTH_OPEN)" SYNTH_OPEN_DIR="$(SYNTH_OPEN_DIR)" $(if $(filter 1,$(TRIM)),TRIM=1) \
 		$(if $(SYNTH_ENGINES_SEL),SYNTH_ENGINES="$(SYNTH_ENGINES_SEL)") SYNTH_TAG="$(SYNTH_TAG)"
+
+# Quality gates (synth-open/tools/stack_ratchet.py, lint_delta.py). They read the build or the lint output and change nothing in the image.
+# RELEASE_ARGS is the one release recipe (synth-open/README.md, release image recipe): the five built in engines (CHIP is a plugin), the plugin host,
+# USB_AUDIO=1 and -DFEATURE_EXT_HOOKS (Features page, USB audio, Restart mode, Developer mode: the flags every device round of 1.3.0 used), the public
+# name PolyendTracker_FF_<A.B.C>.ptf. make original-release, the stack ratchet, the lint delta and the README build the same flags, the stack
+# baseline is the frame list of this flavour. SYNTH_TAG=-rel only names the object dirs (it is not a compiler flag): the flags are new, so the dirs are too.
+# Pass TOOLCHAIN=... as for make original. make does not track flags: wipe core/build-* and platforms/mk66/build-trim between compilers.
+RELEASE_ARGS := SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 RELEASE=1 SYNTH_TAG=-rel SYNTH_ENGINES="ACD FAT VAP WTFM PERC" \
+	SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
+	SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off" \
+	USB_AUDIO=1 CUSTOM_DEFINES="-DFEATURE_EXT_HOOKS"
+STACK_GCC_MAJOR = $(shell $(TOOLCHAIN)gcc -dumpversion 2>/dev/null | cut -d. -f1)
+STACK_BASELINE ?= $(SYNTH_OPEN_DIR)/tools/stack_baseline_gcc$(STACK_GCC_MAJOR).txt
+STACK_LOG ?=
+STACK_RATCHET = python3 -I "$(SYNTH_OPEN_DIR)/tools/stack_ratchet.py" --root "$(ROOT_DIR)" --baseline "$(STACK_BASELINE)" \
+	--su-dir "$(ORIGINAL_CORE_BUILD)" --su-dir "$(MK66_BUILD)" $(if $(STACK_LOG),--log "$(STACK_LOG)")
+LINT_BASE ?= origin/main
+
+# make original-release: the public release image, build/PolyendTracker_FF_<A.B.C>.ptf (RELEASE=1 is in RELEASE_ARGS)
+original-release:
+	$(MAKE) original $(RELEASE_ARGS)
+
+# Stack ratchet: the -fstack-usage .su files of the last build against the committed baseline. Fails on a new frame of 512 B or more, a
+# new VLA function, a grown frame, and on the hard cap for the audio chain. STACK_LOG=build.log also checks the -Wvla variables.
+# Run it after the same make original (same variables) or use stack-ratchet-release.
+stack-ratchet:
+	$(STACK_RATCHET)
+
+# Lock a gain in, or take a reviewed new frame into the baseline (the commit must say why)
+stack-ratchet-update:
+	$(STACK_RATCHET) --update --tag "release image on GCC $(STACK_GCC_MAJOR)"
+
+# Build the release flavour with the log kept, then the ratchet with the VLA check. The log is $(OUT_DIR)/stack-ratchet-build.log
+stack-ratchet-release:
+	@mkdir -p "$(OUT_DIR)"
+	$(MAKE) original $(RELEASE_ARGS) > "$(OUT_DIR)/stack-ratchet-build.log" 2>&1 || { tail -n 60 "$(OUT_DIR)/stack-ratchet-build.log"; exit 1; }
+	$(MAKE) --no-print-directory stack-ratchet $(RELEASE_ARGS) STACK_LOG="$(OUT_DIR)/stack-ratchet-build.log"
+
+# The same for the release flavour, from the build and log of the last make stack-ratchet-release (it fails on the new frame, this takes it in)
+stack-ratchet-update-release:
+	$(MAKE) --no-print-directory stack-ratchet-update $(RELEASE_ARGS) STACK_LOG="$(OUT_DIR)/stack-ratchet-build.log"
+
+# Lint delta: make lint-original, kept to the warnings on lines added since the merge-base with $(LINT_BASE) in the classes that matched the
+# device crashes (array-bounds, null-dereference, *-overflow, and -Wconversion in the file manager and plugin host), plus cppcheck on the
+# changed files when it is installed. Reviewed false positives: synth-open/tools/lint_delta_allow.txt. Same variables as lint-original.
+lint-delta:
+	@mkdir -p "$(OUT_DIR)"
+	$(MAKE) --no-print-directory lint-original > "$(OUT_DIR)/lint-original.log" 2>&1
+	python3 -I "$(SYNTH_OPEN_DIR)/tools/lint_delta.py" --root "$(ROOT_DIR)" --base "$(LINT_BASE)" \
+		--allow "$(SYNTH_OPEN_DIR)/tools/lint_delta_allow.txt" --cppcheck "$(OUT_DIR)/lint-original.log"
+
+lint-delta-release:
+	$(MAKE) --no-print-directory lint-delta $(RELEASE_ARGS)
 
 all: original plus mini
 
@@ -107,6 +174,8 @@ original:
 	@# SDRAM_FILE_POOLS follows SYNTH_OPEN and the plain build shares these objects: rebuild them every time
 	@rm -f "$(MK66_BUILD)/obj/source/FileSystemImpl.o" "$(MK66_BUILD)/obj/3rdparty/SD/SdFile.o"
 ifeq ($(SYNTH_OPEN),1)
+	@# name checked before the long build
+	@"$(SYNTH_OPEN_DIR)/tools/check_ptf_name.sh" $(PTF_NAME_MODE) "$(SYNTH_PTF)"
 	@rm -f "$(OUT_DIR)/$(SYNTH_PTF)" "$(OUT_DIR)/BUILD.txt"
 endif
 	$(MAKE) -C "$(CORE_DIR)" -j$(NPROC) build \
@@ -131,9 +200,6 @@ endif
 		$(if $(filter 1,$(SYNTH_OPEN)),LINK_EXTRA="-Xlinker -Map=build$(TRIM_TAG)/PolyendTracker.map")
 	@mkdir -p "$(OUT_DIR)"
 ifeq ($(SYNTH_OPEN),1)
-	@test $$(printf %s "$(SYNTH_PTF)" | wc -c) -le 31 || { echo "ERROR: $(SYNTH_PTF) exceeds 31 chars"; exit 1; }
-	@printf %s "$(SYNTH_PTF)" | grep -Eq '^PolyendTracker_.+_[0-9]+\.[0-9]+\.[0-9]+\.ptf$$' || { echo "ERROR: $(SYNTH_PTF) must match PolyendTracker_<TAG>_<A.B.C>.ptf"; exit 1; }
-	@test $$(printf %s "$(SYNTH_PTF)" | wc -c) -ge 15 || { echo "ERROR: $(SYNTH_PTF) shorter than 15 chars (not listed in Config > Firmware)"; exit 1; }
 	python3 "$(SYNTH_OPEN_DIR)/tools/check_ptf.py" "$(MK66_BUILD)/PolyendTracker_$(ORIGINAL_POSTFIX).ptf"
 	@# No static constructor may touch the SDRAM: it is set up in main(), after them (a hit never boots, f563f27)
 	python3 "$(SYNTH_OPEN_DIR)/tools/check_static_init.py" --toolchain "$(TOOLCHAIN)" "$(MK66_BUILD)/PolyendTracker.axf"
@@ -155,10 +221,16 @@ endif
 # and every bundled third-party license text, in build/release/ (synth-open/tools/package_release.sh). Does not build.
 package-release:
 ifneq ($(SYNTH_OPEN),1)
-	$(error package-release needs SYNTH_OPEN=1 (it packages build/PolyendTracker_{SO,FF}_<A.B.C>.ptf))
+	$(error package-release needs SYNTH_OPEN=1 (it packages build/PolyendTracker_<TAG>_<sha7>.ptf, or <A.B.C> with RELEASE=1))
 endif
+	@"$(SYNTH_OPEN_DIR)/tools/check_ptf_name.sh" $(PTF_NAME_MODE) "$(SYNTH_PTF)"
 	@test -f "$(OUT_DIR)/$(SYNTH_PTF)" || { echo "build/$(SYNTH_PTF) is missing, run make original SYNTH_OPEN=1 first"; exit 1; }
 	@"$(SYNTH_OPEN_DIR)/tools/package_release.sh" "$(OUT_DIR)/$(SYNTH_PTF)" "$(OUT_DIR)/release" --zip
+
+# make release-gate PLG_DIR=<flat folder of the new .plg and .plgi> [OLD_REF=<ref>]: the firmware and engine mismatch simulator against the latest
+# published release tag, fails on a RED check that is not in synth-open/tools/ui_shot/mismatch_known_findings.txt. package_release.sh runs it too.
+release-gate:
+	@PLG_DIR="$(PLG_DIR)" OLD_REF="$(OLD_REF)" $(if $(IMAGE),IMAGE="$(IMAGE)") "$(SYNTH_OPEN_DIR)/tools/release_gate.sh"
 
 # make synth-engines [SYNTH_ENGINES="ACD VAP WTFM CHIP"]: flash cost of every engine and the budget left for the selection
 synth-engines:

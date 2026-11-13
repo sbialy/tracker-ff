@@ -12,7 +12,7 @@
 #
 # DEVTOOLS_DIR defaults to devtools next to this checkout (../devtools). Without it a console build stops here with a
 # message. Default, release and stock builds never read this file's second half and need nothing from the console.
-# The checkout must implement the hook set of core/include/devhooks.h (DEVHOOKS_API): tracker-ff 1.2.0 goes with console release v1.2.0.
+# The checkout must implement the hook set of core/include/devhooks.h (DEVHOOKS_API): tracker-ff 1.3.0 goes with console tag rel-1.3.0 (DEVHOOKS_API 4).
 
 DEVTOOLS_TREE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 DEVHOOKS_API := $(shell sed -n 's/^\#define DEVHOOKS_API //p' $(DEVTOOLS_TREE)/core/include/devhooks.h)

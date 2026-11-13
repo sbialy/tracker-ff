@@ -1,4 +1,7 @@
 #include "Platform.h"
+#ifdef FEATURE_EXT_HOOKS
+#include "features.h"
+#endif
 #include "Profiler.h"
 #include "configEditor.h"
 #include "configEditor/configEditor.h"
@@ -945,6 +948,9 @@ void cConfigEditor::resetTrackerConfig(bool yes)
         checkConfig();
         saveConfigAsap();
         restartConfigAllActions();
+#if defined(FEATURE_EXT_HOOKS) && !defined(PLATFORM_IMX) && !defined(TRACKER_MINI)
+        features::resetAll(); // decision D5: the features go back to their defaults too, /Features/<id>.cfg removed
+#endif
     }
 
     CE->hidePopout();

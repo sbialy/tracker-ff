@@ -7,6 +7,10 @@
 #include "pinout.h"
 #include "polyassert.h"
 #include "sdram.h"
+#include "devhooks.h" // FEATURE_EXT_HOOKS: ext_power_down (ext_hooks.h)
+#ifdef FEATURE_USB_AUDIO
+#include "usb_audio_ff.h"
+#endif
 
 #ifdef DEBUG
 #define DEBUG_TEXT " debug"
@@ -17,6 +21,9 @@
 PlatformImpl::SystemInfo PlatformImpl::systemInfo = { BUILD_ID DEBUG_TEXT };
 
 extern void disableHardware();
+
+// restart mode (RestartMode.h, set by the core through setRestartOnPowerOff): read by setPowerMode(false) and the guard
+static volatile bool restartOnPowerOff;
 
 void PlatformImpl::init()
 {
@@ -44,13 +51,39 @@ void PlatformImpl::setPowerMode(bool mode)
     }
     else
     {
-        saveStartState(0);
+        // restart mode (RestartMode.h): the same teardown, then the reset of a power-on (start state 1, as resetMCU) instead of
+        // the sleep. The next start reads 1 and comes up without a button press, exactly as after a wake from the sleep.
+        const bool restart = restartOnPowerOff;
+
+        saveStartState(restart ? 1 : 0);
 
         noInterrupts();
 
+#ifdef FEATURE_EXT_HOOKS
+        // disableHardware unpowers the SDRAM, where a loaded extension module keeps its SysTick and fault handlers, and turns the
+        // interrupts on again (detachInterrupt): the image's own handlers first, or the next SysTick locks the core up
+        ext_power_down();
+#endif
+
         disableHardware();
 
-        setPowerOffGuard(false); // interrupts are off from here, the sleep below polls the power button
+        // disableHardware turned the interrupts on again (detachInterrupt) with the SDRAM unpowered. Off from here for good, the same
+        // state as the off start (checkPowerState): the sleep below polls the power button and its wake (Snooze.wakeUp, resetMCU) polls
+        // registers only. Every handler left (SysTick, MIDI, card, display) would run on the slow BLPI clock with the SDRAM gone.
+        noInterrupts();
+
+        setPowerOffGuard(false); // the sleep below polls the power button
+
+        if (restart)
+        {
+            __asm volatile("dsb");
+            (*(volatile uint32_t*)0xE000ED0C) = (uint32_t)((0x5FAUL << 16) | 0x04U);
+            __asm volatile("dsb");
+            for (;;)
+            {
+                __asm volatile("nop");
+            }
+        }
 
         Snooze.sleep();
     }
@@ -84,11 +117,11 @@ extern "C" volatile uint32_t systick_millis_count;
 // survives a reset, not a power cycle (.noinit is not cleared by the startup code)
 uint32_t powerOffMarker __attribute__((section(".noinit.power_off")));
 
-extern "C" void resetToOffState()
+static void resetWithMarker(uint32_t marker)
 {
 #ifndef TRACKER_MINI
     __disable_irq();
-    powerOffMarker = power_off_guard::kOffMarker;
+    powerOffMarker = marker;
     __asm volatile("dsb");
     (*(volatile uint32_t*)0xE000ED0C) = (uint32_t)((0x5FAUL << 16) | 0x04U);
     __asm volatile("dsb");
@@ -99,11 +132,57 @@ extern "C" void resetToOffState()
 #endif
 }
 
-bool takePowerOffMarker()
+extern "C" void resetToOffState()
 {
-    const bool set = powerOffMarker == power_off_guard::kOffMarker;
+    resetWithMarker(power_off_guard::kOffMarker);
+}
+
+// the end of a stalled power-off sequence: the off state, or a start in the restart mode. The restart marker is written only here,
+// while the guard of a power-off sequence runs, and taken at the next boot, so a start never re-enters it by itself.
+extern "C" void resetAfterPowerOff()
+{
+    resetWithMarker(restartOnPowerOff ? power_off_guard::kRestartMarker : power_off_guard::kOffMarker);
+}
+
+// the off starts a reset caused (checkPowerState), for the report at the next start that runs (takeOffStartRecord). Same RAM as the
+// marker: survives a reset, not a power cycle, so the magic tells a record from what the RAM held at power up.
+struct OffStartRecord
+{
+    uint32_t magic, srs, marker, count;
+};
+constexpr uint32_t kOffStartMagic = 0x0FF57A27u;
+OffStartRecord offStartRecord __attribute__((section(".noinit.power_off")));
+
+void noteOffStart(uint32_t srs, uint32_t marker)
+{
+    if (offStartRecord.magic != kOffStartMagic)
+    {
+        offStartRecord.count = 0;
+    }
+    offStartRecord.magic = kOffStartMagic;
+    offStartRecord.srs = srs;
+    offStartRecord.marker = marker;
+    offStartRecord.count++;
+}
+
+bool PlatformImpl::takeOffStartRecord(uint32_t& srs, uint32_t& marker, uint32_t& count)
+{
+    if (offStartRecord.magic != kOffStartMagic)
+    {
+        return false;
+    }
+    srs = offStartRecord.srs;
+    marker = offStartRecord.marker;
+    count = offStartRecord.count;
+    offStartRecord.magic = 0;
+    return true;
+}
+
+uint32_t takePowerOffMarker()
+{
+    const uint32_t marker = powerOffMarker;
     powerOffMarker = 0;
-    return set;
+    return marker;
 }
 
 // SysTick (EventResponder.cpp), every millisecond: the main loop of the power-off sequence stopped coming round
@@ -111,18 +190,76 @@ extern "C" void powerOffGuardTick()
 {
     if (powerOffGuard.expired(systick_millis_count))
     {
-        resetToOffState();
+        resetAfterPowerOff();
     }
 }
 
-// fault_isr (mk20dx128.c) of a release image: a fault during the power-off sequence powers off instead of a lit, dead unit
+// fault_isr (mk20dx128.c) of a release image: a fault during the power-off sequence powers off (or restarts in the restart mode)
+// instead of a lit, dead unit
 extern "C" void powerOffGuardFault()
 {
     if (powerOffGuard.armed())
     {
-        resetToOffState();
+        resetAfterPowerOff();
     }
 }
+
+void PlatformImpl::setRestartOnPowerOff(bool on)
+{
+#ifndef TRACKER_MINI
+    restartOnPowerOff = on && START_STATE_SAVE; // a debug build always starts anyway
+#else
+    (void)on;
+#endif
+}
+
+void PlatformImpl::setStartOnPowerReturn(bool on)
+{
+#ifndef TRACKER_MINI
+    // checkPowerState wrote the mirror below at this start. 1 makes the next power-up (power returning after a cut) start the UI,
+    // the press of a power off writes 0 again (setPowerOffGuard), so a deliberate power off still ends off. The mirror lets the
+    // next start keep the 1 itself (no 3 s window with 0, one write fewer per session). One EEPROM write per change of each.
+    if (START_STATE_SAVE)
+    {
+        uint8_t mirror = 0;
+        EEPROM.readData(POWER_RETURN_EEPROM_ADRESS, &mirror, 1);
+        uint8_t want = on ? POWER_RETURN_ON : 0;
+        if (mirror != want)
+        {
+            EEPROM.writeData(POWER_RETURN_EEPROM_ADRESS, &want, 1);
+        }
+    }
+    saveStartState(on ? 1 : 0);
+#else
+    (void)on;
+#endif
+}
+
+bool PlatformImpl::readPowerReturnMirror()
+{
+#ifndef TRACKER_MINI
+    uint8_t mirror = 0;
+    if (configValid())
+    {
+        EEPROM.readData(POWER_RETURN_EEPROM_ADRESS, &mirror, 1);
+    }
+    return mirror == POWER_RETURN_ON;
+#else
+    return false;
+#endif
+}
+
+#ifdef FEATURE_USB_AUDIO
+bool PlatformImpl::usbAudioRunning()
+{
+    return ffUsbAudioActive() != 0;
+}
+
+void PlatformImpl::setUsbAudioBoot(bool on)
+{
+    ffUsbAudioSetBootFlag(on ? 1 : 0);
+}
+#endif
 
 bool PlatformImpl::powerOffGuardArmed() const
 {

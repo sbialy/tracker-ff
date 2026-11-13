@@ -2,10 +2,10 @@ name: Build Tracker CE Firmware
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'release-*' ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, 'release-*' ]
   workflow_dispatch:
 
 permissions:
@@ -73,6 +73,24 @@ jobs:
 
       - name: Check the plugin modules against the public identity (verify-external)
         run: engines/ci_external.sh
+
+      # Quality gates, release flavour (make original-release: USB_AUDIO=1 and -DFEATURE_EXT_HOOKS, the recipe of the README and of every device round) of the original on the pinned 10.3 compiler. The synth-open objects build with -Werror, so a new
+      # warning there fails this build. The stack ratchet reads the -fstack-usage files against synth-open/tools/stack_baseline_gcc10.txt: a new
+      # frame of 512 B or more, a new VLA, a grown frame or an audio chain frame over the hard cap fails. Changes nothing in the image.
+      # OUT_DIR moves only what the gate copies out (its release .ptf, BUILD.txt, the build log), the .su files, map and axf the ratchet reads stay
+      # in core/build-* and platforms/mk66/build*. Without it the gate image lands in build/ and the upload of build/*.ptf below ships it
+      # as PolyendTracker_FF_<A.B.C>.ptf, a release-looking name for a gate-only image on the pinned 10.3 compiler.
+      - name: Build the release original with -Werror and run the stack ratchet
+        run: make stack-ratchet-release OUT_DIR="$PWD/build/gate" BUILD_TAG="$(git rev-parse --short=7 HEAD)"
+
+      # Lint delta: array-bounds, null-dereference, overflow and file manager / plugin host -Wconversion warnings, and a short list of cppcheck
+      # ids, on lines added since the merge-base with the upstream polyend/tracker-ce main only (origin here is this fork, whose main has
+      # other history, so the base is fetched explicitly). Reviewed false positives: synth-open/tools/lint_delta_allow.txt.
+      - name: Lint delta against upstream main
+        run: |
+          sudo apt-get install -y cppcheck
+          git fetch --no-tags https://github.com/polyend/tracker-ce main:refs/remotes/upstream/main
+          make lint-delta-release LINT_BASE=upstream/main
 
       - name: Build Original Tracker, Tracker+, and Tracker Mini firmware
         run: |

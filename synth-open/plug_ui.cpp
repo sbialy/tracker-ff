@@ -25,7 +25,11 @@
 #include "plug_ui.h"
 #include "plug_ui_nav.h"
 
+// interfaceMenuPopup.h (stock) has three unused parameters in empty inline bodies, everything else in synth-open is -Werror
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "core/interface.h"
+#pragma GCC diagnostic pop
 #include "fileManager.h"
 #include "masterParams/masterParams.h"
 #include "mtAudioEngine.h"
@@ -96,6 +100,7 @@ plugnav::Shown shownOf(int k)
         case plug::SlotState::kSafe: return Shown::kSafe;
         case plug::SlotState::kTripped: return Shown::kOverCpu;
         case plug::SlotState::kBypassed: return Shown::kBypassed;
+        case plug::SlotState::kNoRoom: return Shown::kNoRoom;
         default: return Shown::kName;
     }
 }
@@ -131,7 +136,7 @@ hControl listAt(int col)
 
 // Column col bound to the one blank entry. The display draws every refreshed control, hidden ones too (cDisplay::step1 runs
 // cList::update, which strlen()s each entry), so a hidden list must not keep an unloaded plugin's enum names: the next plugin
-// is copied over them (SRAM_L slot, FlexNVM for insert 2) and the old char* array turns into code words, a fault on the
+// is copied over them (the SRAM_L slot of both inserts) and the old char* array turns into code words, a fault on the
 // first refresh (the hang on Up and Down through the plugin list, each step loading the next plugin).
 void blankList(int col)
 {
@@ -267,7 +272,11 @@ void showParam(int col)
         {
             showList(col, nullptr, 0, 0);
             const bool whole = pp->step >= 1.0f;
-            snprintf(s_val[col], sizeof(s_val[col]), whole ? "%.0f%s" : "%.2f%s", double(v), pp->unit ? pp->unit : "");
+            const char* named = plug_param_value_name(pp, v);   // "Auto" at an end the plugin names, else the number
+            if (named)
+                snprintf(s_val[col], sizeof(s_val[col]), "%s", named);
+            else
+                snprintf(s_val[col], sizeof(s_val[col]), whole ? "%.0f%s" : "%.2f%s", double(v), pp->unit ? pp->unit : "");
             const float span = pp->max - pp->min;
             display.setControlValue(MP->barControl[col], span > 0.0f ? int((v - pp->min) * 100.0f / span + 0.5f) : 0);
             display.setControlShow(MP->barControl[col]);

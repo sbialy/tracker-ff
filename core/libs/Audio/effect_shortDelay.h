@@ -71,15 +71,37 @@ class AudioEffectShortDelay : public AudioStream
     int32_t lastFilterOutLeft;
     int32_t lastFilterOutMono;
     uint32_t silentSamplesCount = MAX_DELAYLINE_LENGTH;
-#ifdef AUDIO_NULL_IS_SILENCE
-    // Consecutive samples (whole blocks) in which the values written to all three lines were zero: the last timeInSamples of them
-    // fill the delay window. With the filters at rest a block of silent input can be skipped bit exactly.
-    uint32_t quietSamplesCount = 0;
 
+    // Only the lines of the mode that is heard run (mono: 1 line, ping pong: 2). A line set is "live" while it is written, depth is how
+    // many samples back from the head its stored data can be trusted (saturates at MAX_DELAYLINE_LENGTH). On a mode switch the new set
+    // goes live with depth 0 and the old one keeps running (output crossfade over kFadeSamples, then the old set stops once the new one has
+    // been written for timeInSamples, so a quick switch back loses nothing), reads of the new set older than
+    // its depth are derived from the old set's stored lines (mono -> ping pong: left = mono, right = 0, ping pong -> mono: left + right).
+    // Steady state is one live set at full weight, both fast loops equal the stock three line loop for that mode bit for bit.
+    static constexpr int32_t kFadeOne = 1 << 15;              // crossfade weight one (15 bit, products stay inside int32)
+    static constexpr int32_t kFadeSamples = 4096;             // crossfade length of a mode switch (93 ms)
+    bool ppLive;                                              // ping pong lines (left, right) are written
+    bool monoLive;                                            // the mono line is written
+    int32_t ppWeight;                                         // output weight of the ping pong set, 0..kFadeOne, the mono set has the rest
+    uint32_t ppDepth;                                         // valid history of the live sets, in samples back from the head
+    uint32_t monoDepth;
+    uint32_t ppSeed;                                          // history before activation the other set's stored lines can still supply
+    uint32_t monoSeed;
+    void startMode(bool pingpong);
+    bool prepareBlock(bool wantPingpong);
+    template<bool kTrackQuiet>
+    int32_t runPingpong(int16_t input[], int16_t outputLeft[], int16_t outputRight[], int sampleCount);
+    template<bool kTrackQuiet>
+    int32_t runMono(int16_t input[], int16_t outputLeft[], int16_t outputRight[], int sampleCount);
+    int32_t runSwitching(int16_t input[], int16_t outputLeft[], int16_t outputRight[], int sampleCount, bool wantPingpong);
     // process() for update(): with kTrackQuiet the block is also checked for quietSamplesCount (silent input only, the loop then has a
     // few more instructions), without it the count is cleared (the input has sound)
     template<bool kTrackQuiet>
     bool processBlock(int16_t input[], int16_t outputLeft[], int16_t outputRight[], int sampleCount);
+#ifdef AUDIO_NULL_IS_SILENCE
+    // Consecutive samples (whole blocks) in which the values written to the lines that run were zero: the last timeInSamples of them
+    // fill the delay window. With the filters at rest a block of silent input can be skipped bit exactly.
+    uint32_t quietSamplesCount = 0;
 #endif
 };
 

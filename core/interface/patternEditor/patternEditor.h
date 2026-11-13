@@ -295,7 +295,7 @@ class cPatternEditor : public ModuleBase
     strList fillInstrumentsFromList;
     strList fillInstrumentsToList;
     //
-    static constexpr int fillTextLen = 10;
+    static constexpr int fillTextLen = 16; // 10 before: a MIDI Chord value shows its name ("M7sus4 inv3")
     char fillText1[fillTextLen];
     char fillText2[fillTextLen];
     char fillTextDensity[10];

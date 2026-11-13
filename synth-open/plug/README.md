@@ -1,4 +1,4 @@
-# Tracker FF plugin SDK (`.plg`, ABI 1.1)
+# Tracker FF plugin SDK (`.plg`, ABI 1.2)
 
 Runtime plugins for tracker-ff on the original Polyend Tracker (MK66, Cortex-M4F). The first plugin kind
 hosts **master inserts**: two slots after the tracks and sends mixer (and the
@@ -9,7 +9,7 @@ phases.
 Licence: the SDK files in this folder (`plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`,
 `build_plugs.sh`, this README) are MIT (`LICENSE` here). A plugin may use any licence that allows shipping it as a separate
 file. The firmware licence is unchanged. No shipped plugin is built here: the inserts Dirt, Tape, Lo-Fi, BBD and Phaser (ports
-of MIT and Apache-2.0 OpenTracker code) are built in the public repository `tracker-effects-os`, Console and Tube (original, proprietary
+of MIT and Apache-2.0 OpenTracker code) are built in the public repository `tracker-effects-os`, Console, Tube and Glue (original, proprietary
 freeware) in the private `tracker-effects`, the engine plugins in `tracker-engines-os` and `tracker-engines`. Their notices ship with their
 release files, `engines/README.md` has the map.
 
@@ -146,12 +146,19 @@ Contract:
   are floats in the parameter's units, enums are indices `0 .. enum_count - 1`. The host rounds to `step` and clamps.
 - At most 32 parameters. Names of 11 characters or less show in full on the Inserts page. Values are stored in the project
   by name, so renaming a parameter loses its stored value and reordering is harmless.
+- A numeric parameter can name its end values: set `PLUG_PARAM_NAME_MIN` and/or `PLUG_PARAM_NAME_MAX` in `plug_param.flags`
+  and point `enum_names` at one string for min (first) and one for max. The Inserts page then shows that name ("Auto") instead
+  of the number and the unit while the value sits at that end. The value stays a plain float (the bar, the stored value and
+  `set_param` are unchanged), so a project written before the name existed reads the same. A host without it shows the number.
 - CPU: a slot that takes more than 60,000 cycles (11.5 % of a 522,240 cycle block) three blocks in a row is bypassed until
   it is loaded again. `emu_plug.py` gives instructions per block, a lower bound: the device measured 1.5 times the emulated
   count for Dirt (design section 11). Add the host's conversion pair (6,496 cycles measured, shared by the two slots).
-- Size: insert 1 holds image + bss up to 8,192 B in SRAM_L. Insert 2 holds text up to 8,192 B in the FlexNVM data flash,
-  its rw and bss go to a fixed 1 KB SRAM buffer (more is refused for insert 2), so its text is the
-  same bytes on every load and a reload costs no flash command.
+- Size: both inserts share one 8 KB SRAM_L slot. Insert 1 holds its image + bss from the bottom, insert 2 from the top (its
+  start aligned down to 16 B), so the two plugins' image + bss together must fit 8,192 B, less up to 15 B of alignment
+  (`plug_index.h` `insertPlace`). One plugin alone may take the whole slot in either insert. The second one of a pair that
+  does not fit is refused before any card read: its column shows `Full:<name>`, the audio passes, its values are kept and
+  saved back, `host.txt` says how many bytes it needs and how many are free, and it loads by itself once the other insert
+  leaves room (another pick, `None`). There is no flash fallback: no insert writes the flash.
 - No static constructors, no exceptions, no RTTI, no per instance state in globals. Constant tables of pointers are fine
   (they are rebased).
 
@@ -209,12 +216,11 @@ $PY -I emu_plug.py gain.plg --base 0x1FFF0BD0 --param 0=150 --wav gain.wav
   all their entries in the stock list control with the
   current one highlighted, numeric parameters show their value and a bar. The value line of an insert column is at most 9 characters:
   the plugin name, `None`, `Loading`, `Bypassed`, or a tag and as much of the name as fits (`Safe:BBD`, `Miss:Lo-Fi`,
-  `Fail:Dirt`, `CPU:Phase`). Picking a plugin while a built-in Saturation
-  entry is on switches the Saturation to Inserts. With `/.develop` on the card the title shows the last block's cycles of
-  each insert in percent.
-- Insert 1 runs from the 8 KB SRAM_L slot. Insert 2 runs its text from the FlexNVM data flash at 0x1001E000 (two 4 KB
-  sectors, erased and programmed when a different plugin is loaded there, no flash command when the bytes are already
-  there) and its data from a fixed 1 KB SRAM buffer.
+  `Fail:Dirt`, `CPU:Phase`, `Full:Phas`: no room beside the other insert). Picking a plugin while a built-in Saturation
+  entry is on switches the Saturation to Inserts.
+- Both inserts run from the 8 KB SRAM_L slot, insert 1 from the bottom and insert 2 from the top. Loading one never
+  writes the bytes of the other, which keeps playing, and the new one is attached with the audio interrupt off. Until
+  insert2-sram, insert 2 ran from the last two FlexNVM sectors (0x1001E000), which the synth bank now uses.
 - The project stores the inserts in `plugins.txt` next to the project file (`tffplug 1`, `format 2`, `mixer <n>` when the
   stage is not Hard Clip (1 Soft Clip, 10 Soft Knee), `slot <n> <uid> <version> <name>`, `p <param>=<value>`). The binary
   project only holds the reserved saturationType `0x80` for the Inserts entry, which stock firmware loads as Hard Clip
@@ -262,7 +268,7 @@ Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sect
 - An engine is installed when a part needs it: the model list (after the list rests 500 ms on it, so scrolling past engines
   writes nothing), a project load (all the project's engines before any part changes, the boot project included). Patch FX
   slots are of the part's own engine and never change it, a patch load is of the part's engine too.
-- When the bank (30 sectors of 4 KB) or the rw pool has no room, the least recently used engines go first. An engine a part
+- When the bank (32 sectors of 4 KB, the whole data flash) or the rw pool has no room, the least recently used engines go first. An engine a part
   plays is never evicted for another part's pick. On a model change the part's own old engine goes only when nothing else
   frees room, on a project load the old project's engines go before the new ones.
 - An install takes whole free sectors (a sector never holds two engines), so it never erases a sector of an engine that may be
@@ -271,7 +277,11 @@ Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sect
 - Power cut: the index is rewritten before the first flash command without the evicted engines and with the new one as `w`.
   A cut leaves a `w`: dropped at the next boot, installed again when picked. A journal that cannot be written issues no command.
 - Wear: `installed.txt` keeps an erase counter per sector (`c` line, counted in the journal, so never fewer than the flash did),
-  `synth.txt` prints them with the total and the highest.
+  `synth.txt` prints them with the total and the highest. The bank had 30 sectors before insert2-sram. A `c` line of 32
+  (wear-fixes, where the last two counted insert 2's erases of the same two sectors) is read as is. A `c` line of 30 (1.2.0)
+  keeps the 30, and sectors 30 and 31, which insert 2 erased without counting, start at the highest of the 30, so the
+  least worn policy does not favour them. Older hosts read the first 30 (1.2.0) or 30 + 2 (wear-fixes) of the new line and
+  drop an engine placed in sectors 30 and 31, which is outside their bank (its CRC check protects a downgrade either way).
 - What the user sees: the popup `Loading <NAME>` while it installs (the main loop waits for it). Audio keeps running, but every
   flash command runs with interrupts off, so each sector erase (up to 5 for the biggest engine, none on blank sectors) can drop
   a few audio blocks. Engines that cannot be loaded (no room next to the engines the parts play, file gone, flash error, safe
@@ -280,13 +290,12 @@ Missing when picked. Limits: 1..8 character name, at most 84 parameters, 10 sect
   5 sectors) is then about 0.1 to 0.2 s of flash commands plus the card read and two index writes. `synth.txt` logs every install
   (`ms`, `in flash commands`, commands, erases, evicted).
 
-Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the twelve need 44 whole sectors of 30 (157,136 B packed), 7 to 8 stay
-resident at once. The 3 biggest on the parts plus the one being picked need 18 sectors. Their rw needs 2,976 B of the 3,072 B pool, so the pool
-never decides what is evicted. The worst 3 at once need 1,928 B (2,048 B with the one being picked): a pool of that size would
-save 1,024 B of SRAM but then hold JU6 and three others only, and the 5th engine picked would rewrite the flash.
+Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the thirteen need 50 whole sectors of 32 (173,428 B packed). The 3 biggest on the parts plus the one being picked need 20 sectors. Their rw needs 7,176 B of the 7,680 B pool (CHIP 4,200 B, JU6 1,648 B, the rest 112 to 168 B each), so the pool
+never decides what is evicted. The worst 3 at once need 6,016 B (6,136 B with the one being picked): a pool of 6,656 B would
+save 1,024 B of SRAM but then hold CHIP, JU6 and a few others only, and the 5th engine picked could rewrite the flash.
 
-The shipped synth plugins are the twelve custom engines (`engines/engines.json`, the release image builds in only ACD FAT VAP
-WTFM PERC CHIP). Ten are built here, PHZ and PLK are private modules built from the private repository `tracker-engines`:
+The shipped synth plugins are the thirteen engines (`engines/engines.json`, the release image builds in only ACD FAT VAP
+WTFM PERC). Eleven are built in the public module repository (the ten OpenTracker ports and CHIP), PHZ and PLK are private modules built from the private repository `tracker-engines`:
 
 | Plugin | Engine | Image B | rw + bss B | Worst block, 4 voices (instructions, scenario 1, engine DSP at `-Os` as in 1.1.0) |
 |---|---|---|---|---|
@@ -302,12 +311,13 @@ WTFM PERC CHIP). Ten are built here, PHZ and PLK are private modules built from 
 | `hand.plg` | Hand-Type | 12,392 | 120 | 47,838 (9.2 %, scenario 0) |
 | `arc.plg` | Arc-Type | 19,136 | 120 | 142,787 (27.3 %) |
 | `pluck.plg` | PLK (private) | 6,476 | 120 + 8,772 work (SDRAM) | 55,551 (10.6 %) |
+| `chip.plg` | CHIP | 13,328 | 4,192 | 251,404 (48.1 %, scenario 1 at `-O2`) |
 
 Instructions are a lower bound of cycles (the device measured 1.5 times the emulated count for Dirt), the percentage is of a
 522,240 cycle block, and the built-in engine executes the same count. The `-O2` figures are in `synth-open/README.md`, CPU at four
 voices. Image B is the code and data, the `.plg` file adds the
-header, manifest and rebase table. Together the twelve need more than the 122,880 B bank: the bank is a cache (below). Logos:
-one `.plgi` per plugin, `previews/sheet.png` shows all twelve.
+header, manifest and rebase table. Together the thirteen need more than the 122,880 B bank: the bank is a cache (below). Logos:
+one `.plgi` per plugin, `previews/sheet.png` shows all thirteen.
 
 ### Engine logos
 
@@ -326,5 +336,13 @@ comes near an engine or the patch editor opens), so every listed engine shows it
 `/Plugins/synth.txt` (`logo <file> sidecar|trailer|text err <n>`). Make a record
 with `synth-open/tools/make_plgi.py`: from a PNG (white or opaque is drawn, black or transparent is not, scaled to both
 sizes), from two PNGs, or `--text NAME` for a text logo in the stock style. `--check` tests a `.plgi` or a `.plg` trailer,
-`--selftest` round-trips the stock logos. The twelve shipped `.plgi` files are text logos (`logo` in `engines/engines.json`), `tools/plgi_sheet.py` stacks
+`--selftest` round-trips the stock logos. The thirteen shipped `.plgi` files are text logos (`logo` in `engines/engines.json`), `tools/plgi_sheet.py` stacks
 their previews into one sheet.
+
+### Paraphony (ABI 1.2, `PLUG_EXT_CHORD`)
+
+An engine with a `Chord Mode` (Poly, Para) and a `Chord` parameter (the 68 entries of `plug_chord.h`, the MIDI Chord FX table, an SDK
+contract) built with `PLUG_SYNTH_PLUGIN_CHORD` answers `query(PLUG_EXT_CHORD)`. The host then sends a MIDI Chord step on a Para patch as
+one note-on with the step's chord in `Chord` for that note-on, the engine latches it in `note_on`. Without the query nothing changes.
+An optional `Strum` parameter (`strum_param`, integer -63..63, 2 ms units, `PLUG_SYNTH_PLUGIN_CHORD_STRUM`) gets a Strum FX the same way.
+Details: `docs/plugin_sdk.md` section 7, "Paraphony and the chord table".

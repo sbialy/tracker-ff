@@ -1,4 +1,5 @@
-// Tracker FF runtime plugin ABI 1.1 (1.0: master inserts. 1.1: synth engines, PLUG_EXT_SYNTH, more libm). MIT licence, see synth-open/plug/README.md.
+// Tracker FF runtime plugin ABI 1.2 (1.0: master inserts. 1.1: synth engines, PLUG_EXT_SYNTH, more libm. 1.2: PLUG_EXT_CHORD,
+// enum parameters of synth engines up to 128 values). MIT licence, see synth-open/plug/README.md.
 // Format reference: synth-open/plug/README.md. Plain C, shared by the host (firmware) and by plugins (any licence).
 //
 // File layout (.plg, little endian):
@@ -26,7 +27,7 @@ extern "C" {
 
 #define PLUG_MAGIC 0x31474C50u   // "PLG1"
 #define PLUG_ABI_MAJOR 1         // bumped only for an incompatible change: a host refuses any other major
-#define PLUG_ABI_MINOR 1         // additive changes: new tail fields, new optional entry points, new host services
+#define PLUG_ABI_MINOR 2         // additive changes: new tail fields, new optional entry points, new host services
 #define PLUG_HOST_LEVEL 1        // host service table level, a plugin's min_host must be <= this
 
 enum
@@ -36,6 +37,7 @@ enum
     PLUG_KIND_TRACK_FX = 3,        // mono or stereo per track insert (reserved)
     PLUG_KIND_SYNTH = 4,           // ISynthEngine shaped voice engine (PLUG_EXT_SYNTH)
     PLUG_KIND_OFFLINE = 5,         // sample editor effect (reserved, what .ptfx is today)
+    PLUG_KIND_EXT = 6,             // extension module of one exact image (core/include/ext_abi.h), develop mode only
 };
 
 enum
@@ -69,6 +71,8 @@ enum
     PLUG_EXT_TAIL = 2,    // plug_ext_tail (declared below, the current host does not ask for it yet)
     PLUG_EXT_SYNTH = 3,   // plug_ext_synth (declared below): the C form of ISynthEngine, PLUG_KIND_SYNTH plugins
     PLUG_EXT_TEMPO = 4,   // reserved: set_tempo(inst, bpm) for synced inserts
+    // 5 belongs to PLUG_EXT_FILES (plug_host.query, the host level 2 line): never reuse it here
+    PLUG_EXT_CHORD = 6,   // plug_ext_chord (declared below, ABI 1.2): a synth engine that plays a MIDI Chord step as one voice
 };
 
 typedef struct
@@ -108,15 +112,45 @@ typedef struct
                              // numbers of a synth engine: stored, patch_engine, type_id, PLUG_SYNTH_MANIFEST (below)
 } plug_manifest;
 
+// plug_param.flags. A numeric parameter (enum_count 0) may name its end values: the host shows the name instead of the number
+// and the unit (the bar and the stored value stay numeric). enum_names then holds the names in this order: first the one for
+// min if PLUG_PARAM_NAME_MIN is set, then the one for max if PLUG_PARAM_NAME_MAX is set. An older host ignores the flags and
+// shows the number, so a plugin that sets them still runs there. Flags a host does not know are ignored.
+enum
+{
+    PLUG_PARAM_NAME_MIN = 1u << 0,   // enum_names[0] is shown while the value is min ("Auto", "Off")
+    PLUG_PARAM_NAME_MAX = 1u << 1,   // the next enum_names entry is shown while the value is max
+};
+
 typedef struct
 {
     const char* name;         // <= 11 chars shows in full on the parameter page, the sidecar stores values by this name
     const char* unit;         // "", "%", "Hz", "dB", "ms"
     float min, max, def, step;
     uint16_t enum_count;      // > 0: an enum, enum_names has enum_count entries, min 0, max enum_count - 1
-    uint16_t flags;           // reserved, 0
+    uint16_t flags;           // PLUG_PARAM_*, 0 for none (the field was reserved as 0, so an older host ignores a flag)
     const char* const* enum_names;
 } plug_param;
+
+// Number of names a numeric parameter's flags promise in enum_names (0 for an enum: its own enum_count rules)
+static inline uint32_t plug_param_name_count(const plug_param* p)
+{
+    return p->enum_count ? 0u : ((p->flags & PLUG_PARAM_NAME_MIN) ? 1u : 0u) + ((p->flags & PLUG_PARAM_NAME_MAX) ? 1u : 0u);
+}
+
+// The name to show for value v instead of the number (a numeric parameter at an end it names), NULL for the number
+static inline const char* plug_param_value_name(const plug_param* p, float v)
+{
+    if (p->enum_count || !p->enum_names) return 0;
+    uint32_t i = 0;
+    if (p->flags & PLUG_PARAM_NAME_MIN)
+    {
+        if (v <= p->min) return p->enum_names[0];
+        i++;
+    }
+    if ((p->flags & PLUG_PARAM_NAME_MAX) && v >= p->max) return p->enum_names[i];
+    return 0;
+}
 
 typedef struct plug_host plug_host;
 
@@ -246,6 +280,32 @@ typedef struct
     uint32_t (*slot_post)(int32_t slot, void* scratch, const void* params, float* l, float* r);    // 1 = tail
     uint32_t (*set_send_tap)(int32_t slot, float* delay, float* reverb, float gain_d, float gain_r);
 } plug_ext_synth;
+
+// ---- PLUG_EXT_CHORD (ABI 1.2): paraphony. A synth engine that can sound a whole chord in one voice (one filter, one set of
+// envelopes for every chord note) answers this query with the indices of two of its own parameters:
+//   param_index  an enum of exactly PLUG_CHORD_COUNT values in the order of plug_chord.h (the MIDI Chord FX table, 0 = the
+//                played note alone). The engine reads p->end[param_index] in note_on and latches it in the voice: the host
+//                may change the value right after note_on returns.
+//   mode_param   an enum: 0 Poly (the engine as it was, Chord is not sounded), 1 Para (every note plays its chord in one voice).
+//                The patch's own choice, so poly and paraphonic patches of one engine coexist.
+// What the host does with it: a MIDI Chord step (FX "0") on a part whose patch is at Para sends ONE note-on (the step note, the
+// lowest note of the chord) and puts the step's chord value into param_index for that note-on only. The note-off is the step
+// note's alone. With mode_param at Poly, with Arp in the other FX slot or on a host without the query, the step keeps the stock
+// path: one note-on per chord note. An engine without the query is never asked anything (older plugins are unchanged).
+// The live keys and MIDI in play one note-on per key as always: in Para the engine sounds the patch's Chord on each.
+// Older hosts (ABI 1.1, firmware 1.3.0 and before) refuse an enum parameter with more than 65 values. A plugin that must also
+// load there declares the Chord parameter numeric (PLUG_FMT_INT, 0 to PLUG_CHORD_COUNT - 1), it reads the same value.
+// Strum (a tail field, read only when struct_size covers it): strum_param is an integer parameter from -63 to 63, the time between
+// two successive chord notes in units of 2 ms, + up (the lowest note first), - down. The host puts a Strum FX of the step into it
+// for that note-on only, like the chord. PLUG_CHORD_NO_STRUM (or a shorter struct): the engine plays every chord unstrummed.
+#define PLUG_CHORD_NO_STRUM 0xFFFFFFFFu
+typedef struct
+{
+    uint32_t struct_size;
+    uint32_t param_index;     // the Chord parameter (plug_chord.h order)
+    uint32_t mode_param;      // the Chord Mode parameter (0 Poly, 1 Para)
+    uint32_t strum_param;     // tail: the Strum parameter, or PLUG_CHORD_NO_STRUM
+} plug_ext_chord;
 
 struct plug_host
 {

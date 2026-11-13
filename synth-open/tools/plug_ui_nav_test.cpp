@@ -173,7 +173,7 @@ int main()
     // insert column value line: every status with the longest name (kNameLen 15) fits kLabelChars
     {
         const Shown all[] = {Shown::kNone, Shown::kLoading, Shown::kName, Shown::kBypassed,
-                             Shown::kMissing, Shown::kFailed, Shown::kSafe, Shown::kOverCpu};
+                             Shown::kMissing, Shown::kFailed, Shown::kSafe, Shown::kOverCpu, Shown::kNoRoom};
         const char* names[] = {"", "BBD", "Phaser", "Console", "ABCDEFGHIJKLMNO"};
         bool fit = true;
         for (Shown st : all)
@@ -192,6 +192,8 @@ int main()
         check(strcmp(out, "Safe:BBD") == 0, "safe mode with BBD reads Safe:BBD");
         slotLabel(Shown::kMissing, "Phaser", out);
         check(strcmp(out, "Miss:Phas") == 0, "missing Phaser reads Miss:Phas");
+        slotLabel(Shown::kNoRoom, "Phaser", out);
+        check(strcmp(out, "Full:Phas") == 0, "Phaser with no room beside the other insert reads Full:Phas");
         slotLabel(Shown::kName, "Console", out);
         check(strcmp(out, "Console") == 0, "running: the plugin name");
         slotLabel(Shown::kBypassed, "Console", out);

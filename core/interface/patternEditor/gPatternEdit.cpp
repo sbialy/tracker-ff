@@ -1,3 +1,4 @@
+#include "mtChord.h"
 #include "config.h"
 #include "core/interfacePopups.h"
 #include "fileManager.h"
@@ -1735,8 +1736,10 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
                 }
             }
 
-            uint8_t fxVal_temp =
-              (stepFx.type == sequencer.fx.FX_TYPE_CHANCE) ? stepFx.value : 0xFF;
+            uint8_t fxVal_temp = (stepFx.type == sequencer.fx.FX_TYPE_CHANCE ||
+                                  stepFx.type == sequencer.fx.FX_TYPE_MIDI_CHORD)
+                                   ? stepFx.value
+                                   : 0xFF;
 
             if (lastTitleBarParamValue == type_temp && lastTitleBarFx == fxVal_temp &&
                 (lastTitleBarParam == editParam) && !forceShow)
@@ -1786,6 +1789,15 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
                              n,
                              m);
                 }
+            }
+            else if (stepFx.type == sequencer.fx.FX_TYPE_MIDI_CHORD)
+            {   // the readable chord: with the step note "MIDI Chord: Fmaj7/C", else the generic "MIDI Chord: maj7 inv2"
+                const auto& st = sequencer.getPatternToUI()
+                                   ->track[trackerPattern.actualTrack]
+                                   .step[trackerPattern.actualStep];
+                char name[20];
+                chordName(name, sizeof(name), stepFx.value, st.note >= 0 ? st.note : -1);
+                snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "MIDI Chord: %s", name);
             }
             else
             {

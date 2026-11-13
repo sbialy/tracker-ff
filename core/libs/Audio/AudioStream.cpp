@@ -164,7 +164,8 @@ AUDIO_CORE_RAM void AudioStream::transmit(audio_block_t* block, unsigned char in
     {
         if (c->src_index == index)
         {
-            if (c->dst->inputQueue[c->dest_index] == NULL)
+            // a destination that is not active takes no block (a disabled record queue that left update_all, see AudioRecordQueue::update)
+            if (c->dst->active && c->dst->inputQueue[c->dest_index] == NULL)
             {
                 c->dst->inputQueue[c->dest_index] = block;
                 block->ref_count++;
@@ -237,6 +238,23 @@ void AudioConnection::connect(void)
         p->next_dest = this;
     }
     this->next_dest = NULL;
+    // Is src updated before dst? (update_all runs the streams in the order they were constructed.) If not, dst is updated first in each
+    // round and sees what src transmitted in the previous one.
+    {
+        bool srcFirst = false;
+        for (AudioStream* q = AudioStream::first_update; q; q = q->next_update)
+        {
+            if (q == src)
+            {
+                srcFirst = true;
+                break;
+            }
+            if (q == dst)
+                break;
+        }
+        if (!srcFirst)
+            dst->hasLaterSource = true;
+    }
     src->numConnections++;
     src->active = true;
 

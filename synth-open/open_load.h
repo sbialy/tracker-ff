@@ -21,6 +21,64 @@ namespace polysynth::open
 // governor (ot::audio::Governor). No-op without a Synth.
 void reportBlockCycles(uint32_t cycles);
 
+// Audio interrupt, at the start of every live block (Profiler::startMeasuringAudio, before MIDI and the sequencer): `startCycles`
+// is the cycle counter at the block start and `cycles` reads it. Turns the note-on admission on: a note-on whose estimated cost
+// would take the block over kAdmitPermille starts at the start of the next block instead (at most one block late, never dropped).
+// The note-ons deferred in the block before start here, first. No-op without a Synth.
+void reportBlockStart(uint32_t startCycles, uint32_t (*cycles)());
+
+// Note-on admission limit: estimated block load, permille of the block (CpuMeter::kBudgetCycles). The default, and a setter for
+// the console (cpu admit N, clamped 500..1000)
+constexpr uint32_t kAdmitPermille = 870;   // device 2026-11-10
+void setAdmitPermille(uint32_t permille);
+uint32_t admitPermille();
+
+// One live block as the admission saw it (cycles at 180 MHz): the worst block since the last Play and the last overrun block
+struct BlockShot
+{
+    uint32_t cycles;    // the whole block (the readout's window)
+    uint32_t pre;       // block start to the first synth part render
+    uint32_t extra;     // estimated cost of the note-ons started in it (admitted and from the queue)
+    uint32_t admitted;  // note-ons admitted in it
+    uint32_t flushed;   // note-ons from the queue started at its start
+    uint32_t deferred;  // note-ons it moved to the next block
+    uint32_t estMax;    // the largest estimate of an admission check in it (0: none)
+    uint32_t voices;    // synth voice renders in it (fading ones included)
+    uint32_t renderCyc; // their timed cycles together (engine render calls only)
+    uint32_t moving;    // synth parts whose parameters moved in it (automation, Patch FX, edits)
+};
+void loadShots(BlockShot& worst, BlockShot& lastOverrun);
+
+// Live load counters of the open synth since the last Play (resetLoadStats) or project load. Read from the main loop or the
+// console (copies of 32-bit words written by the audio interrupt).
+struct LoadStats
+{
+    uint32_t blocks;        // live blocks counted
+    uint32_t overruns;      // blocks at or over the block budget (CpuMeter, L >= 1000 permille)
+    uint32_t peakPermille;  // the worst single block
+    uint32_t avgPermille;   // CpuMeter average (about 100 ms)
+    uint32_t cuts;          // governor cuts (cap lowered)
+    uint32_t cutsTotal;     // governor cuts since boot
+    int32_t cap;            // governor cap now
+    int32_t budget;         // voice budget
+    int32_t sounding;       // synth voices sounding now
+    uint32_t govSteals;     // voices the governor stole after a cut
+    uint32_t steals;        // voices stolen by a note-on in a full pool
+    uint32_t fastKills;     // of those, released voices under kFastKillLevel freed at once (no fade block)
+    uint32_t preSteals;     // victims faded in the block before their deferred note started
+    uint32_t admitted;      // note-ons checked by the admission (live, inside a block)
+    uint32_t deferred;      // note-ons moved to the start of the next block
+    uint32_t deferMaxBlock; // most note-ons deferred in one block
+    uint32_t deferMaxUs;    // longest delay of a deferred note-on (asked for to started)
+    uint32_t queueFull;     // note-ons admitted over the limit because the queue was full
+    uint32_t attackUs[3];   // learned extra cost of a note-on per synth part (engine noteOn + first render over a running voice)
+    uint32_t voiceUs[3];    // learned cost of one running voice per synth part
+    uint32_t stepPreUs;     // learned: how much later the synth render starts in a block with note-ons than guessed at the first
+};
+void loadStats(LoadStats& s);
+// Play (Sequencer::play): the counters above start again (the governor's own lifetime count stays in cutsTotal)
+void resetLoadStats();
+
 // Offline render (export): the governor is off and the cap is back at the budget.
 void setOffline(bool offline);
 
@@ -47,6 +105,25 @@ bool patchStale(const Patch& patch);
 // transmits nothing (a missing block is silence for the amplifiers, analysers and mixers downstream) instead of
 // rendering, soft clipping and sending blocks of zeros. False for a part that does not exist.
 bool partIdle(int part);
+
+// Paraphony (PLUG_EXT_CHORD, plug_abi.h). An engine with a Chord parameter (the MIDI Chord FX table, synth-open/plug/plug_chord.h) and
+// a Chord Mode parameter (0 Poly, 1 Para): the built-in ACD, or a plugin that answers the query (plug_synth.cpp checks the answer
+// at attach). -1 for an engine without them.
+struct EngineDef;
+struct ChordParams
+{
+    int8_t chord = -1;
+    int8_t mode = -1;
+    int8_t strum = -1;   // the Strum parameter (signed units of kStrumUnitUs, + up, - down), -1: the engine plays chords unstrummed
+};
+ChordParams chordParamsOf(const EngineDef* def);
+ChordParams plugChordParams(const EngineDef* def);   // plug_synth.cpp: an attached plugin engine's answer
+// Sequencer (audio interrupt, or main thread with the same order): true when the part's patch is paraphonic, so a MIDI Chord step is
+// sent as ONE note-on. partNoteChord before that note-on puts the step's chord value (0..67) into the engine's Chord parameter
+// for the next note-on of `note` on the part only, a Strum FX (strum != 0, units of 2 ms, + up, - down) into its Strum
+// parameter when the engine has one. False / no-op without a Synth or for a part that does not exist.
+bool partChordPara(int part);
+void partNoteChord(int part, uint8_t note, uint8_t chord, int8_t strum = 0);
 
 // Patch slots and the Patch step FX. Per part, 16 slots in the project: slot 0 is <P>.patch (what stock firmware opens),
 // slot n > 0 is <P>-n.patch, both in Workspace/ and in the project folder. The part's live Patch is the slot that is open in

@@ -5,6 +5,7 @@
 
 #include "audio/engines/acd.h"
 #include "PolySynth/config.h"
+#include "plug/plug_chord.h"
 
 namespace polysynth::open
 {
@@ -19,6 +20,7 @@ using ot::audio::acd::Param;
 const char* const kSubMode[] = { "-1 Oct Square", "-1 Oct Pulse",   "-1 Oct Triangle",
                                  "-2 Oct Square", "-2 Oct Pulse",   "-2 Oct Triangle" };
 const char* const kFilter[] = { "LP SVF 12dB", "LP SVF 24dB", "LP RD3" };
+const char* const kChordMode[] = { "Poly", "Para" };
 const char* const* const kWave = kWaveNames;
 const char* const* const kRetrig = kRetrigNames;
 const char* const* const kGlide = kGlideNames;
@@ -56,6 +58,11 @@ const ParamDef kParams[Param::kParamCount] = {
     { "Glide Mode", 0, 0, 3, F::kEnum, C::kLinear, kGlide },
     { "Glide Time", 0, 0, 3, F::kSec, C::kPower, nullptr },
     { "Volume", 1, 0, 2, F::kPct, C::kLinear, nullptr },
+    // paraphony (tracker-ff): Para sounds the Chord in one voice, a MIDI Chord step plays its own chord there (PLUG_EXT_CHORD)
+    { "Chord Mode", 0, 0, 1, F::kEnum, C::kLinear, kChordMode },
+    { "Chord", 0, 0, PLUG_CHORD_COUNT - 1, F::kEnum, C::kLinear, plugchord::kNames },
+    // Para strum: the chord notes start one after another, 2 ms a unit, + up, - down. A Strum FX step sets it per note-on
+    { "Strum", 0, -63, 63, F::kInt, C::kLinear, nullptr },
 };
 
 const uint8_t kOsc[] = { Param::kSawMix, Param::kSquareMix, Param::kSubMix,   Param::kNoiseMix, Param::kPw,
@@ -65,7 +72,8 @@ const uint8_t kFlt[] = { Param::kCutoff, Param::kResonance, Param::kFilterType,
 const uint8_t kAmp[] = { Param::kAmpA, Param::kAmpD, Param::kAmpS, Param::kAmpR };
 const uint8_t kEnv[] = { Param::kModA, Param::kModD, Param::kModS, Param::kModR };
 const uint8_t kLfo[] = { Param::kLfoHz, Param::kLfoWave, Param::kLfoRetrig };
-const uint8_t kVoice[] = { Param::kGlideMode, Param::kGlideTime, Param::kVolume };
+const uint8_t kVoice[] = { Param::kGlideMode, Param::kGlideTime, Param::kVolume, Param::kChordMode, Param::kChord,
+                           Param::kStrum };
 
 const SectionDef kSections[] = {
     { "Oscillator", "Osc", kOsc, sizeof(kOsc) },

@@ -3,7 +3,10 @@
 #include <cstdio>
 #include <string>
 #define private public
+#define protected public
 #include "../../../core/interface/sampleImporter/sampleImporter.h"
+#include "../../../core/libs/NewDisplay/newListControl.h"
+#undef protected
 #undef private
 
 // the raw bytes of the three label buffers (start, end, play time) and their sizes and offsets
@@ -41,4 +44,15 @@ extern "C" void hostPokeImporterPlayEnd()
     s.showImportPreviewValue();
     s.showImportStartPointValue();
     s.showImportEndPointValue();
+}
+
+// poke picker: the bar of the list control the Model list is shown in (protected state of NewList): "listbar BAR pos POS", BAR 0 when
+// the control draws no highlighted row (a part whose engine is not installed), POS the row the list stands on
+extern "C" void hostPokeListBar(int ctrl, std::string* out)
+{
+    cDisplayControl* c = display.controlsTable[ctrl];
+    NewList* l = static_cast<NewList*>(c); // the Model list control is a NewList
+    char b[64];
+    snprintf(b, sizeof b, "listbar %d pos %d", l && !l->disableBar ? 1 : 0, l ? l->listPosition : -1);
+    *out = b;
 }

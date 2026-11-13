@@ -87,6 +87,10 @@ class audioEngine
     void setReverbPredelay(float value);
     void setReverbDiffusion(float value);
     void setDelayParams(uint8_t value);
+    // The first state of the delay and the reverb at audioEngine::init, from mtProject.values. It has to be the state a project load
+    // leaves (setDelayFeedback, setReverbDamp ...), synth-open/tools/ui_shot/master_fx_sim.sh compares the two on the host.
+    void beginDelay();
+    void beginReverb();
     void setLimiterAttack(uint16_t attack);
     void setLimiterRelease(float release);
     void setLimiterThreshold(uint16_t threshold);

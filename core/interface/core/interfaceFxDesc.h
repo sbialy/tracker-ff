@@ -309,6 +309,12 @@ const char* const fxDescriptions[FX_COUNT] = {
     "\nAfter 057B, inversions:"
     "\n038: Maj/1st  059: Maj/2nd"
     "\n049: Min/1st  058: Min/2nd",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_STRUM,
+    "Destination: MIDI, Synth \n\nStrums the MIDI Chord in the other FX slot: the chord notes start one after another."
+    "\n"
+    "\n"
+    "1 to 63: up, the lowest note first. 65 to 127: down, the highest first. Each unit is 2 ms between two notes"
+    " (+10: 20 ms). 0 and 64: off.",
 #ifdef FEATURE_SYNTH_OPEN
     // Sequencer::strFxConsts::enFxType::FX_TYPE_PATCH_CHANGE,
     "Destination: Synth \n\nSwitches the Synth instrument to another patch slot of the project."
@@ -591,6 +597,12 @@ const char* const fxDescriptions[FX_COUNT] = {
     "\nAfter 057B, inversions:"
     "\n038: Maj/1st  059: Maj/2nd"
     "\n049: Min/1st  058: Min/2nd",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_STRUM,
+    "Destination: MIDI, Synth \n\nStrums the MIDI Chord in the other FX slot: the chord notes start one after another."
+    "\n"
+    "\n"
+    "1 to 63: up, the lowest note first. 65 to 127: down, the highest first. Each unit is 2 ms between two notes"
+    " (+10: 20 ms). 0 and 64: off.",
     // Sequencer::strFxConsts::enFxType::FX_TYPE_BREAK_PATTERN,
     "Destination: Pattern \n\n"
     "Breaks current pattern playback and jumps to the next pattern.",

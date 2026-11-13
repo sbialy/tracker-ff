@@ -57,6 +57,16 @@ inline uint32_t sendTap(int32_t slot, float* d, float* rv, float gd, float gr) {
 inline int32_t init(void*, const plug_host*) { return g_eng ? 0 : -1; }
 inline void process(void*, float* const*, uint32_t, uint32_t) {}   // a synth renders through PLUG_EXT_SYNTH only
 inline const void* query(uint32_t id) { return id == PLUG_EXT_SYNTH && g_eng ? &g_ext : nullptr; }
+// PLUG_EXT_CHORD (ABI 1.2), only in a plugin made with PLUG_SYNTH_PLUGIN_CHORD: the engine's Chord and Chord Mode parameters
+inline plug_ext_chord g_chord;
+inline const void* queryChord(uint32_t id) { return id == PLUG_EXT_CHORD && g_eng ? &g_chord : query(id); }
+inline void fillChord(uint32_t chordParam, uint32_t modeParam, uint32_t strumParam = PLUG_CHORD_NO_STRUM)
+{
+    g_chord.struct_size = sizeof(plug_ext_chord);
+    g_chord.param_index = chordParam;
+    g_chord.mode_param = modeParam;
+    g_chord.strum_param = strumParam;
+}
 
 // Fills the extension from the definition. Called by plug_entry: the host asks for it right after.
 inline void fill(const char* name, const EngineDef& d, int32_t stored, int32_t patchEngine, uint32_t workBytes = 0,
@@ -96,14 +106,14 @@ inline void fill(const char* name, const EngineDef& d, int32_t stored, int32_t p
 // operator it names is never called, it only has to link (the plain one is defined too, -Wsized-deallocation asks for the
 // pair). WORK_BYTES and SET_WORK: the engine's working RAM from the host (PLUG_EXT_SYNTH work_bytes, set_work), 0 and
 // nullptr for none.
-#define PLUG_SYNTH_PLUGIN_WORK(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK)                                          \
+#define PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, QUERY, EXTRA)                       \
     void operator delete(void*) noexcept {}                                                                                    \
     void operator delete(void*, unsigned int) noexcept {}                                                                      \
     namespace                                                                                                                  \
     {                                                                                                                          \
     PLUG_DESCRIPTOR const plug_desc kDesc = {                                                                                  \
         sizeof(plug_desc), PLUG_KIND_SYNTH, NAME, PLUG_SYNTH_AUTHOR, 0, nullptr, 8, plugsynth::init, nullptr,                  \
-        nullptr,           plugsynth::process, plugsynth::query,                                                               \
+        nullptr,           plugsynth::process, QUERY,                                                                          \
     };                                                                                                                         \
     }                                                                                                                          \
     extern "C" PLUG_ENTRY const plug_desc* plug_entry(const plug_host* host, uint32_t abi)                                     \
@@ -111,6 +121,18 @@ inline void fill(const char* name, const EngineDef& d, int32_t stored, int32_t p
         if ((abi >> 16) != PLUG_ABI_MAJOR || !host || !PLUG_HAS(host, plug_host, log2f)) return nullptr;                       \
         plug_rt_host = host;                                                                                                   \
         plugsynth::fill(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK);                                                \
+        EXTRA                                                                                                                  \
         return &kDesc;                                                                                                         \
     }
+#define PLUG_SYNTH_PLUGIN_WORK(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK) \
+    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, plugsynth::query, )
+// A paraphonic engine (PLUG_EXT_CHORD, plug_abi.h): CHORD_PARAM is its Chord parameter (plug_chord.h order), MODE_PARAM its Chord Mode
+// (0 Poly, 1 Para). The host of ABI 1.2 plays a MIDI Chord step on a Para patch as one note-on with the chord in CHORD_PARAM.
+#define PLUG_SYNTH_PLUGIN_CHORD(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, CHORD_PARAM, MODE_PARAM) \
+    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, plugsynth::queryChord,      \
+                            plugsynth::fillChord(CHORD_PARAM, MODE_PARAM);)
+// The same with a Strum parameter (plug_ext_chord.strum_param: integer -63..63, 2 ms units, + up, - down)
+#define PLUG_SYNTH_PLUGIN_CHORD_STRUM(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, CHORD_PARAM, MODE_PARAM, STRUM_PARAM) \
+    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, plugsynth::queryChord,                   \
+                            plugsynth::fillChord(CHORD_PARAM, MODE_PARAM, STRUM_PARAM);)
 #define PLUG_SYNTH_PLUGIN(NAME, DEF, STORED, PATCH_ENGINE) PLUG_SYNTH_PLUGIN_WORK(NAME, DEF, STORED, PATCH_ENGINE, 0, nullptr)

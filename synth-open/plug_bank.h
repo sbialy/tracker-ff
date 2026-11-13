@@ -2,8 +2,9 @@
 // writer. Header only and free of the platform: synth-open/tools/plug_bank_test.cpp runs the same code on the Mac against a
 // simulated flash that loses power after any command. plug_synth.cpp is the only firmware user.
 //
-// The bank is [0x10000000, 0x1001E000) of the data flash (120 KB, 30 sectors of 4 KB). The last two sectors belong to master
-// insert 2 (plug_nvm.cpp) and are never touched here. An installed engine is one entry: its text (rebased for its flash
+// The bank is the whole 128 KB data flash [0x10000000, 0x10020000), 32 sectors of 4 KB. Until insert2-sram the last two sectors
+// (0x1001E000, 0x1001F000) were master insert 2's text and the bank had 30. Master inserts now run from SRAM, the two sectors are
+// bank sectors 30 and 31 (see bankRead for their counters). An installed engine is one entry: its text (rebased for its flash
 // address) followed by its rw segment's initial bytes (rebased for its rw address in the host's SRAM pool).
 //
 // Cache: /Plugins/Synth on the card is the library, the bank is a cache of it. Nothing is installed at boot:
@@ -34,10 +35,11 @@ namespace plug
 {
 
 constexpr uintptr_t kBankRun = 0x10000000u;   // data flash (FlexNVM) base, executable
-constexpr uint32_t kBankBytes = 0x1E000u;     // up to insert 2's two sectors at 0x1001E000
+constexpr uint32_t kBankBytes = 0x20000u;     // the whole data flash (128 KB, partition code 0x05)
 constexpr uint32_t kBankSector = 4096;
-constexpr int kBankSectors = int(kBankBytes / kBankSector);   // 30
-constexpr int kBankMax = 12;                  // installed engines at once (the 12 shipped ones need 38 whole sectors, 30 exist)
+constexpr int kBankSectors = int(kBankBytes / kBankSector);   // 32
+constexpr int kBankSectorsV1 = 30;            // the bank of 1.2.0 and wear-fixes (insert 2 had the last two sectors)
+constexpr int kBankMax = 12;                  // installed engines at once (the 12 shipped ones need 38 whole sectors, 32 exist)
 constexpr int kBankFileLen = 24;
 
 struct BankEntry
@@ -59,8 +61,10 @@ struct Bank
 };
 
 // ------------------------------------------------------------------------------------------------ installed.txt
-// "tffbank 1", "c" and the 30 erase counters (hex), then one line per entry: state uid version fileCrc off len text rwRun rwLen
+// "tffbank 1", "c" and the 32 erase counters (hex), then one line per entry: state uid version fileCrc off len text rwRun rwLen
 // entry crc file (hex, 8 digits). Older hosts drop the "c" line (its state is not 'o' or 'w') and lose the counters.
+// Older hosts read this line too: 1.2.0 reads the first 30 counters and ignores the rest, wear-fixes reads the last two as its
+// insert 2 counters, which count the same two physical sectors. Both drop an entry in sectors 30 and 31 (outside their bank).
 inline int bankWrite(const Bank& b, char* t, int cap)
 {
     int n = sc::putStr(t, 0, cap, "tffbank 1\r\nc");
@@ -101,12 +105,21 @@ inline void bankRead(const char* t, int len, Bank& b)
         while (eol < e && *eol != '\n') eol++;
         const char* q = p;
         if (*q == 'c')
-        {   // the erase counters: all 30 or none
+        {   // the erase counters: 32, or the 30 of an older bank (sectors 30 and 31 are seeded below), else none
             uint32_t w[kBankSectors];
-            bool ok = true;
+            int got = 0;
             q++;
-            for (int k = 0; k < kBankSectors && ok; k++) ok = q < eol && *q++ == ' ' && sc::getHex(q, eol, w[k]);
-            if (ok) memcpy(b.wear, w, sizeof(w));
+            while (got < kBankSectors && q < eol && *q++ == ' ' && sc::getHex(q, eol, w[got])) got++;
+            if (got >= kBankSectorsV1)
+            {
+                // 32: this host, or wear-fixes, whose counters 31 and 32 were insert 2's and count the same two sectors. 30 (1.2.0,
+                // or a damaged end): insert 2 erased sectors 30 and 31 without counting, so they start as worn as the most worn of
+                // the 30, and the least worn policy of bankFindFlash does not pick them first.
+                uint32_t most = 0;
+                for (int k = 0; k < kBankSectorsV1; k++) most = w[k] > most ? w[k] : most;
+                if (got < kBankSectors) w[kBankSectorsV1] = w[kBankSectorsV1 + 1] = most;   // a lone 31st counter is not trusted
+                memcpy(b.wear, w, sizeof(w));
+            }
             p = eol + 1;
             continue;
         }
@@ -284,6 +297,7 @@ struct BankOpenStatus
 {
     int dropped;   // index entries that must not run (half written, damaged, outside the bank): dropped
     int stale;     // entries whose .plg left the card or changed (another version): dropped, installed again on demand
+    bool indexRead;   // installed.txt was read (false: none, or a card error, the counters in the bank are then not the card's)
 };
 
 // Io (both steps):
@@ -300,6 +314,7 @@ BankOpenStatus bankOpen(Flash& f, Io& io, const BankWant* w, int nw, uintptr_t p
 {
     BankOpenStatus st = {};
     const int got = io.readIndex(text, cap);
+    st.indexRead = got >= 0;
     bankRead(text, got, out);
     st.dropped = bankCheck(out, f, pool, poolBytes);
     int k = 0;

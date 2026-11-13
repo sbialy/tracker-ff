@@ -16,7 +16,6 @@ static cTest* TP = &mtTest;
 
 extern int16_t* externalRamEffectsBuff;
 extern int16_t externalRamDelayBuff[];
-extern uint16_t externalRamReverbBuff[];
 
 static void functButtons(uint8_t button, uint8_t state);
 static void functEncoder(int16_t value);
@@ -677,7 +676,6 @@ void cTest::runRAMTest()
         }
 
         memset(externalRamDelayBuff, 0, DELAY_MEMORY_SIZE);
-        memset(externalRamReverbBuff, 0, REVERB_MEMORY_SIZE);
 
         AudioInterrupts();
 

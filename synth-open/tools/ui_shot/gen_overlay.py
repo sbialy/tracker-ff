@@ -59,6 +59,8 @@ HEADERS = {
     'core/include/cr_section_macros.h': [SECTION],
     'synth-open/ot/fastrun.h': [SECTION],
     'synth-open/plug/plug_abi.h': [SECTION],
+    # copied unchanged: its quote include of plug_abi.h must find the copy above, not the original next to it (host_chip_twin.cpp)
+    'synth-open/plug/synth_plug.h': [],
 }
 for p, rules in HEADERS.items():
     wr('inc', os.path.basename(p), edit(rd(p), rules, p))
@@ -128,9 +130,25 @@ SOURCES = {
     'core/FileManager/mtFileManagerOldVersionRecovery.cpp': [(re.compile(r'\(uint32_t\)&'), r'(uint32_t)(uintptr_t)&')],
     # synthEnsure installs an engine of the library into the FlexNVM bank at 0x10000000, an address the host does not have: no engine
     # installs, the part says Missing: <name> as on a card whose bank could not be written
-    'synth-open/plug_synth.cpp': [(re.compile(r'if \(!s_lib\[k\]\.attached && !loadEngine\(k, want, nWant, keep, nKeep\)\) ok = false;'), 'if (!s_lib[k].attached) ok = false;')],
+    # CHIP is the one engine with a native twin (host_chip_twin.cpp, the plugin's engine_chip.cpp and the Polyend voice compiled for the host,
+    # CHIP_PLUGIN_SRC=... in the Makefile): its library entry attaches from the twin's extension instead of the bank. Without the twin source
+    # uishotTwinExt returns null and the part says Missing: CHIP like every other engine plugin
+    'synth-open/plug_synth.cpp': [
+        (re.compile(r'if \(!s_lib\[k\]\.attached && !loadEngine\(k, want, nWant, keep, nKeep\)\) ok = false;'),
+         'if (!s_lib[k].attached && !(uishotTwinExt(s_sidx[k].synthStored) && attachMarked(k, Need{want, nWant, keep, nKeep}) == 0)) ok = false;'),
+        (re.compile(r'(// Runs the installed engine k from its first byte)'),
+         'extern "C" const plug_ext_synth* uishotTwinExt(int stored);   // host_chip_twin.cpp\n\\1'),
+        (re.compile(r'(    const int bi = bankOf\(k\);\n    if \(bi < 0\) return 7;\n    const BankEntry& e = s_bank\.e\[bi\];)'),
+         '    if (const plug_ext_synth* tw = uishotTwinExt(s_sidx[k].synthStored)) { *out = tw; return 0; }\n\\1')],
     # same-directory quote include of plug_abi.h would pick the original: a copy, found through GEN/inc
     'synth-open/plug/fx_dirt_plug.cpp': [],
+    # the three test accessors of host_smoke_test.cpp (OpenInstrument::testParams/testModOut, OpenSynth::instrumentAt, open::testParams/testModOut): they
+    # only read, the stress test (the console, host_stress.cpp) reads the engine's block params and the automation outputs through them. Not
+    # OPEN_HOST_TEST itself, that also removes the audio lock of the patch code
+    'synth-open/open_synth.cpp': [
+        (re.compile(r'#ifdef OPEN_HOST_TEST\n(const ot::audio::SynthParams\* open::testParams)'),
+         'namespace open { const ot::audio::SynthParams* testParams(int part); float testModOut(int part, int slot); }\n#ifdef OPEN_HOST_TEST\n\\1'),
+        (re.compile(r'#ifdef OPEN_HOST_TEST'), '#if 1 /* ui_shot: read only test accessors */')],
     'core/libs/NewDisplay/textBox.cpp': [(re.compile(r'char\* (enter_pos|space_pos) = strchr'), r'const char* \1 = strchr')],
 }
 for p, rules in SOURCES.items():

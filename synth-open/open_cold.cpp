@@ -35,6 +35,7 @@
 // leave the device on the bootloader's "100" (f563f27). synth-open/tools/check_static_init.py checks the linked image for it.
 #define OPEN_EXTERNAL_RAM __attribute__((section(".noinit.$EXTERNAL_RAM")))
 #include "interruptsControl.h"
+#include "log.h"
 #define OPEN_LOCK_AUDIO()   DISABLE_AUDIO_INTERRUPTS()
 #define OPEN_UNLOCK_AUDIO() ENABLE_AUDIO_INTERRUPTS()
 #endif
@@ -274,11 +275,11 @@ constexpr Builtin kBuiltin[] = {
 };
 constexpr int kBuiltinCount = int(sizeof(kBuiltin) / sizeof(kBuiltin[0]));
 // The plugin engines of the list (plug_synth.cpp synthBoot, installed or not): each has its own stored number, so the stored number space
-// bounds them (249), nothing else. Their tables are in the SDRAM: about 0.1 KB each here (list entries, registry entry, name).
+// bounds them (250), nothing else. Their tables are in the SDRAM: about 0.1 KB each here (list entries, registry entry, name).
 constexpr int kPlugMax = open::kPlugStoredLast - open::kPlugStoredFirst + 1;
 // Any plugin engine number (open::kPlugStoredFirst..kPlugStoredLast) that is not in the list is "missing": one placeholder for all
 // of them (type open::kMissingTypeId), the project keeps the number, the name comes from the names this firmware has seen.
-// 0 to 6 are Polyend's (always built in when they exist in this firmware family), DIRT (5) never had an open engine.
+// 0 to 4 are Polyend's (always built in when they exist in this firmware family), DIRT (5) never had an open engine, CHIP (6) is a plugin.
 // Remembered plugin engine names, one per stored number (name[0] 0: none). Every number has its place, so none is ever refused.
 struct EngineName
 {
@@ -293,6 +294,7 @@ void namesClear()
     if (!gNamesClear)
     {
         std::memset(gNames, 0, sizeof(gNames));
+        std::memcpy(gNames[6 - open::kPlugStoredFirst].name, "CHIP", 5);   // CHIP is a plugin but always was number 6: a card without chip.plg says "Missing: CHIP"
         gNamesClear = true;
     }
 }
@@ -349,7 +351,7 @@ bool open::engineListAdd(const EngineDef* def, int stored, int patchEngine)
 {
     if (gCount || gPlugCount >= kPlugMax || stored < kPlugStoredFirst || stored > kPlugStoredLast)
     {
-        return false; // the list is in use (the synth started), full, or not a plugin number (each has its own, so 249 never fill up)
+        return false; // the list is in use (the synth started), full, or not a plugin number (each has its own, so 250 never fill up)
     }
     for (int i = 0; i < kBuiltinCount + gPlugCount; i++) // its numbers must be its own
     {
@@ -496,7 +498,7 @@ int open::typeForEngineId(int engine)
         }
     }
     // a plugin engine id this build has not got: the missing placeholder's (a part on it keeps its slot 0 backup on an engine change)
-    return engine >= kPlugPatchFirst && engine <= kPlugPatchLast ? kMissingTypeId : -1;
+    return (engine >= kPlugPatchFirst && engine <= kPlugPatchLast) || engine == kPlugPatchChip ? kMissingTypeId : -1;
 }
 
 // Every engine of the list and every missing placeholder into the registry (InstrumentTypeRegistry::registerInstrumentTypes)
@@ -556,7 +558,7 @@ void patchBankExportLocked(const OpenPatch& p, PatchData& out);            // lo
 void patchBankValuesReplaced(const OpenPatch& p);                          // locked: an import replaced the values, no shadow is left
 void patchBankPublish(int part, const OpenPatch& p, const PatchData& saved); // takes the lock: the row of the open slot is what was saved
 
-// The pool of OpenPatch objects (3,036 B each on the MK66), in the SDRAM. A part holds one live patch, a new one is made before the old is
+// The pool of OpenPatch objects (3,520 B a slot on the MK66), in the SDRAM. A part holds one live patch, a new one is made before the old is
 // freed (engine change, init) and the Synth keeps a few spare references, so 5 is enough. Main thread only, like every create and free of a
 // patch. A full pool falls back to the heap, as before.
 namespace
@@ -616,6 +618,7 @@ OpenPatch::OpenPatch(int typeId, const InstrumentType* type)
     {
         macroCC[m] = metadata.macros[m].bipolar ? 63 : 0;
     }
+    rebuildOwn();
 }
 
 Patch::optional_paramvalue_t OpenPatch::getParamValue(int id) const
@@ -661,6 +664,7 @@ void OpenPatch::setParamValue(int id, optional_paramvalue_t value, ParamChangeSo
     const float v = value.has_value() ? *value : p.defaultValue.value_or(0.0f);
     patchBankBeforeEdit(this); // the caller holds the audio lock: the edit lands on the edited values, never on the ones of an FX slot
     values[id] = std::clamp(v, float(p.minValue), float(p.maxValue));
+    effSer++;
 }
 
 Patch::optional_paramvalue_t OpenPatch::getMacroValue(int id) const
@@ -674,6 +678,7 @@ void OpenPatch::setMacroValue(int id, optional_paramvalue_t value, tiny_optional
     if (validMacro(id) && value.has_value())
     {
         macroCC[id] = uint8_t(std::clamp(std::lround(*value * 127.0f / kMaxMacroValue), 0L, 127L));
+        effSer++;
     }
 }
 
@@ -683,6 +688,7 @@ void OpenPatch::setMacroModifier(int macroId, int idx, tiny_optional<int> paramI
     {
         return;
     }
+    patchBankBeforeEdit(this); // the caller holds the audio lock: the edit lands on the open slot, which the render path reads again
     auto& mods = metadata.macros[macroId].modifiers;
     if (!paramId.has_value())
     {
@@ -699,15 +705,18 @@ void OpenPatch::setMacroModifier(int macroId, int idx, tiny_optional<int> paramI
     {
         mods.push_back({ *paramId, 0.0f });
     }
+    rebuildOwn();
 }
 
 void OpenPatch::setMacroModifierAmount(int macroId, int idx, float amount)
 {
     if (auto* mod = modifier(macroId, idx))
     {
+        patchBankBeforeEdit(this);
         mod->amount = std::clamp(amount,
                                  -Metadata::Macro::ParamModifier::kMaxAmount,
                                  Metadata::Macro::ParamModifier::kMaxAmount);
+        rebuildOwn();
     }
 }
 
@@ -719,10 +728,12 @@ tiny_optional<float> OpenPatch::getMacroModifierAmount(int macroId, int idx)
 
 void OpenPatch::clearMacroModifiers()
 {
+    patchBankBeforeEdit(this);
     for (auto& macro : metadata.macros)
     {
         macro.modifiers.clear();
     }
+    rebuildOwn();
 }
 
 void OpenPatch::changeMacroModifierAmount(int macroId, int idx, paramvalue_t delta)
@@ -737,7 +748,9 @@ void OpenPatch::setMacroBipolar(int macroId, bool bipolar)
 {
     if (validMacro(macroId))
     {
+        patchBankBeforeEdit(this);
         metadata.macros[macroId].bipolar = bipolar;
+        rebuildOwn();
     }
 }
 
@@ -761,6 +774,21 @@ Patch::Metadata::Macro::ParamModifier* OpenPatch::modifier(int macroId, int idx)
 
 // ---------------------------------------------------------------- .patch transfer
 
+// A file from a newer release of the engine than the .plg on the card: what did not fit the bounded tail (open_patchdata.h) is dropped on the
+// next save. Counted on the host, logged (LOGE) on the unit.
+#ifdef OPEN_HOST_TEST
+int gPatchTailDropped = 0;
+static void patchTailLog(int values, int targets)
+{
+    gPatchTailDropped += values + targets;
+}
+#else
+static void patchTailLog([[maybe_unused]] int values, [[maybe_unused]] int targets) // unused when LOGEF is compiled out
+{
+    LOGEF("patch tail dropped %d values %d targets", values, targets);
+}
+#endif
+
 void OpenPatch::exportData(PatchData& d) const
 {
     d.engine = engineIdForType(metadata.instrumentTypeId);
@@ -770,6 +798,12 @@ void OpenPatch::exportData(PatchData& d) const
         const auto& p = metadata.params[i];
         d.values[i] = float(p.minValue) == float(p.maxValue) ? NAN : values[i]; // unused slot: absent
     }
+    // Values of a newer release of the engine, written back as they were read (none for a patch of this release)
+    for (int k = 0; k < tail.nValues && count + k < kMaxParams; k++)
+    {
+        d.values[count + k] = tail.values[k];
+        d.nParams = count + k + 1;
+    }
     d.nMacros = kPatchMacros;
     for (int m = 0; m < kPatchMacros; m++)
     {
@@ -777,22 +811,46 @@ void OpenPatch::exportData(PatchData& d) const
         PatchMacroData& dst = d.macros[m];
         std::strncpy(dst.name, src.displayName.c_str(), kMacroNameMax);
         dst.bipolar = src.bipolar;
+        // Targets on parameters this engine does not know keep their slot, the known ones fill the others in order. A patch without such
+        // targets takes the old path: slots 0.. in order.
+        bool taken[kMacroTargets] = {};
+        int live = 0;
+        for (int k = 0; k < tail.nTargets; k++)
+        {
+            const PatchTail::Target& t = tail.target[k];
+            if (t.macro == m && t.slot < kMacroTargets && !taken[t.slot])
+            {
+                dst.param[t.slot] = t.param;
+                dst.amount[t.slot] = t.amount;
+                taken[t.slot] = true;
+                live++;
+            }
+        }
         int n = 0;
         for (const auto& mod : src.modifiers)
         {
-            if (mod.paramId.has_value() && n < kMacroTargets)
+            if (mod.paramId.has_value())
             {
-                dst.param[n] = int16_t(*mod.paramId);
-                dst.amount[n] = mod.amount;
-                n++;
+                while (n < kMacroTargets && taken[n])
+                {
+                    n++;
+                }
+                if (n < kMacroTargets)
+                {
+                    dst.param[n] = int16_t(*mod.paramId);
+                    dst.amount[n] = mod.amount;
+                    n++;
+                    live++;
+                }
             }
         }
-        dst.count = int8_t(n);
+        dst.count = int8_t(live);
     }
     for (int i = 0; i < kModSlots; i++)
     {
         d.mod[i] = mod[i]; // the stored identity, so an unresolved destination is written back as it was read
     }
+    d.macroMode = macroScaleMode ? kMacroModeScale : kMacroModeAdd;
     d.extra = extra;
 }
 
@@ -807,6 +865,7 @@ void initPatchData(const EngineDef& def, PatchData& d)
         const ParamDef& p = def.params[i];
         d.values[i] = p.min == p.max ? NAN : p.def; // unused slot: absent
     }
+    d.macroMode = kMacroModeScale; // a new patch is Scale
     d.nMacros = kPatchMacros;
     for (int m = 0; m < kPatchMacros; m++)
     {
@@ -852,51 +911,190 @@ void OpenPatch::valuesFromData(const PatchData& d, float* out) const
     }
 }
 
+// A macro the file does not carry (fewer than kPatchMacros in it) has no targets and is unipolar, for the import and for a bank row alike.
 void OpenPatch::importData(const PatchData& d)
 {
-    valuesFromData(d, values);
-    for (int m = 0; m < d.nMacros && m < kPatchMacros; m++)
+    uint8_t wasBipolar[kPatchMacros]; // of the live config: the macro positions (macroCC) belong to it
+    for (int m = 0; m < kPatchMacros; m++)
     {
+        wasBipolar[m] = cfg->macro[m].bipolar;
+    }
+    valuesFromData(d, values);
+    tail = PatchTail{};
+    {
+        // A file from a newer release of the engine: the values past this engine's table are kept for exportData, bounded
+        const int unknown = std::max(0, d.nParams - count);
+        const int keep = std::min({ unknown, kTailParams, kMaxParams - count });
+        for (int k = 0; k < keep; k++)
+        {
+            tail.values[k] = d.values[count + k];
+        }
+        tail.nValues = uint8_t(std::max(0, keep));
+        if (unknown > keep)
+        {
+            patchTailLog(unknown - keep, 0);
+        }
+    }
+    int targetsDropped = 0;
+    for (int m = 0; m < kPatchMacros; m++)
+    {
+        const bool inFile = m < d.nMacros;
         const PatchMacroData& src = d.macros[m];
         auto& dst = metadata.macros[m];
-        if (src.name[0])
+        if (inFile && src.name[0])
         {
             dst.displayName = src.name;
         }
-        else if (m < int(kUserMacroCount))
+        else if (inFile && m < int(kUserMacroCount))
         {
             dst.displayName = std::string("Macro ") + char('1' + m);
         }
-        if (dst.bipolar != src.bipolar)
-        {
-            macroCC[m] = src.bipolar ? 63 : 0;
-        }
-        dst.bipolar = src.bipolar;
+        dst.bipolar = inFile && src.bipolar;
         dst.modifiers.clear();
-        for (int t = 0; t < src.count; t++)
+        for (int t = 0; inFile && t < src.count; t++)
         {
             if (src.param[t] >= 0 && src.param[t] < count)
             {
                 dst.modifiers.push_back({ src.param[t], std::clamp(src.amount[t], -2.0f, 2.0f) });
             }
+            else if (src.param[t] >= count && src.param[t] < count + tail.nValues)
+            {
+                if (tail.nTargets < kTailTargets)
+                {
+                    tail.target[tail.nTargets++] = { src.param[t], uint8_t(m), uint8_t(t), src.amount[t] };
+                }
+                else
+                {
+                    targetsDropped++;
+                }
+            }
         }
+    }
+    if (targetsDropped)
+    {
+        patchTailLog(0, targetsDropped);
     }
     // Automation: range checks, then each destination is looked up in this engine's table (open_mod.h modResolve). A param found under
     // another index (a plugin update moved it) follows the param. The slot state of the instrument starts over (serial).
     for (int i = 0; i < kModSlots; i++)
     {
-        ModSlot m = d.mod[i];
-        modSanitize(m);
-        m.dest = modResolve(def, m);
-        if (m.dest >= 0 && m.kind == ModKind::kParam)
-        {
-            m.index = m.dest;
-        }
-        mod[i] = m;
+        mod[i] = resolveMod(d.mod[i]);
     }
-    modOn = modAnyOn(mod);
     modSer++;
+    macroScaleMode = d.macroMode == kMacroModeScale;
     extra = d.extra;
+    rebuildOwn();
+    for (int m = 0; m < kPatchMacros; m++)
+    {
+        if (wasBipolar[m] != own.macro[m].bipolar)
+        {
+            macroCC[m] = own.macro[m].bipolar ? 63 : 0; // a macro whose bipolar flag changed goes to its resting position
+        }
+    }
+    cfg = &own; // the live config may have been a Patch FX slot's: the file just imported is the open slot, the FX starts again from it
+    cfgSer++;
+    effSer++;
+}
+
+ModSlot OpenPatch::resolveMod(const ModSlot& in) const
+{
+    ModSlot m = in;
+    modSanitize(m);
+    m.dest = modResolve(def, m);
+    if (m.dest >= 0 && m.kind == ModKind::kParam)
+    {
+        m.index = m.dest;
+    }
+    return m;
+}
+
+// The config a file gives, as importData + rebuildOwn make it: same filters, same order, same limits.
+void OpenPatch::cfgFromData(const PatchData& d, SlotCfg& out) const
+{
+    std::memset(&out, 0, sizeof(out));
+    for (int m = 0; m < kPatchMacros && m < d.nMacros; m++)
+    {
+        const PatchMacroData& src = d.macros[m];
+        MacroRun& dst = out.macro[m];
+        dst.bipolar = src.bipolar ? 1 : 0;
+        for (int t = 0; t < src.count; t++)
+        {
+            if (src.param[t] >= 0 && src.param[t] < count && dst.count < kMacroTargets)
+            {
+                dst.param[dst.count] = int8_t(src.param[t]);
+                dst.amount[dst.count] = std::clamp(src.amount[t], -2.0f, 2.0f);
+                dst.count++;
+            }
+        }
+    }
+    for (int i = 0; i < kModSlots; i++)
+    {
+        const ModSlot c = resolveMod(d.mod[i]);
+        out.mod[i] = { c.type, c.kind, c.shape, c.speed, c.dest, c.amount, c.sustain, c.attack, c.decay, c.release };
+    }
+    out.modOn = modAnyOn(d.mod) ? 1 : 0;
+    out.macroScale = d.macroMode == kMacroModeScale ? 1 : 0;
+}
+
+void OpenPatch::setModSlot(int s, const ModSlot& v)
+{
+    patchBankBeforeEdit(this); // the caller holds the audio lock
+    mod[s] = v;
+    rebuildOwn();
+}
+
+// The macros (the targets that name a parameter of this engine, in order, as effective() walks them) and the slots of the patch in the form the
+// render path reads. The editor allows 5 targets per macro and a file 6 (kMacroTargets): the first kMacroTargets count.
+void OpenPatch::buildCfg(SlotCfg& out) const
+{
+    std::memset(&out, 0, sizeof(out));
+    for (int m = 0; m < kPatchMacros && m < int(metadata.macros.size()); m++)
+    {
+        const auto& src = metadata.macros[m];
+        MacroRun& dst = out.macro[m];
+        dst.bipolar = src.bipolar ? 1 : 0;
+        for (const auto& mod : src.modifiers)
+        {
+            if (mod.paramId.has_value() && *mod.paramId >= 0 && *mod.paramId < count && dst.count < kMacroTargets)
+            {
+                dst.param[dst.count] = int8_t(*mod.paramId);
+                dst.amount[dst.count] = mod.amount;
+                dst.count++;
+            }
+        }
+    }
+    for (int s = 0; s < kModSlots; s++)
+    {
+        const ModSlot& c = mod[s];
+        out.mod[s] = { c.type, c.kind, c.shape, c.speed, c.dest, c.amount, c.sustain, c.attack, c.decay, c.release };
+    }
+    out.modOn = modAnyOn(mod) ? 1 : 0;
+    out.macroScale = macroScaleMode ? 1 : 0;
+}
+
+void OpenPatch::rebuildOwn()
+{
+    buildCfg(own);
+    effSer++;
+}
+
+void OpenPatch::adoptCfg(const SlotCfg* next)
+{
+    const SlotCfg* prev = cfg;
+    if (prev == next)
+    {
+        return;
+    }
+    for (int m = 0; m < kPatchMacros; m++)
+    {
+        if (prev->macro[m].bipolar != next->macro[m].bipolar)
+        {
+            macroCC[m] = next->macro[m].bipolar ? 63 : 0;
+        }
+    }
+    cfg = next;
+    cfgSer++;
+    effSer++;
 }
 
 // ------------------------------------------------------------- automation (editor access)
@@ -1271,7 +1469,7 @@ std::unique_ptr<PatchStore> makePatchStore(const InstrumentTypeRegistry& registr
 }
 
 // ------------------------------------------------------------- patch slots and bank (Patch step FX)
-// Per part: the values (floats only, no macros) of every slot file of the part's engine. Built in the main thread, applied by
+// Per part: the values (floats) and the macros and automation (SlotCfg) of every slot file of the part's engine. Built in the main thread, applied by
 // a copy in the audio callback. The audio callback reads gLive (a plain pointer, one aligned word) and gBank, and the main
 // thread changes gBank only with the audio interrupt disabled.
 
@@ -1284,8 +1482,9 @@ struct PartBank
     uint16_t valid = 0;    // bit n: slot n has a file of this engine (kSlot... rows of vals)
     uint8_t cur = 0;       // the slot open in the editor: the live patch holds its values
     int8_t from = -1;      // cur has no file yet: it began as a copy of this slot (-1: it has a file)
-    bool applied = false;  // the FX replaced the live values, the edited ones wait in the last row of vals
+    bool applied = false;  // the FX replaced the live values and the live config, the edited values wait in the last row of vals
     float* vals = nullptr; // gBankVals[part]: (kPatchBankSlots + 1) * nParams, the slot rows then the shadow row
+    SlotCfg* cfgs = nullptr; // gBankCfg[part]: the macros and automation slots of every slot file (the open slot's own stay in the patch)
 };
 PartBank gBank[kPatchBankParts];
 OpenPatch* volatile gLive[kPatchBankParts];
@@ -1294,6 +1493,10 @@ bool gNamesUnreadable[kPatchBankParts]; // the names file of the part could not 
 // Patch FX did nothing without a word. Worst case, 16 slots plus the shadow row of the engine with the most parameters (kMaxParams):
 // 3 x 17 x 84 floats = 17,136 B. A part always uses the first (kPatchBankSlots + 1) * nParams floats of its block.
 OPEN_EXTERNAL_RAM float gBankVals[kPatchBankParts][size_t(kPatchBankSlots + 1) * size_t(kMaxParams)];
+// The macros and automation slots of every slot file of every part: 316 B a slot, 3 x 16 x 316 = 15,168 B. The Patch FX makes the live
+// patch read one of these rows (OpenPatch::adoptCfg, a pointer), so a patch change carries its macros and its automation with it.
+OPEN_EXTERNAL_RAM SlotCfg gBankCfg[kPatchBankParts][kPatchBankSlots];
+static_assert(std::is_trivially_default_constructible_v<SlotCfg>, "OPEN_EXTERNAL_RAM: no static constructor may touch the SDRAM");
 
 bool partOk(int part)
 {
@@ -1422,6 +1625,11 @@ void patchBankPreload(int part, Patch& patch, PatchStore& workspace)
     const int n = op.paramCount();
     OPEN_LOCK_AUDIO();
     gBank[part] = PartBank(); // retire the old bank: its rows are rewritten below and the audio callback must not read them meanwhile
+    op.useOwnCfg();           // (the live config may be one of its rows)
+    if (gLive[part] && gLive[part] != &op)
+    {
+        gLive[part]->useOwnCfg();
+    }
     OPEN_UNLOCK_AUDIO();
     PartBank nb;
     nb.typeId = op.typeId();
@@ -1429,6 +1637,7 @@ void patchBankPreload(int part, Patch& patch, PatchStore& workspace)
     if (def && n > 0 && n <= kMaxParams)
     {
         nb.vals = gBankVals[part];
+        nb.cfgs = gBankCfg[part];
     }
     if (nb.vals)
     {
@@ -1441,6 +1650,7 @@ void patchBankPreload(int part, Patch& patch, PatchStore& workspace)
             if (st.readPatchFile(def, nb.typeId, name, sc.buf(), sc.data()) == OpenPatchStore::FileRead::kOk)
             {
                 op.valuesFromData(sc.data(), nb.vals + size_t(i) * size_t(n));
+                op.cfgFromData(sc.data(), nb.cfgs[i]);
                 nb.valid |= uint16_t(1u << i);
             }
         }
@@ -1460,6 +1670,10 @@ void patchBankToSlotZero(int part)
     gBank[part].cur = 0;
     gBank[part].from = -1;
     gBank[part].applied = false; // the project's own values are loaded next, the shadow row is stale
+    if (gLive[part])
+    {
+        gLive[part]->useOwnCfg();
+    }
     OPEN_UNLOCK_AUDIO();
 }
 
@@ -1473,7 +1687,7 @@ namespace
 // Bank usable with the live patch of the part (same engine and size). Main thread or audio callback.
 inline bool bankMatches(const PartBank& b, const OpenPatch* p)
 {
-    return p && b.vals && b.typeId == p->typeId() && b.nParams == p->paramCount();
+    return p && b.vals && b.cfgs && b.typeId == p->typeId() && b.nParams == p->paramCount();
 }
 } // namespace
 
@@ -1482,9 +1696,13 @@ namespace
 // The FX replaced the live values of the part: the edited ones (the shadow row) go back. Audio interrupts disabled by the caller.
 void bankRestoreLocked(PartBank& b, OpenPatch* p)
 {
-    if (b.applied && bankMatches(b, p))
+    if (b.applied && p)
     {
-        p->setValuesRaw(b.vals + size_t(kPatchBankSlots) * size_t(b.nParams));
+        if (bankMatches(b, p))
+        {
+            p->setValuesRaw(b.vals + size_t(kPatchBankSlots) * size_t(b.nParams));
+        }
+        p->useOwnCfg(); // the open slot's macros and automation again
     }
     b.applied = false;
 }
@@ -1508,6 +1726,7 @@ void bankPublishLocked(PartBank& b, const OpenPatch& p, const PatchData& saved)
     if (bankMatches(b, &p))
     {
         p.valuesFromData(saved, b.vals + size_t(b.cur) * size_t(b.nParams));
+        p.cfgFromData(saved, b.cfgs[b.cur]);
         b.valid |= uint16_t(1u << b.cur);
         b.from = -1;
     }
@@ -1570,6 +1789,7 @@ void patchBankValuesReplaced(const OpenPatch& p)
     if (part >= 0)
     {
         gBank[part].applied = false;
+        gLive[part]->useOwnCfg();
     }
 }
 
@@ -1802,6 +2022,7 @@ bool patchBankApply(int part, int slot)
         if (b.applied)
         {
             p->setValuesRaw(shadow); // back to the edited values of the open slot
+            p->useOwnCfg();          // and its macros and automation
             b.applied = false;
         }
         return true;
@@ -1812,10 +2033,11 @@ bool patchBankApply(int part, int slot)
     }
     if (!b.applied)
     {
-        p->getValuesRaw(shadow); // keep the edited values of the open slot
+        p->getValuesRaw(shadow); // keep the edited values of the open slot (its macros and automation stay in the patch)
         b.applied = true;
     }
     p->setValuesRaw(b.vals + size_t(slot) * n);
+    p->adoptCfg(b.cfgs + slot); // the slot's macros and automation: a pointer, the instrument keeps or restarts its modulators (modSwitch)
     return true;
 }
 

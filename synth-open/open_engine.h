@@ -135,9 +135,11 @@ int engineUiForStored(int stored);   // -1: not in the list
 // definition, type kMissingTypeId, no parameters and no engine. A part on it stays silent and keeps its project values and patch
 // files untouched ("missing" state), the plugin on the card brings it back. Any number in the range, no list of known
 // engines (before: the 12 engines of 1.1.0 by name). nullptr for any other number (a Polyend
-// number 0 to 6 this build has not got: the part falls back to the defaults, as before).
-constexpr int kPlugStoredFirst = 7, kPlugStoredLast = 255;   // engines.json: the plugin engines' stored numbers (7 to 18 in 1.2.0)
-constexpr int kPlugPatchFirst = 0x80, kPlugPatchLast = 0x3FFF; // and their .patch engine ids (0x80 to 0x8A and 0xA2 in 1.2.0)
+// number 0 to 5 this build has not got: the part falls back to the defaults, as before). 6 is CHIP, the one Polyend engine that is a
+// plugin (chip.plg), so it is in the range and a part on CHIP without its plugin is Missing, not reset to the defaults.
+constexpr int kPlugStoredFirst = 6, kPlugStoredLast = 255;   // engines.json: the plugin engines' stored numbers (6 and 7 to 20 in 1.3.0)
+constexpr int kPlugPatchFirst = 0x80, kPlugPatchLast = 0x3FFF; // and their .patch engine ids (0x80 to 0xA2 in 1.2.0)
+constexpr int kPlugPatchChip = 8;                              // plus CHIP's, Polyend's InstrumentTypeId::kChiptuneSynth (typeForEngineId)
 constexpr int kMissingTypeId = 0x7F00;                         // the placeholder's type: no engine may use it (engineListAdd)
 const EngineDef* missingDef(int stored);
 int typeForStored(int stored);       // the list entry's or the placeholder's type, -1 when neither

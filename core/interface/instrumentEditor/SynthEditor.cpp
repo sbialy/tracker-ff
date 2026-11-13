@@ -17,6 +17,9 @@
 #include "elapsedMillis.h"
 #include "plug_host.h"
 #endif
+#ifdef FEATURE_SYNTH_OPEN
+#include "synth_order.h"
+#endif
 
 extern uint8_t externalRamScratchBuff[];
 static_assert(kMaxFilesListLength * (kMaxFileNameLen + 1) + kMaxFilesListLength * sizeof(char**) <=
@@ -54,19 +57,97 @@ static int synthModelListImage(int ui)
 #endif
 }
 
-#ifdef FEATURE_PLUG_HOST
-// The rows the picker can show around model ui (7 on screen, ui anywhere among them) get their card logo into RAM_G before the list is
-// drawn there: a card read only for an image that is not cached, never while the display list is built.
-static void synthModelLogos(int ui)
+// ---- Order and visibility of the list (synth-open/synth_order.h). The list on screen is a view of the engine list: the engines the
+// user did not hide, in the order of /Plugins/synth-order.txt, and the hidden ones the open project uses at the top. A project still stores
+// the stored number of an engine, so nothing here reaches a project or a patch file. Positions in this view are "pos", positions in the
+// engine list (Synth::synthTypeAt, storedToUi) are "ui".
+// SDRAM, all of it: the entries of the file (up to 512 lines), the view and the text of the file and of the rows of the edit mode.
+constexpr const char* kSynthOrderPath = "/Plugins/synth-order.txt";
+constexpr int kSynthOrderTextMax = 16384;
+__NOINIT(EXTERNAL_RAM) static synthorder::List synthOrder;
+__NOINIT(EXTERNAL_RAM) static int16_t synthOrderUi[synthorder::kMaxEntries]; // engine of every entry, -1: not on the card now
+__NOINIT(EXTERNAL_RAM) static synthorder::View synthView;
+__NOINIT(EXTERNAL_RAM) static const char* synthEngineNames[kSynthModelsMax];
+__NOINIT(EXTERNAL_RAM) static bool synthEngineUsed[kSynthModelsMax];
+__NOINIT(EXTERNAL_RAM) static char synthOrderText[kSynthOrderTextMax];
+__NOINIT(EXTERNAL_RAM) static char synthRowText[kSynthModelsMax][12];
+static bool synthListEdit; // the edit mode of the list (Shift + F1 on the Model column): the whole list, hidden marked, nothing is picked
+
+// Reads the order file (an absent or unreadable one is the default order) and gives every engine of the synth an entry
+static void synthOrderLoad()
 {
+    const int n = std::min(Synth::synthTypeCount(), kSynthModelsMax);
+    for (int i = 0; i < n; i++)
+    {
+        synthEngineNames[i] = polysynth::open::engineAt(i).def->name;
+    }
+    int len = -1;
+#ifdef FEATURE_PLUG_HOST
+    len = plug::readText(kSynthOrderPath, synthOrderText, kSynthOrderTextMax);
+#endif
+    synthorder::parse(synthOrder, synthOrderText, len);
+    synthorder::reconcile(synthOrder, synthEngineNames, n, synthOrderUi);
+}
+
+// The view from the order, the edit flag and the engines the parts of the open project use
+static void synthViewBuild()
+{
+    const int n = std::min(Synth::synthTypeCount(), kSynthModelsMax);
+    memset(synthEngineUsed, 0, sizeof(synthEngineUsed));
+    for (int p = 0; p < kSynthInstrumentsCount; p++)
+    {
+        const int ui = Synth::storedToUi(mtProject.values.synthPart[p].synthType);
+        if (ui >= 0 && ui < kSynthModelsMax)
+        {
+            synthEngineUsed[ui] = true;
+        }
+    }
+    synthorder::buildView(synthOrder, synthOrderUi, n, synthEngineUsed, synthListEdit, synthView);
+}
+
+static void synthViewEnsure()
+{
+    if (synthView.n == 0)
+    {
+        synthOrderLoad();
+        synthViewBuild();
+    }
+}
+
+// Position in the view of an engine of the synth's list. An engine that is not shown is the first row
+static int synthViewPosOf(int ui)
+{
+    synthViewEnsure();
+    return std::max(synthorder::viewPos(synthView, ui), 0);
+}
+
+// The row of the engine a part plays, -1 for a part whose engine is not installed (Missing): it has no row, the list highlights none
+static int synthPartPos(int part)
+{
+    const int ui = Synth::storedToUi(mtProject.values.synthPart[part].synthType);
+    return ui < 0 ? -1 : synthViewPosOf(ui);
+}
+
+#ifdef FEATURE_PLUG_HOST
+// The rows the picker can show around position pos (7 on screen, pos anywhere among them) get their card logo into RAM_G before the list
+// is drawn there: a card read only for an image that is not cached, never while the display list is built. The edit mode shows names.
+static void synthModelLogos(int pos)
+{
+    if (synthListEdit)
+    {
+        return;
+    }
+    pos = std::max(pos, 0); // -1: the list of a Missing part starts at the top
     constexpr int kAround = 7;
     const polysynth::open::EngineDef* defs[2 * kAround + 1];
-    const int n = Synth::synthTypeCount();
+    const int n = synthView.n;
     int m = 0;
     for (int d = 0; d <= kAround; d++)
     {   // nearest first
-        if (ui + d < n && polysynth::open::engineAt(ui + d).builtin < 0) defs[m++] = polysynth::open::engineAt(ui + d).def;
-        if (d && ui - d >= 0 && polysynth::open::engineAt(ui - d).builtin < 0) defs[m++] = polysynth::open::engineAt(ui - d).def;
+        if (pos + d < n && polysynth::open::engineAt(synthView.ui[pos + d]).builtin < 0)
+            defs[m++] = polysynth::open::engineAt(synthView.ui[pos + d]).def;
+        if (d && pos - d >= 0 && polysynth::open::engineAt(synthView.ui[pos - d]).builtin < 0)
+            defs[m++] = polysynth::open::engineAt(synthView.ui[pos - d]).def;
     }
     plug::synthLogoPrefetch(defs, m);
 }
@@ -74,13 +155,28 @@ static void synthModelLogos(int ui)
 static void synthModelLogos(int) {}
 #endif
 
+// The rows of the list control: the logo or the name of every engine of the view. The edit mode shows names only, a hidden engine with
+// the "-" it has in the order file
 static int fillSynthModelList()
 {
-    const int n = std::min(Synth::synthTypeCount(), kSynthModelsMax);
-    for (int i = 0; i < n; i++)
+    synthViewEnsure();
+    const int n = synthView.n;
+    for (int p = 0; p < n; p++)
     {
-        synthModelListImages[i] = synthModelListImage(i);
-        synthModelListNames[i] = const_cast<char*>(polysynth::open::engineAt(i).def->name);
+        const int ui = synthView.ui[p];
+        if (synthListEdit)
+        {
+            // the list centres the text in a clip of synthorder::kRowPx: the name gives way, the "-" stays visible
+            synthorder::fitRow(synthRowText[p], sizeof(synthRowText[p]), polysynth::open::engineAt(ui).def->name,
+                               synthOrder.e[synthView.entry[p]].hidden, [](char c) { return int(fonts[0].data[uint8_t(c)]); });
+            synthModelListImages[p] = -1;
+            synthModelListNames[p] = synthRowText[p];
+        }
+        else
+        {
+            synthModelListImages[p] = synthModelListImage(ui);
+            synthModelListNames[p] = const_cast<char*>(polysynth::open::engineAt(ui).def->name);
+        }
     }
     return n;
 }
@@ -146,6 +242,140 @@ static void functSynthPads(uint8_t pad, uint8_t state, int16_t velo);
 static void functSynthLeft();
 static void functSynthRight();
 static void functSynthShift(uint8_t state);
+static void functSynthInsert();
+
+#ifdef FEATURE_SYNTH_OPEN
+// ---- Edit mode of the Model list (Shift + F1 on the Model column, again Shift + F1, F1, Left, Right or any other button to leave).
+// The list shows every engine in the order of the file, as names, a hidden one with a "-" (the mark it has in the file). Nothing is
+// picked: Up / Down and the encoder move the cursor, Shift + Up / Down move the engine under it in the order, Delete hides it, Insert
+// shows it. Every change is written to /Plugins/synth-order.txt at once.
+static int synthListCursor; // row of the cursor in the edit mode
+static void synthModelPendClear(); // below
+
+// The control shows the rows of the view again with pos as the selected one
+static void synthListReload(int pos)
+{
+    IE->modelListData.length = fillSynthModelList();
+    IE->modelListData.linesCount = std::min<uint16_t>(IE->modelListData.length, 7);
+    IE->modelListData.rowHeight = 50;
+    IE->modelListData.params = synthModelListNames;
+    IE->modelListData.imageIds = synthModelListImages;
+    IE->modelListData.scrollText = true;
+    IE->modelListData.start = pos;
+    synthModelLogos(pos);
+    display.setControlData(IE->modelListControl, &IE->modelListData);
+    display.setControlValue(IE->modelListControl, pos);
+    display.refreshControl(IE->modelListControl);
+}
+
+static void synthListLabel(const char* text)
+{
+    display.setControlText(IE->label[0], text);
+    display.refreshControl(IE->label[0]);
+}
+
+// The order goes to the card. False: it is not there (no /Plugins folder, a card error), the change stays until the screen is shown again
+static bool synthOrderSave()
+{
+#ifdef FEATURE_PLUG_HOST
+    const int n = synthorder::format(synthOrder, synthOrderText, kSynthOrderTextMax);
+    if (plug::writeText(kSynthOrderPath, synthOrderText, n))
+    {
+        return true;
+    }
+#endif
+    mtPopups.show(0, "Order not saved");
+    return false;
+}
+
+static void synthListEditBegin()
+{
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    synthListEdit = true;
+    synthModelPendClear(); // an engine the list was resting on is not picked any more
+    synthViewBuild();
+    synthListCursor = synthPartPos(part);
+    IE->selectedPlace[mtInstEditModeSynth] = 0;
+    IE->activateLabelsBorder();
+    synthListLabel("Edit list");
+    synthListReload(synthListCursor);
+    mtPopups.show(0, "Del hide, Ins show", "Shift+Up/Dn move");
+}
+
+static void synthListEditEnd()
+{
+    if (!synthListEdit)
+    {
+        return;
+    }
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    synthListEdit = false;
+    synthViewBuild();
+    synthListLabel("Model");
+    synthListReload(synthPartPos(part));
+}
+
+// Up (-1) and Down (+1) in the edit mode, true when the key was taken. Shift moves the engine, else the cursor goes round the ends
+static bool synthListEditArrow(int dir)
+{
+    if (!synthListEdit)
+    {
+        return false;
+    }
+    if (IE->buttons->isButtonPressed(interfaceButtonShift))
+    {
+        if (synthListCursor < 0)
+        {
+            return true; // a Missing part: no row under the cursor yet, there is nothing to move
+        }
+        if (synthorder::moveEntry(synthOrder, synthOrderUi, synthView.entry[synthListCursor], dir))
+        {
+            synthListCursor += dir; // the view holds the engines that are there in the order of the file: one place
+            synthViewBuild();
+            synthOrderSave();
+        }
+    }
+    else
+    {
+        synthListCursor = synthorder::step(synthListCursor, dir, synthView.n, true);
+    }
+    synthListReload(synthListCursor);
+    return true;
+}
+
+static bool synthListEditEncoder(int16_t value)
+{
+    if (!synthListEdit)
+    {
+        return false;
+    }
+    synthListCursor = synthorder::step(synthListCursor, interfaceGlobals.invertValForList ? -value : value, synthView.n, false);
+    synthListReload(synthListCursor);
+    return true;
+}
+
+// Delete (hide) and Insert (show) in the edit mode, true when the key was taken
+static bool synthListEditHide(bool hide)
+{
+    if (!synthListEdit)
+    {
+        return false;
+    }
+    if (synthListCursor < 0)
+    {
+        return true; // a Missing part: no row under the cursor until an arrow key or the encoder puts it on one, so Delete hides nothing
+    }
+    bool& h = synthOrder.e[synthView.entry[synthListCursor]].hidden;
+    if (h != hide)
+    {
+        h = hide;
+        synthViewBuild();
+        synthOrderSave();
+        synthListReload(synthListCursor);
+    }
+    return true;
+}
+#endif
 
 void cInstrumentEditor::exitSynthEditor()
 {
@@ -195,7 +425,7 @@ void cInstrumentEditor::setSynthParamsScreenFunct()
     ip->setButtonObj(interfaceButtonDelete, buttonPress, functSynthDelete);
     ip->setButtonObj(interfaceButtonMiniMiddle, functSynthMiniMiddle);
     ip->setPadsGlobal(functSynthPads);
-    ip->clearButton(interfaceButtonInsert);
+    ip->setButtonObj(interfaceButtonInsert, buttonPress, functSynthInsert);
 }
 
 void cInstrumentEditor::changeSynthParamValue(int value, ValueChangeSource source)
@@ -204,7 +434,19 @@ void cInstrumentEditor::changeSynthParamValue(int value, ValueChangeSource sourc
 
     switch (selectedPlace[mtInstEditModeSynth])
     {
-        case 0: changeSynthModel(invert ? -value : value); break;
+        case 0:
+        {
+#ifdef FEATURE_SYNTH_OPEN
+            // the arrow keys go round the ends of the list (up on the first engine is the last), the encoder stops there
+            const bool roll = rollListOver;
+            rollListOver = roll || source == kArrowButton;
+            changeSynthModel(invert ? -value : value);
+            rollListOver = roll;
+#else
+            changeSynthModel(invert ? -value : value);
+#endif
+            break;
+        }
         case 1: changeSynthPolyphony(value); break;
         case 2: changeSynthGain(value); break;
         case 3: changeSynthPanning(value); break;
@@ -259,21 +501,53 @@ void cInstrumentEditor::playSynthNoteByPad(uint8_t pad, uint8_t state, uint8_t c
 
 static void functSynthEncoder(int16_t value)
 {
+#ifdef FEATURE_SYNTH_OPEN
+    if (synthListEditEncoder(value))
+    {
+        return;
+    }
+#endif
     IE->changeSynthParamValue(value, IE->kEncoder);
 }
 
 static void functSynthUp()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    if (synthListEditArrow(-1))
+    {
+        return;
+    }
+#endif
     IE->changeSynthParamValue(1);
 }
 
 static void functSynthDown()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    if (synthListEditArrow(1))
+    {
+        return;
+    }
+#endif
     IE->changeSynthParamValue(-1);
+}
+
+// Insert has no use on the Synth screen but in the edit mode of the Model list (shows the engine)
+static void functSynthInsert()
+{
+#ifdef FEATURE_SYNTH_OPEN
+    synthListEditHide(false);
+#endif
 }
 
 static void functSynthDelete()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    if (synthListEditHide(true))
+    {
+        return;
+    }
+#endif
     switch (IE->selectedPlace[mtInstEditModeSynth])
     {
         // case 0: IE->setDefaultSynthModel(); break;
@@ -288,6 +562,9 @@ static void functSynthDelete()
 
 static void functSynthLeft()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    synthListEditEnd();
+#endif
     if (IE->selectedPlace[mtInstEditModeSynth] > 0)
     {
         IE->selectedPlace[mtInstEditModeSynth]--;
@@ -298,6 +575,9 @@ static void functSynthLeft()
 
 static void functSynthRight()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    synthListEditEnd();
+#endif
     if (IE->selectedPlace[mtInstEditModeSynth] < IE->frameData.placesCount - 1)
     {
         IE->selectedPlace[mtInstEditModeSynth]++;
@@ -331,6 +611,22 @@ static void functSynthActionButtons(uint8_t button)
         return;
     }
 
+#ifdef FEATURE_SYNTH_OPEN
+    if (button == 0 && !synthListEdit && IE->buttons->isButtonPressed(interfaceButtonShift))
+    {
+        synthListEditBegin(); // Shift + F1
+        return;
+    }
+    if (synthListEdit)
+    {
+        synthListEditEnd(); // F1 again, or another column
+        if (button == 0)
+        {
+            return;
+        }
+    }
+#endif
+
     if (button == 0 && IE->selectedPlace[IE->mode] == 0)
     {
         IE->rollListOver = true;
@@ -346,6 +642,7 @@ static void functSynthActionButtons(uint8_t button)
 static void functSynthLoad()
 {
 #ifdef FEATURE_SYNTH_OPEN
+    synthListEditEnd();
     if (synthPartMissing(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX))
     {
         return;
@@ -499,6 +796,7 @@ static void functSynthLoadMiniMiddle(uint8_t state)
 static void functSynthEditPatch()
 {
 #ifdef FEATURE_SYNTH_OPEN
+    synthListEditEnd();
     if (synthPartMissing(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX))
     {
         return;
@@ -519,16 +817,25 @@ static void functSynthEditPatch()
 // installed and picked once the list rests there for kModelRestMs (synthModelTick), so scrolling past engines writes no flash.
 namespace
 {
-constexpr uint32_t kModelRestMs = 500;
+// One second, not half: every install erases and programs 3 or more 4 KB FlexNVM sectors (rated 10,000 cycles) and can glitch
+// the audio, so a longer rest means fewer installs while scrolling, less flash wear and fewer install glitches.
+// Only this Model-list pick uses it, a project load still installs at once.
+constexpr uint32_t kModelRestMs = 1000;
 struct PendingModel
 {
     int part = -1;
     int ui = -1;
 };
 PendingModel s_pendModel;
-bool s_applyModel; // synthModelTick applies the pending one: no new wait
+bool s_applyModel;     // synthModelTick applies the pending one: no new wait
+bool s_initMsgUp;      // initCurrentPatch raised its message and nothing took it down since
 elapsedMillis s_pendTimer;
 } // namespace
+
+static void synthModelPendClear()
+{
+    s_pendModel = {};
+}
 
 // Main loop (Tracker.cpp, after plug::tick)
 void synthModelTick()
@@ -544,11 +851,13 @@ void synthModelTick()
     {
         return; // the screen or the part changed while the list moved: nothing is picked
     }
-    const int cur = std::max(Synth::storedToUi(mtProject.values.synthPart[part].synthType), 0);
+    const int cur = synthPartPos(part);
     s_applyModel = true;
-    IE->changeSynthModel(int16_t(p.ui - cur));
+    IE->changeSynthModel(int16_t(synthViewPosOf(p.ui) - cur)); // steps are rows of the list
     s_applyModel = false;
 }
+#elif defined(FEATURE_SYNTH_OPEN)
+static void synthModelPendClear() {}
 #endif
 
 void cInstrumentEditor::changeSynthModel(int16_t value)
@@ -557,20 +866,36 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     assert(syntPartIdx >= 0 && syntPartIdx < kSynthInstrumentsCount);
 
 #ifdef FEATURE_SYNTH_OPEN
-    int modelMaxValue = Synth::synthTypeCount() - 1;
+    // A part whose engine is not installed (Missing) keeps it: a change of the Model list (encoder, arrows, F1) is refused with the popup
+    // the patch browser and the patch editor show. Nothing moves, nothing is picked, so the project and the patch files stay as they are
+    // until the plugin is back (or the project is replaced). The list stands on no row and the edit mode of the list is not a change.
+    if (synthPartMissing(syntPartIdx))
+    {
+        return;
+    }
+    synthViewEnsure();
+    const int modelMaxValue = synthView.n - 1; // the rows of the list, not every engine: some may be hidden
 #else
     int modelMaxValue = (Synth::kSynthTypes.size() - 1);
 #endif
 
     // The project stores the engine's canonical number, the list on screen is the engines of this build
     int32_t previousSynthType = mtProject.values.synthPart[syntPartIdx].synthType;
+#ifdef FEATURE_SYNTH_OPEN
+    const int currentUi = Synth::storedToUi(previousSynthType);
+    const int currentPos = synthViewPosOf(currentUi);
 #ifdef FEATURE_PLUG_HOST
-    const int currentUi = std::max(Synth::storedToUi(previousSynthType), 0);
     // while the list waits on an engine that is not installed, the next step goes on from there
-    const int previousUi = !s_applyModel && s_pendModel.part == syntPartIdx && s_pendModel.ui >= 0 ? s_pendModel.ui : currentUi;
+    const int previousPos =
+      !s_applyModel && s_pendModel.part == syntPartIdx && s_pendModel.ui >= 0 ? synthViewPosOf(s_pendModel.ui) : currentPos;
+#else
+    const int previousPos = currentPos;
+#endif
+    // IE->rollListOver: the arrow keys and the top button of the column go round the ends of the list (the encoder stops there)
+    const int newPos = synthorder::step(previousPos, value, modelMaxValue + 1, IE->rollListOver);
+    const int newUi = synthView.ui[newPos];
 #else
     const int previousUi = std::max(Synth::storedToUi(previousSynthType), 0);
-#endif
     int newUi;
 
     if (IE->rollListOver && previousUi + value > modelMaxValue)
@@ -581,26 +906,29 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     {
         newUi = clamp<int>(previousUi + value, 0, modelMaxValue);
     }
+#endif
 #ifdef FEATURE_PLUG_HOST
+    if (!s_applyModel)
     {
-        const int t = static_cast<int>(Synth::synthTypeAt(newUi));
-        if (!s_applyModel && newUi != currentUi && plug::synthIsPlugin(t) && !plug::synthLoaded(t))
-        {   // not installed: the list shows it, synthModelTick installs and picks it when the list rests
+        if (newUi != currentUi)
+        {   // Every step of the list, onto any engine (built in, attached or not installed): the list shows it, synthModelTick picks it
+            // when the list has rested for kModelRestMs after the last step. The one place that restarts the rest, whatever the input
+            // (arrows, their key repeat, the encoder, F1): scrolling past engines loads none of them.
             s_pendModel = { syntPartIdx, newUi };
-            s_pendTimer = 0;
-            synthModelLogos(newUi);
-            display.setControlValue(modelListControl, newUi);
+            if (s_initMsgUp)
+            {   // "Init patch loaded" of the engine change before this step is still up (2 s): it is not the message of the pick that
+                // follows the rest, so it goes now. The new one comes with the pick, and a skip with short rests shows none.
+                s_initMsgUp = false;
+                mtPopups.hide();
+            }
+            synthModelLogos(newPos); // card reads for the logos around the row: part of the step, the rest starts after them
+            display.setControlValue(modelListControl, newPos);
             display.refreshControl(modelListControl);
+            s_pendTimer = 0;
             return;
         }
-        if (!s_applyModel)
-        {
-            s_pendModel = {}; // back on the current one, or on an engine that is there: no wait
-            if (newUi == currentUi)
-            {
-                showSynthModel(syntPartIdx);
-            }
-        }
+        s_pendModel = {}; // back on the current one: no wait
+        showSynthModel(syntPartIdx);
     }
 #endif
     mtProject.values.synthPart[syntPartIdx].synthType = Synth::uiToStored(newUi);
@@ -1051,6 +1379,9 @@ void cInstrumentEditor::initCurrentPatch(bool backupRestored)
     newFileManager.setProjectStructChanged();
 
     mtPopups.show(0, backupRestored ? "Previous patch restored" : "Init patch loaded");
+#ifdef FEATURE_PLUG_HOST
+    s_initMsgUp = true;
+#endif
 
     IE->showSynthPatchName(syntPartIdx);
 }
@@ -1121,14 +1452,19 @@ void cInstrumentEditor::showSynthParamsScreen()
     display.setControlPosition(noteLabel, 625, 45);
     display.setControlSize(noteLabel, 170, 30);
 
-    modelListData.start = std::max(Synth::storedToUi(mtProject.values.synthPart[syntPartIdx].synthType), 0);
 #ifdef FEATURE_SYNTH_OPEN
+    // the order file is read again every time the screen comes up (a card edit takes effect here), the edit mode never survives it
+    synthListEdit = false;
+    synthOrderLoad();
+    synthViewBuild();
+    modelListData.start = synthPartPos(syntPartIdx);
     synthModelLogos(modelListData.start);
     modelListData.length = fillSynthModelList();
     modelListData.linesCount = std::min<uint16_t>(modelListData.length, 7);
     modelListData.rowHeight = 50;
     modelListData.params = synthModelListNames;
 #else
+    modelListData.start = std::max(Synth::storedToUi(mtProject.values.synthPart[syntPartIdx].synthType), 0);
     modelListData.length = Synth::kSynthTypes.size();
     modelListData.linesCount = std::min<uint16_t>(Synth::kSynthTypes.size(), 7);
     modelListData.rowHeight = 50;
@@ -1219,11 +1555,14 @@ void cInstrumentEditor::showSynthParamsScreen()
 void cInstrumentEditor::showSynthModel(uint8_t synthPart)
 {
 #ifdef FEATURE_SYNTH_OPEN
-    synthModelLogos(std::max(Synth::storedToUi(mtProject.values.synthPart[synthPart].synthType), 0));
-#endif
+    const int pos = synthPartPos(synthPart); // a row of the list, not an index of the engine list
+    synthModelLogos(pos);
+    display.setControlValue(modelListControl, pos);
+#else
     display.setControlValue(
       modelListControl,
       std::max(Synth::storedToUi(mtProject.values.synthPart[synthPart].synthType), 0));
+#endif
     display.refreshControl(modelListControl);
     titleBar->showCurrentInstrumentOnRightLabel();
 }

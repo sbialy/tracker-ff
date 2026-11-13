@@ -22,6 +22,7 @@
 #include "plug_bank.h"
 #include "plug_logo.h"
 #include "plug_work.h"
+#include "plug/plug_chord.h"
 
 #include "DisplayDriver.h"
 #include "Platform.h"
@@ -66,11 +67,13 @@ constexpr const char* kStatusPath = "/Plugins/synth.txt";
 // "<stored> <name>" of every plugin engine this firmware has listed on this card: a project whose engine's plugin is gone later
 // shows "Missing: <name>" (open::missingName), not only the number. Written at boot when a new engine shows up.
 constexpr const char* kNamesPath = "/Plugins/names.txt";
-// rw + bss of the installed engines. JU6 1,648 B (its chorus lines), the other 11 112 to 160 B each: all 12 together 2,976 B, so
-// every engine of the library keeps its own rw range and the pool never decides what is evicted (only the flash does). The worst
-// 3 at once need 1,928 B (JU6, T-Type and one of 120 B) and the 3 plus the one being picked 2,048 B: a 2,048 B pool would save
-// 1,024 B but then hold JU6 plus three others only, and picking a 5th engine would rewrite the flash (plug_bank_test prints both).
-constexpr uint32_t kPoolBytes = 3072;
+// rw + bss of the installed engines. CHIP 4,200 B (its 12 voice objects, 276 B each, in the bss: they are hot state, SDRAM would cost
+// 20 to 30 cycles per access), JU6 1,648 B (its chorus lines), the other 11 112 to 168 B each: all 13 together 7,176 B
+// in all, so every engine of the library keeps its own rw range and the pool never decides what is evicted (only the flash does). It was
+// 3,072 B while CHIP was built in (the 12 shipped plugins needed 2,976 B). The worst 3 at once need 6,016 B (CHIP, JU6 and one of 168 B) and
+// the 3 plus the one being picked 6,184 B, so a pool of 6,656 B would still do but then hold CHIP, JU6 and a few others only, and
+// picking a 5th engine could rewrite the flash (plug_bank_test prints both). 7,680 B costs 4,608 B of SRAM heap over 3,072 B.
+constexpr uint32_t kPoolBytes = 7680;
 constexpr uint32_t kStageBytes = 32768;  // one engine's image + bss while it is rebased for the flash
 
 __attribute__((aligned(8))) uint8_t s_pool[kPoolBytes];
@@ -93,6 +96,7 @@ __NOINIT(EXTERNAL_RAM) ScanStats s_sscan;
 FileSystem* s_sfs;
 int s_sn;            // library entries (the scan of /Plugins/Synth)
 bool s_safe;         // the crash marker was there at boot: no engine is attached this session
+bool s_legacyOn;     // /Plugins/nvm-legacy was there at boot
 bool s_uiUp;
 DisplayDriver* s_dd;  // the FT812 (synthLogos), the logo cache writes RAM_G through it
 LogoCache s_logo;     // the RAM_G logo slots (plug_logo.h)
@@ -105,6 +109,9 @@ static_assert(kLibMax >= polysynth::open::kPlugStoredLast - polysynth::open::kPl
 static_assert(kPlugLogoFirst <= 255, "the editor logo id fits the label's uint8_t bitmapIndex");
 int s_editorK = -1;
 extern "C" volatile uint32_t systick_millis_count;
+extern "C" volatile uint32_t ff_audio_late;      // output_i2s.cpp: audio blocks held off or written too late
+extern "C" volatile uint32_t ff_audio_gap_max;   // the longest gap between two audio blocks (DWT)
+constexpr const char* kLegacyPath = "/Plugins/nvm-legacy";   // A/B tests: flash commands the 1.2.0 way (plug_nvm.cpp)
 
 // The ISynthEngine of a library engine: every call goes to its PLUG_EXT_SYNTH function (audio context, as built in). x is null
 // while the engine is not attached: the calls do nothing (render ends the voice), nothing runs from the flash.
@@ -167,6 +174,8 @@ struct Lib
     int8_t err;         // 0, else the last attach (1..8) or install (10 + BankErr) error, 9 no numbers, 11.. see synth.txt
     bool attached;
     LogoState logo;     // what the card holds for its logo (probed on the first load)
+    int8_t chord, mode; // PLUG_EXT_CHORD of the attached engine: its Chord and Chord Mode parameters, -1 none (placeholder clears them)
+    int8_t strum;       // its Strum parameter (the tail field), -1 none
     uint32_t used;      // last use (s_tick)
 };
 // The tables of the library entries are in the SDRAM (260 B per entry with s_sidx and s_bwant), so the internal RAM does not
@@ -193,6 +202,7 @@ struct Install
     char file[kBankFileLen];
     int err, evicted, commands, erases;
     uint32_t ms, cmdMs;
+    uint32_t late, gapUs, maskUs, leadOk, leadShort, noAudio, leadMin, waitUs;   // install-crackle: what the audio saw during the install
 };
 Install s_log[8];
 int s_logN;
@@ -294,7 +304,8 @@ bool checkSynth(const plug_ext_synth* x, uintptr_t t, uint32_t tn, uintptr_t rw,
         if (p.fmt == PLUG_FMT_ENUM)
         {
             const uint32_t ne = uint32_t(p.max) + 1u;
-            if (p.min != 0.0f || p.max > 64.0f || !in(p.enum_names, t, tn) || !in(p.enum_names + ne - 1, t, tn)) return false;
+            // ABI 1.2: up to 128 names (the Chord parameter of a paraphonic engine has 68), ABI 1.1 hosts took 65
+            if (p.min != 0.0f || p.max > 127.0f || !in(p.enum_names, t, tn) || !in(p.enum_names + ne - 1, t, tn)) return false;
             for (uint32_t k = 0; k < ne; k++)
                 if (!in(p.enum_names[k], t, tn)) return false;
         }
@@ -319,9 +330,36 @@ bool checkSynth(const plug_ext_synth* x, uintptr_t t, uint32_t tn, uintptr_t rw,
 }
 
 
+// PLUG_EXT_CHORD (ABI 1.2): the answer of an engine that checkSynth passed. Inside its text or rw, both indices in range and
+// different, the Chord parameter an enum or an integer of exactly PLUG_CHORD_COUNT values, Chord Mode an enum or integer from 0 with
+// at least Poly and Para. Anything else and the engine plays every chord the stock way (one note-on per chord note).
+bool checkChord(const plug_ext_chord* c, const plug_ext_synth* x, uintptr_t t, uint32_t tn, uintptr_t rw, uint32_t rwn)
+{
+    // the strum tail is optional: an ABI 1.2 engine built before it answers 12 B
+    if (!c || !(in(c, t, tn) || in(c, rw, rwn)) || c->struct_size < offsetof(plug_ext_chord, strum_param)) return false;
+    const uint32_t np = x->param_count;
+    if (c->param_index >= np || c->mode_param >= np || c->param_index == c->mode_param) return false;
+    const plug_synth_param& ch = x->params[c->param_index];
+    const plug_synth_param& md = x->params[c->mode_param];
+    const bool chOk = (ch.fmt == PLUG_FMT_ENUM || ch.fmt == PLUG_FMT_INT) && ch.min == 0.0f && ch.max == float(PLUG_CHORD_COUNT - 1);
+    const bool mdOk = (md.fmt == PLUG_FMT_ENUM || md.fmt == PLUG_FMT_INT || md.fmt == PLUG_FMT_ON_OFF) && md.min == 0.0f && md.max >= 1.0f;
+    return chOk && mdOk;
+}
+
+// The Strum tail of an answer checkChord passed: an integer parameter from -63 to 63, else none (the chords sound unstrummed)
+int8_t chordStrum(const plug_ext_chord* c, const plug_ext_synth* x)
+{
+    if (c->struct_size < sizeof(plug_ext_chord) || c->strum_param >= x->param_count || c->strum_param == c->param_index ||
+        c->strum_param == c->mode_param)
+        return -1;
+    const plug_synth_param& st = x->params[c->strum_param];
+    return st.fmt == PLUG_FMT_INT && st.min == -63.0f && st.max == 63.0f ? int8_t(c->strum_param) : int8_t(-1);
+}
+
 // The definition of an engine that is not attached: its name and type only, as the shim's missing placeholder
 void placeholder(int k)
 {
+    s_lib[k].chord = s_lib[k].mode = s_lib[k].strum = -1;
     EngineDef& d = def(k);
     d.params = nullptr;
     d.paramCount = 0;
@@ -358,6 +396,11 @@ int start(int k, const plug_ext_synth** out)
     const plug_ext_synth* x =
       fn(reinterpret_cast<const void*>(d->query), t, e.text, true) ? static_cast<const plug_ext_synth*>(d->query(PLUG_EXT_SYNTH)) : nullptr;
     if (!checkSynth(x, t, e.text, e.rwRun, e.rwLen)) return 4;
+    const plug_ext_chord* c = static_cast<const plug_ext_chord*>(d->query(PLUG_EXT_CHORD));   // an ABI 1.1 engine answers NULL
+    const bool chordOk = checkChord(c, x, t, e.text, e.rwRun, e.rwLen);
+    s_lib[k].chord = chordOk ? int8_t(c->param_index) : int8_t(-1);
+    s_lib[k].mode = chordOk ? int8_t(c->mode_param) : int8_t(-1);
+    s_lib[k].strum = chordOk ? chordStrum(c, x) : int8_t(-1);
     const IndexEntry& ix = s_sidx[k];
     if (x->stored != ix.synthStored || x->patch_engine != ix.synthPatch || x->type_id != ix.synthType ||
         strncmp(x->name, s_lib[k].name, sizeof(s_lib[k].name)) != 0)
@@ -575,8 +618,13 @@ void status()
     for (int i = 0; i < s_logN && i < 8 && len < cap; i++)
     {
         const Install& x = s_log[(s_logN - 1 - i) % 8];
-        len += snprintf(t + len, size_t(cap - len), "install %s err %d ms %lu (in flash commands %lu) commands %d erases %d evicted %d\r\n",
-                        x.file, x.err, (unsigned long)x.ms, (unsigned long)x.cmdMs, x.commands, x.erases, x.evicted);
+        len += snprintf(t + len, size_t(cap - len),
+                        "install %s err %d ms %lu (in flash commands %lu) commands %d erases %d evicted %d"
+                        " audio late %lu gap max %lu us masked max %lu us erase lead ok %lu short %lu no audio %lu min %lu wait max %lu us%s\r\n",
+                        x.file, x.err, (unsigned long)x.ms, (unsigned long)x.cmdMs, x.commands, x.erases, x.evicted,
+                        (unsigned long)x.late, (unsigned long)x.gapUs, (unsigned long)x.maskUs, (unsigned long)x.leadOk,
+                        (unsigned long)x.leadShort, (unsigned long)x.noAudio, (unsigned long)x.leadMin, (unsigned long)x.waitUs,
+                        s_legacyOn ? " legacy" : "");
     }
     static const char* const kSrc[3] = {"text", "sidecar", "trailer"};
     for (int k = 0; k < s_sn && s_uiUp && len < cap; k++)
@@ -629,6 +677,9 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
         SdIo io;
         const uint32_t ms0 = systick_millis_count;
         const uint64_t cy0 = nvmCommandCycles();
+        nvmStatsReset();
+        const uint32_t late0 = ff_audio_late;
+        ff_audio_gap_max = 0;
         const BankInstallStatus st = bankInstall(f, io, w, rank, onEvict, uintptr_t(s_pool), kPoolBytes, s_bank, s_sec, s_itext,
                                                  int(sizeof(s_itext)), s_bankWork);
         // systick stops inside a flash command (interrupts off): the command time is counted from the DWT (90 MHz there)
@@ -641,6 +692,14 @@ bool loadEngine(int k, const int* want, int nWant, const int* keep, int nKeep)
         l.erases = st.erases;
         l.cmdMs = cmdMs;
         l.ms = (systick_millis_count - ms0) + cmdMs;
+        l.late = ff_audio_late - late0;
+        l.gapUs = ff_audio_gap_max / 180u;
+        l.maskUs = nvmStats().maskMaxCyc / 90u;
+        l.leadOk = nvmStats().leadOk;
+        l.leadShort = nvmStats().leadShort;
+        l.noAudio = nvmStats().noAudio;
+        l.waitUs = nvmStats().waitMaxUs;
+        l.leadMin = nvmStats().erases ? nvmStats().leadMin : 0;
         if (st.err)
         {
             s_lib[k].err = int8_t(10 + st.err);
@@ -706,6 +765,8 @@ void synthBoot(FileSystem* fs)
     const bool hadIndex = fs->exists(kIndexPath);
     namesRead();
     if (!n && !hadIndex) return;   // no synth plugin was ever installed: nothing to do, nothing written
+    s_legacyOn = fs->exists(kLegacyPath);
+    nvmLegacy(s_legacyOn);
     s_safe = fs->exists(kMarker);  // a marker left by the last session (plug_host.cpp boot() reads it too): no engine runs
     BankWant* const w = s_bwant;
     for (int k = 0; k < n; k++)
@@ -801,6 +862,14 @@ int libOfDef(const polysynth::open::EngineDef* d)
     return at < sizeof(s_defRaw) && at % sizeof(EngineDef) == 0 && int(k) < s_sn ? int(k) : -1;
 }
 
+// An attached engine's PLUG_EXT_CHORD answer (start() checked it), none for anything else
+polysynth::open::ChordParams chordOfDef(const EngineDef* d)
+{
+    const int k = libOfDef(d);
+    if (k < 0 || !def(k).inst) return polysynth::open::ChordParams{};
+    return polysynth::open::ChordParams{s_lib[k].chord, s_lib[k].mode, s_lib[k].strum};
+}
+
 // The slot of k's image (main loop, may read the card), -1 none
 int logoSlot(int k, bool med)
 {
@@ -868,6 +937,11 @@ const strBitmap* bitmapAt(int id)
     b = kTpl[med ? 1 : 0];
     b.address = LogoCache::address(slot, med);
     return &b;
+}
+
+polysynth::open::ChordParams polysynth::open::plugChordParams(const polysynth::open::EngineDef* d)
+{
+    return plug::chordOfDef(d);
 }
 
 #endif   // FEATURE_PLUG_HOST

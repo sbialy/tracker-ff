@@ -6,8 +6,8 @@
    "repo": "sbialy/tracker-engines-os",
    "visibility": "public",
    "kind": "synth",
-   "tag": "v1.2.0",
-   "tag_commit": "f20ded8ad84e8acb6ea61f3c8b7c4fa7653af718",
+   "tag": "v1.3.0",
+   "tag_commit": "8ec7152cbc7f640e4968599cc65b46b7b8029221",
    "local_repo": "../poly-engines-os",
    "local_dirs": [
     "../poly-engines-os/build/engines-autof",
@@ -54,10 +54,12 @@
     "arc.plg": "52f929e1def1452d2610212e0218b39f585ee370a8e4dcd3aaf99743052337ae",
     "arc.plgi": "7321dc7c9244392bd7b37194a6d0a0176f95cab7ae7e9c1c50f2f50778a6e372",
     "arc.json": "6c5359258ea12efbea36aae1e7c3d077068f43017bc72c2f9e31e5e0b0076c57",
-    "arc.wasm": "8782a0dcf3a14356f967e1a78ce8ebaac06a0f5f4ce9c32ef80d6d40741a2050"
+    "arc.wasm": "8782a0dcf3a14356f967e1a78ce8ebaac06a0f5f4ce9c32ef80d6d40741a2050",
+    "chip.plg": "09db2602f01ec290eadcc935a8f092550723d90a39933466e7d9e5ae3050cfc1",
+    "chip.plgi": "211617a3e8f5f306e33ee2ec52e3fe083bb2e92240043a4e0c0ad8bddee1984d"
    },
    "notice_files": {
-    "NOTICE.md": "87c042319a3fb333bd1591b7d0d0be5e48b1ca4bf2c8a60d2dc7b1d6d21ce4a9",
+    "NOTICE.md": "5ba758753fefdff01d45ec7238805677dfc968d97a954e4c048e78c22d29e91a",
     "LICENSE-OpenTracker-synths-MIT.txt": "313016655fb017714d4735f4772a8f6761b7c2c2ccce70db070e00bfdfba9058",
     "LICENSE-OpenTracker-Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "LICENSE-tracker-ff-MIT.txt": "c922340e052e913e48e48f8827efc86833c9378380120bf85d67f8dba7056a78",
@@ -68,8 +70,8 @@
    "repo": "sbialy/tracker-engines",
    "visibility": "private",
    "kind": "synth",
-   "tag": "engines-v1.2.0",
-   "tag_commit": "3ec1380b9ffc9f4db990cfee72f4d4a6a5bf2e8e",
+   "tag": "engines-v1.3.0",
+   "tag_commit": "1dd07ea3334ec19f1757da3e8f3f225bdc60579f",
    "local_repo": "../poly-engines",
    "local_dirs": [
     "../poly-engines/build/engines-autof",
@@ -79,16 +81,16 @@
    "files": {
     "phz.plg": "a15e7409f716d8411b68f2514e7e906dd3e9df1106a0b762a58ef4396a8a564d",
     "phz.plgi": "8c23438f494f2bc70c5d13cf27e55af86fa68ad05c5052276a96ba72b55d31a7",
-    "phz.json": "1cda009c02725e6853e31d2676bb9863e7e5b8c85e605221632af91145e85406",
+    "phz.json": "4a25a9ddd97a795f331d7255a3ca946107cb33d67147107b494b4f8c90665690",
     "phz.wasm": "d523341801813d0d5cb37dd09815787d7fa4a8175ff7e1fd957dd4f3335d64ea",
-    "pluck.plg": "6d232ffeac5e2a312ea4c4ae4895b0874f84ac7bdb71083454656f290fd00201",
+    "pluck.plg": "fcabdc0ac8b540f02b3c62b1bc6749a08d1486e899a7629d57411aa018500bc0",
     "pluck.plgi": "88978e6d1d8f7ef14a8b6c2a091ffb782bd18992aaeb1ae723074d81c650f19d",
-    "pluck.json": "096d10a8f7fba3e6dfc6f8ff08c1fc341156fc77b0babbc7bab012d7b9ff2014",
-    "pluck.wasm": "fc10abf705fc8b66a125ef696a5911b522c0083a91b871a4ebe5a7dcc10b435a"
+    "pluck.json": "feca294284f3b38d26f9ba5baabf6b80b5d422cd4b249f74fd3cf76c98a9ad7a",
+    "pluck.wasm": "f4cfd3ce862016a04d67a956ba32261f5a75b93e003f5b8d0b550141efd4db62"
    },
    "notice_files": {
-    "LICENSE.md": "41f40196d26bf7f6029a74c40b0cb60ecb70ff836355ef30028acd800d498ebb",
-    "NOTICE.md": "befe53fb34abe09781d524ede3ae851cab0917bfd7b148b88e1cabf11d2cb284",
+    "LICENSE.md": "fd96fd6d22348ff5f116ca5eccf89d99e522052d84528436ffdeac2550add279",
+    "NOTICE.md": "217c9f137aac74c047c842bb6b4f5a67966f09a19a42a02b76c308ceb51c2b56",
     "LICENSE-OpenTracker-Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "LICENSE-tracker-ff-MIT.txt": "c922340e052e913e48e48f8827efc86833c9378380120bf85d67f8dba7056a78"
    }
@@ -97,7 +99,7 @@
    "repo": "sbialy/tracker-effects-os",
    "visibility": "public",
    "kind": "master",
-   "tag": "v1.2.0",
+   "tag": "v1.3.0",
    "tag_commit": "1350bb6e7f74a6ef22f9c0c54e8a0a481ea5cc35",
    "local_repo": "../poly-effects-os",
    "local_dirs": [
@@ -133,8 +135,8 @@
    "repo": "sbialy/tracker-effects",
    "visibility": "private",
    "kind": "master",
-   "tag": "effects-v1.0.0",
-   "tag_commit": "3954631b80bae37051cc53039e8f1128c357c136",
+   "tag": "effects-v1.3.0",
+   "tag_commit": "0884263734fe3e5943306ce98d1d9fd8c4b2e32b",
    "local_repo": "../poly-effects",
    "local_dirs": [
     "../poly-effects/build/set"
@@ -142,15 +144,18 @@
    "source_root": "src/synth-open/plug/fx/",
    "files": {
     "console.plg": "10b3da9d48b96afb8a42a0d40762196fc185f73d8d51ca34381f1476f738c7e1",
-    "console.json": "91eb3718074bd50ea2c967f9cc41cfa4c48f8d2d467bf7c6e3f63b838be0c01d",
+    "console.json": "575d7efd9942140f134ca87ef048c48e624fd77bf4f4de4abccd9af9e5f09a01",
     "console.wasm": "a3bb143b21307b7ff6783d4e1b5ba32a4d9088f9acfecbd675709dd0c51409ae",
     "tube.plg": "0ea4233370437d48d90d9bec8b2bf5a060067338b6989183d3246b1ffba0d02f",
-    "tube.json": "dc60451ed31b3e8f1fdeb319fe2bb5fa733bc074f00d98484855c3987fa90222",
-    "tube.wasm": "a5370d4bab6974158c8a2ed3e2c56187de718045579e9d37e8424fcabfc0ceef"
+    "tube.json": "d5877e72236dbad9b52aed610e205b99faf7431922266e4e6e0f43b9ae0dc7b7",
+    "tube.wasm": "a5370d4bab6974158c8a2ed3e2c56187de718045579e9d37e8424fcabfc0ceef",
+    "glue.plg": "3d04575348442539eb00e584efe9092643d0b181c34f9835ffc78515a9ec1ac0",
+    "glue.json": "dd012ba581cf38bd1f20640d5bb6be77443083a916e011faaeb9dca4ea458b98",
+    "glue.wasm": "52e82a4282daad20709d1f557a84a7af164c8f603f0df29cbdd39a60759a299a"
    },
    "notice_files": {
-    "LICENSE.md": "bf1a74057ea0fe994f0ab01882acd31bb6af4a25d978a1a3e75a815702ae094c",
-    "NOTICE.md": "ec54ece8fbaed22f1d2914de8ae06b248242cfbaec5f192f27559205671833d9",
+    "LICENSE.md": "fd96fd6d22348ff5f116ca5eccf89d99e522052d84528436ffdeac2550add279",
+    "NOTICE.md": "e3532cc33cdb6b50822b6732c5a74d887aad512a6384a7eec09bdc5ebb2d8664",
     "LICENSE-tracker-ff-MIT.txt": "c922340e052e913e48e48f8827efc86833c9378380120bf85d67f8dba7056a78"
    }
   }

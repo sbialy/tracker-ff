@@ -84,6 +84,39 @@ enum class EnvStage : uint8_t
     kRelease,
 };
 
+// ---- the configuration the render path reads: macros and automation slots of one patch, compact and trivial (no constructors, so a table of
+// them may sit in the SDRAM). A patch keeps one of its own (the open slot's) and the Patch FX bank one per slot file. What the render path
+// reads is the one that is live (OpenPatch::liveCfg): the Patch FX changes the pointer, never the open slot's own data.
+struct MacroRun
+{
+    uint8_t bipolar;
+    uint8_t count;                       // live targets, the first `count` entries
+    int8_t param[kMacroTargets];         // engine parameter index (0..kMaxParams - 1)
+    float amount[kMacroTargets];
+};
+
+struct ModRun
+{
+    ModType type;
+    ModKind kind;
+    uint8_t shape;
+    uint8_t speed;
+    int16_t dest;                        // run time destination, -1 none (ModSlot::dest)
+    int8_t amount;
+    uint8_t sustain;
+    uint16_t attack;
+    uint16_t decay;
+    uint16_t release;
+};
+
+struct SlotCfg
+{
+    MacroRun macro[kPatchMacros];        // M1..M6, Velocity, Pressure
+    ModRun mod[kModSlots];
+    uint8_t modOn;                       // some slot is not Off
+    uint8_t macroScale;                  // macro depth mode of the patch file: 1 Scale (headroom), 0 Add (range)
+};
+
 // Run time state of one slot (instrument, internal RAM, touched every block)
 struct ModState
 {
@@ -102,7 +135,8 @@ inline void modReset(ModState& st, int slot)
 }
 
 // The editor changed the type of a slot: its state starts over for the new type
-inline void modSync(const ModSlot& c, ModState& st)
+template <class C> // ModSlot or ModRun: the run time fields have the same names
+inline void modSync(const C& c, ModState& st)
 {
     if (c.type != st.type)
     {
@@ -118,7 +152,8 @@ inline void modSync(const ModSlot& c, ModState& st)
 }
 
 // One block of one slot: writes st.out for this block, then moves on
-inline void modStep(const ModSlot& c, ModState& st, float bpm)
+template <class C> // ModSlot or ModRun: the run time fields have the same names
+inline void modStep(const C& c, ModState& st, float bpm)
 {
     modSync(c, st);
     float v = 0.0f;
@@ -171,7 +206,8 @@ inline void modStep(const ModSlot& c, ModState& st, float bpm)
 
 // A note starts. `afterSilence`: no voice of the part was sounding. LFOs restart their phase only then, envelopes restart the attack on
 // every note from where they are (no click). After silence an envelope starts from 0.
-inline void modNoteOn(const ModSlot& c, ModState& st, bool afterSilence)
+template <class C> // ModSlot or ModRun: the run time fields have the same names
+inline void modNoteOn(const C& c, ModState& st, bool afterSilence)
 {
     modSync(c, st);
     if (c.type == ModType::kLfo && afterSilence)
@@ -191,7 +227,8 @@ inline void modNoteOn(const ModSlot& c, ModState& st, bool afterSilence)
 }
 
 // The last held voice of the part was released: envelopes go to release, which takes the Release time from the level they are at
-inline void modGateOff(const ModSlot& c, ModState& st)
+template <class C> // ModSlot or ModRun: the run time fields have the same names
+inline void modGateOff(const C& c, ModState& st)
 {
     if (c.type == ModType::kEnv && c.type == st.type && st.stage != EnvStage::kIdle && st.stage != EnvStage::kRelease)
     {

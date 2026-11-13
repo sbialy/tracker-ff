@@ -164,7 +164,7 @@ class Synth
             persistSlotNames(part);
         }
     }
-    // Synth automation (synth-open/open_mod.h): the 4 slots of the open patch (they belong to its slot file, the Patch FX leaves them).
+    // Synth automation (synth-open/open_mod.h): the 4 slots of the open patch (they belong to its slot file; the Patch FX plays another slot's, the editor always shows these).
     // setModSlot disables audio interrupts and marks the patch dirty (the slot file is written with the patch, the project structure
     // does not change). modDestinations fills `out` (open::kModPickMax) with the picker order and returns the count.
     const polysynth::open::ModSlot& getModSlot(int part, int slot) { return polysynth::open::modSlotOf(*parts[part].patch, slot); }

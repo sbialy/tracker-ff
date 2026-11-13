@@ -412,6 +412,24 @@ let me know?  http://forum.pjrc.com/forums/4-Suggestions-amp-Bug-Reports
 
 #define ENDPOINT7_CONFIG  ENDPOINT_TRANSMIT_ONLY
 
+// tracker-ff USB_AUDIO=1 (-DFEATURE_USB_AUDIO): a stereo USB audio input for the computer (Tracker -> computer,
+// UAC 1.0, 44.1 kHz 16 bit) as interfaces 4 (control) and 5 (streaming), described last so interfaces 0..3 keep
+// their numbers. Isochronous IN endpoint 8, asynchronous. Layout ported from OpenTracker (Apache-2.0, see
+// platforms/mk66/usbaudio/). AUDIO_INTERFACE stays undefined, so the Teensy audio code is not compiled.
+// Compiled in, switched at start (ff_usb_audio_select in usb_init, Config > Features > USB audio): off cuts the
+// configuration back to interfaces 0..3, leaves endpoint 8 disabled and stalls the audio requests.
+#ifdef FEATURE_USB_AUDIO
+#undef NUM_ENDPOINTS
+#define NUM_ENDPOINTS         	8
+#undef NUM_INTERFACE
+#define NUM_INTERFACE   		6
+#define FF_USB_AUDIO_TX			1
+#define FF_AUDIO_INTERFACE		4 // control 4, streaming 5
+#define AUDIO_TX_ENDPOINT     	8
+#define AUDIO_TX_SIZE         	180
+#define ENDPOINT8_CONFIG  ENDPOINT_TRANSMIT_ISOCHRONOUS
+#endif
+
 
 #elif defined(USB_MIDI4)
   #define VENDOR_ID		0x16C0

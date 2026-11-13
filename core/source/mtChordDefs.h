@@ -5,7 +5,8 @@ const uint8_t MIN_CHORD = 0;
 const uint8_t MAX_CHORD = 67;
 const uint8_t CHORD_FOR_MAX = 15; // number of significant bits in chordDef
 
-const uint16_t chordDef[] = {
+// inline: one copy in the image, whatever number of files include this (mtChord.cpp checks it against plug_chord.h)
+inline constexpr uint16_t chordDef[] = {
     0b0000000000000001, // 0
     0b0000000010000101, // 1
     0b0000000100000101, // 2
@@ -75,12 +76,24 @@ const uint16_t chordDef[] = {
     0b0000010000110001, // 66 sus4maj7, 2nd inversion
     0b0000000101000011, // 67 sus4maj7, 3rd inversion
 };
-const char chordDefName[MAX_CHORD + 1][4] = {
+inline constexpr char chordDefName[MAX_CHORD + 1][4] = {
     "---", " 27", " 28", " 36", " 37", " 47", " 48", " 57", " 5A", " 5C", " 67", " 7C",
     " 7E", "279", "27A", "27B", "369", "36A", "378", "379", "37A", "37B", "479", "47A",
     "47B", "489", "48A", "48B", "57A", "57B", " 38", " 59", " 49", " 58", "459", "158",
     "358", "259", "368", "359", "269", " 39", " 69", " 6A", " 46", " 16", " 5B", "469",
     "258", "458", "148", "468", "248", "26A", "478", "348", "159", "257", "35A", "58A",
+    "357", "249", "59A", "457", "138", "267", "45A", "168",
+};
+
+// Short chord names for the 3 character grid cell (with the 2026-11-12 decisions: sus2 with a capital S,
+// the maj7 family as ^7, the 11 sus 7th inversions 57..67 keep the interval digits). Config > Features > Chord names picks this
+// table (on, the default) or chordDefName (off). Every entry is 3 characters, only entry 0 has a '-' (the dim empty cell look).
+inline constexpr char chordShortName[MAX_CHORD + 1][4] = {
+    "---", "Su2", "Su+", "dim", "min", "maj", "aug", "su4", "s42", "po1", "su#", "pow",
+    "po9", "6S2", "7S2", "MS2", "di7", "m7b", "^71", "mi6", "m7 ", "mM7", "ma6", "do7",
+    "^7 ", "mM1", "a7 ", "aM7", "7s4", "Ms4", "ma1", "ma2", "mi1", "mi2", "^72", "^73",
+    "m72", "m73", "do1", "do2", "do3", "di1", "di2", "S+1", "S+2", "s#1", "s#2", "mb2",
+    "mb3", "mM2", "mM3", "a71", "a72", "a73", "aM1", "aM2", "aM3", "257", "35A", "58A",
     "357", "249", "59A", "457", "138", "267", "45A", "168",
 };
 

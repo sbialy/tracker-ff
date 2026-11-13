@@ -72,6 +72,12 @@ SECTIONS
 	} > FLASH
 	_etext = .;
 
+	/* The I2S output ring (Audio/output_i2s.cpp): 4,096 B, its DMA wraps it with SMOD 12, so it must be 4,096 B aligned.
+	   First in the RAM (ORIGIN is aligned), so the alignment costs no padding. */
+	.dmaring (NOLOAD) : {
+		*(.dmaring*)
+	} > RAM
+
 	.usbdescriptortable (NOLOAD) : {
 		/* . = ORIGIN(RAM); */
 		. = ALIGN(512);

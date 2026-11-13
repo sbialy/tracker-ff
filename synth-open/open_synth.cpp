@@ -20,6 +20,9 @@
 #include "open_patch.h"
 
 #include "audio/cpu_meter.h"
+#ifdef SYNTH_ENGINE_ACD
+#include "audio/engines/acd.h"
+#endif
 #include "audio/governor.h"
 
 #include "PolySynth/GridMapperStore.h"
@@ -35,7 +38,12 @@
 #include "PolySynth/sdk/InstrumentVoice.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#ifdef OPEN_REFRESH_CHECK
+#include <cstdio>
+#include <cstdlib>
+#endif
 #include <cstring>
 #include <span>
 #include <vector>
@@ -48,6 +56,8 @@
 
 namespace polysynth
 {
+using open::ChordParams;
+using open::chordParamsOf;
 using open::EngineDef;
 using open::kMaxParams;
 using open::kMaxVoicesPerInstrument;
@@ -61,20 +71,36 @@ namespace
 // cents) sends the full 14 bit range, so 1 semitone makes the FX read in cents. Own choice.
 constexpr float kBendRange = 1.0f;
 
+// std::bit_cast needs GCC 11, the pinned 10.3 has none: the same bits through memcpy, which compiles to the same register move
+template <class To, class From>
+inline To bitCast(const From& from)
+{
+#if defined(__cpp_lib_bit_cast)
+    return std::bit_cast<To>(from);
+#else
+    static_assert(sizeof(To) == sizeof(From));
+    To to;
+    std::memcpy(&to, &from, sizeof(To));
+    return to;
+#endif
+}
+
 } // namespace
 
-// Values with macros M1..M6 and the automation slots applied (additive, scaled by the param range, clamped once).
+// Values with macros M1..M6 and the automation slots applied (additive, clamped once). Macro depth: Add scales by the param range,
+// Scale by the headroom above (amount * macro > 0) or below (< 0) the base value.
 void open::OpenPatch::effective(float* out, const float* modOut) const
 {
     std::memcpy(out, values, sizeof(float) * count);
     float add[kMaxParams] = {};
     bool hit[kMaxParams] = {};
     float macroMod[open::kModMacros] = {};
-    if (modOut && modOn)
+    const open::SlotCfg& live = *cfg; // the open slot's macros and automation, or those of the slot the Patch FX has on
+    if (modOut && live.modOn)
     {
         for (int s = 0; s < open::kModSlots; s++)
         {
-            const open::ModSlot& c = mod[s];
+            const open::ModRun& c = live.mod[s];
             if (c.type == open::ModType::kOff || c.dest < 0)
             {
                 continue;
@@ -93,22 +119,27 @@ void open::OpenPatch::effective(float* out, const float* modOut) const
     }
     for (int m = 0; m < int(kUserMacroCount); m++)
     {
-        const auto& macro = metadata.macros[m];
+        const open::MacroRun& macro = live.macro[m];
         const float cc = float(macroCC[m]);
         float mv = macro.bipolar ? (cc - 63.0f) * (1.0f / 64.0f) : cc * (1.0f / 127.0f);
         if (m < open::kModMacros && macroMod[m] != 0.0f)
         {
             mv = std::clamp(mv + macroMod[m], macro.bipolar ? -1.0f : 0.0f, 1.0f); // as far as the knob goes
         }
-        for (const auto& mod : macro.modifiers)
+        for (int t = 0; t < macro.count; t++) // the targets that name a parameter of this engine (SlotCfg is built with that filter)
         {
-            if (!mod.paramId.has_value() || *mod.paramId < 0 || *mod.paramId >= count)
+            const int id = macro.param[t];
+            const auto& p = metadata.params[id];
+            if (live.macroScale)
             {
-                continue;
+                const float v = macro.amount[t] * mv;
+                add[id] += v > 0.0f ? v * (float(p.maxValue) - values[id]) : v * (values[id] - float(p.minValue));
             }
-            const auto& p = metadata.params[*mod.paramId];
-            add[*mod.paramId] += mod.amount * mv * (float(p.maxValue) - float(p.minValue));
-            hit[*mod.paramId] = true;
+            else
+            {
+                add[id] += macro.amount[t] * mv * (float(p.maxValue) - float(p.minValue));
+            }
+            hit[id] = true;
         }
     }
     for (int i = 0; i < count; i++)
@@ -134,7 +165,19 @@ struct Voice
     float vel = 1.0f;
     float gain = 0.0f;
     uint32_t age = 0;
+    uint32_t onCyc = 0; // live: cycles of the engine's noteOn, added to the first render to learn the part's note-on cost
 };
+
+// Note-on admission and the cost model (live blocks only, OpenSynth::admit). Cycles at 180 MHz.
+constexpr uint32_t kCyclesPerUs = 180;
+constexpr uint32_t admitCyclesFor(uint32_t permille) { return uint32_t(uint64_t(ot::audio::CpuMeter::kBudgetCycles) * permille / 1000u); }
+// Seeds of the learned costs before a part played a note (device: PLK note-on about 150 us, a running voice about 32 us,
+// the governor notes): a fresh part is judged as a PLK part until its own numbers come in
+constexpr uint32_t kSeedAttackCycles = 150 * kCyclesPerUs;
+constexpr uint32_t kSeedVoiceCycles = 32 * kCyclesPerUs;
+// A released victim quieter than this (amplitude envelope, about -48 dB) is freed at once instead of fading over a block
+constexpr float kFastKillLevel = 1.0f / 256.0f;
+constexpr int kPendingMax = 8;
 
 // Steal order after "free": the quietest released voice, else the oldest.
 bool betterVictim(const Voice& c, const Voice& best)
@@ -142,6 +185,8 @@ bool betterVictim(const Voice& c, const Voice& best)
     const bool cRel = !c.v.gate, bRel = !best.v.gate;
     return cRel != bRel ? cRel : (cRel ? c.v.level < best.v.level : c.age > best.age);
 }
+
+class OpenInstrument;
 
 // The shared voice pool as an instrument sees it (implemented by OpenSynth).
 class VoiceHost
@@ -151,6 +196,14 @@ class VoiceHost
     virtual int sounding() const = 0; // voices on and not fading, all slots
     virtual Voice* victim() = 0;      // best steal candidate over all slots, or nullptr
     virtual void onStop() = 0;        // transport Stop: governor back to the budget
+    // Note-on admission (live only). False: the note-on was queued for the start of the next block (it is not started now).
+    // chord: the MIDI Chord value the note-on carries to a paraphonic engine (-1: none), it rides with a queued note-on
+    virtual bool admit(OpenInstrument& inst, uint8_t note, uint8_t velocity, int16_t chord) = 0;
+    virtual bool pendingOff(OpenInstrument& inst, uint8_t note) = 0;   // a queued note-on of this note gets its note-off too
+    virtual void flushPending(OpenInstrument& inst) = 0;               // start the queued note-ons of this part now (Stop)
+    virtual void dropPending(OpenInstrument& inst) = 0;                // forget them (the part's voices were cut)
+    virtual ot::audio::CpuMeter::CycleFn clock() const = 0;            // live cycle counter, nullptr when not live
+    virtual void noteStolen(bool fastKill) = 0;                        // counters
 };
 
 class OpenInstrument final : public Instrument
@@ -165,8 +218,14 @@ class OpenInstrument final : public Instrument
     void assignPatch(std::shared_ptr<Patch> newPatch) override
     {
         patch = std::static_pointer_cast<OpenPatch>(std::move(newPatch));
+        const EngineDef* oldDef = def;
         def = patch ? patch->getDef() : nullptr;
         engine = engineOf(def); // nullptr for a missing engine's placeholder: the part is silent
+        if (def != oldDef)
+        {
+            attackCyc = kSeedAttackCycles; // another engine: its costs are learned again
+            voiceCyc = kSeedVoiceCycles;
+        }
         cutAll();
         modResetAll();
         std::memset(scratch.bytes, 0, sizeof(scratch.bytes));
@@ -284,11 +343,13 @@ class OpenInstrument final : public Instrument
             engine->setTempo(bpmNow);
         }
         engine->prepare(scratch, params);
+        blockMoving |= params.moving;
         // PERC has no Volume: the voice gain is the note velocity (the engine divides it back out per hit)
         const bool hasVol = def->volumeParam >= 0;
         const float volMin = hasVol ? float(patch->getMetadata().params[def->volumeParam].minValue) : 0.0f;
         const float volMax = hasVol ? float(patch->getMetadata().params[def->volumeParam].maxValue) : 1.0f;
         const float velK = hasVol ? patch->velocityAmount() : 1.0f;
+        const auto clk = host.clock(); // live: every voice render is timed to learn this part's costs (the audio is not touched)
         for (auto& v : voices)
         {
             if (!v.on)
@@ -305,7 +366,16 @@ class OpenInstrument final : public Instrument
             const float gInc = (target - g0) * (1.0f / float(kAudioBufferSize));
             v.gain = target;
             v.age++;
-            if (!engine->render(v.v, params, g0, gInc, L, R) || fade)
+            const uint32_t t0 = clk ? clk() : 0;
+            const bool alive = engine->render(v.v, params, g0, gInc, L, R);
+            if (clk)
+            {
+                const uint32_t cyc = clk() - t0;
+                learn(v, cyc);
+                blockVoices++;
+                blockRenderCyc += cyc;
+            }
+            if (!alive || fade)
             {
                 v.on = false;
             }
@@ -321,8 +391,71 @@ class OpenInstrument final : public Instrument
             }
         }
 #endif
-        std::memcpy(params.start, params.end, sizeof(float) * params.count);
+#ifdef OPEN_REFRESH_CHECK
+        ot::audio::SynthParams ref = params;
+        std::memcpy(ref.start, ref.end, sizeof(float) * ref.count);
+        ref.moving = false;
+#endif
+        if (!startIsEnd)
+        {
+            std::memcpy(params.start, params.end, sizeof(float) * params.count);
+            startIsEnd = true;
+        }
         params.moving = false;
+#ifdef OPEN_REFRESH_CHECK
+        refreshCheck(ref, true);
+#endif
+    }
+
+    // Note-on admission: the learned cycles of a note-on of this part (over a running voice) and of one running voice
+    uint32_t attackCost() const { return attackCyc; }
+    uint32_t voiceCost() const { return voiceCyc; }
+    // A queued note-on starts (OpenSynth, start of the next block) and its note-off when one came while it waited
+    void startQueued(uint8_t note, uint8_t velocity, bool off, int16_t chord)
+    {
+        if (!engine || !patch || voiceCount == 0)
+        {
+            return;
+        }
+        noteOnNow(note, velocity, chord);
+        if (off)
+        {
+            noteOff(note);
+        }
+    }
+    // Whether a note-on now would take a new record of the shared pool (not mono legato on a held voice)
+    bool takesPoolVoice() const
+    {
+        const int n = std::clamp(voiceCount, 1, def ? def->maxVoices : 1);
+        return !(n == 1 && voices[0].on && !voices[0].v.fading);
+    }
+    bool owns(const Voice* v) const { return v >= voices && v < voices + kMaxVoicesPerInstrument; }
+    // Paraphony (PLUG_EXT_CHORD): the engine has Chord and Chord Mode parameters and the patch is at Para. The sequencer then sends a
+    // MIDI Chord step as one note-on (noteChord, then the note-on of `note`) instead of one per chord note.
+    bool chordPara() const
+    {
+        if (!engine || !patch || voiceCount == 0)
+        {
+            return false;
+        }
+        const ChordParams cp = chordParamsOf(def);
+        return cp.chord >= 0 && cp.mode >= 0 && patch->values_()[cp.mode] >= 0.5f;
+    }
+    // The next note-on of `note` carries `chord` (0..67) to the engine's Chord parameter and a Strum FX (units, + up, - down, 0 none)
+    // to its Strum parameter when it has one. Same thread as the note-on that follows.
+    void noteChord(uint8_t note, uint8_t chord, int8_t strum)
+    {
+        chordNote = note;
+        chordIdx = int16_t(chord | ((std::clamp<int>(strum, -63, 63) + 64) << 8));
+    }
+    // The block's timed voice renders, taken once per block by OpenSynth::blockDone
+    void takeBlock(uint32_t& voicesOut, uint32_t& cycOut, uint32_t& movingOut)
+    {
+        voicesOut += blockVoices;
+        cycOut += blockRenderCyc;
+        movingOut += blockMoving;
+        blockVoices = blockRenderCyc = 0;
+        blockMoving = false;
     }
 
 #ifdef OPEN_HOST_TEST
@@ -340,21 +473,51 @@ class OpenInstrument final : public Instrument
             modOut[s] = 0.0f;
         }
         modSerial = patch ? patch->modSerial() : 0;
+        cfgSerial = patch ? patch->cfgSerial() : 0;
     }
 
-    void modAdvance(float bpm)
+    // The Patch FX put another slot's macros and automation on (or took them off): keep the state of the slots whose type stays (an LFO
+    // goes on from its phase, an envelope from its stage and level, so a fast rhythmic patch change neither retriggers nor clicks) and
+    // start the slots whose type changes (modSync). A slot that went Off is cleared. An envelope that starts under a held note goes to
+    // its attack, otherwise it would sit idle until the next note.
+    __attribute__((noinline)) void modSwitch()
+    {
+        cfgSerial = patch->cfgSerial();
+        const bool held = anyGate();
+        for (int s = 0; s < open::kModSlots; s++)
+        {
+            const open::ModRun& c = patch->live().mod[s];
+            open::modSync(c, modSt[s]);
+            if (c.type == open::ModType::kEnv && held && modSt[s].stage == open::EnvStage::kIdle)
+            {
+                modSt[s].stage = open::EnvStage::kAttack;
+            }
+            modOut[s] = modSt[s].out;
+        }
+    }
+
+    void modCheck()
     {
         if (patch->modSerial() != modSerial)
         {
             modResetAll(); // another file came in (slot select, load): its modulators start fresh
         }
+        else if (patch->cfgSerial() != cfgSerial)
+        {
+            modSwitch();
+        }
+    }
+
+    void modAdvance(float bpm)
+    {
+        modCheck();
         if (!patch->modActive())
         {
             return;
         }
         for (int s = 0; s < open::kModSlots; s++)
         {
-            open::modStep(patch->modSlot(s), modSt[s], bpm);
+            open::modStep(patch->live().mod[s], modSt[s], bpm);
             modOut[s] = modSt[s].out;
         }
     }
@@ -374,14 +537,11 @@ class OpenInstrument final : public Instrument
     // Note and gate events of the automation: once per MIDI event, not per block, kept out of line (the MIDI lambda inlines the rest)
     __attribute__((noinline)) void modNoteOnAll()
     {
-        if (patch->modSerial() != modSerial)
-        {
-            modResetAll();
-        }
+        modCheck();
         const bool afterSilence = !anyActive();
         for (int s = 0; s < open::kModSlots; s++)
         {
-            open::modNoteOn(patch->modSlot(s), modSt[s], afterSilence);
+            open::modNoteOn(patch->live().mod[s], modSt[s], afterSilence);
             modOut[s] = modSt[s].out;
         }
     }
@@ -390,9 +550,10 @@ class OpenInstrument final : public Instrument
     {
         if (patch && patch->modActive() && !anyGate())
         {
+            modCheck();
             for (int s = 0; s < open::kModSlots; s++)
             {
-                open::modGateOff(patch->modSlot(s), modSt[s]);
+                open::modGateOff(patch->live().mod[s], modSt[s]);
             }
         }
     }
@@ -411,6 +572,7 @@ class OpenInstrument final : public Instrument
 
     void cutAll()
     {
+        host.dropPending(*this);
         for (auto& v : voices)
         {
             v.on = false;
@@ -420,44 +582,155 @@ class OpenInstrument final : public Instrument
 #endif
     }
 
-    void refreshParams()
+    // The parameters of this block: params.end = the patch's effective values, params.start = the block's start values, serial and moving as
+    // before. The SDRAM is slow (the instrument lives there: blocks of 1 KB and more come from the SDRAM arena, platforms/mk66/.../new.cpp), so a
+    // block with nothing changed reads each value twice (patch, params.end) and writes nothing: startIsEnd says that params.start already equals
+    // params.end bit for bit (set at the end of every render), then a value that did not change cannot make the parameters move.
+#ifdef OPEN_REFRESH_CHECK
+    // Test build only (synth-open/tools/run_refresh_equiv.sh): the refresh as it was before the fast paths, run on a copy of the parameters,
+    // and the bit for bit comparison of the two results
+    void refreshParamsRef(ot::audio::SynthParams& pr, bool valid)
     {
         float eff[kMaxParams];
         patch->effective(eff, modOut);
-        params.count = patch->paramCount();
+        pr.count = patch->paramCount();
         bool changed = false;
-        for (int i = 0; i < params.count; i++)
+        for (int i = 0; i < pr.count; i++)
         {
-            if (!paramsValid)
+            if (!valid)
             {
-                params.start[i] = eff[i];
+                pr.start[i] = eff[i];
             }
-            if (params.end[i] != eff[i] || !paramsValid)
+            if (pr.end[i] != eff[i] || !valid)
             {
                 changed = true;
             }
-            params.end[i] = eff[i];
+            pr.end[i] = eff[i];
         }
-        params.moving = false;
-        for (int i = 0; i < params.count; i++)
+        pr.moving = false;
+        for (int i = 0; i < pr.count; i++)
         {
-            if (params.start[i] != params.end[i])
+            if (pr.start[i] != pr.end[i])
             {
-                params.moving = true;
+                pr.moving = true;
                 break;
             }
         }
         if (changed)
         {
+            pr.serial++;
+        }
+    }
+    void refreshCheck(const ot::audio::SynthParams& pr, bool atRenderEnd)
+    {
+        bool ok = pr.count == params.count && pr.serial == params.serial && pr.moving == params.moving;
+        for (int i = 0; ok && i < params.count; i++)
+        {
+            ok = bitCast<uint32_t>(pr.start[i]) == bitCast<uint32_t>(params.start[i]) &&
+                 bitCast<uint32_t>(pr.end[i]) == bitCast<uint32_t>(params.end[i]);
+        }
+        if (!ok)
+        {
+            std::fprintf(stderr, "refreshParams differs from the reference (%s)\n", atRenderEnd ? "render end" : "refresh");
+            std::abort();
+        }
+    }
+#endif
+    void refreshParams()
+    {
+#ifdef OPEN_REFRESH_CHECK
+        ot::audio::SynthParams ref = params;
+        refreshParamsRef(ref, paramsValid);
+#endif
+        refreshParamsFast();
+#ifdef OPEN_REFRESH_CHECK
+        refreshCheck(ref, false);
+#endif
+    }
+    void refreshParamsFast()
+    {
+        // Nothing the patch feeds effective() with changed since the refresh that found params.end already equal to it (OpenPatch::effSerial),
+        // and params.start equals params.end: the result of the loops below is no change, not moving
+        if (seenOk && paramsValid && startIsEnd && patch->effSerial() == seenSer)
+        {
+            params.moving = false;
+            return;
+        }
+        float eff[kMaxParams];
+        const float* src = eff;
+        if (patch->plainValues(true))
+        {
+            src = patch->values_(); // effective() would copy exactly these
+        }
+        else
+        {
+            patch->effective(eff, modOut);
+        }
+        params.count = patch->paramCount();
+        const int n = params.count;
+        bool changed = false;
+        bool moving = false;
+        bool same = true; // params.start == params.end bit for bit, after this refresh
+        if (!paramsValid)
+        {
+            changed = true;
+            for (int i = 0; i < n; i++)
+            {
+                const float v = src[i];
+                params.start[i] = v;
+                params.end[i] = v;
+                moving |= v != v; // start != end only for a NaN
+            }
+        }
+        else if (startIsEnd)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                const float v = src[i];
+                const float e = params.end[i]; // start[i] has the bits of e
+                if (e != v)
+                {
+                    changed = true;
+                    moving = true;
+                }
+                if (bitCast<uint32_t>(e) != bitCast<uint32_t>(v))
+                {
+                    params.end[i] = v;
+                    same = false;
+                }
+                else
+                {
+                    moving |= v != v; // a NaN: start != end
+                }
+            }
+        }
+        else
+        {
+            for (int i = 0; i < n; i++)
+            {
+                const float v = src[i];
+                changed |= params.end[i] != v;
+                params.end[i] = v;
+                moving |= params.start[i] != v;
+                same &= bitCast<uint32_t>(params.start[i]) == bitCast<uint32_t>(v);
+            }
+        }
+        params.moving = moving;
+        startIsEnd = same;
+        if (changed)
+        {
             params.serial++;
         }
         paramsValid = true;
+        seenOk = same && !changed && !moving && patch->effStatic();
+        seenSer = patch->effSerial();
     }
 
     void onMidi(const MidiEvent& e)
     {
         if (e.type == MidiEvent::Type::kStop)
         {
+            host.flushPending(*this); // a note-on waiting for the next block starts and is released like the others
             releaseAll();
             bend = 0.0f;
             host.onStop();
@@ -488,6 +761,7 @@ class OpenInstrument final : public Instrument
                 const int cc = e.data.controlChange.id;
                 if (cc == MidiEvent::Data::ControlChange::kAllNotesOffCC || cc == 120)
                 {
+                    host.flushPending(*this);
                     releaseAll();
                 }
                 else if (patch && cc >= Patch::Metadata::Macro::kMacroCCStart &&
@@ -538,10 +812,22 @@ class OpenInstrument final : public Instrument
             Voice* victim = host.victim();
             if (victim && (victim < voices || victim >= voices + kMaxVoicesPerInstrument))
             {
-                victim->v.fading = true;
+                // live: a released victim that is already near silence is freed at once, so this block does not render
+                // it next to the new note (offline render keeps the fade, the export stays as it was)
+                const bool kill = host.clock() && !victim->v.gate && victim->age > 0 && victim->v.level < kFastKillLevel;
+                if (kill)
+                {
+                    victim->on = false;
+                }
+                else
+                {
+                    victim->v.fading = true;
+                }
+                host.noteStolen(kill);
             }
             else if (victim)
             {
+                host.noteStolen(false);
                 mine = victim;
             }
             else
@@ -561,12 +847,43 @@ class OpenInstrument final : public Instrument
         return best;
     }
 
+    // Learns this part's costs from a timed voice render (live only): the first render of a note carries the burst of most
+    // engines (PLK makes it there), so it plus the engine's noteOn over a running voice is the note-on cost (a decaying max,
+    // the estimate errs high), the other renders give the running voice cost (average of 16)
+    void learn(Voice& v, uint32_t cyc)
+    {
+        if (v.age == 1)
+        {
+            const uint32_t a = cyc + v.onCyc > voiceCyc ? cyc + v.onCyc - voiceCyc : 0;
+            attackCyc = std::max(a, attackCyc - (attackCyc >> 5));
+        }
+        else if (!v.v.fading)
+        {
+            voiceCyc = uint32_t(int32_t(voiceCyc) + (int32_t(cyc) - int32_t(voiceCyc)) / 16);
+        }
+    }
+
     void noteOn(uint8_t note, uint8_t velocity)
     {
+        int16_t chord = -1;
+        if (chordNote == note)
+        {
+            chord = chordIdx;
+        }
+        chordNote = -1;
         if (!engine || !patch || voiceCount == 0)
         {
             return;
         }
+        if (!host.admit(*this, note, velocity, chord))
+        {
+            return; // queued: starts at the start of the next block
+        }
+        noteOnNow(note, velocity, chord);
+    }
+
+    void noteOnNow(uint8_t note, uint8_t velocity, int16_t chord = -1)
+    {
         if (patch->modActive())
         {
             modNoteOnAll();
@@ -599,7 +916,47 @@ class OpenInstrument final : public Instrument
         v->v.bend = v->v.bendStart = bend;
         v->vel = float(velocity) * (1.0f / 127.0f);
         v->on = true;
-        engine->noteOn(v->v, params, n);
+        const auto clk = host.clock();
+        const uint32_t t0 = clk ? clk() : 0;
+        if (chord >= 0)
+        {
+            chordNoteOn(*v, n, chord);
+        }
+        else
+        {
+            engine->noteOn(v->v, params, n);
+        }
+        v->onCyc = clk ? clk() - t0 : 0;
+    }
+
+    // A MIDI Chord step's note-on: the step's chord is the engine's Chord parameter for this note-on only (the engine latches it in
+    // note_on, PLUG_EXT_CHORD), a Strum FX the engine's Strum parameter when it has one (else the chord sounds unstrummed). The
+    // block's values are put back right after. chord: bits 0-7 the chord, bits 8-14 the strum + 64.
+    void chordNoteOn(Voice& v, const ot::audio::SynthNote& n, int16_t chord)
+    {
+        const ChordParams cp = chordParamsOf(def);
+        if (cp.chord < 0 || cp.chord >= params.count)
+        {
+            engine->noteOn(v.v, params, n);
+            return;
+        }
+        const int strum = (chord >> 8) - 64;
+        const int si = (strum != 0 && cp.strum >= 0 && cp.strum < params.count) ? cp.strum : cp.chord;
+        float& e = params.end[cp.chord];
+        float& s = params.start[cp.chord];
+        float& se = params.end[si];
+        float& ss = params.start[si];
+        const float e0 = e, s0 = s, se0 = se, ss0 = ss;
+        e = s = float(chord & 0xFF);
+        if (si != cp.chord)
+        {
+            se = ss = float(strum);
+        }
+        engine->noteOn(v.v, params, n);
+        se = se0;
+        ss = ss0;
+        e = e0;
+        s = s0;
     }
 
     void noteOff(uint8_t note)
@@ -608,6 +965,7 @@ class OpenInstrument final : public Instrument
         {
             return;
         }
+        host.pendingOff(*this, note);
         for (auto& v : voices)
         {
             if (v.on && v.v.gate && v.v.note == note)
@@ -652,10 +1010,20 @@ class OpenInstrument final : public Instrument
     ot::audio::SynthSlotScratch scratch;
     ot::audio::SynthParams params;
     bool paramsValid = false;
+    bool seenOk = false;      // the last refresh found params.end equal to effective() and the patch can say when that changes (effStatic)
+    uint32_t seenSer = 0;     // OpenPatch::effSerial() at that refresh
+    bool startIsEnd = false; // params.start equals params.end bit for bit over params.count (refreshParams, render)
     open::ModState modSt[open::kModSlots];
     float modOut[open::kModSlots] = {};
     uint8_t modSerial = 0;
+    uint8_t cfgSerial = 0;
     float bend = 0.0f; // pitch bend in semitones, applied to every voice (SynthVoice::bend)
+    uint32_t attackCyc = kSeedAttackCycles; // learned (live renders): a note-on over a running voice
+    uint32_t voiceCyc = kSeedVoiceCycles;   // learned: one running voice
+    uint32_t blockVoices = 0, blockRenderCyc = 0;
+    bool blockMoving = false;
+    int16_t chordNote = -1; // noteChord: the note whose next note-on carries chordIdx (-1: none)
+    int16_t chordIdx = 0;   // the chord in bits 0-7, the strum + 64 in bits 8-14
     Voice voices[kMaxVoicesPerInstrument];
 };
 
@@ -720,6 +1088,215 @@ class OpenSynth final
     }
     void onStop() override { governor.reset(); }
 
+    // ---- note-on admission (live blocks only: a cycle source, governor on)
+    ot::audio::CpuMeter::CycleFn clock() const override { return governor.enabled() ? clk : nullptr; }
+    void noteStolen(bool fastKill) override
+    {
+        stats.steals++;
+        stats.fastKills += fastKill;
+    }
+    bool admit(OpenInstrument& inst, uint8_t note, uint8_t velocity, int16_t chord) override
+    {
+        const auto c = clock();
+        if (!c)
+        {
+            return true;
+        }
+        const uint32_t cost = inst.attackCost() + inst.voiceCost();
+        if (!inBlock)
+        {
+            carry += cost; // outside the audio block (main thread with the audio interrupt off): it renders in the next block
+            return true;
+        }
+        stats.admitted++;
+        bool queued = false; // the order of a part's notes is kept: after one waits, the next waits too
+        for (int i = 0; i < pendN && !queued; i++)
+        {
+            queued = pend[i].inst == &inst;
+        }
+        if (!queued)
+        {
+            const uint32_t now = c() - blockStart;
+            // the rest of the block from the synth render on, as the last block took it without its note-ons
+            const uint32_t used = prevPre + prevExtra;
+            const uint32_t rest = prevTotal > used ? prevTotal - used : 0;
+            // the synth render starts after the sequencer: at the last block's point or later when this block's step work ran longer
+            // a step block runs longer before the synth render than the last block did (the rest of the sequencer step, Patch and
+            // CC FX, the graph before the synth): stepPre, learned from earlier step blocks, is added
+            const uint32_t guess = std::max(now, prevPre);
+            if (preGuess == 0)
+            {
+                preGuess = guess;
+            }
+            const uint32_t est = guess + stepPre + rest + extra + cost;
+            shot.estMax = std::max(shot.estMax, est);
+            // the next block: a block without note-ons as the last one was, plus what already waits for it and this note-on.
+            // When it would be over the limit too and is no cheaper, the note-on starts now: waiting would only move the load
+            const uint32_t steady = prevTotal > prevExtra ? prevTotal - prevExtra : 0;
+            const uint32_t estNext = steady + queuedCost + cost;
+            if (est <= admitCycles || (estNext > admitCycles && est < estNext))
+            {
+                extra += cost;
+                shot.admitted++;
+                return true;
+            }
+        }
+        if (pendN == kPendingMax)
+        {
+            stats.queueFull++; // never dropped: it starts now
+            shot.admitted++;
+            extra += cost;
+            return true;
+        }
+        // the voice it will take: when the pool is full a victim in another part fades in this block (it renders here
+        // anyway), so the block the note starts in does not render both
+        if (inst.takesPoolVoice() && sounding() + pendSlots >= cap())
+        {
+            Voice* v = victim();
+            if (v && !inst.owns(v))
+            {
+                v->v.fading = true;
+                stats.preSteals++;
+            }
+        }
+        else if (inst.takesPoolVoice())
+        {
+            pendSlots++;
+        }
+        pend[pendN++] = Pending{&inst, note, velocity, false, chord, c()};
+        queuedCost += cost;
+        stats.deferred++;
+        shot.deferred++;
+        if (++deferredNow > stats.deferMaxBlock)
+        {
+            stats.deferMaxBlock = deferredNow;
+        }
+        return false;
+    }
+    bool pendingOff(OpenInstrument& inst, uint8_t note) override
+    {
+        bool hit = false;
+        for (int i = 0; i < pendN; i++)
+        {
+            if (pend[i].inst == &inst && pend[i].note == note)
+            {
+                pend[i].off = true;
+                hit = true;
+            }
+        }
+        return hit;
+    }
+    void flushPending(OpenInstrument& inst) override
+    {
+        Pending mine[kPendingMax];
+        int n = 0, k = 0;
+        for (int i = 0; i < pendN; i++)
+        {
+            if (pend[i].inst == &inst)
+            {
+                mine[n++] = pend[i];
+            }
+            else
+            {
+                pend[k++] = pend[i];
+            }
+        }
+        pendN = k;
+        for (int i = 0; i < n; i++)
+        {
+            mine[i].inst->startQueued(mine[i].note, mine[i].vel, mine[i].off, mine[i].chord);
+        }
+    }
+    void dropPending(OpenInstrument& inst) override
+    {
+        int k = 0;
+        for (int i = 0; i < pendN; i++)
+        {
+            if (pend[i].inst != &inst)
+            {
+                pend[k++] = pend[i];
+            }
+        }
+        pendN = k;
+    }
+    // Start of a live block: the note-ons queued in the block before start first, their cost counts in this block
+    void blockStart_(uint32_t start, ot::audio::CpuMeter::CycleFn fn)
+    {
+        clk = fn;
+        blockStart = start;
+        inBlock = true;
+        extra = carry;
+        carry = 0;
+        pre = 0;
+        deferredNow = 0;
+        pendSlots = 0;
+        queuedCost = 0;
+        if (pendN == 0 || !clock())
+        {
+            return;
+        }
+        Pending q[kPendingMax];
+        const int n = pendN;
+        std::copy_n(pend, n, q);
+        pendN = 0;
+        const uint32_t t = fn();
+        for (int i = 0; i < n; i++)
+        {
+            const uint32_t us = (t - q[i].asked) / kCyclesPerUs;
+            stats.deferMaxUs = std::max(stats.deferMaxUs, us);
+            extra += q[i].inst->attackCost() + q[i].inst->voiceCost();
+            q[i].inst->startQueued(q[i].note, q[i].vel, q[i].off, q[i].chord);
+        }
+        shot.flushed = uint32_t(n);
+    }
+    void setAdmit(uint32_t permille) { admitCycles = admitCyclesFor(std::clamp<uint32_t>(permille, 500, 1000)); }
+    uint32_t admit() const
+    {
+        return uint32_t((uint64_t(admitCycles) * 1000u + ot::audio::CpuMeter::kBudgetCycles / 2) / ot::audio::CpuMeter::kBudgetCycles);
+    }
+    void shots(open::BlockShot& w, open::BlockShot& o) const
+    {
+        w = worst;
+        o = lastOver;
+    }
+    void renderStarts()
+    {
+        if (inBlock && clk && pre == 0) // the first part rendered in this block
+        {
+            pre = clk() - blockStart;
+        }
+    }
+    void resetStats()
+    {
+        stats = open::LoadStats{};
+        worst = lastOver = shot = open::BlockShot{};
+        cutsAtReset = governor.cuts();
+        govStealsAtReset = governor.steals();
+        meter.reset();
+        peak = 0;
+    }
+    void fillStats(open::LoadStats& s)
+    {
+        s = stats;
+        s.blocks = meter.blocks();
+        s.overruns = meter.overruns();
+        s.peakPermille = peak;
+        s.avgPermille = meter.avg();
+        s.cutsTotal = governor.cuts();
+        s.cuts = governor.cuts() - cutsAtReset;
+        s.govSteals = governor.steals() - govStealsAtReset;
+        s.stepPreUs = stepPre / kCyclesPerUs;
+        s.cap = governor.cap();
+        s.budget = governor.budget();
+        s.sounding = sounding();
+        for (int p = 0; p < 3; p++)
+        {
+            auto* i = p < int(instruments.size()) && instruments[p] ? &static_cast<OpenInstrument&>(*instruments[p]) : nullptr;
+            s.attackUs[p] = i ? i->attackCost() / kCyclesPerUs : 0;
+            s.voiceUs[p] = i ? i->voiceCost() / kCyclesPerUs : 0;
+        }
+    }
+
     void setBudget(int voices)
     {
         governor.setBudget(std::clamp(voices, 1, open::kMaxVoiceBudget));
@@ -730,7 +1307,41 @@ class OpenSynth final
     void blockDone(uint32_t cycles)
     {
         meter.addBlock(cycles);
+        peak = std::max(peak, meter.last());
         governor.evaluate(meter);
+        if (inBlock)
+        {
+            if (preGuess != 0)
+            {
+                // how much later the synth render started than the first admission check guessed (decaying max over step blocks)
+                const uint32_t miss = pre > preGuess ? pre - preGuess : 0;
+                stepPre = std::max(miss, stepPre - (stepPre >> 4));
+                preGuess = 0;
+            }
+            prevTotal = cycles;
+            prevPre = pre;
+            prevExtra = extra;
+            inBlock = false;
+            shot.cycles = cycles;
+            shot.pre = pre;
+            shot.extra = extra;
+            for (const auto& i : instruments)
+            {
+                if (i)
+                {
+                    static_cast<OpenInstrument&>(*i).takeBlock(shot.voices, shot.renderCyc, shot.moving);
+                }
+            }
+            if (cycles > worst.cycles)
+            {
+                worst = shot;
+            }
+            if (meter.last() >= ot::audio::CpuMeter::kOverrunPermille)
+            {
+                lastOver = shot;
+            }
+        }
+        shot = open::BlockShot{};
     }
     void engineGone(const EngineDef* d)
     {
@@ -773,14 +1384,13 @@ class OpenSynth final
             }
         }
         governor.reset();
-        meter.reset();
+        pendN = 0;
+        resetStats();
     }
-#ifdef OPEN_HOST_TEST
     OpenInstrument* instrumentAt(int part)
     {
         return part >= 0 && part < int(instruments.size()) && instruments[part] ? &static_cast<OpenInstrument&>(*instruments[part]) : nullptr;
     }
-#endif
     bool partIdle(int part)
     {
         if (part < 0 || part >= int(instruments.size()) || !instruments[part])
@@ -791,9 +1401,20 @@ class OpenSynth final
     }
     void setOffline(bool offline)
     {
+        // a note-on still waiting starts now: the offline render admits every note-on and must see none in a queue
+        Pending q[kPendingMax];
+        const int n = pendN;
+        std::copy_n(pend, n, q);
+        pendN = 0;
+        for (int i = 0; i < n; i++)
+        {
+            q[i].inst->startQueued(q[i].note, q[i].vel, q[i].off, q[i].chord);
+        }
         governor.setEnabled(!offline);
         governor.reset();
         meter.reset();
+        inBlock = false;
+        carry = 0;
     }
     ~OpenSynth() override;
     ot::audio::Governor governor;
@@ -845,6 +1466,7 @@ class OpenSynth final
                TempoProvider tempoProvider) override
     {
         tempo = std::move(tempoProvider);
+        pendN = 0; // queued note-ons point at the old instruments
         instruments.assign(newInstruments.begin(), newInstruments.end());
         for (auto& i : instruments)
         {
@@ -858,6 +1480,7 @@ class OpenSynth final
 
     void renderAudioBuffer(AudioBufferStereoRef buffer) override
     {
+        renderStarts();
         clear(buffer);
         for (auto& i : instruments)
         {
@@ -871,17 +1494,18 @@ class OpenSynth final
                            std::span<AudioBufferRef> bufferAux,
                            int instrumentId) override
     {
+        renderStarts();
         clear(bufferMain);
-        for (auto& aux : bufferAux)
-        {
-            std::fill(aux.begin(), aux.end(), 0.0f);
-        }
+        // The aux buffers (the send taps of a stereo patch that renders aux sends) stay as they are: no open patch has rendersAuxSends
+        // (open_cold.cpp never sets it), so PolySynth::update never reads them, and clearing 2 x 512 B per part and block cost 5 us.
+        (void)bufferAux;
         if (instrumentId >= 0 && instrumentId < int(instruments.size()) && instruments[instrumentId])
         {
             float* l = bufferMain[0].data();
             float* r = bufferMain[1].data();
             static_cast<OpenInstrument&>(*instruments[instrumentId]).render(l, r);
             // mono output: tracker-ce reads the left buffer only
+#pragma GCC unroll 8
             for (int i = 0; i < kAudioBufferSize; i++)
             {
                 l[i] = 0.5f * (l[i] + r[i]);
@@ -895,9 +1519,22 @@ class OpenSynth final
   private:
     static void clear(AudioBufferStereoRef buffer)
     {
+        // 8 stores per turn (std::fill compiled to one store per loop turn)
+        static_assert(kAudioBufferSize % 8 == 0);
         for (auto& channel : buffer)
         {
-            std::fill(channel.begin(), channel.end(), 0.0f);
+            float* p = channel.data();
+            for (int i = 0; i < kAudioBufferSize; i += 8)
+            {
+                p[i] = 0.0f;
+                p[i + 1] = 0.0f;
+                p[i + 2] = 0.0f;
+                p[i + 3] = 0.0f;
+                p[i + 4] = 0.0f;
+                p[i + 5] = 0.0f;
+                p[i + 6] = 0.0f;
+                p[i + 7] = 0.0f;
+            }
         }
     }
 
@@ -906,6 +1543,36 @@ class OpenSynth final
     std::vector<std::shared_ptr<Instrument>> instruments;
     TempoProvider tempo;
     ot::audio::CpuMeter meter;
+
+    // note-on admission state (audio interrupt)
+    struct Pending
+    {
+        OpenInstrument* inst;
+        uint8_t note;
+        uint8_t vel;
+        bool off;
+        int16_t chord;  // the MIDI Chord value (and strum) for a paraphonic engine, -1 none
+        uint32_t asked; // cycle counter when the note-on came
+    };
+    Pending pend[kPendingMax];
+    int pendN = 0;
+    uint32_t queuedCost = 0;        // estimated cycles of the note-ons queued in this block (they start in the next)
+    int pendSlots = 0;              // queued note-ons of this block that take a free pool voice (no victim faded for them)
+    ot::audio::CpuMeter::CycleFn clk = nullptr;
+    bool inBlock = false;
+    uint32_t blockStart = 0;
+    uint32_t pre = 0;               // this block: cycles from its start to the synth render
+    uint32_t extra = 0;             // this block: estimated cycles of the note-ons started in it
+    uint32_t carry = 0;             // note-ons started between blocks, counted in the next
+    uint32_t deferredNow = 0;
+    uint32_t prevTotal = 0, prevPre = 0, prevExtra = 0;
+    uint32_t preGuess = 0;          // this block: the render start the first admission check assumed (0: no check yet)
+    uint32_t stepPre = 0;           // learned: how much later than that the render starts in a block with note-ons
+    uint32_t peak = 0;
+    uint32_t cutsAtReset = 0, govStealsAtReset = 0;
+    open::LoadStats stats{};
+    uint32_t admitCycles = admitCyclesFor(open::kAdmitPermille);
+    open::BlockShot shot{}, worst{}, lastOver{};
 };
 
 OpenSynth* gActive = nullptr; // the one Synth of the firmware (the latest created in host tests)
@@ -934,7 +1601,76 @@ void open::reportBlockCycles(uint32_t cycles)
         gActive->blockDone(cycles);
     }
 }
+void open::reportBlockStart(uint32_t startCycles, uint32_t (*cycles)())
+{
+    if (gActive)
+    {
+        gActive->blockStart_(startCycles, cycles);
+    }
+}
+void open::loadStats(LoadStats& s)
+{
+    if (gActive)
+    {
+        gActive->fillStats(s);
+    }
+    else
+    {
+        s = LoadStats{};
+    }
+}
+void open::setAdmitPermille(uint32_t permille)
+{
+    if (gActive)
+    {
+        gActive->setAdmit(permille);
+    }
+}
+uint32_t open::admitPermille() { return gActive ? gActive->admit() : kAdmitPermille; }
+void open::loadShots(BlockShot& w, BlockShot& o)
+{
+    if (gActive)
+    {
+        gActive->shots(w, o);
+    }
+    else
+    {
+        w = o = BlockShot{};
+    }
+}
+void open::resetLoadStats()
+{
+    if (gActive)
+    {
+        gActive->resetStats();
+    }
+}
 bool open::partIdle(int part) { return gActive && gActive->partIdle(part); }
+open::ChordParams open::chordParamsOf(const EngineDef* def)
+{
+#ifdef SYNTH_ENGINE_ACD
+    if (def == &kAcdDef)
+    {
+        return ChordParams{int8_t(ot::audio::acd::kChord), int8_t(ot::audio::acd::kChordMode), int8_t(ot::audio::acd::kStrum)};
+    }
+#endif
+    return plugChordParams(def);
+}
+#ifndef FEATURE_PLUG_HOST
+open::ChordParams open::plugChordParams(const EngineDef*) { return ChordParams{}; }
+#endif
+bool open::partChordPara(int part)
+{
+    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
+    return i && i->chordPara();
+}
+void open::partNoteChord(int part, uint8_t note, uint8_t chord, int8_t strum)
+{
+    if (auto* i = gActive ? gActive->instrumentAt(part) : nullptr)
+    {
+        i->noteChord(note, chord, strum);
+    }
+}
 #ifdef OPEN_HOST_TEST
 const ot::audio::SynthParams* open::testParams(int part)
 {
