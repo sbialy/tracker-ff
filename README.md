@@ -60,13 +60,12 @@ The original Polyend Tracker (MK66) only. The Tracker+ and the Mini are not buil
 
 ## Flash
 
-1. Copy `PolyendTracker_FF_1.3.0.ptf` to the `/Firmware/` folder on the microSD card.
-2. Copy `Plugins/Synth/` to `/Plugins/Synth/` and `Plugins/Master/` to `/Plugins/Master/` on the card. Optional: copy the `.ptfx` files to `/Effects/`. The release zip holds all of it.
-3. On the Tracker open **Config > Firmware > Firmware update**, pick the file and confirm.
+1. Download `PolyendTracker_FF_1.3.0.zip` from the [release page](https://github.com/sbialy/tracker-ff/releases/tag/tracker-ff-v1.3.0) and unzip the whole zip onto the root of the microSD card. It is laid out like the card: `Firmware/` holds the image, `Plugins/Synth/` and `Plugins/Master/` the plugins and `Effects/` the sample editor effects.
+2. On the Tracker open **Config > Firmware > Firmware update**, pick `PolyendTracker_FF_1.3.0.ptf` and confirm.
 
 Coming from 1.1.0 or 1.2.0? Read [`UPGRADING.md`](UPGRADING.md) first, because CHIP is a plugin now and `chip.plg` has to be on the card.
 
-Do not rename the file. The original's bootloader lists only names that start with `PolyendTrac` and are at most 31 characters long. Back up your `Projects/` folder first, because upstream CE saves patterns in a newer format that older firmware cannot read. If a build does not boot, the emergency recovery steps in [upstream's README](docs/upstream-README.md#4-flashing-on-hardware--emergency-recovery) apply.
+Do not rename the `.ptf`. The original's bootloader lists only names that start with `PolyendTrac` and are at most 31 characters long. Back up your `Projects/` folder first, because upstream CE saves patterns in a newer format that older firmware cannot read. If a build does not boot, the emergency recovery steps in [upstream's README](docs/upstream-README.md#4-flashing-on-hardware--emergency-recovery) apply.
 
 ## Build
 

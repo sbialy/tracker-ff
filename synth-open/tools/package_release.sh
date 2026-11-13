@@ -28,7 +28,8 @@
 # makes nothing when a check that is not on that list is RED. OLD_REF=<ref> picks another old release, MISMATCH_GATE=skip skips the gate (a
 # layout test, never a release) and says so.
 # With --zip the folder is also zipped next to itself (<name>.zip, needs zip). The zip has no wrapper directory: its root is the card root,
-# so it unzips straight onto the SD card. The bare .ptf and a standalone SHA256SUMS are published as separate release assets.
+# so it unzips straight onto the SD card. The zip is the only thing a release publishes: the image is inside it as Firmware/<image>.ptf and the
+# release page lists a SHA256SUMS of the zip alone (the list inside the zip, tracker-ff/SHA256SUMS, covers every file in it).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -208,9 +209,10 @@ tracker-ff/licenses/   the full license text of every bundled third-party compon
 tracker-ff/SHA256SUMS  checksums of every file, paths from the card root: shasum -a 256 -c tracker-ff/SHA256SUMS
 ${plugnotes}
 This image links neither libPolySynth.a nor libPolyDSP.a. $nofactory
-Unzip to the root of the SD card, then Config > Firmware (the file name of the .ptf must stay as it is).
-Firmware/ holds the image and Plugins/ the plugins. Without the synth plugins the projects that use the $nword plugin engines show Missing on those parts.
-When you update from 1.2.x, copy Plugins/Synth/chip.plg to the card as well: CHIP is no longer in the image, and without chip.plg the CHIP parts show Missing.
+Install: unzip this whole zip onto the root of the SD card. It is laid out like the card, so Firmware/ holds the image and Plugins/ the plugins.
+Then open Config > Firmware > Firmware update on the Tracker, pick the image and confirm. The file name of the image must stay as it is.
+Without the synth plugins the projects that use the $nword plugin engines show Missing on those parts.
+When you update from 1.2.x, Plugins/Synth/chip.plg is required: CHIP is no longer in the image, and without chip.plg the CHIP parts show Missing.
 Effects/ holds the optional effects.${patchesline}
 EOF
 else
@@ -226,7 +228,8 @@ tracker-ff/licenses/   the full license text of every bundled third-party compon
 tracker-ff/SHA256SUMS  checksums of every file, paths from the card root: shasum -a 256 -c tracker-ff/SHA256SUMS
 
 This image links neither libPolySynth.a nor libPolyDSP.a. Factory patches and .ptfx plugins are not part of this package.
-Unzip to the root of the SD card, then Config > Firmware. The file name of the .ptf must stay as it is.
+Install: unzip this whole zip onto the root of the SD card. It is laid out like the card, so Firmware/ holds the image.
+Then open Config > Firmware > Firmware update on the Tracker, pick the image and confirm. The file name of the image must stay as it is.
 EOF
 fi
 

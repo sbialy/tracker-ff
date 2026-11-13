@@ -2,12 +2,12 @@
 
 This guide is for the original Polyend Tracker (MK66) when you come from tracker-ff 1.1.0 or 1.2.0. A fresh install needs only the "Flash" section of the README of the repository.
 
-The steps are the same for both versions: back up, copy the files of the zip over the card, flash, check. What differs is how many files are new to you. Read the section for your version and then the sections after it.
+The steps are the same for both versions: back up, unzip the zip onto the card, flash, check. What differs is how many files are new to you. Read the section for your version and then the sections after it.
 
 ## Before you start
 
 1. Put the SD card in your computer and copy the whole card to a folder on the computer. At least `Projects/`, `Patches/`, `Plugins/` and `Workspace/` should be in the copy. A project saved by 1.3.0 loads on 1.2.0 (see "Going back"), but a copy costs nothing.
-2. Download `PolyendTracker_FF_1.3.0.zip` from the release page of the tag `tracker-ff-v1.3.0`. Check it with the `SHA256SUMS` asset.
+2. Download `PolyendTracker_FF_1.3.0.zip` from the release page of the tag `tracker-ff-v1.3.0`. Check it with the `SHA256SUMS` asset. The zip is the whole release, the firmware image is inside it as `Firmware/PolyendTracker_FF_1.3.0.ptf`.
 3. Unzip it. Unlike the 1.2.0 zip, it has no wrapper folder. The folders in it (`Firmware/`, `Plugins/`, `Effects/`) are laid out like the card, so you can unzip straight onto the card root and let the computer replace the files that are there. The 1.2.0 zip put `LICENSE`, `NOTICE.md`, `SHA256SUMS` and `licenses/` at the card root. This zip has them under `tracker-ff/`, so after the copy you can delete the old ones at the card root. The old `SHA256SUMS` there no longer matches the card. `tracker-ff/SHA256SUMS` lists every file with its path from the card root. From the card root, `shasum -a 256 -c tracker-ff/SHA256SUMS` checks the copy.
 
 ## From 1.2.0
@@ -18,7 +18,7 @@ The steps are the same for both versions: back up, copy the files of the zip ove
 
 | File | What to do |
 |---|---|
-| `Firmware/PolyendTracker_FF_1.3.0.ptf` | New. Copy it to `/Firmware/`. You can leave `PolyendTracker_FF_1.2.0.ptf` there as your way back (the firmware update menu lists both). |
+| `Firmware/PolyendTracker_FF_1.3.0.ptf` | New. The unzip puts it in `/Firmware/`. You can leave `PolyendTracker_FF_1.2.0.ptf` there as your way back (the firmware update menu lists both). |
 | `Plugins/Synth/chip.plg` and `chip.plgi` | **New and required for CHIP.** CHIP is no longer built into the image, it is a plugin like the other twelve. Copy both files. Without them every part on CHIP shows `Missing: CHIP` and plays nothing. |
 | `Plugins/Master/glue.plg` | New. The Glue bus compressor. It is the eighth master insert. |
 | `Effects/*.ptfx` | Copy all fourteen over the old ones. They are rebuilt, and `transient_shaper.ptfx` has new envelope times. |
@@ -28,7 +28,7 @@ Plate Reverb was never in a public release. If a test build left a Plate Reverb 
 
 ### Flash
 
-1. Copy the files as above.
+1. Unzip the zip onto the card root as in "Before you start".
 2. Put the card in the Tracker. Open **Config > Firmware > Firmware update**, pick `PolyendTracker_FF_1.3.0.ptf` and confirm.
 3. Wait until the Tracker restarts by itself. Do not switch it off while it flashes.
 4. Open **Config**. There is a new **Features** entry, and **Info > About** says `tracker-ff 1.3.0`.
@@ -100,7 +100,7 @@ Projects, `.patch` files and `Patches/` folders open as they were. Back them up 
 
 ## Going back to 1.2.0
 
-1. Download `PolyendTracker_FF_1.2.0.ptf` from the release page of the tag `tracker-ff-v1.2.0` (or use the copy you kept in `/Firmware/`).
+1. Use the `PolyendTracker_FF_1.2.0.ptf` you kept in `/Firmware/`. If it is gone, the release page of the tag `tracker-ff-v1.2.0` has it as a file of its own.
 2. For the pinhole recovery only one `.ptf` may be in `/Firmware`. For the menu it does not matter.
 3. Open **Config > Firmware > Firmware update**, pick the 1.2.0 file and confirm.
 4. You can leave the 1.3.0 plugin files on the card. 1.2.0 lists the plugins it knows and ignores `chip.plg` because CHIP is built into 1.2.0. It also ignores `/Plugins/synth-order.txt` and `/Features/`.
@@ -117,4 +117,4 @@ Going back to 1.1.0 works the same way with the file of the tag `tracker-ff-v1.1
 
 ## Checksums
 
-The release page lists the SHA-256 of the `.ptf` and the zip. The zip also holds `tracker-ff/SHA256SUMS` for every file in it. Check the file you copy to the card, because a bad copy is the most common reason for a failed update.
+The release page lists the SHA-256 of the zip in `SHA256SUMS`. The zip also holds `tracker-ff/SHA256SUMS` for every file in it, the image included. Check the zip before you unzip it and run `shasum -a 256 -c tracker-ff/SHA256SUMS` from the card root afterwards, because a bad copy is the most common reason for a failed update.
