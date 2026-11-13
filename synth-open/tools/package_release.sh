@@ -212,7 +212,7 @@ This image links neither libPolySynth.a nor libPolyDSP.a. $nofactory
 Install: unzip this whole zip onto the root of the SD card. It is laid out like the card, so Firmware/ holds the image and Plugins/ the plugins.
 Then open Config > Firmware > Firmware update on the Tracker, pick the image and confirm. The file name of the image must stay as it is.
 Without the synth plugins the projects that use the $nword plugin engines show Missing on those parts.
-When you update from 1.2.x, Plugins/Synth/chip.plg is required: CHIP is no longer in the image, and without chip.plg the CHIP parts show Missing.
+When you update from 1.2.x, copy Plugins/Synth/chip.plg and chip.plgi (unzip the whole zip onto the card): CHIP is a plugin since 1.3.0, it is no longer in the image, and without the two files the CHIP parts show Missing.
 Effects/ holds the optional effects.${patchesline}
 EOF
 else

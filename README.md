@@ -60,8 +60,8 @@ The original Polyend Tracker (MK66) only. The Tracker+ and the Mini are not buil
 
 ## Flash
 
-1. Download `PolyendTracker_FF_1.3.0.zip` from the [release page](https://github.com/sbialy/tracker-ff/releases/tag/tracker-ff-v1.3.0) and unzip the whole zip onto the root of the microSD card. It is laid out like the card: `Firmware/` holds the image, `Plugins/Synth/` and `Plugins/Master/` the plugins and `Effects/` the sample editor effects.
-2. On the Tracker open **Config > Firmware > Firmware update**, pick `PolyendTracker_FF_1.3.0.ptf` and confirm.
+1. Download `PolyendTracker_FF_1.3.1.zip` from the [release page](https://github.com/sbialy/tracker-ff/releases/tag/tracker-ff-v1.3.1) and unzip the whole zip onto the root of the microSD card. It is laid out like the card: `Firmware/` holds the image, `Plugins/Synth/` and `Plugins/Master/` the plugins and `Effects/` the sample editor effects.
+2. On the Tracker open **Config > Firmware > Firmware update**, pick `PolyendTracker_FF_1.3.1.ptf` and confirm.
 
 Coming from 1.1.0 or 1.2.0? Read [`UPGRADING.md`](UPGRADING.md) first, because CHIP is a plugin now and `chip.plg` has to be on the card.
 
@@ -72,7 +72,7 @@ Do not rename the `.ptf`. The original's bootloader lists only names that start 
 You need `make`, `python3` and the Arm GNU Toolchain 12.3.rel1 (the release compiler, in `./agt/12.3.rel1/` or pass `TOOLCHAIN=/path/to/arm-none-eabi-`). Build only the original, `make all` also builds the Tracker+ and the Mini.
 
 ```bash
-# the release image, build/PolyendTracker_FF_1.3.0.ptf (without RELEASE=1: PolyendTracker_FF_<commit>.ptf)
+# the release image, build/PolyendTracker_FF_1.3.1.ptf (without RELEASE=1: PolyendTracker_FF_<commit>.ptf)
 make original-release
 ```
 

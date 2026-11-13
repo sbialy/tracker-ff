@@ -4,7 +4,11 @@ All notable changes to the **Polyend Tracker Community Edition (CE)** firmware a
 
 ---
 
-## [Unreleased] - 1.3.1
+## [1.3.1] - 2026-11-13 - tracker-ff 1.3.1 (original Tracker, MK66)
+
+Bugfix release on 1.3.0. The image changes, the plugins and effects of the release zip are the same as in 1.3.0.
+
+When you update from 1.2.x, copy `chip.plg` and `chip.plgi` to `/Plugins/Synth/` on the card (unzip the whole release zip onto the card root and both are there). CHIP is a plugin since 1.3.0. Without the two files a part on CHIP shows `Missing: CHIP` and plays nothing.
 
 ### Fixed
 

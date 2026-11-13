@@ -215,6 +215,9 @@ known() { checks=$((checks+1)); knowns=$((knowns+1)); printf 'KNOWN %s\n' "$1"; 
 
 # ------------------------------------------------------------------------------------------------------------------ builds
 echo "### setup: the two hosts and the 1.2.0 plugin set"
+# the version of the tree under test (the stamp of its project header, 1.2.0 is 1.2.0): 1.3.0 differs from 1.2.0 in byte 5 only, 1.3.1 in bytes 5 and 6
+VER13="$(sed -n 's/^SYNTH_OPEN_VER[[:space:]]*:\{0,1\}=[[:space:]]*//p' "$ROOT/version.mk" | head -1 | sed 's/-.*//')"
+PROJDIFF="5,2320,2321,2322,2323"; [ "${VER13##*.}" = 0 ] || PROJDIFF="5,6,2320,2321,2322,2323"
 LOCK12="$WORK/lock12.json"; LOCK13="$WORK/lock13.json"
 git -C "$ROOT" show "$FW12_REF:engines/external.lock.json" >"$LOCK12" || { echo "no external.lock.json in $FW12_REF" >&2; exit 2; }
 cp "$ROOT/engines/external.lock.json" "$LOCK13"
@@ -524,7 +527,7 @@ sd="$WORK/b2"; card "$sd" "$SYN13" "$FX13"; prime "$H13" "$sd"
 "$H13" "$sd" "$SYNTH; tap Down 2; wait 2500; tap Pattern; wait 600" >/dev/null 2>&1     # the pick of CHIP (a plugin on 1.3.0) writes its patch
 py seed "$sd/Workspace/project.mt" 6 0 2
 S1="$(sum "$sd"/Workspace/project.mt "$sd"/Workspace/?.patch)"
-expect "the 1.3.0 project says 1.3.0 in its header" "1.3.0" "$(py stamp "$sd/Workspace/project.mt")"
+expect "the 1.3.x project says its own version in its header ($VER13)" "$VER13" "$(py stamp "$sd/Workspace/project.mt")"
 runh "$H12" "$sd" "$SYNTH; poke picker; instr 65; tap Pattern; wait 300; tap Params; wait 1500; poke picker; instr 66; tap Pattern; wait 300; tap Params; wait 1500; poke picker"
 expect "1.2.0 reads the project: part 1 is on the built-in CHIP (stored 6)" "part 0 stored 6 engine CHIP" "$(part_line 1 0)"
 expect "the CHIP row is the part's row in the list (it is not Missing, cursor on CHIP)" "CHIP" "$(list_of 1 | tr ',' '\n' | sed -n "$(( $(cursor_of 1) + 1 ))p")"
@@ -535,7 +538,7 @@ expect "and 1.3.0 reads it again as before" "part 0 stored 6 engine CHIP" "$(par
 # the two firmwares write the same project structure: a default project of each differs in the version stamp and the CRC only
 sd12="$WORK/b2d12"; sd13="$WORK/b2d13"; rm -rf "$sd12" "$sd13"; mkdir -p "$sd12" "$sd13"; prime "$H12" "$sd12"; prime "$H13" "$sd13"
 py projdiff "$sd12/Workspace/project.mt" "$sd13/Workspace/project.mt" >"$WORK/pd.txt"
-expect "a default project of 1.2.0 and of 1.3.0: same size, only the firmware stamp (byte 5, the minor) and the CRC (last 4 bytes) differ" "size 2324 2324 diff 5,2320,2321,2322,2323" "$(cat "$WORK/pd.txt")"
+expect "a default project of 1.2.0 and of 1.3.x: same size, only the firmware stamp (byte 5, the minor, and byte 6 when the patch number is not 0) and the CRC (last 4 bytes) differ" "size 2324 2324 diff $PROJDIFF" "$(cat "$WORK/pd.txt")"
 expect "the Synth stored numbers sit at the same offsets (1.2.0 default project: WTFM, ACD, VAP = 3 0 2)" "3 0 2" "$(py stored "$sd12/Workspace/project.mt")"
 expect "the project file loader (fileManagerProject.cpp) is the same file in both firmwares: no gate on the firmware stamp" "same" "$(cmp -s "$B12/core/FileManager/fileManagerProject.cpp" "$ROOT/core/FileManager/fileManagerProject.cpp" && echo same || (diff <(tr -d '\r' <"$B12/core/FileManager/fileManagerProject.cpp") <(tr -d '\r' <"$ROOT/core/FileManager/fileManagerProject.cpp") >/dev/null && echo same || echo different))"
 

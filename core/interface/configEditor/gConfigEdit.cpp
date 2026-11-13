@@ -29,7 +29,7 @@ const char creditsText[] = {
     "\n(No Wholesale Commercial Clones; see LICENSE)."
 #ifdef FEATURE_SYNTH_OPEN
     "\n"
-    "\ntracker-ff 1.3.0: unofficial community firmware,"
+    "\ntracker-ff 1.3.1: unofficial community firmware,"
     "\nnot affiliated with Polyend."
     "\nSynth engines: OpenTracker (Apache-2.0),"
     "\ngithub.com/sandlbn/polyend-tracker-re"
