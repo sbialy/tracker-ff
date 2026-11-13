@@ -25,6 +25,7 @@
 //   popup                                the text popup the UI shows now (first line, "popup none" when hidden), for model_rest_sim.sh
 //   rhs                                  the right-hand side of the Synth screen as the UI holds it (the engine the part plays and its voice limit,
 //                                        patch name, polyphony, gain, panning, sends), for model_rest_sim.sh
+//   imode                                the page of the instrument editor: synth (1/3), macros, automation or other (synth_order_sim.sh scenario 12)
 //   watch [reset|mark]                   what the screen showed since the last "watch reset", sampled at every millis() of the main loop: how many
 //                                        times the right-hand side changed and the first change, how many popups came up and the first one with its
 //                                        text, times in ms after the last "watch mark" (-1 for none) (model_rest_sim.sh)
@@ -274,6 +275,13 @@ void run(const char* line)
             const int st = mtProject.values.synthPart[p].synthType;
             out("part %d stored %d engine %s", p, st, Synth::storedName(st));
         }
+    }
+    else if (!strcmp(cmd, "imode"))
+    {   // the page of the instrument editor (synth_order_sim.sh, scenario 12: the Macros and Automation pages of a Missing part stay closed)
+        out("imode %s", instrumentEditor.mode == mtInstEditModeSynth          ? "synth"
+                        : instrumentEditor.mode == mtInstEditModeSynthMacros  ? "macros"
+                        : instrumentEditor.mode == mtInstEditModeSynthAutomation ? "automation"
+                                                                                 : "other");
     }
     else if (!strcmp(cmd, "rhs"))
     {

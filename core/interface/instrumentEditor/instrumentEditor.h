@@ -13,6 +13,8 @@
 // Synth Automation page (SynthAutomation.cpp): the open synth only (MK66 SYNTH_OPEN), not the IMX stock synth GUI
 #if GUI_HANDLE_SYNTH && defined(FEATURE_SYNTH_OPEN)
 #define GUI_SYNTH_AUTO 1
+// A part whose engine is not installed (Missing): shows the "<name> not installed" popup and returns true (SynthEditor.cpp)
+bool synthPartMissingPopup(int part);
 #else
 #define GUI_SYNTH_AUTO 0
 #endif

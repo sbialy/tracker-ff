@@ -273,12 +273,13 @@ done
 expect "every hidden engine shows its - mark" "$nrows" "$nmark"
 expect "no row is wider than the clip of the list (the first glyph is not cut off)" "0" "$over"
 case ",$L11," in *,-HAND,*) pass "Hand-Type reads -HAND when hidden" ;; *) fail "Hand-Type reads -HAND when hidden" "$L11" ;; esac
-echo "### scenario 12: a part whose engine is not installed (Missing) is not ACD and its Model list is closed (R1 and R2)"
+echo "### scenario 12: a part whose engine is not installed (Missing) is not ACD, and it can always be switched to an installed engine (R1, R2, R6)"
 # CHIP is chip.plg since 1.3.0: a project of 1.2.x has the part on stored 6 and a card without chip.plg leaves it Missing. The host starts from
 # Workspace/project.mt, so the stored number of part 1 (the synthType byte at 1876, as fw_engine_mismatch_sim.sh seeds it) is written into the
-# project a first power up made. R1: one click of the encoder turned the part into ACD at once. R2: the list highlighted row 0 (ACD) and the
-# edit mode started on it, so Delete hid ACD. Since the refusal (missing-part-ui) a change of the Model list on a Missing part (encoder, arrow
-# keys, F1) shows the "<name> not installed" popup of Load and Edit Patch and moves and picks nothing, not even after the rest of the list.
+# project a first power up made. R1: one click of the encoder used to turn the part into ACD at once, with no rest and no cursor. R2: the list
+# highlighted row 0 (ACD) and the edit mode started on it, so Delete hid ACD. 1.3.0 then refused every change of the Model list with the "not
+# installed" popup, which trapped the part (chip-missing-fix): a Missing part has no row, the first step puts the list on a row like on any part,
+# and the engine of that row is picked after the rest of the list (1 s), never at once. R6: the Macros and Automation pages stay closed.
 miss_card() {   # miss_card DIR: a card without chip.plg whose project has part 1 on the missing stored number 6
     stage "$1" chip
     "$BIN" "$1" "wait 100" >/dev/null 2>&1
@@ -292,29 +293,37 @@ PY2
 bar_of() { grep '^listbar' "$WORK/poke.out" | sed -n "${1}p" | sed 's/^listbar \([0-9]*\) pos.*/\1/'; }   # 1 when the list draws a highlighted row
 barpos_of() { grep '^listbar' "$WORK/poke.out" | sed -n "${1}p" | sed 's/.* pos //'; }
 popup_of() { grep '^popup' "$WORK/poke.out" | sed -n "${1}p"; }
+imode_of() { grep '^imode' "$WORK/poke.out" | sed -n "${1}p" | sed 's/^imode //'; }
 sd="$WORK/s12"; miss_card "$sd"
 S12="$(sum "$sd"/Workspace/project.mt "$sd"/Workspace/?.patch)"
 run "$sd" "$SYNTH; $(shot s12-missing); $P; poke rhs"
 expect "the part is stored as 6 and is Missing: CHIP" "6 Missing: CHIP" "$(part_stored 1 0) $(grep '^rhs' "$WORK/poke.out" | head -1 | sed 's/.*stored\[\([^]]*\)\].*/\1/')"
 expect "R2: the Missing part highlights no row of the list" "0" "$(bar_of 1)"
 M12_LIST="$(list_of 1)"; M12_FIRST="${M12_LIST%%,*}"; M12_LAST="${M12_LIST##*,}"
-# R1: every way to change the Model list is refused with the popup. The list stays where it was (no highlight), the engine stays stored 6
-# after the rest of the list (kModelRestMs) too, and the files are not written
-refuse() {   # refuse "what" "keys"
+M12_ROWS="$(echo "$M12_LIST" | tr ',' '\n' | wc -l | tr -d ' ')"
+# R1: a step on a Missing part moves the list onto a row and shows it, the engine stays stored 6 (nothing is picked, no file is written) until the
+# list has rested kModelRestMs, then the engine of that row is picked as for any part. step: "what" "keys" "row the list stands on" "engine after the rest"
+step_pick() {
     miss_card "$sd"
     run "$sd" "$SYNTH; poke popup; $2; wait 300; poke popup; $P; wait 2500; poke popup; $P"
     expect "R1: $1: no popup before the key" "popup none" "$(popup_of 1)"
-    expect "R1: $1: the popup says CHIP is not installed" "popup 'CHIP not installed'" "$(popup_of 2)"
-    expect "R1: $1: the part stays on the Missing engine (stored 6), also after the rest of the list" "6 6" "$(part_stored 1 0) $(part_stored 2 0)"
-    expect "R1: $1: no row is highlighted, none is picked, the list did not move" "0 0" "$(bar_of 1) $(bar_of 2)"
-    expect "R1: $1: the project and the patch files are byte identical" "$S12" "$(sum "$sd"/Workspace/project.mt "$sd"/Workspace/?.patch)"
+    expect "R1: $1: the list stands on row $3 and highlights it, the part is still on the Missing engine (stored 6), no popup yet" "1 $3 6 popup none" "$(bar_of 1) $(barpos_of 1) $(part_stored 1 0) $(popup_of 2)"
+    expect "R1: $1: after the rest the part plays $4 (the Init patch of that engine is announced)" "$4 popup 'Init patch loaded'" "$(part_engine 2 0) $(popup_of 3)"
+    expect "R1: $1: the list still stands on row $3 and highlights it" "1 $3" "$(bar_of 2) $(barpos_of 2)"
 }
-refuse "the encoder click (-1)" "enc -1"
-refuse "the encoder click (+1)" "enc 1"
-refuse "the Up arrow" "tap Up"
-refuse "the Down arrow" "tap Down"
-refuse "F1" "tap F1"
-# R2 in the edit mode: no row under the cursor until the user moves it, so Delete hides nothing
+step_pick "the encoder click (+1)" "enc 1" 0 "$M12_FIRST"
+step_pick "the encoder click (-1)" "enc -1" 0 "$M12_FIRST"
+step_pick "the Down arrow" "tap Down" 0 "$M12_FIRST"
+step_pick "F1" "tap F1" 0 "$M12_FIRST"
+step_pick "the Up arrow (it goes round the list)" "tap Up" "$((M12_ROWS - 1))" "$M12_LAST"
+step_pick "three encoder clicks" "enc 3" 2 "$(echo "$M12_LIST" | cut -d, -f3)"
+# no way back is blocked: the part that was picked away from the Missing engine can be switched again, and a pick of another engine
+# while the first rest runs replaces the pending one (only the last row is loaded)
+miss_card "$sd"
+run "$sd" "$SYNTH; enc 2; wait 200; enc 1; wait 200; $P; wait 2500; $P; wait 100; enc 1; wait 2500; $P"
+expect "R1: steps in quick succession load only the last row (row 2 of the list)" "$(echo "$M12_LIST" | cut -d, -f3)" "$(part_engine 2 0)"
+expect "R1: a part that left the Missing engine switches on like any part (one more step: row 3)" "$(echo "$M12_LIST" | cut -d, -f4)" "$(part_engine 3 0)"
+# R2 in the edit mode: no row under the cursor until the user moves it, so Delete hides nothing. The edit mode is not a change of the engine.
 miss_card "$sd"
 run "$sd" "$SYNTH; hold Shift; tap F1; unhold Shift; wait 800; $(shot s12-missing-edit); $P; tap Delete; wait 500; $P"
 expect "R2: the edit mode of a Missing part has no row under the cursor" "0" "$(bar_of 1)"
@@ -322,14 +331,20 @@ expect "R2: Delete with no row under the cursor hides nothing (no mark in the li
 run "$sd" "$SYNTH; hold Shift; tap F1; unhold Shift; wait 800; tap Down; wait 300; $P; tap Delete; wait 500; $P"
 expect "R2: an arrow key puts the cursor on the first row" "1 0" "$(bar_of 1) $(barpos_of 1)"
 expect "R2: Delete on that row hides that engine ($M12_FIRST), as it does for any part" "-$M12_FIRST" "$(list_of 2 | cut -d, -f1)"
-expect "R2: the part is still on the Missing engine after the whole edit" "6" "$(part_stored 2 0)"
-# the refusal is the popup Load and Edit Patch show (same text), so the three agree
+expect "R2: the part is still on the Missing engine after the whole edit (the edit mode picks nothing)" "6" "$(part_stored 2 0)"
+# R6: the Macros and Automation pages have nothing to edit on a Missing part: the Params key stays on page 1 and says why. Any other part cycles.
 miss_card "$sd"
-run "$sd" "$SYNTH; tap F7; wait 300; poke popup; wait 2500; tap F1; wait 300; poke popup"
-expect "R1: the popup of Load (F7) and of a Model change (F1) is the same text" "popup 'CHIP not installed' popup 'CHIP not installed'" "$(popup_of 1) $(popup_of 2)"
-# How the user replaces a Missing engine on purpose: install the plugin (chip.plg back on the card, the part is CHIP again with its project and
-# patches as they were), then pick another engine in the list as for any part. Without the plugin the part keeps its engine, new project or
-# another project replace it (not run here, the host cannot load a project)
+run "$sd" "$SYNTH; poke imode; tap Params; wait 300; poke popup; poke imode; wait 2500; tap Params; wait 300; poke imode"
+expect "R6: the Params key on a Missing part stays on the Synth page and shows the not installed popup" "synth popup 'CHIP not installed' synth" "$(imode_of 2) $(popup_of 1) $(imode_of 2)"
+run "$sd" "instr 65; tap Params; wait 1500; tap Params; wait 300; poke imode; tap Params; wait 300; poke imode; instr 64; tap Params; wait 800; poke imode; wait 300; poke popup"
+expect "R6: another part still cycles through Macros and Automation" "macros automation" "$(imode_of 1) $(imode_of 2)"
+expect "R6: a Missing part picked while the Automation page is open opens on the Synth page" "synth" "$(imode_of 3)"
+# the part still has the files it had: the Missing run wrote none of them (every pick above is a deliberate change)
+miss_card "$sd"
+run "$sd" "$SYNTH; poke rhs; tap Params; wait 300; hold Shift; tap F1; unhold Shift; wait 300; poke picker"
+expect "the project and the patch files are byte identical after the page keys and the edit mode" "$S12" "$(sum "$sd"/Workspace/project.mt "$sd"/Workspace/?.patch)"
+# How the user brings the engine back: install the plugin (chip.plg back on the card, the part is CHIP again with its project and
+# patches as they were), and a pick of another engine works as for any part
 miss_card "$sd"
 cp "$plg/chip.plg" "$plg/chip.plgi" "$sd/Plugins/Synth/"
 run "$sd" "$SYNTH; $P; wait 300"

@@ -194,6 +194,12 @@ static bool synthPartMissing(int part)
     mtPopups.show(0, text);
     return true;
 }
+
+// For the Params key (fIinstrEdit.cpp): the Macros and Automation pages of a Missing part stay closed with the same popup
+bool synthPartMissingPopup(int part)
+{
+    return synthPartMissing(part);
+}
 #else
 const char* const synthModelNames[Synth::kSynthTypes.size()] = {
     "ACD", "FAT", "VAP", "WTFM", "PERC", "DIRT", "CHIP",
@@ -866,13 +872,17 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     assert(syntPartIdx >= 0 && syntPartIdx < kSynthInstrumentsCount);
 
 #ifdef FEATURE_SYNTH_OPEN
-    // A part whose engine is not installed (Missing) keeps it: a change of the Model list (encoder, arrows, F1) is refused with the popup
-    // the patch browser and the patch editor show. Nothing moves, nothing is picked, so the project and the patch files stay as they are
-    // until the plugin is back (or the project is replaced). The list stands on no row and the edit mode of the list is not a change.
+#ifndef FEATURE_PLUG_HOST
+    // Without the plugin host there is no rest before a pick, so a stray step would replace the engine at once: the list stays closed
     if (synthPartMissing(syntPartIdx))
     {
         return;
     }
+#endif
+    // With the plugin host a part whose engine is not installed (Missing) is not trapped on it: the list stands on no row, the first
+    // step puts it on a row (a step forward on the first row, a step back on the last) and the engine of that row is picked after the
+    // rest of the list like for any part. The stored engine and the patch files stay as they are until that pick, and slot 0 is kept
+    // as <P>-b.patch (see backupSlotZero below), so the engine comes back with its patch when the user picks it again.
     synthViewEnsure();
     const int modelMaxValue = synthView.n - 1; // the rows of the list, not every engine: some may be hidden
 #else
@@ -882,8 +892,8 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     // The project stores the engine's canonical number, the list on screen is the engines of this build
     int32_t previousSynthType = mtProject.values.synthPart[syntPartIdx].synthType;
 #ifdef FEATURE_SYNTH_OPEN
-    const int currentUi = Synth::storedToUi(previousSynthType);
-    const int currentPos = synthViewPosOf(currentUi);
+    const int currentUi = Synth::storedToUi(previousSynthType); // -1: a Missing part
+    const int currentPos = currentUi < 0 ? -1 : synthViewPosOf(currentUi);
 #ifdef FEATURE_PLUG_HOST
     // while the list waits on an engine that is not installed, the next step goes on from there
     const int previousPos =
@@ -893,6 +903,10 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
 #endif
     // IE->rollListOver: the arrow keys and the top button of the column go round the ends of the list (the encoder stops there)
     const int newPos = synthorder::step(previousPos, value, modelMaxValue + 1, IE->rollListOver);
+    if (newPos < 0)
+    {
+        return; // no step on a part that stands on no row
+    }
     const int newUi = synthView.ui[newPos];
 #else
     const int previousUi = std::max(Synth::storedToUi(previousSynthType), 0);

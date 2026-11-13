@@ -403,19 +403,21 @@ expect "part 1 (CHIP) is Missing: CHIP, silent (R7: a flash alone breaks CHIP pa
 expect "part 2 (JU6, ju6.plg on the card) is in the Model list at its own row" "JU6" "$(list_of 2 | tr ',' '\n' | sed -n "$(( $(cursor_of 2) + 1 ))p")"
 expect "part 3 (PLK, pluck.plg 1.0 on the card) is in the Model list at its own row" "PLK" "$(list_of 3 | tr ',' '\n' | sed -n "$(( $(cursor_of 3) + 1 ))p")"
 expect "boot and the Synth screens did not rewrite the project or the patches" "$S0" "$(sum "$sd"/Workspace/project.mt "$sd"/Workspace/?.patch)"
-# R1 and R2 (hide-and-legacy-engines.md): the Missing CHIP part highlights no row of the Model list, and a change of the list (encoder, arrow
-# keys, F1) is refused with the "CHIP not installed" popup of Load and Edit Patch: nothing moves, nothing is picked, not even after the rest of
-# the list (kModelRestMs, 1 s), and the project and the patch files stay byte identical
+# R1 and R2 (hide-and-legacy-engines.md): the Missing CHIP part highlights no row of the Model list. A change of the list (encoder, arrow keys,
+# F1) moves it onto a row like on any part and the engine of that row is picked only after the rest of the list (kModelRestMs, 1 s), so the
+# part is never trapped on the Missing engine (chip-missing-fix) and a stray click does not change it at once. Every key runs on a copy of the
+# card, the card of the 1.2.0 project itself stays byte identical for the checks after this loop.
 bar_of() { grep '^listbar' "$WORK/poke.out" | sed -n "${1}p" | sed 's/^listbar \([0-9]*\) pos.*/\1/'; }
 popup_of() { grep '^popup' "$WORK/poke.out" | sed -n "${1}p"; }
 runh "$H13" "$sd" "$SYNTH; poke picker"
 expect "R2: the Missing CHIP part highlights no row of the Model list" "0" "$(bar_of 1)"
 for keys in "enc -1" "enc 1" "tap Up" "tap Down" "tap F1"; do
-    runh "$H13" "$sd" "$SYNTH; poke popup; $keys; wait 300; poke popup; wait 2500; poke picker"
-    expect "R1: $keys on the Missing CHIP part shows the not installed popup" "popup none|popup 'CHIP not installed'" "$(popup_of 1)|$(popup_of 2)"
-    expect "R1: $keys does not change its engine, also after the rest (stored 6, not ACD), the list shows no row" "6 0" "$(part_line 1 0 | sed 's/.* stored \([0-9]*\) engine.*/\1/') $(bar_of 1)"
-    expect "R1: $keys leaves the project and patch files untouched" "$S0" "$(sum "$sd"/Workspace/project.mt "$sd"/Workspace/?.patch)"
+    rm -rf "$sd.k"; cp -R "$sd" "$sd.k"
+    runh "$H13" "$sd.k" "$SYNTH; poke popup; $keys; wait 300; poke picker; poke popup; wait 2500; poke picker; poke popup"
+    expect "R1: $keys on the Missing CHIP part moves the list onto a row and does not change the engine before the rest (stored 6)" "1 6 popup none" "$(bar_of 1) $(part_line 1 0 | sed 's/.* stored \([0-9]*\) engine.*/\1/') $(popup_of 2)"
+    expect "R1: $keys: after the rest the part is on the engine of that row (not stored 6, Init patch loaded)" "1 popup 'Init patch loaded'" "$([ "$(part_line 2 0 | sed 's/.* stored \([0-9]*\) engine.*/\1/')" != 6 ] && echo 1 || echo 0) $(popup_of 3)"
 done
+rm -rf "$sd.k"
 # the user installs the 1.3.0 chip.plg: the part is back
 cp "$SYN13/chip.plg" "$SYN13/chip.plgi" "$sd/Plugins/Synth/"
 runh "$H13" "$sd" "$SYNTH; poke picker; poke rhs"

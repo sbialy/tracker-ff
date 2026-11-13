@@ -183,6 +183,16 @@ void cInstrumentEditor::start(uint32_t options)
         }
     }
 
+#if GUI_SYNTH_AUTO
+    // The pages 2 and 3 of the part that was last open stay on screen when another part is picked: a Missing part opens on page 1
+    if ((mode == mtInstEditModeSynthMacros || mode == mtInstEditModeSynthAutomation) &&
+        mtProject.values.lastUsedInstrument >= SYNTH_INSTRUMENTS_START_IDX &&
+        Synth::storedIsMissing(mtProject.values.synthPart[mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX].synthType))
+    {
+        mode = mtInstEditModeSynth;
+    }
+#endif
+
     if (mtProject.values.lastUsedInstrument < kSampleInstrumentsCount)
     {
         editorInstrument = &mtProject.instrument[mtProject.values.lastUsedInstrument];
@@ -998,6 +1008,13 @@ static void functSwitchModule(uint8_t button)
 
 static void functSwitchMode()
 {
+#if GUI_SYNTH_AUTO
+    // A part whose engine is not installed has no macros or automation to edit: page 2 and 3 stay closed, the popup says why
+    if (IE->mode == mtInstEditModeSynth && synthPartMissingPopup(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX))
+    {
+        return;
+    }
+#endif
     mtPopups.hideInfoPopup();
     sequencer.stopManualNotes();
 
