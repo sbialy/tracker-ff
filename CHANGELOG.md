@@ -4,11 +4,9 @@ All notable changes to the **Polyend Tracker Community Edition (CE)** firmware a
 
 ---
 
-## [1.3.0] - Unreleased - tracker-ff 1.3.0 (original Tracker, MK66)
+## [1.3.0] - 2026-11-13 - tracker-ff 1.3.0 (original Tracker, MK66)
 
 Version 1.3.0 of the tracker-ff firmware for the original Tracker. The Tracker+ and the Mini are not part of it.
-
-<!-- TODO: put the release date in the heading at tag time (tracker-ff-v1.3.0) -->
 
 ### Added
 
@@ -52,7 +50,7 @@ Items 3 to 6 and 8 (paraphony, chord capture and chord names, Strum, record join
 4. A part whose engine is missing still opens its Macros and Automation pages, and edits made there are not kept.
 5. Firmware 1.2.0 keeps at most 768 bytes of patch data it does not know. A patch saved by 1.3.0 that carries more than 765 bytes of such data fails to load on 1.2.0. Normal patches carry 8 to 52 bytes.
 6. The first install of a plugin engine can still cost a short audio gap in a busy project. The gap is much shorter than in 1.2.0.
-7. Shift + Power screenshots can freeze the Tracker (known since 1.2.0). Hold the power button to switch it off and on again. <!-- TODO: drop this line if a device round shows the freeze gone -->
+7. Shift + Power screenshots can freeze the Tracker (known since 1.2.0). Hold the power button to switch it off and on again.
 
 Updating from 1.1.0 or 1.2.0: see [`UPGRADING.md`](UPGRADING.md). `chip.plg` has to be on the card for projects that use CHIP.
 
