@@ -153,7 +153,7 @@ uint32_t arm_compare_fixed_q15(q15_t *pIn, q15_t * pOut, uint32_t numSamples)
   	diff = pIn[i] - pOut[i];
   	diffCrnt = (diff > 0) ? diff : -diff;
 
-	if(diffCrnt > maxDiff)
+	if((uint32_t)diffCrnt > maxDiff)
 	{
 		maxDiff = diffCrnt;
 	}	
@@ -181,7 +181,7 @@ uint32_t arm_compare_fixed_q31(q31_t *pIn, q31_t * pOut, uint32_t numSamples)
   	diff = pIn[i] - pOut[i];
   	diffCrnt = (diff > 0) ? diff : -diff;
 
-	if(diffCrnt > maxDiff)
+	if((uint32_t)diffCrnt > maxDiff)
 	{
 		maxDiff = diffCrnt;
 	}

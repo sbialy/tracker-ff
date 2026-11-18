@@ -50,7 +50,8 @@ int32_t plugin_process_block(const int16_t** in, int16_t** out, uint32_t samples
         if (t <= 1.0f) {
             float pitch_env = s_host->expf(-t * 6.0f);
             float freq = s_end_pitch + (s_start_pitch - s_end_pitch) * pitch_env;
-            float amp_env = s_host->expf(-t * 3.5f);
+            float fade = 1.0f - t;
+            float amp_env = s_host->expf(-t * 3.5f) * fade;
 
             float click = 0.0f;
             if (s_current_sample < (uint32_t)(0.005f * sample_rate)) {

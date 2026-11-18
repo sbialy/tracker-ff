@@ -9,9 +9,6 @@ constexpr uint8_t RANDOM_NAME_WORD_2_MAX_SIZE = 30;
 constexpr uint8_t RANDOM_NAME_MAX_SIZE =
   RANDOM_NAME_WORD_1_MAX_SIZE + RANDOM_NAME_WORD_2_MAX_SIZE + 1;
 
-extern const char randomNameWord1Tab[];
-extern const char randomNameWord2Tab[];
-
 class Timer;
 
 class mtRandomNameGenerator
@@ -21,6 +18,7 @@ class mtRandomNameGenerator
 
   private:
     char randomName[RANDOM_NAME_MAX_SIZE];
+    bool tabsReady;   // the tables are inflated (first call). No initialiser: the global is zeroed, an initialiser would add a static constructor
 };
 
 extern mtRandomNameGenerator randomNameGenerator;

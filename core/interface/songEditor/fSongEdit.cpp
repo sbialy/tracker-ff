@@ -1,3 +1,6 @@
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
 #include "core/interfaceMenuPopup.h"
 #include "fileManager.h"
 #include "songEditor/songEditor.h"
@@ -48,11 +51,6 @@ static void functMenu(uint8_t state);
 
 static void functCopyPaste();
 static void refreshCopyPasting();
-static void updateBitmaskAfterCopy(uint16_t* srcBitmask,
-                                   uint16_t* destBitmask,
-                                   uint8_t startSrc,
-                                   uint8_t startDest,
-                                   uint8_t length);
 
 static void functCopy();
 static void functPaste();
@@ -67,6 +65,19 @@ void playSongFromSelectedPattern_stop();
 
 void cSongEditor::update()
 {
+#ifdef FEATURE_PARTS
+    if (partsView)
+    {
+        if (songPlayerRefreshTimer > 100)
+        {
+            songPlayerRefreshTimer = 0;
+            partsUpdate();
+            if (!editMode) refreshTempoField();   // Build: F8 is the track 8 / 16 button, not Tempo
+        }
+        tapTempo_update();
+        return;
+    }
+#endif
     if (songPlayerRefreshTimer > 100)
     {
         songPlayerRefreshTimer = 0;
@@ -116,7 +127,7 @@ void cSongEditor::update()
                 }
 
                 icon_t playerIcon =
-                  patternsList.icon.iconNum == displayPlayIcon + iconLoop ? iconLoop : iconPlay;
+                  patternsList.icon.iconNum == displayPlayIcon + int(iconLoop) ? iconLoop : iconPlay;
                 showIcon(playerIcon, lastSongListPos);
             }
         }
@@ -138,7 +149,7 @@ void cSongEditor::update()
     refreshDeleting();
 }
 
-void cSongEditor::start(uint32_t options)
+void cSongEditor::start(uint32_t /*options*/)
 {
     moduleRefresh = 1;
     lastSongListPos = -1;
@@ -149,6 +160,16 @@ void cSongEditor::start(uint32_t options)
 
     newFileManager.updateActualPatternBitmask();
     readSong();
+#ifdef FEATURE_PARTS
+    partsView = parts::modeOn(); // the view the project was left in (the Parts mode of its list)
+    lastPartsLabels = 0xFF;
+    lastPartPos = -2;
+    if (partsView)
+    {
+        partsReadList();
+    }
+    else
+#endif
     handleEntryIcon();
 
     // ustawienie funkcji
@@ -214,6 +235,9 @@ void cSongEditor::setDefaultScreenFunct()
     ip->setButtonObj(interfaceButtonDelete, buttonPress, functDelete);
 
     ip->setPadsGlobal(functPads);
+#ifdef FEATURE_PARTS
+    if (partsView) partsBind();   // Arrange / Build keys over the stock ones (fSongParts.cpp)
+#endif
 }
 
 void cSongEditor::lightUpPadBoard()
@@ -221,6 +245,7 @@ void cSongEditor::lightUpPadBoard()
     padsBacklight.clearGlobalPads(0, 1, 1);
 
     bool isBeatSlice =
+      mtProject.values.lastUsedInstrument < kSampleInstrumentsCount &&
       mtProject.instrument[mtProject.values.lastUsedInstrument].playMode == playModeBeatSlice;
 
     if (isBeatSlice)
@@ -517,12 +542,17 @@ static void functDeleteSlot()
         return;
     }
 
-    mtProject.song.playlist[SE->songLength] = 0;
+    // A song that fills the playlist has no terminator after its last slot.
+    if (SE->songLength < SONG_MAX)
+    {
+        mtProject.song.playlist[SE->songLength] = 0;
+    }
 
-    for (int i = SE->selectedSongPosition; i < SE->songLength; i++)
+    for (int i = SE->selectedSongPosition; i < SE->songLength - 1; i++)
     {
         mtProject.song.playlist[i] = mtProject.song.playlist[i + 1];
     }
+    mtProject.song.playlist[SE->songLength - 1] = 0;
 
     SE->songLength--;
 
@@ -621,6 +651,13 @@ static void functTempo(uint8_t state)
     {
         return;
     }
+#ifdef FEATURE_PARTS
+    if (state == buttonPress && SE->buttons->isButtonPressed(interfaceButtonShift))
+    {
+        SE->partsEnterView(!SE->partsView); // Shift + F8: Patterns <-> Parts
+        return;
+    }
+#endif
 
     if (state == buttonPress)
     {
@@ -859,6 +896,9 @@ static void functRecAction()
     SE->editMode = !SE->editMode;
 
     SE->refreshEditMode();
+#ifdef FEATURE_PARTS
+    if (SE->partsView) SE->partsModeChanged();   // Rec: Arrange <-> Build
+#endif
 }
 
 static void functSwitchModule(uint8_t button)
@@ -916,7 +956,17 @@ void cSongEditor::refreshSongPlayer(uint8_t source)
 
 void cSongEditor::changeSongPositionSelection(int16_t value)
 {
-    if (SE->editMode == 0)
+#ifdef FEATURE_PARTS
+    if (partsView && songLength == 0)
+    {
+        return;
+    }
+#endif
+    if (SE->editMode == 0
+#ifdef FEATURE_PARTS
+        && !partsView // the Parts view moves while playing: F2 queues the selected Part
+#endif
+    )
     {
         if (!sequencer.isStop())
         {
@@ -1021,6 +1071,12 @@ void cSongEditor::readSong()
 
 void cSongEditor::refreshPatternsList()
 {
+#ifdef FEATURE_PARTS
+    if (partsView)
+    {
+        return; // fSongParts.cpp keeps the rows
+    }
+#endif
     patternsList.length = songLength;
     patternsList.linesCount = 12;
     patternsList.data = mtProject.song.playlist;
@@ -1145,6 +1201,7 @@ static void functPads(uint8_t pad, uint8_t state, int16_t)
     }
 
     bool isBeatSlice =
+      mtProject.values.lastUsedInstrument < kSampleInstrumentsCount &&
       mtProject.instrument[mtProject.values.lastUsedInstrument].playMode == playModeBeatSlice;
     if (state == buttonPress)
     {
@@ -1581,6 +1638,12 @@ static void functPaste()
     }
     else if (SE->selectedPlace == 1)
     {
+        // Until the first copy the copied block is empty: no source, no progress to show.
+        if (SE->copyCurrentData.patternSelectionLength == 0)
+        {
+            return;
+        }
+
         SE->selectSongPosition(SE->selectedSongPosition);
 
         SE->currentCopyElement = 0;

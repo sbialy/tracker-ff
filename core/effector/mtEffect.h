@@ -71,7 +71,7 @@ class mtEffect
     bool isDataProcessed();
     void clearProcessedData();
     uint32_t getExpectedProcessedSampleLength();
-    int16_t* const getSampleAddresToPreview(Channel channel = Channel::kLeft);
+    int16_t* getSampleAddresToPreview(Channel channel = Channel::kLeft);
     uint32_t getSampleLengthToPreview();
     int16_t* getAddresToPolyphonicPlay(Channel channel = Channel::kLeft);
     uint32_t getLengthToPolyphonicPlay();

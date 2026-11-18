@@ -32,11 +32,17 @@ class UsbImpl final : public Usb
      *
      * Serial - disabled by default unless develop mode is enabled.
      */
+#ifdef FEATURE_USB_MSC
+    // USB_MSC=1: kStorage lends the card to the computer (usbmsc/msc_drive.cpp)
+    virtual void setClassState(Usb::ClassType, bool) override;
+    virtual bool getClassState(Usb::ClassType) override;
+#else
     virtual void setClassState(Usb::ClassType, bool) override{};
     /**
      * This method retrieves whether certain USB function is enabled
      */
     virtual bool getClassState(Usb::ClassType) override { return false; };
+#endif
 
     virtual bool isAttached() override { return false; };
 };

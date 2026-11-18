@@ -1,5 +1,15 @@
 # reverb-merge: noteOnNow calls engine->noteOn only (never render), the generic OpenInstrument rule below would also give it every render
 ^polysynth::\(anonymous namespace\)::OpenInstrument::noteOnNow => ^(ot::audio::.*Engine|plug::\(anonymous namespace\)::PlugSynth|polysynth::open::\(anonymous namespace\)::ChipEngine)::noteOn\(
+# noteOff and releaseAll call engine->noteOff only (open_synth.cpp:1044-1075), same class as noteOnNow: without this rule the generic OpenInstrument rule
+# below gives them every engine method including render (PercEngine::render 1,768 B) and the main loop reads a false 3,232 B instead of 2,544 B
+^polysynth::\(anonymous namespace\)::OpenInstrument::(noteOff|releaseAll)\( => ^(ot::audio::.*Engine|plug::\(anonymous namespace\)::PlugSynth|polysynth::open::\(anonymous namespace\)::ChipEngine)::noteOff\(
+# plug::start (plug_synth.cpp:392) calls plugin code only: plug_entry (:404), plug_desc.init (:408) and plug_desc.query (:410, :412), all through function
+# pointers. It never calls the FileSystem. In the 1.4.0 image GCC keeps the descriptor pointer in a stack slot (`ldr r3,[sp] ; ldr r4,[r3,#28] ; blx r4`),
+# which the FileSystem rule below reads as a vptr load: plug_desc.init (byte 28) became slot 28 = removeDirWithFiles and .query (byte 44) slot 44 =
+# getFileAvailable, a false main loop path of +592 B (3,312 B instead of 2,720 B). What plugin code can call back is the host table (plug_host.cpp:166
+# s_host: libm wrappers, hostAlloc, hostCycles, hostQuery), nothing of it reaches a FileSystem call or removeDirWithFiles. The plugin's own frames
+# are not modelled here (as before). This rule must stay above the FileSystem rule: the first matching caller rule wins.
+^plug::\(anonymous namespace\)::start\( => ^plug::\(anonymous namespace\)::(hostAlloc|hostCycles|hostQuery|h(Sin|Cos|Tan|Tanh|Exp|Log|Pow|Exp2|Log2))\(
 # virtual FileSystem interface: FileSystemImpl is the only implementation. The file handling code calls it through a pointer, a
 # virtual call site (vptr load, then slot load) in these classes takes the FileSystemImpl method of that slot (slots of other
 # interfaces that coincide add spurious edges, so it is an over-approximation)
@@ -24,11 +34,13 @@
 ^updateBuffers\(void\*, void\*\) => ^TrackerImpl::updateAudioBuffers\(
 ^AudioStream::update_all\(\) => ^(Audio\w*(<\d+>)?|MonoToStereo|PolySynth)::update\(\)$
 ^PolySynth::update\(\) => ^(polysynth::\(anonymous namespace\)::Open(Instrument::getVoiceCount|Synth::renderAudioBuffer)|polysynth::open::OpenPatch::getMetadata)\(
+# optional-rule: the built-in CHIP voice is gone from the release image (CHIP is a plugin), the next two rules and chipVoiceReset only fire in builds that link it
 ^polysynth::open::\(anonymous namespace\)::ChipEngine:: => ^polysynth::\(anonymous namespace\)::ChiptuneSynthVoice::
 ^polysynth::\(anonymous namespace\)::ChiptuneSynthVoice:: => &OBJ
 # the shim calls the engine through ISynthEngine: every engine class of the image (the built-in ones and the plugin proxy)
 ^polysynth::\(anonymous namespace\)::Open\w+::~ => &OBJ
 ^polysynth::\(anonymous namespace\)::Open(Instrument::|Synth::render) => ^(ot::audio::.*Engine|plug::\(anonymous namespace\)::PlugSynth|polysynth::open::\(anonymous namespace\)::ChipEngine)::\w+\(
+# optional-rule: see above
 ^polysynth::open::chipVoiceReset => ^polysynth::\(anonymous namespace\)::ChiptuneSynthVoice::
 ^polysynth:: => &OBJ
 ^ot::audio:: => &OBJ
@@ -36,6 +48,7 @@
 ^plug::\(anonymous namespace\)::PlugSynth:: => NONE
 ^AudioEffectPlug::update\(\) => NONE
 ^std::_Sp_counted_base<.*>::_M_release\(\) => ::_M_(dispose|destroy)\(\)
+# optional-rule: owns a ChiptuneSynthVoice only in builds that link the built-in CHIP
 ^std::unique_ptr<polysynth::InstrumentVoice => ^polysynth::.*::~\w*Voice\(\)
 ^AudioInputI2S::isr\(\) => ^updateInputBuffers\(void\*\)
 ^updateInputBuffers\(void\*\) => ^TrackerImpl::updateInputAudioBuffers\(

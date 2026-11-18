@@ -62,7 +62,7 @@ void cSlicePoints::setText(const char* text)
     this->text = text;
 }
 
-void cSlicePoints::setValue(int value)
+void cSlicePoints::setValue(int /*value*/)
 {
 }
 

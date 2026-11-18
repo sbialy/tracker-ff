@@ -1,4 +1,8 @@
+#include "mtCapture.h"
+#include "tapeFx.h"
 #include "mtChord.h"
+#include "mtPatternGen.h"
+#include "mtFollowChord.h"
 #include "config.h"
 #include "core/interfacePopups.h"
 #include "fileManager.h"
@@ -36,16 +40,35 @@ static const uint16_t framesPopupPlaces[9][4] = {
 };
 
 static const uint8_t fillTypeListCount = 3;
-const char fillTypeListLabels[fillTypeListCount][11] = {
+// features-140: idea-gen adds Role to the Note column, idea-groove Quantize to the Micro-move column, both as type 3 of that column
+static const uint8_t fillTypeListCountNote = 4;  // the Note column has the fourth type, Role
+static const uint8_t fillTypeListCountMicro = 4; // the Micro-move column adds Quantize
+const char fillTypeListLabels[5][11] = {
     "Constant",
     "From-To",
     "Random",
+    "Role",
+    "Quantize",
 };
-const char* ptrfillTypeListNames[fillTypeListCount] = {
+const char* ptrfillTypeListMicroNames[fillTypeListCountMicro] = {
     &fillTypeListLabels[0][0],
     &fillTypeListLabels[1][0],
     &fillTypeListLabels[2][0],
+    &fillTypeListLabels[4][0],
 };
+const char* ptrfillTypeListNames[fillTypeListCountNote] = {
+    &fillTypeListLabels[0][0],
+    &fillTypeListLabels[1][0],
+    &fillTypeListLabels[2][0],
+    &fillTypeListLabels[3][0],
+};
+// the types of the Fill Type list of a column: Note 4 (Role), Micro-move of the mic/vol view 4 (Quantize), the rest 3
+static uint8_t fillTypeCountOf(uint8_t editParam, bool micVolView)
+{
+    if (editParam == cPatternEditor::EditNote) return fillTypeListCountNote;
+    if (micVolView && editParam == cPatternEditor::EditFx1) return fillTypeListCountMicro;
+    return fillTypeListCount;
+}
 //------------------------------------------------------------
 static const uint8_t fillScaleFilterCount = 2;
 const char fillScaleFilterLabels[fillScaleFilterCount][5] = {
@@ -414,12 +437,23 @@ void cPatternEditor::showLength(uint8_t forceShow)
 
     const char* numberFormat =
       mtConfig.general.numberingMode == NumberingMode::kHexadecimal ? "%02X" : "%d";
-    uint8_t localLength = sequencer.getPatternToUI()->track[0].length + 1;
+    const Sequencer::strPattern* pattern = sequencer.getPatternToUI();
+    uint8_t localLength = pattern->track[0].length + 1;
+    // polymeter: "track/pattern" when the cursor track has its own length
+    uint8_t trackLength = Sequencer::getTrackLastStep(pattern, trackerPattern.actualTrack) + 1;
+    uint16_t shown = uint16_t(localLength | (trackLength << 8));
 
-    if (lastLength != localLength || forceShow)
+    if (lastLength != shown || forceShow)
     {
-        lastLength = localLength;
-        sprintf(cLength, numberFormat, localLength);
+        lastLength = shown;
+        if (trackLength != localLength)
+        {
+            const char* polyFormat =
+              mtConfig.general.numberingMode == NumberingMode::kHexadecimal ? "%02X/%02X" : "%d/%d";
+            sprintf(cLength, polyFormat, trackLength, localLength);
+        }
+        else
+            sprintf(cLength, numberFormat, localLength);
         display.setControlText2(label[1], cLength);
         display.refreshControl(label[1]);
     }
@@ -570,11 +604,16 @@ void cPatternEditor::showFillFx()
 void cPatternEditor::showFillPopup()
 {
     uint8_t fillIdx = getFillDataIdx();
+    const uint8_t typeCount = fillTypeCountOf(editParam, isMicVolView);
+    if (fillData[fillIdx].type >= typeCount)
+        fillData[fillIdx].type = 0;
 
-    if (fillData[fillIdx].type == 0)
+    if (fillData[fillIdx].oneValue() || isFillRole())
     {
         if (fillPlace > 4)
             fillPlace = 4;
+        if (isFillRole() && fillPlace == 0) // the Where? list is not there for a role
+            fillPlace = 3;
     }
     else
     {
@@ -614,10 +653,10 @@ void cPatternEditor::showFillPopup()
     display.setControlText2(label[0], "");
 
     // typ
-    fillTypeList.linesCount = fillTypeListCount;
+    fillTypeList.linesCount = typeCount;
     fillTypeList.start = fillData[fillIdx].type;
-    fillTypeList.length = fillTypeListCount;
-    fillTypeList.data = (char**)(&ptrfillTypeListNames);
+    fillTypeList.length = typeCount;
+    fillTypeList.data = (isMicVolView && editParam == EditFx1) ? (char**)(&ptrfillTypeListMicroNames) : (char**)(&ptrfillTypeListNames);
     fillTypeList.lineWidthMax = 800 / 8 - 30;
     fillTypeList.lineTextLenMax = 11;
 
@@ -633,8 +672,7 @@ void cPatternEditor::showFillPopup()
     display.setControlText(label[1], "Density");
     display.setControlText2(label[1], "");
     display.setControlPosition(val3PopupBar, (800 / 8) * (1) + 1, -1);
-    display.setControlValue(val3PopupBar,
-                            fillData[fillIdx].density[fillData[fillIdx].fillStep]);
+    display.setControlValue(val3PopupBar, fillData[fillIdx].density[fillDensityStep(fillIdx)]);
 
     // val to/from
     display.setControlPosition(val1PopupBar, (800 / 8) * (4) + 1, -1);
@@ -756,7 +794,24 @@ void cPatternEditor::refreshFillType()
     fillText1[0] = 0;
     fillText2[0] = 0;
 
-    if (fillData[fillIdx].type == 0)
+    // a role has no Where? list (it fills the whole selection) and no To
+    const bool role = isFillRole();
+    if (role)
+    {
+        display.setControlHide(param3PopupListControl);
+        display.setControlText(label[0], "");
+        display.setControlText2(label[0], "");
+    }
+    else
+    {
+        display.setControlShow(param3PopupListControl);
+        display.setControlText(label[0], "Where?");
+        display.setControlText2(label[0], "");
+    }
+    display.refreshControl(label[0]);
+    display.refreshControl(param3PopupListControl);
+
+    if (fillData[fillIdx].oneValue() || role)
     {
         display.setControlValue(val2PopupBar, -1);
         display.setControlText(label[5], "");
@@ -773,7 +828,14 @@ void cPatternEditor::refreshFillType()
         display.setControlText2(label[4], (char*)&mtNotes[fillData[fillIdx].from][0]);
         display.setControlValue(val1PopupBar, (fillData[fillIdx].from * 100) / (127));
 
-        if (fillData[fillIdx].type == 0)
+        if (role)
+        {
+            display.setControlText(label[4], "Role");
+            display.setControlText2(label[4], patternGen::roleName(fillData[fillIdx].role));
+            display.setControlValue(val1PopupBar,
+                                    (fillData[fillIdx].role * 100) / (patternGen::roleCount - 1));
+        }
+        else if (fillData[fillIdx].oneValue())
         {
             display.setControlText(label[4], "Note");
         }
@@ -792,7 +854,7 @@ void cPatternEditor::refreshFillType()
         display.setControlText2(label[4], fillText1);
         display.setControlValue(intstrumentsFromPopupListControl, fillData[fillIdx].from);
 
-        if (fillData[fillIdx].type == 0)
+        if (fillData[fillIdx].oneValue())
         {
             display.setControlText(label[4], "Instrument");
         }
@@ -814,7 +876,11 @@ void cPatternEditor::refreshFillType()
         if (isMicVolView)
         {
             display.setControlValue(val1PopupBar, fillData[fillIdx].from);
-            if (fillData[fillIdx].type == 0)
+            if (isQuantizeFill())
+            {
+                display.setControlText(label[4], "Strength");
+            }
+            else if (fillData[fillIdx].oneValue())
             {
                 display.setControlText(label[4], editParam == EditFx1 ? "Micro-move" : "Volume");
             }
@@ -829,7 +895,7 @@ void cPatternEditor::refreshFillType()
         {
             display.setControlValue(val1PopupBar, (fillData[fillIdx].from * 100) / (255));
 
-            if (fillData[fillIdx].type == 0)
+            if (fillData[fillIdx].oneValue())
             {
                 display.setControlText(label[4], "Fx Value");
             }
@@ -844,6 +910,10 @@ void cPatternEditor::refreshFillType()
 
     refreshFillFrom();
     refreshFillTo();
+    refreshFillDensity(); // a role shows the Random density, the others the one of their Where? mode
+
+    display.setControlText(label[7], isQuantizeFill() ? "Quantize" : "Fill");
+    display.refreshControl(label[7]);
 
     display.refreshControl(val1PopupBar);
     display.refreshControl(val2PopupBar);
@@ -859,7 +929,13 @@ void cPatternEditor::refreshFillFrom()
     uint8_t fillIdx = getFillDataIdx();
 
     fillText1[0] = 0;
-    if (editParam == EditNote)
+    if (editParam == EditNote && isFillRole())
+    {
+        display.setControlText2(label[4], patternGen::roleName(fillData[fillIdx].role));
+        display.setControlValue(val1PopupBar,
+                                (fillData[fillIdx].role * 100) / (patternGen::roleCount - 1));
+    }
+    else if (editParam == EditNote)
     {
         display.setControlText2(label[4], (char*)&mtNotes[fillData[fillIdx].from][0]);
         display.setControlValue(val1PopupBar, (fillData[fillIdx].from * 100) / (127));
@@ -889,19 +965,32 @@ void cPatternEditor::refreshFillFrom()
 
             uint8_t fxType = editParam == EditFx1 ? sequencer.fx.FX_TYPE_MICROMOVE
                                                   : sequencer.fx.FX_TYPE_VOLUME;
-            sequencer.makeFxValLabelWithAlgin(fillText1,
-                                              fillTextLen,
-                                              fxType,
-                                              fillData[fillIdx].from,
-                                              Sequencer::fxValLabelAlign_center);
-            display.setControlText2(label[4], fillText1);
-            display.setControlValue(val1PopupBar, fillData[fillIdx].from);
+            if (isQuantizeFill())
+            {
+                // strength percent (0 = nothing moves, 100 = on the grid), not a micromove value
+                fillData[fillIdx].quantize = clamp<int16_t>(fillData[fillIdx].quantize, 0, 100);
+                snprintf(fillText1, fillTextLen, "%d%%", int(fillData[fillIdx].quantize));
+                display.setControlText2(label[4], fillText1);
+                display.setControlValue(val1PopupBar, fillData[fillIdx].quantize);
+            }
+            else
+            {
+                sequencer.makeFxValLabelWithAlgin(fillText1,
+                                                  fillTextLen,
+                                                  fxType,
+                                                  fillData[fillIdx].from,
+                                                  Sequencer::fxValLabelAlign_center);
+                display.setControlText2(label[4], fillText1);
+                display.setControlValue(val1PopupBar, fillData[fillIdx].from);
+            }
         }
         else
         {
-            int16_t min_fx = sequencer.getFxMin(interfaceGlobals.fxIDs[fillData[fillIdx].param]);
+            int16_t min_fx =
+              sequencer.getFxMin(interfaceGlobals.fxNameToId(fillData[fillIdx].param));
 
-            int16_t max_fx = sequencer.getFxMax(interfaceGlobals.fxIDs[fillData[fillIdx].param]);
+            int16_t max_fx =
+              sequencer.getFxMax(interfaceGlobals.fxNameToId(fillData[fillIdx].param));
 
             if (fillData[fillIdx].from < min_fx)
                 fillData[fillIdx].from = min_fx;
@@ -914,14 +1003,17 @@ void cPatternEditor::refreshFillFrom()
 
             sequencer.makeFxValLabelWithAlgin(fillText1,
                                               fillTextLen,
-                                              interfaceGlobals.fxIDs[fillData[fillIdx].param],
+                                              interfaceGlobals.fxNameToId(fillData[fillIdx].param),
                                               fillData[fillIdx].from,
                                               Sequencer::fxValLabelAlign_center);
 
             display.setControlText2(label[4], fillText1);
 
-            display.setControlValue(val1PopupBar,
-                                    ((fillData[fillIdx].from - min_fx) * 100) / (max_fx - min_fx));
+            // An FX with a single value, like Off, has no range to place the bar in.
+            int16_t range_fx = max_fx - min_fx;
+            display.setControlValue(
+              val1PopupBar,
+              range_fx > 0 ? ((fillData[fillIdx].from - min_fx) * 100) / range_fx : 0);
         }
     }
 
@@ -936,7 +1028,7 @@ void cPatternEditor::refreshFillTo()
 
     fillText2[0] = 0;
 
-    if (fillData[fillIdx].type == 0)
+    if (fillData[fillIdx].oneValue() || isFillRole())
     {
         display.setControlText(label[5], "");
         display.setControlText2(label[5], "");
@@ -993,8 +1085,10 @@ void cPatternEditor::refreshFillTo()
         }
         else
         {
-            int16_t min_fx = sequencer.getFxMin(interfaceGlobals.fxIDs[fillData[fillIdx].param]);
-            int16_t max_fx = sequencer.getFxMax(interfaceGlobals.fxIDs[fillData[fillIdx].param]);
+            int16_t min_fx =
+              sequencer.getFxMin(interfaceGlobals.fxNameToId(fillData[fillIdx].param));
+            int16_t max_fx =
+              sequencer.getFxMax(interfaceGlobals.fxNameToId(fillData[fillIdx].param));
 
             if (fillData[fillIdx].to < min_fx)
                 fillData[fillIdx].to = min_fx;
@@ -1010,14 +1104,16 @@ void cPatternEditor::refreshFillTo()
 
             sequencer.makeFxValLabelWithAlgin(fillText2,
                                               fillTextLen,
-                                              interfaceGlobals.fxIDs[fillData[fillIdx].param],
+                                              interfaceGlobals.fxNameToId(fillData[fillIdx].param),
                                               fillData[fillIdx].to,
                                               Sequencer::fxValLabelAlign_center);
 
             display.setControlText2(label[5], fillText2);
 
-            display.setControlValue(val2PopupBar,
-                                    ((fillData[fillIdx].to - min_fx) * 100) / (max_fx - min_fx));
+            // An FX with a single value, like Off, has no range to place the bar in.
+            int16_t range_fx = max_fx - min_fx;
+            display.setControlValue(
+              val2PopupBar, range_fx > 0 ? ((fillData[fillIdx].to - min_fx) * 100) / range_fx : 0);
             display.refreshControl(label[5]);
         }
     }
@@ -1057,27 +1153,28 @@ void cPatternEditor::refreshFillDensity()
     uint8_t fillIdx = getFillDataIdx();
     const char* labelText = nullptr;
     int value;
-    switch (fillData[fillIdx].fillStep)
+    const uint8_t densStep = fillDensityStep(fillIdx);
+    switch (densStep)
     {
         case Sequencer::fillStepRandom:
             labelText = "Density";
-            value = fillData[fillIdx].density[fillData[fillIdx].fillStep] * 100 /
+            value = fillData[fillIdx].density[densStep] * 100 /
                     Sequencer::MAX_FILL_DENSITY;
             sprintf(fillTextDensity, "%d %%", value);
             break;
         case Sequencer::fillStepByStep:
             labelText = "Step";
-            value = fillData[fillIdx].density[fillData[fillIdx].fillStep] * 100 /
+            value = fillData[fillIdx].density[densStep] * 100 /
                     Sequencer::MAX_FILL_DENSITY;
             sprintf(
-              fillTextDensity, "%d", fillData[fillIdx].density[fillData[fillIdx].fillStep]);
+              fillTextDensity, "%d", fillData[fillIdx].density[densStep]);
             break;
         case Sequencer::fillStepEuclidean:
             labelText = "Events";
-            value = fillData[fillIdx].density[fillData[fillIdx].fillStep] * 100 /
+            value = fillData[fillIdx].density[densStep] * 100 /
                     Sequencer::MAX_FILL_DENSITY;
             sprintf(
-              fillTextDensity, "%d", fillData[fillIdx].density[fillData[fillIdx].fillStep]);
+              fillTextDensity, "%d", fillData[fillIdx].density[densStep]);
             break;
         default: break;
     }
@@ -1441,7 +1538,8 @@ void cPatternEditor::showActionButtonPage1Labels()
     display.setControlText(label[0], "Pattern");
     display.setControlText(label[1], "Length");
     display.setControlText(label[2], "Step jump");
-    display.setControlText(label[3], "Fill");
+    const bool capture = !editMode && captureFeatureOn; // the green mode button 3 is Capture (Config > Features), else the red mode Fill
+    display.setControlText(label[3], capture ? "Capture" : "Fill");
     display.setControlText(label[4], "Preview");
     display.setControlText(label[5], "Undo");
     display.setControlText(label[6], "Redo");
@@ -1474,12 +1572,16 @@ void cPatternEditor::showActionButtonPage1Labels()
         display.setControlColors(label[5], display.getTheme().inactiveButtonLabelsColors);
         display.setControlColors(label[6], display.getTheme().inactiveLabelsColors);
     }
+    if (capture)
+    {
+        display.setControlColors(label[3], display.getTheme().activeLabelsColors);
+    }
     display.setControlColors(label[7], display.getTheme().moreButtonColors);
 
     display.setControlData(label[0], &labelDataGreen);
     display.setControlData(label[1], &labelDataGreen);
     display.setControlData(label[2], &labelDataGreen);
-    display.setControlData(label[3], &labelDataRed);
+    display.setControlData(label[3], capture ? &labelDataGreen : &labelDataRed);
     display.setControlData(label[4], &labelDataGreen);
     display.setControlData(label[5], &labelDataRed);
     display.setControlData(label[6], &labelDataRed);
@@ -1574,19 +1676,22 @@ void cPatternEditor::showActionButtonPage3Labels()
 {
     display.setControlText(label[0], "Pattern");
     display.setControlText(label[1], "Track");
+#ifdef FEATURE_PLUG_HOST
+    display.setControlText(label[2], "Groove");
+#else
     display.setControlText(label[2], "");
-    display.setControlText(label[3], "");
-    display.setControlText(label[4], "");
-    display.setControlText(label[5], "");
+#endif
+    // features-140: Follow chord on F4 and F5 (Groove of idea-groove has F3)
+    display.setControlText(label[3], "Follow");
+    display.setControlText(label[4], "Chord");
+    display.setControlText(label[5], editMode ? "V/m FX" : "");
     display.setControlText(label[6], "");
     display.setControlText(label[7], "More");
 
     display.setControlText2(label[0], "Name");
     display.setControlText2(label[1], "Name");
-    display.setControlText2(label[2], "");
-    display.setControlText2(label[3], "");
     display.setControlText2(label[4], "");
-    display.setControlText2(label[5], "");
+    display.setControlText2(label[5], editMode ? "to fields" : "");
     display.setControlText2(label[6], "");
     display.setControlText2(label[7], "");
 
@@ -1599,11 +1704,20 @@ void cPatternEditor::showActionButtonPage3Labels()
 
     display.setControlColors(label[0], display.getTheme().activeButtonLabelsColors);
     display.setControlColors(label[1], display.getTheme().activeButtonLabelsColors);
+    display.setControlColors(label[2], display.getTheme().activeButtonLabelsColors);
+    display.setControlColors(label[3], display.getTheme().activeButtonLabelsColors);
+    display.setControlColors(label[4], display.getTheme().activeButtonLabelsColors);
+    display.setControlColors(label[5], display.getTheme().activeButtonLabelsColors);
     display.setControlColors(label[7], display.getTheme().moreButtonColors);
 
     display.setControlData(label[0], &labelDataGreen);
     display.setControlData(label[1], &labelDataGreen);
+    display.setControlData(label[2], &labelDataGreen);
+    display.setControlData(label[3], &labelDataGreen);
+    display.setControlData(label[4], &labelDataGreen);
+    display.setControlData(label[5], &labelDataGreen);
     display.setControlData(label[7], &labelDataMore);
+    showFollowChordLabels(); // texts only, the loop below draws them
 
     for (uint8_t i = 0; i < 8; i++)
     {
@@ -1612,7 +1726,7 @@ void cPatternEditor::showActionButtonPage3Labels()
           label[i],
           controlStyleCenterX | controlStyleCenterY | controlStyleFont3 | controlStyleShow |
             (i == 7 ? controlStyleSpecialFx2
-                    : (i < 2 ? (display.getTheme().patternEditorBottomButtonsLines
+                    : (i < 5 ? (display.getTheme().patternEditorBottomButtonsLines
                                   ? controlStyleSpecialFx
                                   : 0)
                              : 0)));
@@ -1623,7 +1737,44 @@ void cPatternEditor::showActionButtonPage3Labels()
 
     labelDataMore.dotIndicator.current = 2;
 
+#ifdef FEATURE_PLUG_HOST
+    showGrooveLabel();
+#endif
     display.synchronizeRefresh();
+}
+
+// Groove of the track under the cursor: off, +17 (odd steps 17 % of a step late), -25 (recorded micromove 50 % toward the grid)
+void cPatternEditor::showGrooveLabel()
+{
+    const int g = sequencer.getTrackGroove(uint8_t(clamp<int>(trackerPattern.actualTrack, 0, kAllTracks - 1)));
+    if (g == 0)
+        snprintf(grooveText, sizeof(grooveText), "off");
+    else
+        snprintf(grooveText, sizeof(grooveText), "%+d", g);
+    display.setControlText2(label[2], grooveText);
+    display.refreshControl(label[2]);
+}
+
+// The cursor track's Follow chord: F4 its mode, F5 its chord track (features-140, F3 is the Groove) ("-" while it follows nothing)
+void cPatternEditor::showFollowChordLabels()
+{
+    const int8_t track = trackerPattern.actualTrack;
+    followShownTrack = track;
+    const bool valid = track >= 0 && track < kAllTracks;
+    const uint8_t mode = valid ? followchord::setting.mode[track] : followchord::kOff;
+    snprintf(followModeText, sizeof(followModeText), "%s", followchord::modeName(mode));
+    if (mode == followchord::kOff)
+    {
+        snprintf(followSourceText, sizeof(followSourceText), "-");
+    }
+    else
+    {
+        snprintf(followSourceText, sizeof(followSourceText), "Track %d", followchord::setting.source[track] + 1);
+    }
+    display.setControlText2(label[3], followModeText);
+    display.setControlText2(label[4], followSourceText);
+    display.refreshControl(label[3]);
+    display.refreshControl(label[4]);
 }
 
 void cPatternEditor::showTitleBar()
@@ -1669,7 +1820,38 @@ void cPatternEditor::showTitleBarPattern()
         cTitlePattern[13] = 0;
     }
 
+    // the volume and micro-move of the cursor step ("V100 m12"): the cells only carry marks of them. The name gives way, the title is
+    // about 24 characters wide. Not with the V / m columns, they show the numbers themselves
+    char vm[sizeof(lastStepVmText)];
+    makeStepVmText(vm, sizeof(vm));
+    if (vmColumnsOn())
+        vm[0] = 0;
+    snprintf(lastStepVmText, sizeof(lastStepVmText), "%s", vm);
+    if (vm[0] && strcmp(cTitlePattern, "Pattern PERF") != 0)
+    {
+        constexpr size_t kTitleChars = 24;
+        const size_t vmLen = strlen(vm);
+        const size_t nameMax = kTitleChars > vmLen + 2 ? kTitleChars - vmLen - 2 : 1;
+        if (strlen(cTitlePattern) > nameMax)
+            cTitlePattern[nameMax] = 0;
+        const size_t n = strlen(cTitlePattern);
+        snprintf(cTitlePattern + n, sizeof(cTitlePattern) - n, "  %s", vm);
+    }
+
     titleBar->setTitle(cTitlePattern);
+}
+
+// the title bar follows the cursor: its V / m text changes with the step
+void cPatternEditor::showStepVmOnBar()
+{
+    if (mtConfig.general.patternInfo != 0)
+        return;
+    char vm[sizeof(lastStepVmText)];
+    makeStepVmText(vm, sizeof(vm));
+    if (vmColumnsOn())
+        vm[0] = 0;
+    if (strcmp(vm, lastStepVmText) != 0)
+        showTitleBarPattern();
 }
 
 void cPatternEditor::showActualParamOnBar(bool forceShow)
@@ -1678,6 +1860,8 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
     {
         return;
     }
+
+    showStepVmOnBar();
 
     switch (editParam)
     {
@@ -1718,10 +1902,9 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
                 break;
             }
 
-            const auto& stepFx = sequencer.getPatternToUI()
-                                   ->track[trackerPattern.actualTrack]
-                                   .step[trackerPattern.actualStep]
-                                   .fx[1 - (editParam - 2)];
+            const auto& curStep = sequencer.getPatternToUI()->track[trackerPattern.actualTrack].step[trackerPattern.actualStep];
+            const uint8_t rank = fxRank();   // 0 FX2, 1 FX1, 2 FX4, 3 FX3
+            const fx34::Fx stepFx = fx34::getFx(&curStep, rank);
             uint8_t type_temp = interfaceGlobals.fxIdToName(stepFx.type);
             if (type_temp == 0 || type_temp >= FX_MAX)
             {
@@ -1736,10 +1919,14 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
                 }
             }
 
-            uint8_t fxVal_temp = (stepFx.type == sequencer.fx.FX_TYPE_CHANCE ||
+            uint8_t fxVal_temp = (sequencer.isChanceFamily(stepFx.type) ||
+#ifdef FEATURE_SYNTH_OPEN
+                                  stepFx.type == sequencer.fx.FX_TYPE_PATCH_MORPH ||
+#endif
                                   stepFx.type == sequencer.fx.FX_TYPE_MIDI_CHORD)
                                    ? stepFx.value
-                                   : 0xFF;
+                                   : stepFx.type == sequencer.fx.FX_TYPE_TAPE ? uint8_t(tapefx::isStart(stepFx.value)) // the title follows the direction, not the length
+                                                                              : 0xFF;
 
             if (lastTitleBarParamValue == type_temp && lastTitleBarFx == fxVal_temp &&
                 (lastTitleBarParam == editParam) && !forceShow)
@@ -1750,20 +1937,22 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
             lastTitleBarParamValue = type_temp;
             lastTitleBarFx = fxVal_temp;
 
-            if (stepFx.type == sequencer.fx.FX_TYPE_CHANCE)
+            if (sequencer.isChanceFamily(stepFx.type))
             {
                 uint8_t val = stepFx.value;
+                // Chance drops the whole step, Chance FX (tracker-ff) only the other FX of the step, the note plays
+                const char* const who = stepFx.type == sequencer.fx.FX_TYPE_COND ? "Chance FX" : "Chance";
                 if (val <= sequencer.fx.CHANCE_PROB_MAX)
                 {
-                    snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "Chance: %u%%", val);
+                    snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "%s: %u%%", who, val);
                 }
                 else if (val == sequencer.fx.CHANCE_GROUP_WITH_LAST)
                 {
-                    strncpy(rightTitleBarLabel, "Chance: Group with Last", 35);
+                    snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "%s: Group with Last", who);
                 }
                 else if (val == sequencer.fx.CHANCE_NOT_LAST)
                 {
-                    strncpy(rightTitleBarLabel, "Chance: Not Last", 35);
+                    snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "%s: Not Last", who);
                 }
                 else if (val >= sequencer.fx.CHANCE_PLAY_SKIP_START &&
                          val <= sequencer.fx.CHANCE_PLAY_SKIP_END)
@@ -1773,7 +1962,8 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
                     uint8_t m = 1 + idx % sequencer.fx.CHANCE_CYCLE_STEPS;
                     snprintf(rightTitleBarLabel,
                              sizeof(rightTitleBarLabel),
-                             "Chance: Play %u / Skip %u",
+                             "%s: Play %u / Skip %u",
+                             who,
                              n,
                              m);
                 }
@@ -1785,9 +1975,26 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
                     uint8_t m = 1 + idx % sequencer.fx.CHANCE_CYCLE_STEPS;
                     snprintf(rightTitleBarLabel,
                              sizeof(rightTitleBarLabel),
-                             "Chance: Skip %u / Play %u",
+                             "%s: Skip %u / Play %u",
+                             who,
                              n,
                              m);
+                }
+                else if (val >= sequencer.fx.CHANCE_PASS8_START && val <= sequencer.fx.CHANCE_PASS8_END)
+                {
+                    snprintf(rightTitleBarLabel,
+                             sizeof(rightTitleBarLabel),
+                             "%s: Pass %u of 8",
+                             who,
+                             unsigned(1 + val - sequencer.fx.CHANCE_PASS8_START));
+                }
+                else if (val >= sequencer.fx.CHANCE_PASS16_START && val <= sequencer.fx.CHANCE_PASS16_END)
+                {
+                    snprintf(rightTitleBarLabel,
+                             sizeof(rightTitleBarLabel),
+                             "%s: Pass %u of 16",
+                             who,
+                             unsigned(1 + val - sequencer.fx.CHANCE_PASS16_START));
                 }
             }
             else if (stepFx.type == sequencer.fx.FX_TYPE_MIDI_CHORD)
@@ -1799,11 +2006,34 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
                 chordName(name, sizeof(name), stepFx.value, st.note >= 0 ? st.note : -1);
                 snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "MIDI Chord: %s", name);
             }
+#ifdef FEATURE_SYNTH_OPEN
+            else if (stepFx.type == sequencer.fx.FX_TYPE_PATCH_MORPH)
+            {   // "Morph: 40% to slot 3": the slot of a Patch FX in the other FX slot, else the part's Morph target
+                const auto& st = curStep;
+                const fx34::Fx other = fx34::getFx(&st, rank ^ 1);   // the other slot of the pair
+                const int part = st.instrument - SYNTH_INSTRUMENTS_START_IDX;
+                const int to = other.type == sequencer.fx.FX_TYPE_PATCH_CHANGE ? other.value
+                                                                                : polysynth::open::patchBankMorphTarget(part);
+                snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "Morph: %u%% to slot %d", stepFx.value, to);
+            }
+#endif
+            else if (stepFx.type == sequencer.fx.FX_TYPE_TAPE)
+            {   // the letter and the direction follow the value: "W - Tape Stop" / "Z - Tape Start"
+                snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "%c - Tape %s", tapefx::letter(stepFx.value),
+                         tapefx::isStart(stepFx.value) ? "Start" : "Stop");
+            }
             else
             {
-                strncpy(rightTitleBarLabel, &interfaceGlobals.fxNames[type_temp][0], 35);
+                strncpy(rightTitleBarLabel, interfaceGlobals.ptrFxNames[type_temp], 35);
             }
             rightTitleBarLabel[35] = 0;
+            // the bank 3/4 says so: "FX4: Filter low", "FX3: ..." (the bank 1/2 label stays as it was)
+            if (fxBankActive())
+            {
+                char named[sizeof(rightTitleBarLabel)];
+                snprintf(named, sizeof(named), "FX%d: %s", rank == 3 ? 3 : 4, rightTitleBarLabel);
+                snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "%s", named);
+            }
             break;
         }
     }

@@ -1,3 +1,7 @@
+#ifdef FEATURE_SEND_DUCK
+#include "mtAudioEngine.h"
+#endif
+#include "fx_auto_mute.h"
 #include "ampLogarythmicValues.h"
 #include "mtMasterEnhancer.h"
 #ifdef FEATURE_SYNTH
@@ -672,7 +676,21 @@ void cMasterParams::showLimiterScreen()
     display.setControlText2(label[3], "");
     display.setControlText(label[4], "Sidechain");
     display.setControlText2(label[4], " ");
+#ifdef FEATURE_SEND_DUCK
+    display.setControlText(label[5], "Send Duck");
+    if (duckPage)
+    {
+        titleBar->setTitle("Send Ducking");
+        display.setControlText(label[0], "Duck Depth");
+        display.setControlText(label[1], "Duck Rls");
+        display.setControlText(label[2], "Duck Thr");
+        display.setControlText(label[3], "Ducking");
+        display.setControlText(label[4], "Duck Src");
+        display.setControlText(label[5], "Limiter");
+    }
+#else
     display.setControlText(label[5], " ");
+#endif
     display.setControlText2(label[5], " ");
     display.setControlText(label[6], " ");
     display.setControlText2(label[6], " ");
@@ -711,11 +729,24 @@ void cMasterParams::showLimiterScreen()
     display.refreshControl(bgLabel);
     display.setControlValue(bgLabel, 255); // 0b10111111
 
-    showLimiterAttack();
-    showLimiterRelease();
-    showLimiterThreshold();
-    showLimiterGainReduce();
-    showLimiterSidechain();
+#ifdef FEATURE_SEND_DUCK
+    if (duckPage)
+    {
+        showDuckDepth();
+        showDuckRelease();
+        showDuckThreshold();
+        showDuckMeter();
+        showDuckSource();
+    }
+    else
+#endif
+    {
+        showLimiterAttack();
+        showLimiterRelease();
+        showLimiterThreshold();
+        showLimiterGainReduce();
+        showLimiterSidechain();
+    }
 
     frameData.placesCount = 5;
     frameData.startPlace = selectedPlaceLimiter;
@@ -829,6 +860,57 @@ void cMasterParams::showLimiterSidechain()
     display.setControlText2(label[4], limiterSidechainListTxt[mtProject.values.limiterSidechain]);
     display.refreshControl(label[4]);
 }
+
+#ifdef FEATURE_SEND_DUCK
+// Send ducking page (a second page of the limiter screen, same places: 0 depth, 1 release, 2 threshold, 3 meter, 4 source)
+void cMasterParams::showDuckDepth()
+{
+    const DuckParams& d = engine.getSendDuck();
+    snprintf(duckDepthVal, sizeof(duckDepthVal), "%d%%", d.depth);
+    display.setControlValue(barControl[0], d.depth);
+    display.refreshControl(barControl[0]);
+    display.setControlText2(label[0], duckDepthVal);
+    display.refreshControl(label[0]);
+}
+
+void cMasterParams::showDuckRelease()
+{
+    const DuckParams& d = engine.getSendDuck();
+    snprintf(duckReleaseVal, sizeof(duckReleaseVal), "%d ms", (int)(duckReleaseMs(d.release) + 0.5f));
+    display.setControlValue(barControl[1], d.release);
+    display.refreshControl(barControl[1]);
+    display.setControlText2(label[1], duckReleaseVal);
+    display.refreshControl(label[1]);
+}
+
+void cMasterParams::showDuckThreshold()
+{
+    const DuckParams& d = engine.getSendDuck();
+    snprintf(duckThresholdVal, sizeof(duckThresholdVal), "%d dB", (int)lroundf(duckThresholdDb(d.thresh)));
+    display.setControlValue(barControl[2], d.thresh);
+    display.setControlShow(barControl[2]);
+    display.refreshControl(barControl[2]);
+    display.setControlText2(label[2], duckThresholdVal);
+    display.refreshControl(label[2]);
+}
+
+void cMasterParams::showDuckMeter()
+{
+    display.setControlValue(barControl[3], duckMeterValue);
+    display.setControlShow(barControl[3]);
+    display.refreshControl(barControl[3]);
+}
+
+void cMasterParams::showDuckSource()
+{
+    const uint8_t src = engine.getSendDuck().source;
+    display.setControlValue(limiterSidechainList, src);
+    display.refreshControl(limiterSidechainList);
+
+    display.setControlText2(label[4], limiterSidechainListTxt[src]);
+    display.refreshControl(label[4]);
+}
+#endif
 
 // EQ
 
@@ -1474,6 +1556,10 @@ void cMasterParams::showMixerDelayReverbScreen()
 #endif
 
     char* mixerLabelFormat = (char*)"%s";
+    // USB 8+3 auto mute (fx_auto_mute.h): the Delay and Reverb Mute keys are locked, the label says why
+    const bool autoLocked = fxAutoMuteActive();
+    char* lockText = (char*)"8+3";
+    shownFxAutoMute = autoLocked;
 
     if (isSolo)
     {
@@ -1486,13 +1572,13 @@ void cMasterParams::showMixerDelayReverbScreen()
             {
                 sprintf(mixerLabel[i],
                         mixerLabelFormat,
-                        soloTrack == delayIsSolo ? unsoloText : soloText);
+                        autoLocked ? lockText : soloTrack == delayIsSolo ? unsoloText : soloText);
             }
             else if (i == reverbVolumeScreenPosition)
             {
                 sprintf(mixerLabel[i],
                         mixerLabelFormat,
-                        soloTrack == reverbIsSolo ? unsoloText : soloText);
+                        autoLocked ? lockText : soloTrack == reverbIsSolo ? unsoloText : soloText);
             }
             else if (i == dryMixVolumeScreenPosition)
             {
@@ -1525,13 +1611,13 @@ void cMasterParams::showMixerDelayReverbScreen()
             {
                 sprintf(mixerLabel[i],
                         mixerLabelFormat,
-                        mtProject.values.delayMute ? unmuteText : muteText);
+                        autoLocked ? lockText : mtProject.values.delayMute ? unmuteText : muteText);
             }
             else if (i == reverbVolumeScreenPosition)
             {
                 sprintf(mixerLabel[i],
                         mixerLabelFormat,
-                        mtProject.values.reverbMute ? unmuteText : muteText);
+                        autoLocked ? lockText : mtProject.values.reverbMute ? unmuteText : muteText);
             }
             else if (i == dryMixVolumeScreenPosition)
             {
@@ -1624,10 +1710,10 @@ void cMasterParams::showMixerDelayReverbScreen()
     }
 
     display.setControlColors(label[delayVolumeScreenPosition],
-                             mtProject.values.delayMute ? display.getTheme().inactiveLabelsColors
+                             (mtProject.values.delayMute || fxAutoMuteActive()) ? display.getTheme().inactiveLabelsColors
                                                         : display.getTheme().activeLabelsColors);
     display.setControlColors(label[reverbVolumeScreenPosition],
-                             mtProject.values.reverbMute ? display.getTheme().inactiveLabelsColors
+                             (mtProject.values.reverbMute || fxAutoMuteActive()) ? display.getTheme().inactiveLabelsColors
                                                          : display.getTheme().activeLabelsColors);
     display.setControlColors(label[dryMixVolumeScreenPosition],
                              mtProject.values.dryMixMute ? display.getTheme().inactiveLabelsColors
@@ -1725,12 +1811,12 @@ void cMasterParams::showLevelBar(uint8_t n, strTrackLevel* level)
     {
         if ((n == delayVolumeScreenPosition) || (n == delayVolumeScreenPosition + 4))
         {
-            if (mtProject.values.delayMute)
+            if (mtProject.values.delayMute || fxAutoMuteActive())
                 barData[n].value = display.getTheme().grey_22;
         }
         else if ((n == reverbVolumeScreenPosition) || (n == reverbVolumeScreenPosition + 4))
         {
-            if (mtProject.values.reverbMute)
+            if (mtProject.values.reverbMute || fxAutoMuteActive())
                 barData[n].value = display.getTheme().grey_22;
         }
         else if ((n == dryMixVolumeScreenPosition) || (n == dryMixVolumeScreenPosition + 4))
@@ -1787,7 +1873,7 @@ void cMasterParams::showDelayVolumeBar()
 
     display.setControlShow(trackVolumeBar[delayVolumeScreenPosition]);
 
-    if (mtProject.values.delayMute)
+    if (mtProject.values.delayMute || fxAutoMuteActive())
         display.setControlColors(trackVolumeBar[delayVolumeScreenPosition],
                                  display.getTheme().inactiveBarColors);
     else
@@ -1812,7 +1898,7 @@ void cMasterParams::showReverbVolumeBar()
 
     display.setControlShow(trackVolumeBar[reverbVolumeScreenPosition]);
 
-    if (mtProject.values.reverbMute)
+    if (mtProject.values.reverbMute || fxAutoMuteActive())
         display.setControlColors(trackVolumeBar[reverbVolumeScreenPosition],
                                  display.getTheme().inactiveBarColors);
     else

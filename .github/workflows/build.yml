@@ -3,7 +3,7 @@ name: Build Tracker CE Firmware
 on:
   push:
     branches: [ main, 'release-*' ]
-    tags: [ 'v*' ]
+    tags: [ 'tracker-ff-v*' ]
   pull_request:
     branches: [ main, 'release-*' ]
   workflow_dispatch:
@@ -15,6 +15,10 @@ permissions:
 jobs:
   build-firmware:
     runs-on: ubuntu-22.04
+    env:
+      # Tracker+ and Tracker Mini (IMX) are built only on a v* tag push and on a manual run (workflow_dispatch, the check before a release).
+      # Branch pushes and pull requests build the original (MK66) only.
+      IMX_BUILD: ${{ (startsWith(github.ref, 'refs/tags/tracker-ff-v') || github.event_name == 'workflow_dispatch') && 'true' || 'false' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -52,7 +56,7 @@ jobs:
         run: make version
 
       # Every plugin module comes from a module repository pinned in engines/external.lock.json: tracker-engines-os and tracker-effects-os
-      # (public, fetched over https without a token) and tracker-engines and tracker-effects (private: PHZ, PLK, Console, Tube). With a secret
+      # (public, fetched over https without a token) and tracker-engines and tracker-effects (private: PHZ, PLK, ALCO, Console, Tube, Glue). With a secret
       # PRIVATE_RELEASES_TOKEN (a token that can read the private releases) the private sets are fetched and checked too. Without it
       # (forks, pull requests from forks) only the public sets are checked. A public set that cannot be fetched (its release is not
       # published yet) skips the check with a note.
@@ -83,6 +87,13 @@ jobs:
       - name: Build the release original with -Werror and run the stack ratchet
         run: make stack-ratchet-release OUT_DIR="$PWD/build/gate" BUILD_TAG="$(git rev-parse --short=7 HEAD)"
 
+      # Static worst case stack gate (synth-open/tools/stack/stack_margin.py): main loop + audio chain + every nested interrupt against the real stack
+      # room of the linked release image, in both USB modes, floor 512 B. Fails too when the interrupt census (stack_isr_levels.txt), the dynamic frame
+      # bounds (stack_vla_bounds.txt) or the STACK_MARGIN check no longer match the image. The plugin depths are the committed 1.3.0 values
+      # (stack_plugin_depths.txt, the plugin ELFs are not in this repository). Reuses the objects of the step above, changes nothing in the image.
+      - name: Static worst case stack gate
+        run: make stack-margin-release OUT_DIR="$PWD/build/gate" BUILD_TAG="$(git rev-parse --short=7 HEAD)"
+
       # Lint delta: array-bounds, null-dereference, overflow and file manager / plugin host -Wconversion warnings, and a short list of cppcheck
       # ids, on lines added since the merge-base with the upstream polyend/tracker-ce main only (origin here is this fork, whose main has
       # other history, so the base is fetched explicitly). Reviewed false positives: synth-open/tools/lint_delta_allow.txt.
@@ -92,15 +103,28 @@ jobs:
           git fetch --no-tags https://github.com/polyend/tracker-ce main:refs/remotes/upstream/main
           make lint-delta-release LINT_BASE=upstream/main
 
-      - name: Build Original Tracker, Tracker+, and Tracker Mini firmware
+      - name: Build Original Tracker firmware
         run: |
           set -o pipefail
-          POSTFIX_ARGS=""
-          if [[ "${{ github.ref }}" != refs/tags/v* ]]; then
+          POSTFIX_ARGS=()
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
             SHORT_SHA=$(git rev-parse --short=7 HEAD)
-            POSTFIX_ARGS="ORIGINAL_POSTFIX=CE_${SHORT_SHA} PLUS_POSTFIX=CE_${SHORT_SHA} MINI_POSTFIX=CE_${SHORT_SHA}"
+            POSTFIX_ARGS=("ORIGINAL_POSTFIX=CE_${SHORT_SHA}")
           fi
-          make all $POSTFIX_ARGS 2>&1 | tee build_output.log
+          make original "${POSTFIX_ARGS[@]}" 2>&1 | tee build_output.log
+
+      # The check before a release: Tracker+ and Tracker Mini must still compile (make plus, make mini). Only on a tracker-ff-v* tag push and on a manual
+      # workflow_dispatch run, never on a branch push or a pull request.
+      - name: Build Tracker+ and Tracker Mini firmware (tags and manual runs only)
+        if: env.IMX_BUILD == 'true'
+        run: |
+          set -o pipefail
+          POSTFIX_ARGS=()
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            SHORT_SHA=$(git rev-parse --short=7 HEAD)
+            POSTFIX_ARGS=("PLUS_POSTFIX=CE_${SHORT_SHA}" "MINI_POSTFIX=CE_${SHORT_SHA}")
+          fi
+          make plus mini "${POSTFIX_ARGS[@]}" 2>&1 | tee -a build_output.log
 
       - name: Build reference .ptfx Sample Editor plugins
         run: |
@@ -121,7 +145,11 @@ jobs:
             ls -lh editor-fx-sdk/build/Effects/*.ptfx || true
             echo "\`\`\`"
             echo ""
-            echo "### Linker Memory Usage (All 3 Devices)"
+            if [ "$IMX_BUILD" = true ]; then
+              echo "### Linker Memory Usage (Original Tracker, Tracker+, Tracker Mini)"
+            else
+              echo "### Linker Memory Usage (Original Tracker)"
+            fi
             echo "\`\`\`text"
             grep -E "^ Building |=== Building|Memory region|FLASH:|RAM:|EXTERNAL_RAM:|QSPI_FLASH:|SRAM_DTC:|SRAM_ITC:|SRAM_OC:" build_output.log || true
             echo "\`\`\`"
@@ -133,7 +161,11 @@ jobs:
             cat pr_summary.md
             echo ""
             echo "> **Downloads (Bottom of Summary Page)**:"
-            echo "> * **\`polyend-tracker-ce-firmware\`**: Ready-to-flash \`.ptf\` firmware files for **Original Tracker**, **Tracker+**, and **Tracker Mini**."
+            if [ "$IMX_BUILD" = true ]; then
+              echo "> * **\`polyend-tracker-ce-firmware\`**: Ready-to-flash \`.ptf\` firmware files for **Original Tracker**, **Tracker+**, and **Tracker Mini**."
+            else
+              echo "> * **\`polyend-tracker-ce-firmware\`**: Ready-to-flash \`.ptf\` firmware file for the **Original Tracker** (Tracker+ and Tracker Mini are built on tags and manual runs only)."
+            fi
             echo "> * **\`polyend-tracker-ce-effects\`**: Unzip and copy the included **\`Effects/\`** folder directly to the root of your Tracker's microSD card."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -177,7 +209,7 @@ jobs:
               marker,
               '### Polyend Tracker CE Test Firmware & Sample Editor Effects',
               '',
-              'This pull request passed all build checks. You can download and test the built firmware for **Original Tracker**, **Tracker+**, and **Tracker Mini** (`Build: ' + shortSha + '`) and the `.ptfx` Sample Editor plugins directly using the links below (no GitHub account required):',
+              'This pull request passed all build checks. You can download and test the built firmware for the **Original Tracker** (`Build: ' + shortSha + '`) and the `.ptfx` Sample Editor plugins directly using the links below (no GitHub account required). Tracker+ and Tracker Mini are not built for pull requests, they are checked before a release:',
               '',
               `* **[Download Firmware (.zip)](${fwUrl})**`,
               `* **[Download Sample Editor Effects (.zip)](${fxUrl})**`,
@@ -187,10 +219,7 @@ jobs:
               '',
               '### 1. Flashing the Firmware (`.ptf`)',
               `1. Download and unzip **[polyend-tracker-ce-firmware.zip](${fwUrl})**.`,
-              '2. Copy the `.ptf` file matching your hardware to the **`/Firmware/`** folder on your Tracker\'s microSD card:',
-              `   * **Original Polyend Tracker**: \`PolyendTracker_CE_${shortSha}.ptf\``,
-              `   * **Polyend Tracker+**: \`TrackerPlus_CE_${shortSha}.ptf\``,
-              `   * **Polyend Tracker Mini**: \`TrackerMini_CE_${shortSha}.ptf\``,
+              `2. Copy the \`PolyendTracker_CE_${shortSha}.ptf\` file (for the **Original Polyend Tracker**) to the **\`/Firmware/\`** folder on your Tracker\'s microSD card.`,
               '3. Insert the microSD card into your Tracker, navigate to **Config → Firmware → Firmware update**, select the `.ptf` file, and confirm.',
               `4. Once rebooted, you can verify you are running this PR build under **Config → Firmware** (\`Build: ${shortSha}\`).`,
               '',
@@ -202,7 +231,7 @@ jobs:
               'The Tracker\'s bootloader is hardware-isolated from the firmware. If a test build ever fails to boot:',
               '1. Place a known-good, stable `.ptf` firmware file inside the **`/Firmware/`** folder on your microSD card (ideally as the only `.ptf` file in that folder).',
               '2. Insert the microSD card and power on your Tracker.',
-              '3. Use a paperclip or SIM-eject pin to press the **recessed hardware Reset / Emergency Bootloader pinhole button** (on the bottom of Original Tracker / Tracker+, or next to the USB-C port on Tracker Mini). The bootloader will automatically flash the `.ptf` file from `/Firmware/`.',
+              '3. Use a paperclip or SIM-eject pin to press the **recessed hardware Reset / Emergency Bootloader pinhole button** (on the bottom of the Original Tracker). The bootloader will automatically flash the `.ptf` file from `/Firmware/`.',
               '',
               '</details>',
               '',

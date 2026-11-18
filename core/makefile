@@ -41,6 +41,14 @@ ifeq ($(SYNTH_OPEN),1)
 # plugin (chip.plg of tracker-engines-os) now, so a SYNTH_OPEN image never compiles it
 CPP_SRCS 	:= $(filter-out $(addprefix ./,$(foreach e,$(filter-out $(SYNTH_ENGINES_SEL),$(SYNTH_ENGINES_ALL) CHIP),$(SYNTH_ENGINE_CORE_SRCS_$(e)))),$(CPP_SRCS))
 endif
+# MODIT_MODULE=1 (default with SYNTH_OPEN=1 PLUG_HOST=1 and -DFEATURE_EXT_HOOKS in CUSTOM_DEFINES, the release build): MOD import, IT import
+# and IT export are the card module /Plugins/Ext/modit.plg (synth-open/modit/, build_modit.sh), not part of the image. The three sources
+# go to the module, FileManager/fileManagerModit.cpp is the image's side (the entry points forward through ext_hooks.modit).
+# PLUG_HOST and CUSTOM_DEFINES come from the command line (the Makefile's RELEASE_ARGS), so they are known here.
+MODIT_MODULE ?= $(if $(and $(filter 1,$(SYNTH_OPEN)),$(filter 1,$(PLUG_HOST)),$(filter -DFEATURE_EXT_HOOKS,$(CUSTOM_DEFINES))),1,0)
+ifeq ($(MODIT_MODULE),1)
+CPP_SRCS 	:= $(filter-out ./FileManager/fileManagerImportMod.cpp ./FileManager/fileManagerImportIt.cpp ./FileManager/fileManagerExportToMod.cpp,$(CPP_SRCS))
+endif
 C_SRCS 	 	+= $(shell find ./libs/ -name *.c)
 
 _CPP_OBJS	= $(patsubst ./%.cpp, %.o, $(CPP_SRCS))
@@ -66,6 +74,14 @@ OBJS		+= $(SYNTH_OPEN_OBJS)
 #   SYNTH_OPT_SHIM     the shim render path (synth-open/open_synth.cpp: instrument, voice pool, OpenPatch::effective), leave empty (-O2)
 #   SYNTH_OPT_COLD     cold shim code (synth-open/open_cold.cpp, open_patchio.cpp, stub_fmt.cpp: metadata, value text, patch store, registry glue)
 # Example: make original SYNTH_OPEN=1 SYNTH_TAG=-c SYNTH_OPT_ENGINES=-Os SYNTH_OPT_GUI=-Os
+# FW_LTO=1 (opt-in): link time optimisation of the -Os objects only (UI, file manager, cold shim, platform). The -O2 audio objects
+# (AudioEngine, libs/Audio, engines, open_synth) are compiled as before and stay out of the LTO set. The archive needs gcc-ar.
+FW_LTO ?=
+LTO_ALL := $(if $(filter 1,$(FW_LTO)),-flto)
+# FW_LTO=ui: only the UI side (interface, FileManager, NewDisplay, effector, Exporter, synth GUI), no sequencer, platform or shim objects
+LTO_UI := $(if $(filter 1 ui,$(FW_LTO)),-flto)
+LTO_ANY := $(LTO_UI)
+LTO_UI_PATHS := interface FileManager libs/NewDisplay effector Exporter
 SYNTH_OPT_ENGINES ?=
 SYNTH_OPT_GUI ?=
 SYNTH_OPT_SHIM ?=
@@ -77,16 +93,27 @@ $(filter $(OBJ_DIR)/synth-open/ot/%,$(SYNTH_OPEN_OBJS)): EXTRA_OPT := $(SYNTH_OP
 SYNTH_OPT_CHIP ?= $(SYNTH_OPT_ENGINES)
 # PHZ: -O2 and no fused multiply add. On the Cortex-M4F a VFMA / VMLA takes 3 cycles, a VMUL + VADD pair 2, and that is
 # worth 20 % of the voice (synth-open/tools/phz_cycles). Measured: worst case 5.8 % of a block at these flags, 7.3 % at -Os
-$(SYNTH_GUI_OBJS): EXTRA_OPT := $(SYNTH_OPT_GUI)
+$(SYNTH_GUI_OBJS): EXTRA_OPT := $(SYNTH_OPT_GUI) $(LTO_UI)
 $(OBJ_DIR)/synth-open/open_synth.o: EXTRA_OPT := $(SYNTH_OPT_SHIM)
 # Dirt: FMA fusing costs 3 cycles on the M4F against 2 for a separate multiply and add, so no contraction
 SYNTH_OPT_DIRT ?= -O2 -ffp-contract=off
 $(OBJ_DIR)/synth-open/ff_dirt.o: EXTRA_OPT := $(SYNTH_OPT_DIRT)
 $(OBJ_DIR)/synth-open/ff_dirt_ctl.o: EXTRA_OPT := -Os
 # plugin host: loader and bench are cold (-Os), the insert's per block path and the in-image Dirt plugin as the .plg build
-$(OBJ_DIR)/synth-open/plug_host.o $(OBJ_DIR)/synth-open/plug_bench.o $(OBJ_DIR)/synth-open/plug_nvm.o $(OBJ_DIR)/synth-open/plug_ui.o $(OBJ_DIR)/synth-open/plug_synth.o $(OBJ_DIR)/synth-open/ext_module.o: EXTRA_OPT := -Os
+$(OBJ_DIR)/synth-open/plug_host.o $(OBJ_DIR)/synth-open/plug_bench.o $(OBJ_DIR)/synth-open/plug_nvm.o $(OBJ_DIR)/synth-open/plug_ui.o $(OBJ_DIR)/synth-open/plug_synth.o: EXTRA_OPT := -Os $(LTO_ALL)
+$(OBJ_DIR)/synth-open/ext_module.o: EXTRA_OPT := -Os
 $(OBJ_DIR)/synth-open/plug_insert.o $(OBJ_DIR)/synth-open/plug_dirt_inimage.o: EXTRA_OPT := -O2 -ffp-contract=off
-$(OBJ_DIR)/synth-open/open_cold.o $(OBJ_DIR)/synth-open/open_patchio.o $(OBJ_DIR)/synth-open/stub_fmt.o: EXTRA_OPT := $(SYNTH_OPT_COLD)
+# Tail pad (synth-open/ext_module.cpp): the top Makefile sizes it from the linked image and passes FF_TAIL_PAD. The stamp is named after the
+# value, so ext_module.o is rebuilt exactly when the value changes (make does not track flags)
+FF_TAIL_PAD ?= 0
+TAILPAD_STAMP := $(OBJ_DIR)/synth-open/.tailpad-$(FF_TAIL_PAD)
+$(OBJ_DIR)/synth-open/ext_module.o: COMPILER_OPTIONS += -DFF_TAIL_PAD=$(FF_TAIL_PAD)
+$(OBJ_DIR)/synth-open/ext_module.o: $(TAILPAD_STAMP)
+$(TAILPAD_STAMP):
+	@mkdir -p $(dir $@)
+	@rm -f $(dir $@).tailpad-*
+	@touch $@
+$(OBJ_DIR)/synth-open/open_cold.o $(OBJ_DIR)/synth-open/open_patchio.o $(OBJ_DIR)/synth-open/stub_fmt.o: EXTRA_OPT := $(SYNTH_OPT_COLD) $(LTO_ALL)
 $(OBJ_DIR)/synth-open/ot/audio/engines/fat.o: EXTRA_OPT := $(SYNTH_OPT_FAT)
 # FM4 and B-Type (-O3) are plugins built in tracker-engines-os, SYNTH_OPT_FM4 and SYNTH_OPT_BTYPE are accepted and unused.
 # Our code under synth-open/ builds warning free with -Wall -Wextra on 10.3 and 12.3, so every warning there is an error, and only there
@@ -106,8 +133,12 @@ $(SYNTH_OPEN_OBJS): COMPILER_OPTIONS += $(SYNTH_OPEN_WERROR)
 #   The newlib-nano link and the platform at -Os are in platforms/mk66/makefile.
 ifeq ($(TRIM),1)
 DEFINES += -DFW_TRIM
+# -DFW_SE_PTFX: nine sample editor effects (Amplifier Overdrive Delay Bitcrusher Chorus Flanger Equalizer Limiter Compressor) are card
+# files /Effects/se_*.ptfx (tracker-effects-os src/ptfx), their classes are not linked. The list rows stay, a row without its file reads
+# "Missing: <name>". Stock builds (no TRIM) keep every effect built in.
+DEFINES += -DFW_SE_PTFX
 TRIM_OS_PATHS ?= interface FileManager libs/NewDisplay effector Exporter synth source
-$(foreach d,$(TRIM_OS_PATHS),$(eval $$(OBJ_DIR)/$(d)/%.o: EXTRA_OPT := -Os))
+$(foreach d,$(TRIM_OS_PATHS),$(eval $$(OBJ_DIR)/$(d)/%.o: EXTRA_OPT := -Os $$(if $$(filter $(d),$(LTO_UI_PATHS)),$$(LTO_UI),$$(LTO_ALL))))
 # Audio graph construction and the performance pad / note on glue run once at start or once per event, not per block: -Os frees flash
 # for the idle-skip audio CPU work without touching a per-block path
 # mtAudioSequencer holds the per step effect handlers (seqFx, endFx, fx*): they run once per sequencer step and effect, not per block (-3,056 B)
@@ -160,6 +191,18 @@ COMPILER_OPTIONS+=-mcpu=cortex-m4 -mfpu=fpv4-sp-d16
 # watch for NEW names. Not -Wconversion (4,951 lines), see the lint target below. CRASH_WARN= switches them off.
 CRASH_WARN ?= -Wstack-usage=512 -Wvla
 COMPILER_OPTIONS+=$(CRASH_WARN)
+# Parts: the Parts view of the Song screen, a song built from Parts kept in the project's project.mtff sidecar (core/source/parts.h,
+# ref/parts.md). It needs the plugin host (PLUG_HOST=1) that owns project.mtff: the default is on with it and off without it. PARTS=0
+# builds without it (stock behaviour, a define is not a make dependency: wipe the object dir between them)
+PARTS ?= $(if $(filter 1,$(PLUG_HOST)),1,0)
+ifeq ($(PARTS),1)
+ifneq ($(PLUG_HOST),1)
+$(error PARTS=1 needs PLUG_HOST=1: the Parts list is stored in project.mtff)
+endif
+endif
+ifeq ($(PARTS),1)
+DEFINES+=-DFEATURE_PARTS
+endif
 ifeq ($(SYNTH_OPEN),1)
 # Patch.h uses __fp16. FEATURE_SYNTH_OPEN also makes interfaceDefs.h set GUI_HANDLE_SYNTH=1.
 COMPILER_OPTIONS+=-mfp16-format=ieee
@@ -195,13 +238,29 @@ endif
 # A define is not a make dependency: give each variant its own SYNTH_TAG.
 PLUG_HOST ?= 0
 PLUG_BENCH ?= 0
+ifeq ($(MODIT_MODULE),1)
+DEFINES+=-DFEATURE_MODIT_MODULE
+endif
 ifeq ($(PLUG_HOST),1)
 DEFINES+=-DFEATURE_PLUG_HOST
 INCLUDES+=-I$(SYNTH_OPEN_DIR)/plug
+# SEND_DUCK=1 (default with PLUG_HOST=1): send ducking, a chosen track or synth part pulls the delay and reverb returns down
+# (core/libs/Audio/effect_duck.h). The settings live in the plugin sidecar, so it needs the plugin host. SEND_DUCK=0 is the build without it.
+SEND_DUCK ?= 1
+ifeq ($(SEND_DUCK),1)
+DEFINES+=-DFEATURE_SEND_DUCK
+endif
 ifeq ($(PLUG_BENCH),1)
 DEFINES+=-DFEATURE_PLUG_BENCH
 endif
 endif
+endif
+# USB_MSC=1 (platforms/mk66/makefile has the same flag): the SD card as a USB drive in Drive mode (Config > USB > Storage,
+# Config > Features > USB drive, off by default). The core side: the Storage row on MK66 and the Exit that reloads /Workspace.
+# A define is not a make dependency: build it in a clean core build dir.
+USB_MSC ?= 0
+ifeq ($(USB_MSC),1)
+DEFINES+=-DFEATURE_USB_MSC
 endif
 else ifeq ($(PLATFORM), IMX)
 COMPILER_OPTIONS+=-mcpu=cortex-m7 -mfpu=fpv5-sp-d16 -mfp16-format=ieee
@@ -237,8 +296,25 @@ $(DEVTOOLS_CORE_OBJS): $(OBJ_DIR)/source/%.o: $(DEVTOOLS_CORE_DIR)/%.cpp
 	$(TOOLCHAIN)c++ $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) $(EXTRA_OPT) -o "$@" "$<"
 endif
 
+# MODIT_MODULE=1: the objects of modit.plg, built here with the image's own compiler line (same defines, same flags, -Os with TRIM=1 as the
+# FileManager folder has it) and the forced include that gives the three sources the module's member names (synth-open/modit/modit_names.h).
+# They are not archived into libTracker.a: synth-open/modit/build_modit.sh links them against the finished image. Their .su files sit in
+# the build dir like every other one, so the stack ratchet reads the module's frames too.
+ifeq ($(MODIT_MODULE),1)
+MODIT_OBJS := $(addprefix $(OBJ_DIR)/modit/,fileManagerImportMod.o fileManagerImportIt.o fileManagerExportToMod.o modit_dispatch.o modit_entry.o)
+$(MODIT_OBJS): COMPILER_OPTIONS += -include $(abspath $(SYNTH_OPEN_DIR))/modit/modit_names.h
+$(MODIT_OBJS): EXTRA_OPT := $(if $(filter 1,$(TRIM)),-Os)
+$(OBJ_DIR)/modit/fileManager%.o: FileManager/fileManager%.cpp
+	@mkdir -p $(dir $@)
+	$(TOOLCHAIN)c++ $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) $(EXTRA_OPT) -o "$@" "$<"
+$(OBJ_DIR)/modit/modit_%.o: $(SYNTH_OPEN_DIR)/modit/modit_%.cpp
+	@mkdir -p $(dir $@)
+	$(TOOLCHAIN)c++ $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) $(EXTRA_OPT) -o "$@" "$<"
+$(TARGET): $(MODIT_OBJS)
+endif
+
 $(TARGET): $(OBJS)
-	$(TOOLCHAIN)ar -r "$(BUILD_DIR)/$(TARGET)" $(OBJS_SORTED)
+	$(TOOLCHAIN)$(if $(LTO_ANY),gcc-ar,ar) -r "$(BUILD_DIR)/$(TARGET)" $(OBJS_SORTED)
 	$(MAKE) --no-print-directory post-build
 	
 # Main rules

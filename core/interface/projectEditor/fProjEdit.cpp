@@ -10,6 +10,10 @@
 #include "mtAudioEngine.h"
 #ifdef FEATURE_PLUG_HOST
 #include "plug_sidecar.h"
+#include "plug_host.h"
+#endif
+#ifdef FEATURE_MODIT_MODULE
+#include "ext_hooks.h"
 #endif
 #include "mtPadBoard.h"
 #include "sampleRecorder/sampleRecorder.h"
@@ -19,6 +23,7 @@
 
 #include "FileBrowser.h"
 #include "fileManager.h"
+#include "fileManagerDefs.h"
 
 #include "Platform.h"
 #include "config.h"
@@ -51,6 +56,9 @@ static void functImportMod();
 static void functSaveProject();
 static void functSaveAsProject();
 static void functExport();
+#ifdef FEATURE_PLUG_HOST
+static void functProjectSettings();
+#endif
 //****************************************************
 // New project
 static void functSaveChangesCancelNewProject();
@@ -70,6 +78,7 @@ static void functSaveAsOverwriteYes();
 // Open
 static void functEnterBrowser();
 static void functCloseBrowser();
+static void functCancelBrowser();
 static void functSaveChangesCancelOpen();
 static void functSaveChangesDontSaveOpenBrowser();
 static void functSaveChangesSaveOpen();
@@ -245,6 +254,8 @@ void cProjectEditor::stop()
 {
     cleanupListsData();
     cleanupAfterSaveData();
+    // The path and name of a pending open are freed above; it must not run without them.
+    afterSaveOperation = noOperationAfterSave;
 
     sequencer.stopManualNotes();
     mtPopups.hideInfoPopup();
@@ -280,6 +291,9 @@ void cProjectEditor::setDefaultScreenFunct()
     ip->setButtonObj(interfaceButton3, buttonPress, functSaveProject);
     ip->setButtonObj(interfaceButton4, buttonPress, functSaveAsProject);
     ip->setButtonObj(interfaceButton5, buttonPress, functExport);
+#ifdef FEATURE_PLUG_HOST
+    ip->setButtonObj(interfaceButton6, buttonPress, functProjectSettings);
+#endif
 
     ip->setButtonObj(interfaceButtonPlay, buttonPress, functPlayAction);
 
@@ -689,7 +703,7 @@ void cProjectEditor::setProjectBrowserFunct()
     PE->ip->setButtonObj(interfaceButton0, buttonPress, functEnterBrowser);
     PE->ip->setButtonObj(interfaceButton2, buttonPress, functDeleteFileFolder);
     PE->ip->setButtonObj(interfaceButton3, buttonPress, functCreateNewFolder);
-    PE->ip->setButtonObj(interfaceButton6, buttonPress, functCloseBrowser);
+    PE->ip->setButtonObj(interfaceButton6, buttonPress, functCancelBrowser);
 
     if (PE->currentBrowserMode == cProjectEditor::kSaveAsProject)
     {
@@ -736,6 +750,13 @@ void cProjectEditor::saveProject()
         !newFileManager.projectExist(newFileManager.getCurrentProjectPath(),
                                      newFileManager.getCurrentProjectName()))
     {
+        functSaveAsProject();
+        return;
+    }
+
+    if (!projectFolderFits(newFileManager.getCurrentProjectPath(), newFileManager.getCurrentProjectName()))
+    {   // opened from a folder too deep for its files: Save would write them under cut-off names, Save As picks another place
+        mtPopups.show(1, "Maximum number of characters in folder path exceeded.");
         functSaveAsProject();
         return;
     }
@@ -806,8 +827,25 @@ static void functOpenProject()
     PE->openBrowser(cProjectEditor::kOpenProject);
 }
 
+// MOD and IT import and the IT export are the card module /Plugins/Ext/modit.plg (synth-open/ext_loader.h moditLoad): loaded on the first
+// click, so a missing, foreign or damaged file or the busy slot is a popup here, before anything else of the flow starts
+static bool moditReady()
+{
+#ifdef FEATURE_MODIT_MODULE
+    const char* line1 = "";
+    const char* line2 = "";
+    if (ext_modit_check(&line1, &line2) != 0)
+    {
+        mtPopups.showInfoPopup(line1, line2);
+        return false;
+    }
+#endif
+    return true;
+}
+
 static void functImportMod()
 {
+    if (!moditReady()) return;
     PE->openBrowser(cProjectEditor::kOpenMod);
 }
 
@@ -891,6 +929,17 @@ static void functNewFolderConfirm()
     PE->setProjectBrowserFunct();
 }
 
+#ifdef FEATURE_PLUG_HOST
+// F7: the Project Settings page (the Config editor on its Project Settings group, configMenu.cpp). It holds the settings of project.mtff:
+// 4 FX Slots, Macro depth, Strum volume, Random seed and Scale snap
+static void functProjectSettings()
+{
+    uint8_t button = interfaceButtonConfig;
+    uint32_t options = kOpenProjectSettings;
+    PE->eventFunct(eventSwitchModule, PE, &button, &options);
+}
+#endif
+
 static void functExport()
 {
     if (sequencer.isPlay())
@@ -933,6 +982,7 @@ static void functSaveChangesDontSaveNewProject()
     PE->setDefaultScreenFunct();
 
     // ignorowanie neizapisanego
+    newFileManager.backupDiscardedWorkspace(); // one generation kept as Workspace.prev
     mtProject.values.projectNotSavedFlag = 0;
     newFileManager.clearChangeFlags();
 
@@ -975,6 +1025,12 @@ static void functSaveAsConfirm()
         return;
     }
 
+    if (!projectFolderFits(PE->fileBrowser.getCurrentPath(), PE->keyboardManager.getName()))
+    {
+        mtPopups.show(1, "Maximum number of characters in folder path exceeded.");
+        return; // the keyboard stays open: a shorter name may fit
+    }
+
     if (newFileManager.projectExist(PE->fileBrowser.getCurrentPath(),
                                     PE->keyboardManager.getName()))
     {
@@ -1002,8 +1058,7 @@ static void functSaveAsOverwriteYes()
         PE->ip->unblockAllInputs();
     }
 
-    PE->showDefaultScreen();
-    PE->setDefaultScreenFunct();
+    functCloseBrowser();
     display.processDisplayUpdateImmediate();
 }
 
@@ -1121,10 +1176,18 @@ static void functCloseBrowser()
 {
     PE->currentBrowserMode = cProjectEditor::kNone;
 
-    PE->cleanupListsData();
-
+    // The browser lists are not freed here: the list control is only hidden and can
+    // still be refreshed. stop() and the next openBrowser() free them.
     PE->showDefaultScreen();
     PE->setDefaultScreenFunct();
+}
+
+static void functCancelBrowser()
+{
+    // Cancelling Save As abandons the save, and with it whatever was to follow the save.
+    PE->afterSaveOperation = cProjectEditor::AfterSaveOperation::noOperationAfterSave;
+
+    functCloseBrowser();
 }
 
 bool cProjectEditor::browserEnter()
@@ -1266,6 +1329,7 @@ static void functSaveChangesDontSaveOpenBrowser()
     PE->afterSaveOperation = cProjectEditor::AfterSaveOperation::noOperationAfterSave;
 
     // ignore saveing
+    newFileManager.backupDiscardedWorkspace(); // one generation kept as Workspace.prev
     mtProject.values.projectNotSavedFlag = 0;
     newFileManager.clearChangeFlags();
 
@@ -1306,8 +1370,7 @@ static void functSaveChangesSaveOpen()
     }
 
     PE->ip->unblockAllInputs();
-    PE->showDefaultScreen();
-    PE->setDefaultScreenFunct();
+    functCloseBrowser();
 
     PE->saveProject();
 }
@@ -1412,6 +1475,7 @@ void cProjectEditor::startExport(uint8_t source)
 
 static void functExportToMOD()
 {
+    if (!moditReady()) return;
     if (sequencer.isPlay())
     {
         PE->showStopPatternWindow();
@@ -1644,6 +1708,12 @@ static void makeMoveOnActiveList(int16_t moveDir)
         PE->currentBrowserMode == cProjectEditor::kOpenMod ||
         PE->currentBrowserMode == cProjectEditor::kSaveAsProject)
     {
+        // An empty list has no entry to move to; the clamp below would give position -1.
+        if (PE->fileBrowserData.browserListLength <= 0)
+        {
+            return;
+        }
+
         PE->fileBrowserData.browserListPosition =
           clamp<int>(PE->fileBrowserData.browserListPosition + moveDir,
                      0,

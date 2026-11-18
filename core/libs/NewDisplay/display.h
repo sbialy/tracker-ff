@@ -50,8 +50,9 @@
 
 struct CompressedFontData
 {
-    const CompressedData* data;
-    int count;
+    const uint8_t* data;   // raw deflate stream (core/libs/fonts/*_L4.cpp)
+    int count;             // its size in bytes
+    int rawSize;           // the glyph bitmap it decodes to
 };
 
 class FileSystem;

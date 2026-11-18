@@ -9,7 +9,7 @@ firmware's attach does (emu_synth.load: rebased for its FlexNVM home, rw in SRAM
 the real checkSynth in Unicorn on that extension. An engine it rejects is listed in the picker but shows Missing when picked
 (attach error 4), and no other test sees it: emu_synth.py and the module repositories' render checks never call checkSynth.
 
-It also prints the facts the check is about (sections, formats, work memory), the use of the firmware's 16 KB work arena (plug_synth.cpp
+It also prints the facts the check is about (sections, formats, work memory), the use of the firmware's work arena (18 KB, plug_synth.cpp
 kWorkBytes, plug_work.h: a block is given back when another engine needs the room and no part plays its engine, so what
 must fit is the engines in use at the same time, one per synth part: the 3 biggest, and the 4 biggest as a margin), and fails when a
 plugin uses a format the firmware only has for a built-in engine (PLUG_FMT_COUNT and up). Exit code 0 only when every synth plugin
@@ -50,8 +50,9 @@ def extract():
     src = open(os.path.join(SO, "plug_synth.cpp")).read()
     lines = src.splitlines()
     want = []
-    for pat, need in ((r"^constexpr uint32_t kLayout = ", True), (r"^constexpr uint32_t kSynthSectionMax = ", False)):
-        m = [l for l in lines if re.match(pat, l)]   # kSynthSectionMax: absent before 1.2.0 (a literal 8 in the check)
+    for pat, need in ((r"^constexpr uint32_t kLayout = ", True), (r"^constexpr uint32_t kSynthSectionMax = ", False),
+                      (r"^constexpr uint32_t kSynthExt11 = ", False)):
+        m = [l for l in lines if re.match(pat, l)]   # kSynthSectionMax: absent before 1.2.0 (a literal 8), kSynthExt11 before ABI 1.2
         if len(m) != 1 and (need or m):
             sys.exit("validate_synth: %r not found once in plug_synth.cpp" % pat)
         want += m

@@ -11,7 +11,7 @@ class Platform;
 
 namespace features
 {
-constexpr int kMax = 8;          // features listed
+constexpr int kMax = 10;         // features listed (features-140: 8 built-ins with idea-ui and idea-skipback, two left for a module)
 constexpr int kMaxParams = 8;    // params per feature page
 constexpr int kMaxState = 64;    // opaque state bytes per feature
 constexpr int kFileMax = 384;    // one .cfg file
@@ -29,6 +29,7 @@ struct Io
 
 int add(const feat_desc* d);     // -1: full, bad size or ABI, duplicate id. Built-ins before boot(), a module from its entry
 void boot(Platform* platform);   // card Io, registerBuiltins(), load(), menuBuild()
+const Io* cardIo();              // the card side once boot() has run, null before it (FEATURES_TEST: always null). The Synth play page keeps its own file with it
 void load(const Io* io);         // read every file, call each boot() (the test calls it with its own Io)
 void tick();                     // main loop: debounced saves of changed files
 void flush();                    // write every changed file now (any power off, Restart now)

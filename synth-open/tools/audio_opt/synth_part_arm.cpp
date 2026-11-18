@@ -67,7 +67,7 @@ static void oldPath()
 
 static void newPath()
 {
-    part_clip::monoPart<kBlock>(gRender, gReuse ? 1.0f : dbToAmplitude(gGainDb), gReuse, gSkip, gSkip ? nullptr : gNewSend, gNewPost);
+    part_clip::monoPart<kBlock>(gRender, gReuse ? 1.0f : dbToAmplitude(gGainDb), gReuse, gSkip, (gSkip || gReuse) ? nullptr : gNewSend, gNewPost);
 }
 
 extern "C" void bench_setup(int) {}

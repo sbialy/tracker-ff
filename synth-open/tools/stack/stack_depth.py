@@ -282,6 +282,9 @@ def main():
     ap.add_argument("--cut", action="append", default=[], help="drop call edges into functions matching REGEX (a path that cannot be taken, for example float printf)")
     ap.add_argument("--sa", action="append", default=[], help="with --gap: print the deepest prefix before functions matching REGEX")
     ap.add_argument("--frame", action="append", default=[], help="REGEX=BYTES: replace the frame of matching functions (what-if for a patch)")
+    ap.add_argument("--payload", action="append", default=[], help="REGEX=BYTES: add BYTES to the frame of matching functions (the dynamic part of a VLA frame, which the .su and the prologue scan do not have)")
+    ap.add_argument("--recur", action="append", default=[], help="REGEX=LEVELS: a recursive function matching REGEX nests LEVELS deep, not once (the cycle cost is added LEVELS-1 more times)")
+    ap.add_argument("--dyn-list", action="store_true", help="list every function of the image with a dynamic frame (VLA, alloca) and whether a --payload matched it, then exit")
     ap.add_argument("--cha", action="store_true", help="indirect calls without a rule: virtual calls (vptr load) go to every vtable entry at that slot")
     ap.add_argument("--sites", action="store_true", help="list the indirect call sites left unresolved below the roots, with their kind")
     ap.add_argument("--map", help="link map: rule target &OBJ = address-taken functions of the caller's object file")
@@ -323,6 +326,23 @@ def main():
         for n in funcs:
             if re.search(rr, dem[n]):
                 frames[n] = int(bb)
+    payload_hit = {}
+    for po in a.payload:
+        rr, bb = po.rsplit('=', 1)
+        rx_ = re.compile(rr)
+        for n in funcs:
+            if re.search(rx_, dem[n]) and dyn.get(n):
+                frames[n] += int(bb)
+                payload_hit.setdefault(po, []).append(n)
+    if a.dyn_list:
+        for n in sorted(funcs, key=lambda n: dem[n]):
+            if dyn.get(n):
+                hit = [po for po, ns in payload_hit.items() if n in ns]
+                print("dynamic %6d B  %-3s  %s%s" % (frames[n], src[n], dem[n][:120], "  payload %s" % hit[0].rsplit("=", 1)[1] if hit else "  NO-PAYLOAD"))
+        for po in a.payload:
+            if po not in payload_hit:
+                print("payload-unused %s" % po)
+        return
     resolve = []
     if a.resolve:
         for line in open(a.resolve):
@@ -403,6 +423,13 @@ def main():
             edges[n] = ({x for x in c_ if not any(r.search(dem[x]) for r in cx)}, {x for x in t_ if not any(r.search(dem[x]) for r in cx)})
     memo = {}
     cycles = set()
+    recur = []
+    for ro in a.recur:
+        rr, bb = ro.rsplit("=", 1)
+        recur.append((re.compile(rr), int(bb), ro))
+    lap = {}          # function a back edge returns to -> frame bytes of one trip round the cycle (deepest seen)
+    applied = {}      # recursion bound -> (function, extra bytes)
+    pstack = []
     sys.setrecursionlimit(100000)
 
     def depth(n, stack):
@@ -410,8 +437,11 @@ def main():
             return memo[n]
         if n in stack:
             cycles.add(dem[n])
+            i = pstack.index(n)
+            lap[n] = max(lap.get(n, 0), sum(frames[x] for x in pstack[i:]))
             return (0, [])
         stack.add(n)
+        pstack.append(n)
         best, bpath = 0, []
         calls, tails = edges.get(n, (set(), set()))
         for c in calls:
@@ -427,6 +457,13 @@ def main():
         for r, b in extra:
             if r.search(dem[n]):
                 own += b
+        if n in lap:
+            for r, lv, ro in recur:
+                if r.search(dem[n]):
+                    x = (lv - 1) * lap[n]
+                    own += x
+                    applied[ro] = (dem[n], lv, lap[n], x)
+        pstack.pop()
         stack.discard(n)
         memo[n] = (own, path)
         return memo[n]
@@ -560,6 +597,8 @@ def main():
             print("  dynamic frames reachable: " + "; ".join(dem[x][:60] for x in dy))
     if cycles:
         print("recursion cut at: " + "; ".join(sorted(cycles)[:20]))
+    for ro, (nm, lv, lp, x) in sorted(applied.items()):
+        print("recursion bound %s: %d levels of %d B = +%d B" % (nm[:70], lv, lp, x))
 
 
 if __name__ == "__main__":

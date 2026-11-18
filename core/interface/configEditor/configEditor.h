@@ -52,6 +52,11 @@ class cConfigEditor : public ModuleBase
 
     // menu
     void createConfigMenu();
+#ifdef FEATURE_PLUG_HOST
+    void projectPageSetup();
+    void leaveProjectPage() { eventFunct(eventSwitchToPreviousModule, this, 0, 0); }
+#endif
+    bool projectPage = false; // opened by the File screen (kOpenProjectSettings): the Project Settings page, not the Config groups
     void hideConfigMenu();
 
     void createMenuBaseList();
@@ -114,7 +119,8 @@ class cConfigEditor : public ModuleBase
                             uint8_t min,
                             uint8_t max,
                             uint8_t interval,
-                            uint8_t dev);
+                            uint8_t dev,
+                            const char* zeroText = nullptr);
     void hideConfigList();
 
     void changeConfigListPosition(int16_t value);
@@ -156,6 +162,7 @@ class cConfigEditor : public ModuleBase
     hControl batteryLabelControl = -1;
     hControl audioPerformanceLabelControl = -1;
     hControl memoryUsageLabelControl = -1;
+    hControl usbStreamLabelControl = -1; // dev mode: USB audio mode and whether the computer records it now
 
     hControl configBasemenuListControl;
     hControl configSubmenuListControl;
@@ -199,6 +206,8 @@ class cConfigEditor : public ModuleBase
 #endif
     char audioPerformanceText[30];
     char audioPerformanceText2[30];
+    char usbStreamText[16];
+    char usbStreamText2[16];
     char heapUsageText[30];
     char stackUsageText[30];
     //----------------------------------

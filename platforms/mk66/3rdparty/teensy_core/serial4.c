@@ -236,7 +236,7 @@ int serial4_set_rts(uint8_t pin)
 	return 1;
 }
 
-int serial4_set_cts(uint8_t pin)
+int serial4_set_cts(uint8_t pin __attribute__((unused)))
 {
 	return 0;
 }

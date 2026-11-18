@@ -12,7 +12,7 @@
 // against them. Never called.
 extern "C" __attribute__((noinline, used)) void ext_keep_platform(void)
 {
-    static volatile uint32_t sink;
+    [[maybe_unused]] static volatile uint32_t sink;
     sink = SD.freeClusterCount() + SD.sectorsPerCluster();
     attachInterruptVector(IRQ_NUMBER_t(0), nullptr);
 #ifdef FEATURE_USB_AUDIO

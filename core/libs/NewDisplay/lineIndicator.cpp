@@ -15,8 +15,7 @@ void cLineIndicator::update()
 {
     if (lineIndicatorSelection != nullptr)
     {
-        if (((lineIndicatorSelection->start >= 0) && (lineIndicatorSelection->start <= width)) &&
-            ((lineIndicatorSelection->end >= 0) && (lineIndicatorSelection->end <= width)))
+        if ((lineIndicatorSelection->start <= width) && (lineIndicatorSelection->end <= width))
         {
             API_COLOR(colors[1]);
             API_BLEND_FUNC(SRC_ALPHA, ONE);

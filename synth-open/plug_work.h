@@ -1,7 +1,7 @@
 // Work memory of the synth engine plugins (PLUG_EXT_SYNTH work_bytes, PLK's delay line pool ...). Header only and
 // free of the platform: plug_synth.cpp is the firmware user, synth-open/tools/plug_work_test.cpp runs the same code on the Mac.
 //
-// The arena (plug_synth.cpp s_work, 16 KB of SDRAM) holds one block per ATTACHED library entry. The table below is the only
+// The arena (plug_synth.cpp s_work, 18 KB of SDRAM, 16 KB before ABI 1.2) holds one block per ATTACHED library entry. The table below is the only
 // bookkeeping, the arena itself carries no header: a block is (off, len) at its entry's index and the free space is every gap
 // between blocks, so a block that goes back coalesces with its free neighbours by construction. A request takes the lowest gap
 // that is big enough (first fit, 8 byte aligned).
@@ -163,7 +163,7 @@ struct WorkArena
 //   2. when pick() has none left, the blocks that are left belong to the engines the parts play (and must keep). If they and n fit the
 //      arena together, they are packed to the bottom (compact) and restart(moved, m) starts the m engines whose block moved again at
 //      the new place, voices cut (plug_synth.cpp restartMoved). n then fits the one gap at the end.
-// False: the engines that must stay and n do not fit together (16 KB is too small for this combination), nothing was moved.
+// False: the engines that must stay and n do not fit together (the arena is too small for this combination), nothing was moved.
 // So fragmentation never refuses a request, its worst case is the restart: at most one engine per other part (2 with 3 parts) has its
 // notes cut when the arena is packed, only at an attach that needs it.
 template <int N, class Pick, class Release, class Restart>

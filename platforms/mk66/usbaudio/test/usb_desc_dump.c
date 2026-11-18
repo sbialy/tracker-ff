@@ -1,7 +1,8 @@
 // Host dump of the USB descriptors one usb_desc.c serves (tracker-ff Features > USB audio, usb_desc_test.sh). Compiled against
 // the real platforms/mk66/3rdparty/teensy_core/usb_desc.c (USB_MIDI): prints every descriptor of usb_descriptor_list with the
 // length usb_dev.c GET_DESCRIPTOR sends, and the endpoint configuration SET_CONFIGURATION writes to ENDPT1..8.
-// Argument: 0 or 1, the boot flag handed to ff_usb_audio_select (ignored by a tree without the switch).
+// Argument: 0, 1 or 2 (off, stereo, 8+3 mono), the boot flag handed to ff_usb_audio_select (ignored by a tree without the switch).
+// A tree with the 8+3 mode also prints the channel name strings usb_dev.c serves ahead of the list (ff_usb_audio_string).
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -44,6 +45,16 @@ int main(int argc, char** argv)
         for (unsigned i = 0; i < len; i++) printf(" %02x", l->addr[i]);
         printf("\n");
     }
+#if defined(FF_USB_AUDIO_TX) && defined(FF_AUDIO_MULTI_CH)
+    for (unsigned w = 0x0300; w < 0x0320; w++)
+    {
+        const uint8_t* d = ff_usb_audio_string((uint16_t)w);
+        if (!d) continue;
+        printf("chname %04x len %u:", w, d[0]);
+        for (unsigned i = 0; i < d[0]; i++) printf(" %02x", d[i]);
+        printf("\n");
+    }
+#endif
     // usb_dev.c case 0x0900: ENDPT1..NUM_ENDPOINTS from the table, an endpoint past the table is never written (reset value 0)
     printf("endpoints:");
     for (int i = 1; i <= 8; i++)

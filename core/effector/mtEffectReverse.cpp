@@ -14,8 +14,10 @@ bool mtEffectReverse::startProcess()
     for (int channel = 0; channel < kChannels; channel++)
     {
         channelParams[channel].srcAddr = confirmed[channel].selection.addr;
+        // the last sample of the selection: the first source sample lands there (addr + length was one past the end, so the first
+        // source sample was written outside the selection and the first destination sample kept what was in memory)
         channelParams[channel].dstAddr =
-          processed[channel].selection.addr + confirmed[channel].selection.length;
+          processed[channel].selection.addr + confirmed[channel].selection.length - 1;
     }
 
     processedSamples = 0;

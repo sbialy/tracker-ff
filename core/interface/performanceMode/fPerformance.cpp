@@ -12,6 +12,9 @@
 #include "Platform.h"
 #include "performanceEngine.h"
 #include "util_math.h"
+#ifdef FEATURE_PARTS
+#include "songEditor/songEditor.h"
+#endif
 
 cPerformanceMode performanceMode;
 static cPerformanceMode* PM = &performanceMode;
@@ -25,6 +28,10 @@ static void functUp();
 static void functDown();
 
 static void functCopyPaste();
+#ifdef FEATURE_PARTS
+static void functInsertSnapshot();
+static bool s_snapshotTitle;   // the title bar shows the snapshot answer (back to the screen title after 3 s, update())
+#endif
 
 static void functShift(uint8_t value);
 
@@ -64,6 +71,13 @@ void cPerformanceMode::update()
     {
         blinkTrackUntilSwitch();
     }
+#ifdef FEATURE_PARTS
+    if (s_snapshotTitle && mtInterface.getPlatform()->getTimer()->millis() - partsSnapshotMs() > 3000)
+    {
+        s_snapshotTitle = false;
+        titleBar->setTitle("Performance FX");
+    }
+#endif
     if (refreshTrackState == 1)
     {
         refreshTrackState = 0;
@@ -182,6 +196,9 @@ void cPerformanceMode::setDefaultScreenFunct()
     ip->setButtonObj(interfaceButtonShift, functShift);
 
     ip->setButtonObj(interfaceButtonCopy, buttonPress, functCopyPaste);
+#ifdef FEATURE_PARTS
+    ip->setButtonObj(interfaceButtonInsert, buttonPress, functInsertSnapshot);
+#endif
 
     ip->setButtonObj(interfaceButton0, functActionButton);
     ip->setButtonObj(interfaceButton1, functActionButton);
@@ -248,6 +265,14 @@ void cPerformanceMode::turnOffAtEndOfPattern()
     if (!sequencer.isPerformanceMode())
         return;
 
+    if (!sequencer.isPlay())
+    {
+        // No pattern end is coming that could do it.
+        turnOff();
+        dontClearPerformanceMode = 0;
+        return;
+    }
+
     dontClearPerformanceMode = 1;
     if (!sequencer.isSongMode())
     {
@@ -257,6 +282,22 @@ void cPerformanceMode::turnOffAtEndOfPattern()
     }
     sequencer.setOnPatternOrSelectionEnd(cbkTurnOffPerformanceMode);
 }
+
+#ifdef FEATURE_SYNTH_OPEN
+// Opens the Synth play page and keeps Performance mode as it is, the way a switch to the Params page does (the FX rows, the track states and
+// the pattern swaps stay, dontClearPerformanceMode is read by the next start). A refusal (a popup, the page is not on screen) undoes the flag
+bool cPerformanceMode::openSynthPlay()
+{
+    const uint8_t before = dontClearPerformanceMode;
+    dontClearPerformanceMode = 1;
+    if (mtInterface.openSynthPlayFrom(this))
+    {
+        return true;
+    }
+    dontClearPerformanceMode = before;
+    return false;
+}
+#endif
 
 bool cPerformanceMode::canPerformanceModeContinueAfterSwitchingTo(uint8_t button)
 {
@@ -442,6 +483,7 @@ static void functLeft()
         PM->showFxNames(PM->performanceEditPlace + 1);
         PM->showPerformaceValue(PM->performanceEditPlace);
         PM->showPerformaceValue(PM->performanceEditPlace + 1);
+        PM->lightUpPadBoard();
     }
     else if (PM->performanceEditState)
     {
@@ -487,6 +529,7 @@ static void functRight()
         PM->showFxNames(PM->performanceEditPlace - 1);
         PM->showPerformaceValue(PM->performanceEditPlace);
         PM->showPerformaceValue(PM->performanceEditPlace - 1);
+        PM->lightUpPadBoard();
     }
     else if (PM->performanceEditState)
     {
@@ -635,6 +678,15 @@ static void functCopyPaste()
     PM->lightUpPadBoard();
 }
 
+#ifdef FEATURE_PARTS
+// Insert: what Performance plays now (pattern per track, muted tracks Off) as a new Part of the Song's Parts list
+static void functInsertSnapshot()
+{
+    PM->titleBar->setTitle(partsSnapshotFromPerformance());
+    s_snapshotTitle = true;
+}
+#endif
+
 static void functSwitchModule(uint8_t button)
 {
     if (sequencer.isPerformanceMode())
@@ -647,9 +699,11 @@ static void functSwitchModule(uint8_t button)
         {
             PM->turnOffAtEndOfPattern();
         }
-        else
-        {
-            PM->turnOff();
+        else if (PM->turnOff())
+        {   // stopped: what stop() does when it turns Performance off. stop() finds it off already and skips the reload, so the
+            // switched tracks stayed in the pattern on screen and the next edit saved them under its number
+            newFileManager.loadWorkspacePatternNow(mtProject.values.actualPattern);
+            sequencer.switchRamPatternsNow();
         }
     }
 
@@ -658,6 +712,15 @@ static void functSwitchModule(uint8_t button)
 
 static void functSwitchTracksPage()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    // The third page of the Perform key: Perform on page 2 (tracks 9 to 16) opens the Synth play page (A/B), Perform there comes back to page 1.
+    // Shift + Perform keeps flipping the two track pages with the mute buttons, as before
+    if (PM->tracksPage && !PM->buttons->isButtonPressed(interfaceButtonShift) && PM->openSynthPlay())
+    {
+        return;
+    }
+#endif
+
     for (uint8_t i = 0; i < kPerformanceTracks; i++)
     {
         PM->trackPatternChange[i] = 0;
@@ -832,7 +895,7 @@ void cPerformanceMode::lightUpPadBoard()
     }
 }
 
-static void functPads(uint8_t pad, uint8_t state, int16_t velo)
+static void functPads(uint8_t pad, uint8_t state, int16_t /*velo*/)
 {
     if (state > 1)
     {
@@ -917,7 +980,7 @@ static void functMenu(uint8_t state)
     }
 }
 
-static void functMiniMiddle(uint8_t state)
+static void functMiniMiddle(uint8_t /*state*/)
 {
 }
 

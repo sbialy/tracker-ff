@@ -16,6 +16,12 @@
 //  - the period is not recomputed with a float divide (that rounds differently than the stock double expression and moves a tick by
 //    1 ulp, a few us over minutes): the stock expression is evaluated only when the tempo or the swing factor changes, and the
 //    result is kept. A few entries cover the two swing phases.
+//  - one difference from the stock code, on purpose: the stock loop took the period once per audio block, so a tick that changes it
+//    (the swing phase toggles at every step boundary, a Tempo FX sets a new tempo) left the rest of that block counting in the old
+//    period. At a step boundary inside a block that is up to one block of the long phase counted as the short one or the other way round,
+//    and the two errors of a pair of steps do not cancel (a measured +0.098 % at 125 BPM and swing 66, a project exports at 125.12).
+//    Here the inputs are read again after every tick and the period follows at once. With no swing and no Tempo FX the inputs never
+//    change inside a block and the ticks and offsets are bit for bit the stock ones (seq_tick_test.cpp checks both).
 class InternalTickClock
 {
   public:
@@ -24,23 +30,37 @@ class InternalTickClock
 
     void reset() { accumulator = 0; }
 
+    // The inputs of the period, as the sequencer holds them now (tempo in BPM, swingFactor 0 = no swing)
+    struct Inputs
+    {
+        float tempo;
+        float swingFactor;
+    };
+
     // Adds one audio block and calls onTick(offsetUs) once per tick due in it, offsetUs = microseconds from the tick to the end of the block
     // (what the stock loop passed to midiSetClockSubBlockOffsetUs).
-    //   tempo, swingFactor  the inputs of the period (swingFactor 0 = no swing), compared by bits to the cached ones
-    //   stockPeriodUs()     the stock float period in us for those inputs, only called when they changed
-    template<typename StockPeriodFn, typename TickFn>
-    inline __attribute__((always_inline)) void advance(float intervalSeconds,
-                                                       float tempo,
-                                                       float swingFactor,
-                                                       StockPeriodFn&& stockPeriodUs,
-                                                       TickFn&& onTick)
+    //   inputs()            returns the Inputs now, called at the start of the block and again after every tick (a tick can change them)
+    //   stockPeriodUs()     the stock float period in us for the inputs now, only called when they changed
+    template<typename InputsFn, typename StockPeriodFn, typename TickFn>
+    inline __attribute__((always_inline)) void advance(float intervalSeconds, InputsFn&& inputs, StockPeriodFn&& stockPeriodUs, TickFn&& onTick)
     {
         const int64_t block = blockFixed(intervalSeconds);
-        const int64_t period = periodFixed(tempo, swingFactor, stockPeriodUs);
+        Inputs in{ 0.0f, 0.0f };
+        int64_t period = 0;
+        bool known = false;
 
         accumulator += block;
-        while (accumulator >= period)
+        for (;;) // one place that reads the inputs and the period, before the first tick and after every tick
         {
+            const Inputs now = inputs();
+            if (!known || differs(now.tempo, in.tempo) || differs(now.swingFactor, in.swingFactor))
+            {
+                known = true;
+                in = now;
+                period = periodFixed(in.tempo, in.swingFactor, stockPeriodUs);
+            }
+            if (accumulator < period)
+                break;
             accumulator -= period;
             const int64_t offset = block - accumulator;
             onTick(offset > 0 ? static_cast<uint32_t>((offset + kHalf) >> kFracBits) : 0U);
@@ -62,6 +82,14 @@ class InternalTickClock
 
   private:
     static constexpr int64_t kHalf = int64_t(1) << (kFracBits - 1);
+
+    static inline __attribute__((always_inline)) bool differs(float a, float b)
+    {
+        uint32_t ba, bb;
+        memcpy(&ba, &a, sizeof(ba));
+        memcpy(&bb, &b, sizeof(bb));
+        return ba != bb;
+    }
 
     inline __attribute__((always_inline)) int64_t blockFixed(float intervalSeconds)
     {

@@ -193,7 +193,11 @@ void cSongPlayer::update()
     }
 
     API_COLOR(colors[0]);
-    API_CMD_TEXT(600, posY + 30, font->handle, textStyle | OPT_CENTERY | OPT_CENTERX, "Pattern");
+    API_CMD_TEXT(600,
+                 posY + 30,
+                 font->handle,
+                 textStyle | OPT_CENTERY | OPT_CENTERX,
+                 controlData->listTitle ? controlData->listTitle : "Pattern");
 
     showList();
 }
@@ -205,6 +209,12 @@ void cSongPlayer::update2()
 
 void cSongPlayer::update3()
 {
+    if (controlData->partsSrc != nullptr)
+    {
+        fillPartBlocks();
+        drawProgressLine();
+        return;
+    }
     if ((controlData->songData != nullptr) && (controlData->normalPatternsBitmask != nullptr) &&
         (controlData->midiPatternsBitmask != nullptr))
     {
@@ -756,6 +766,52 @@ void cSongPlayer::fillBlocks()
     }
 
     API_END();
+
+    drawSelection();
+}
+
+// The Parts view: a cell holds the source pattern number of its track in the Part of the row, an empty cell is a track that is off
+void cSongPlayer::fillPartBlocks()
+{
+    int rows = std::max(controlData->songLength, (uint8_t)textListPos) - (uint8_t)textListPos;
+    rows = std::min(rows, MAX_PATTERNS_VISIBLE);
+    const int allTracksCount = controlData->normalTracksCount + controlData->midiTracksCount;
+
+    API_LINE_WIDTH(kRedFrameWidth);
+    API_BEGIN(RECTS);
+    selectionCalcInit = 0;
+    for (int row = 0; row < rows; row++)
+    {
+        const uint8_t* src = controlData->partsSrc + (textListPos + row) * controlData->partsStride;
+        uint16_t localY = posY + row * (BLOCK_HEIGHT + BLOCK_SPACING) + 64;
+        for (int track = 0; track < allTracksCount; track++)
+        {
+            uint16_t localX = posX + BLOCKS_MARGIN + track * (blockWidth + BLOCK_SPACING);
+            const bool muted = track < controlData->normalTracksCount
+                                 ? controlData->normalTracksMute[track]
+                                 : controlData->midiTracksMute[track - controlData->normalTracksCount];
+            API_COLOR(src[track] == 0 ? colors[8] : muted ? colors[7] : colors[1]);
+            API_VERTEX2F(localX, localY);
+            API_VERTEX2F(localX + blockWidth, localY + BLOCK_HEIGHT);
+            calculateSelection(row, track, localX, localY, localX + blockWidth, localY + BLOCK_HEIGHT);
+        }
+    }
+    API_END();
+
+    API_CMD_SETBASE((style & controlStyleHexNumbers) ? 16 : 10);
+    API_COLOR(colors[3]);
+    for (int row = 0; row < rows; row++)
+    {
+        const uint8_t* src = controlData->partsSrc + (textListPos + row) * controlData->partsStride;
+        uint16_t localY = posY + row * (BLOCK_HEIGHT + BLOCK_SPACING) + 64;
+        for (int track = 0; track < allTracksCount; track++)
+        {
+            if (src[track] == 0) continue;
+            uint16_t localX = posX + BLOCKS_MARGIN + track * (blockWidth + BLOCK_SPACING);
+            API_CMD_NUMBER(localX + blockWidth / 2, localY + BLOCK_HEIGHT / 2, fonts[4].handle, OPT_CENTERX | OPT_CENTERY, src[track]);
+        }
+    }
+    API_CMD_SETBASE(10);
 
     drawSelection();
 }

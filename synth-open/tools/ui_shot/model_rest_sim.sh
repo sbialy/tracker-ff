@@ -1,8 +1,8 @@
 #!/bin/bash
 # model_rest_sim.sh [PNG_DIR]
 #
-# When the "Init patch loaded" message of the Synth Model list appears, run on the real UI code of this tree (ui_shot, the PLUG_HOST
-# configuration with the CHIP host twin) on the Mac. Host only: no device, every scenario has its own SD card folder.
+# When the "Init patch loaded" message of the Synth Model list appears, run on the real UI code of this tree (ui_shot, the emulator
+# bridge build with the card's real chip.plg) on the Mac. Host only: no device, every scenario has its own SD card folder.
 # The message belongs to the engine change. Any engine, built in, attached or a plugin that is not installed, is picked after the list
 # rests on it for kModelRestMs (1 s) and not before. Scrolling past engines with short rests picks and installs nothing and shows no message. Reads the popup on screen ("poke popup", host_poke.cpp) and the engine the part stores ("poke picker").
 # Every step of the list (arrow, held key repeat, encoder) restarts the rest: scenarios 5 to 10 step more often than kModelRestMs, count the
@@ -10,16 +10,17 @@
 # Ends with "RESULT: GREEN" (exit 0) or "RESULT: RED (n failing)".
 #
 #   synth-open/tools/ui_shot/model_rest_sim.sh [PNG_DIR]
-#   CHIP_PLUGIN_SRC  engine_chip.cpp of tracker-engines-os (default ../poly-engines-os/src/synth-open/engine_chip.cpp): the CHIP twin is
-#                    the one plugin engine that installs on the host, JU6 and the others stay "not installed" (a pick of them only moves)
+#   The binary is the BRIDGE=1 ui_shot (bridge_env.sh: UNICORN_DIR, BRIDGE_AXF): every synth .plg of the card installs and attaches with its
+#   real bytes under Unicorn, as on the unit
 #   CHIP_PLG_DIR     folder with chip.plg and chip.plgi (default build/chip-plugin)
 #   PLG_DIR          folder with the other synth .plg (default the newest of build/cpu-adopt, plugin-synth)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-export CHIP_PLUGIN_SRC="${CHIP_PLUGIN_SRC:-$ROOT/../poly-engines-os/src/synth-open/engine_chip.cpp}"
+. "$HERE/bridge_env.sh"
+bridge_env "$ROOT" || exit 2
 CHIP_PLG_DIR="${CHIP_PLG_DIR:-$ROOT/build/chip-plugin}"
-BUILD="$ROOT/build/ui-shot-chipplg"
+BUILD="$ROOT/build/ui-shot-bridge"
 BIN="$BUILD/ui_shot"
 PNG_DIR="${1:-}"
 [ -n "$PNG_DIR" ] && mkdir -p "$PNG_DIR"
@@ -30,9 +31,8 @@ plg="${PLG_DIR:-}"
 if [ -z "$plg" ]; then for d in "$ROOT/build/cpu-adopt" "$ROOT/build/plugin-synth"; do [ -f "$d/ju6.plg" ] && { plg="$d"; break; }; done; fi
 [ -f "$plg/ju6.plg" ] || { echo "model_rest_sim.sh: no plugins (set PLG_DIR to a folder with ju6.plg ...)" >&2; exit 2; }
 [ -f "$CHIP_PLG_DIR/chip.plg" ] || { echo "model_rest_sim.sh: no chip.plg (set CHIP_PLG_DIR)" >&2; exit 2; }
-[ -f "$CHIP_PLUGIN_SRC" ] || { echo "model_rest_sim.sh: no CHIP_PLUGIN_SRC $CHIP_PLUGIN_SRC" >&2; exit 2; }
 mkdir -p "$BUILD"
-make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
+make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" "${BRIDGE_ARGS[@]}" OUT="$BUILD" >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
 
 fails=0; checks=0
 pass() { checks=$((checks+1)); printf 'ok    %s\n' "$1"; }

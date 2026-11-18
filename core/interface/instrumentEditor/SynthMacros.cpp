@@ -284,6 +284,7 @@ void cInstrumentEditor::showSynthMacrosScreen()
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);
     display.setControlHide(imgGridControl);
+    hideSynthView();
 
     uint32_t shadow = (display.getTheme().bottomScreenShadow > 0 ? controlStyleBottomShadow : 0);
     uint32_t gradient = (display.getTheme().barShadow > 0 ? controlStyleGradient : 0);

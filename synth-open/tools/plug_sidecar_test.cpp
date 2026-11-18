@@ -4,7 +4,7 @@
 //
 //   c++ -std=c++20 -O1 -Wall -I synth-open -I synth-open/tools/plug_stub synth-open/tools/plug_sidecar_test.cpp \
 //       -o /tmp/plug_sidecar_test && /tmp/plug_sidecar_test
-#include "plug_sidecar_io.h"
+#include "plug_memfs.h"
 
 #include <cmath>
 #include <cstdio>
@@ -24,95 +24,7 @@ void check(bool ok, const char* what)
     if (!ok) g_fail++;
 }
 
-// An in-memory card: path -> bytes, FatFs rules (rename fails onto an existing name). Faults:
-//   unknown         stat of these paths answers kUnknown (a card error), openFail: readFile fails, readFailAfter: a read
-//                   fails after that many bytes (the SD read error mid file, SdFile::read gives -1)
-//   writeFail       writeNew of these paths fails after writing half (a partial file is left, as a full card does)
-//   renameFail      the n-th rename from now fails (0: none), cut: the power goes before the n-th mutation from now (0: none):
-//                   that one and every later operation fails, the card keeps what it had
-struct MemFs
-{
-    std::map<std::string, std::string> files;
-    std::set<std::string> unknown, openFail, writeFail;
-    int readFailAfter = -1;
-    int renameFail = 0, cut = 0;
-    bool dead = false;
-    int writes = 0, removes = 0, renames = 0, mutations = 0;
-    bool step()   // one mutation: false when the power is gone
-    {
-        if (dead) return false;
-        mutations++;
-        if (cut && --cut == 0)
-        {
-            dead = true;
-            return false;
-        }
-        return true;
-    }
-    void reboot()   // power back, every fault gone
-    {
-        dead = false;
-        cut = renameFail = 0;
-        readFailAfter = -1;
-        unknown.clear();
-        openFail.clear();
-        writeFail.clear();
-    }
-    Presence stat(const char* p)
-    {
-        if (dead || unknown.count(p)) return Presence::kUnknown;
-        return files.count(p) ? Presence::kPresent : Presence::kAbsent;
-    }
-    int readFile(const char* p, char* buf, int cap)
-    {
-        auto it = files.find(p);
-        if (dead || unknown.count(p) || openFail.count(p) || it == files.end()) return -1;
-        if (readFailAfter >= 0 && int(it->second.size()) > readFailAfter) return -1;
-        if (int(it->second.size()) > cap) return -1;
-        memcpy(buf, it->second.data(), it->second.size());
-        return int(it->second.size());
-    }
-    bool writeNew(const char* p, const char* buf, int n)
-    {
-        if (!step()) return false;
-        writes++;
-        if (writeFail.count(p))
-        {
-            files[p] = std::string(buf, size_t(n / 2));
-            return false;
-        }
-        files[p] = std::string(buf, size_t(n));
-        return true;
-    }
-    bool remove(const char* p)
-    {
-        if (!files.count(p) || !step()) return false;
-        removes++;
-        files.erase(p);
-        return true;
-    }
-    bool rename(const char* from, const char* to)
-    {
-        if (!files.count(from) || files.count(to) || !step()) return false;
-        renames++;
-        if (renameFail && --renameFail == 0) return false;
-        files[to] = files[from];
-        files.erase(from);
-        return true;
-    }
-    bool exists(const char* p) { return files.count(p) != 0; }
-    // only the canonical names: no .tmp or .bak left over
-    bool clean(std::initializer_list<const char*> keep)
-    {
-        for (auto& [k, v] : files)
-        {
-            bool ok = false;
-            for (const char* q : keep) ok = ok || k == q;
-            if (!ok) return false;
-        }
-        return true;
-    }
-};
+using plug_test::MemFs;
 
 void setRef(SlotRef& r, uint32_t uid, uint32_t ver, const char* name, std::initializer_list<std::pair<const char*, float>> ps)
 {
@@ -210,9 +122,10 @@ int main()
               "an old Dirt sidecar (Preset only) reads, the new parameter names find no value and keep their defaults");
     }
 
-    // ---- the file rules (what the firmware does on the card)
     const char* ws = "Workspace/plugins.txt";
     const char* proj = "Projects/Song/plugins.txt";
+
+    // ---- the file rules (what the firmware does on the card)
     {   // a project without a sidecar: open, load, save, save to Projects. No file appears anywhere, slots stay empty.
         MemFs fs;
         fs.files["Projects/Song/project.bin"] = "binary project bytes";
@@ -681,6 +594,56 @@ int main()
         n = sidecarWrite(p, buf, sizeof(buf));
         Sidecar q;
         check(sidecarRead(buf, n, q) && q.slot[0].uid == kDirtUid && q.slot[0].count == 6, "the migrated sidecar saves and reads back");
+    }
+    // ---- paths: nested project folders (the hooks used to build them in 64 byte buffers, uncut paths up to kPathMax - 1 characters now)
+    {
+        char out[kPathMax];
+        const std::string deep(60, 'd');
+        check(sidecarPath(out, kPathMax, "Workspace", "plugins.txt") && !strcmp(out, "Workspace/plugins.txt"), "path: Workspace/plugins.txt");
+        auto folder = [&](int len) {   // a folder path of exactly len characters
+            std::string f = "Projects";
+            while (int(f.size()) < len) f += "/" + std::string(size_t(std::min(40, len - int(f.size()) - 1)), 'd');
+            return f;
+        };
+        const std::string f243 = folder(243), f244 = folder(244);
+        check(f243.size() == 243 && f244.size() == 244, "path: the test folders have the lengths they say");
+        check(sidecarPath(out, kPathMax, f243.c_str(), "plugins.txt") && strlen(out) == 255 && !strcmp(out, (f243 + "/plugins.txt").c_str()),
+              "path: a folder of 243 characters gives the 255 character file path, uncut");
+        check(!sidecarPath(out, kPathMax, f244.c_str(), "plugins.txt") && out[0] == 0, "path: a folder of 244 characters is refused, out is empty (never a cut name)");
+        check(!sidecarPath(out, kPathMax, std::string(400, 'x').c_str(), "plugins.txt") && out[0] == 0, "path: 400 characters refused");
+
+        // the replace, remove and copy of the longest legal path: .tmp and .bak fit the scratch, nothing is left over
+        MemFs fs;
+        const std::string src = f243 + "/plugins.txt", dst = "Workspace/plugins.txt";
+        const std::string text = "tffplug 1\nformat 2\nmixer 10\n";
+        fs.files[src] = text;
+        char b2[kSidecarMax];
+        check(sidecarCopy(fs, src.c_str(), dst.c_str(), b2, sizeof(b2)) && fs.files[dst] == text && fs.clean({src.c_str(), dst.c_str()}),
+              "long path: Open copies a 255 character source to the Workspace, no .tmp left");
+        fs.files[dst] = text + "p X=1\n";
+        check(sidecarCopy(fs, dst.c_str(), src.c_str(), b2, sizeof(b2)) && fs.files[src] == text + "p X=1\n" && fs.clean({src.c_str(), dst.c_str()}),
+              "long path: Save replaces a 255 character destination (.tmp, .bak steps), nothing left over");
+        check(sidecarRemove(fs, src.c_str()) && !fs.exists(src.c_str()) && fs.exists(dst.c_str()), "long path: remove of a 255 character path");
+
+        // 256 characters: refused everywhere, the card is not touched (no cut name, no write, no remove)
+        const std::string over = f244 + "/plugins.txt";
+        fs.files[over] = "present";
+        const int mut = fs.mutations;
+        int got = 0;
+        check(over.size() == 256 && sidecarFetch(fs, over.c_str(), b2, sizeof(b2), got) == Presence::kUnknown,
+              "long path: a read of a 256 character path says kUnknown, not 'no file'");
+        check(!sidecarReplace(fs, over.c_str(), "x", 1) && !sidecarRemove(fs, over.c_str()) &&
+                !sidecarCopy(fs, dst.c_str(), over.c_str(), b2, sizeof(b2)) && !sidecarCopy(fs, over.c_str(), dst.c_str(), b2, sizeof(b2)),
+              "long path: replace, remove and both copies of a 256 character path fail");
+        check(fs.mutations == mut && fs.files[over] == "present" && fs.files[dst] == text + "p X=1\n", "long path: the card is untouched by them");
+        // the old 64 / 80 byte buffers: a 70 character folder works and the file keeps its name
+        const std::string mid = std::string("Projects/") + deep;   // 69 characters
+        fs.files.clear();
+        fs.files[dst] = text;
+        const std::string midFile = mid + "/plugins.txt";
+        check(sidecarPath(out, kPathMax, mid.c_str(), "plugins.txt") && sidecarCopy(fs, dst.c_str(), out, b2, sizeof(b2)) &&
+                fs.files.count(midFile) && fs.files[midFile] == text && fs.files.size() == 2,
+              "nested path: a 69 character folder gets <folder>/plugins.txt, no other file");
     }
     printf("%s: %d failed\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;

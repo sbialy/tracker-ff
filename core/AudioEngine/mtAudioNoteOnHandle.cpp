@@ -2,6 +2,7 @@
 #include "mtAudioEngine.h"
 #include "mtSequencer.h"
 #include "polyassert.h"
+#include "tapeFx.h"
 
 using namespace mtAudioEngineConstans;
 
@@ -16,6 +17,11 @@ uint8_t playerEngine ::noteOn(uint8_t instr_idx, int8_t note, int8_t _velocity)
 
     endFx(lastSeqFx[0], 0);
     endFx(lastSeqFx[1], 1);
+    if (lastSeqFx[2] | lastSeqFx[3]) // ranks 2 and 3 only ever hold an FX with the 4 FX switch
+    {
+        endFx(lastSeqFx[2], 2);
+        endFx(lastSeqFx[3], 3);
+    }
 
     //	__disable_irq();
     AudioNoInterrupts();
@@ -79,7 +85,11 @@ AUDIO_CORE_RAM uint8_t playerEngine ::noteOn(uint8_t instr_idx,
                                              uint8_t fx1_id,
                                              uint8_t fx1_val,
                                              uint8_t fx2_id,
-                                             uint8_t fx2_val)
+                                             uint8_t fx2_val,
+                                             uint8_t fx3_id,
+                                             uint8_t fx3_val,
+                                             uint8_t fx4_id,
+                                             uint8_t fx4_val)
 {
     if (mtProject.instrument[instr_idx].isActive != 1)
         return 0;
@@ -145,8 +155,25 @@ AUDIO_CORE_RAM uint8_t playerEngine ::noteOn(uint8_t instr_idx,
             fx2_id = Sequencer::strFxConsts::FX_TYPE_VOLUME;
             fx2_val = velocity;
         }
+
+        if (isFxVelocity(fx3_id))
+        {
+            fx3_id = Sequencer::strFxConsts::FX_TYPE_VOLUME;
+            fx3_val = velocity;
+        }
+
+        if (isFxVelocity(fx4_id))
+        {
+            fx4_id = Sequencer::strFxConsts::FX_TYPE_VOLUME;
+            fx4_val = velocity;
+        }
     }
 
+    // the least significant first. Ranks 2 and 3 are left alone (not even an end of the last FX) while no FX ever sat there
+    if (fx4_id | lastSeqFx[3])
+        seqFx(fx4_id, fx4_val, 3);
+    if (fx3_id | lastSeqFx[2])
+        seqFx(fx3_id, fx3_val, 2);
     seqFx(fx2_id, fx2_val, 1); // mniej wazny najpierw
     seqFx(fx1_id, fx1_val, 0);
 
@@ -155,12 +182,33 @@ AUDIO_CORE_RAM uint8_t playerEngine ::noteOn(uint8_t instr_idx,
     bool isFx2Slide = (fx2_id == Sequencer::strFxConsts::FX_TYPE_SLIDE_UP) ||
                       (fx2_id == Sequencer::strFxConsts::FX_TYPE_SLIDE_DOWN);
 
+    if (!isFx1Slide && !isFx2Slide && (fx3_id | fx4_id) &&
+        fx1_id != Sequencer::strFxConsts::FX_TYPE_GLIDE)
+    {
+        // a Slide in rank 2 or 3 (the 4 FX switch): the more significant of the two plays when slots 1 and 2 hold none
+        const bool isFx3Slide = (fx3_id == Sequencer::strFxConsts::FX_TYPE_SLIDE_UP) ||
+                                (fx3_id == Sequencer::strFxConsts::FX_TYPE_SLIDE_DOWN);
+        const bool isFx4Slide = (fx4_id == Sequencer::strFxConsts::FX_TYPE_SLIDE_UP) ||
+                                (fx4_id == Sequencer::strFxConsts::FX_TYPE_SLIDE_DOWN);
+        if (isFx3Slide || isFx4Slide)
+        {
+            const uint8_t slideId = isFx3Slide ? fx3_id : fx4_id;
+            const uint8_t slideVal = isFx3Slide ? fx3_val : fx4_val;
+            for (int channel = 0; size_t(channel) < playMemPtr.size(); channel++)
+            {
+                playMemPtr[channel]->setSlideOnPlay((slideId == Sequencer::strFxConsts::FX_TYPE_SLIDE_UP),
+                                                    slideVal,
+                                                    sequencer.getStepPeriodMs());
+            }
+        }
+    }
+
     if (isFx1Slide || isFx2Slide)
     {
         bool isFx1Glide = (fx1_id == Sequencer::strFxConsts::FX_TYPE_GLIDE);
         if (isFx1Slide)
         {
-            for (int channel = 0; channel < playMemPtr.size(); channel++)
+            for (int channel = 0; size_t(channel) < playMemPtr.size(); channel++)
             {
                 playMemPtr[channel]->setSlideOnPlay(
                   (fx1_id == Sequencer::strFxConsts::FX_TYPE_SLIDE_UP),
@@ -170,7 +218,7 @@ AUDIO_CORE_RAM uint8_t playerEngine ::noteOn(uint8_t instr_idx,
         }
         else if (!isFx1Glide && isFx2Slide)
         {
-            for (int channel = 0; channel < playMemPtr.size(); channel++)
+            for (int channel = 0; size_t(channel) < playMemPtr.size(); channel++)
             {
                 playMemPtr[channel]->setSlideOnPlay(
                   (fx2_id == Sequencer::strFxConsts::FX_TYPE_SLIDE_UP),
@@ -180,10 +228,27 @@ AUDIO_CORE_RAM uint8_t playerEngine ::noteOn(uint8_t instr_idx,
         }
     }
 
+    // Tape on the step of the note (value 1..64 Stop, 65..128 Start): the note starts the run (AudioPlayMemory::play), the first of the slots wins
+    {
+        const bool tape1 = (fx1_id == Sequencer::strFxConsts::FX_TYPE_TAPE);
+        const bool tape2 = (fx2_id == Sequencer::strFxConsts::FX_TYPE_TAPE);
+        const bool tape3 = (fx3_id == Sequencer::strFxConsts::FX_TYPE_TAPE);
+        const bool tape4 = (fx4_id == Sequencer::strFxConsts::FX_TYPE_TAPE);
+        if (tape1 || tape2 || tape3 || tape4)
+        {
+            const uint8_t tapeVal = tape1 ? fx1_val : tape2 ? fx2_val : tape3 ? fx3_val : fx4_val;
+            const uint32_t frames = tapefx::lengthFrames(tapefx::lengthMs(tapeVal, sequencer.getStepPeriodMs()));
+            for (int channel = 0; channel < playMemPtr.size(); channel++)
+            {
+                playMemPtr[channel]->setTapeOnPlay(tapefx::isStart(tapeVal), frames);
+            }
+        }
+    }
+
     bool isAmpRandom = (mtProject.instrument[instr_idx].envelope[envAmp].loop == 1) &&
                        (mtProject.instrument[instr_idx].lfo[envAmp].shape == lfoShapeRandom);
 
-    for (int channel = 0; channel < playMemPtr.size(); channel++)
+    for (int channel = 0; size_t(channel) < playMemPtr.size(); channel++)
     {
         playMemPtr[channel]->envelopeSetIsRandom(isAmpRandom);
         playMemPtr[channel]->envelopeNoteOn(instr_idx,
@@ -241,7 +306,7 @@ AUDIO_CORE_RAM void playerEngine::noteOffFade()
 {
     //	__disable_irq();
     AudioNoInterrupts();
-    for (int channel = 0; channel < playMemPtr.size(); channel++)
+    for (int channel = 0; size_t(channel) < playMemPtr.size(); channel++)
     {
         playMemPtr[channel]->envelopeRelease(300);
         playMemPtr[channel]->envelopeNoteOff();
@@ -268,7 +333,7 @@ AUDIO_CORE_RAM void playerEngine::noteOffCut()
     //	__disable_irq();
     AudioNoInterrupts();
     // caly voice i automatyka zabijane
-    for (int channel = 0; channel < playMemPtr.size(); channel++)
+    for (int channel = 0; size_t(channel) < playMemPtr.size(); channel++)
     {
         playMemPtr[channel]->envelopeNoteOff();
         playMemPtr[channel]->envelopeSetIdle();
@@ -280,7 +345,7 @@ AUDIO_CORE_RAM void playerEngine::noteOffCut()
         envelopePtr[i]->killToZero();
     }
 
-    for (int channel = 0; channel < playMemPtr.size(); channel++)
+    for (int channel = 0; size_t(channel) < playMemPtr.size(); channel++)
     {
         playMemPtr[channel]->stop();
     }
@@ -296,7 +361,7 @@ AUDIO_CORE_RAM void playerEngine::noteOffOrdinary()
     //	__disable_irq();
     AudioNoInterrupts();
 
-    for (int channel = 0; channel < playMemPtr.size(); channel++)
+    for (int channel = 0; size_t(channel) < playMemPtr.size(); channel++)
     {
         playMemPtr[channel]->envelopeNoteOff();
     }
@@ -693,7 +758,7 @@ AUDIO_CORE_RAM void playerEngine::handleFxNoteOnFilter()
     //***** resonance
     if (mtProject.instrument[currentInstrument_idx].filterEnable)
     {
-        for (int channel = 0; channel < filterPtr.size(); channel++)
+        for (int channel = 0; size_t(channel) < filterPtr.size(); channel++)
         {
             filterPtr[channel]->resonance(mtProject.instrument[currentInstrument_idx].resonance +
                                           RESONANCE_OFFSET);

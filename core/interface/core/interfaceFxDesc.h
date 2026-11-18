@@ -64,7 +64,9 @@ const char* const fxDescriptions[FX_COUNT] = {
     "0-100: Probability %\n"
     "GL / !L: Group / Not Last\n"
     "1:1-6:6: Play N / Skip M\n"
-    "S11-S66: Skip N / Play M",
+    "S11-S66: Skip N / Play M\n"
+    "1/8-8/8: Pass N of 8\n"
+    "P01-P16: Pass N of 16",
     // Sequencer::strFxConsts::enFxType::FX_TYPE_ROLL,
     "Destination: Sample, Synth, MIDI \n\nSets the type and value of the Roll (step divider) "
     "parameter."
@@ -322,7 +324,38 @@ const char* const fxDescriptions[FX_COUNT] = {
     "\n"
     "The value is the slot number from 0 to 15, as in the slot selector of the Synth screen. Slot 0 is the patch of the song."
     " A slot with no patch of this engine is ignored.",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_PATCH_MORPH,
+    "Destination: Synth \n\nBlends the open patch slot with another slot of the project, from this step on."
+    "\n"
+    "\n"
+    "0: the open slot, 100: the other slot, in between a mix. Number settings glide, switches and lists"
+    " change at 50. The other slot is the Patch FX in the other FX column, else the Morph target"
+    " (Synth screen, Shift + encoder on the slot).",
 #endif
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_COND,
+    "Destination: Sample, Synth, MIDI \n\nA condition for the other FX of the step. When it fails the note still plays, only the"
+    " other FX of the step is skipped. Same values as Chance."
+    "\n\n"
+    "0-100: Probability %\n"
+    "GL / !L: Group / Not Last\n"
+    "1:1-6:6: Play N / Skip M\n"
+    "S11-S66: Skip N / Play M\n"
+    "1/8-8/8: Pass N of 8\n"
+    "P01-P16: Pass N of 16",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_TAPE,
+    "Destination: Sample, Synth \n\nTape stop and tape start in one FX. Values 1-64 (W) slow the track down like a tape that is stopped:"
+    " the pitch falls to a crawl and the sound fades out. Values 65-128 (Z) start the note like a tape that is switched on: it spins up from a standstill."
+    "\n"
+    "\n"
+    "The run length is in quarters of a step (64 less than the value for a start): 4 is one step, 1 a quarter step, 64 sixteen steps. A stop on a step with a"
+    " note runs down at once, on an empty step it stops what still sounds. A start needs a note.",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_SNAP,
+    "Destination: Sample, Synth, MIDI \n\nSets the scale snap of the track from this step on, until the next Snap FX or the end of the pattern."
+    " Then the track goes back to its Scale snap setting (Project Settings > Scale snap)."
+    "\n"
+    "\n"
+    "0: off, 1: nearest scale note, 2: down, 3: up, 4: track (back to the Scale snap setting of the track). The note of this step is snapped too. The scale and the root note are the ones of"
+    " Project Settings. Playback only, the pattern keeps the notes as written.",
     // Sequencer::strFxConsts::enFxType::FX_TYPE_BREAK_PATTERN,
     "Destination: Pattern \n\n"
     "Breaks current pattern playback and jumps to the next pattern.",
@@ -387,7 +420,9 @@ const char* const fxDescriptions[FX_COUNT] = {
     "0-100: Probability %\n"
     "GL / !L: Group / Not Last\n"
     "1:1-6:6: Play N / Skip M\n"
-    "S11-S66: Skip N / Play M",
+    "S11-S66: Skip N / Play M\n"
+    "1/8-8/8: Pass N of 8\n"
+    "P01-P16: Pass N of 16",
     // Sequencer::strFxConsts::enFxType::FX_TYPE_ROLL,
     "Destination: Sample, MIDI \n\nSets the type and value of the Roll (step divider) "
     "parameter."
@@ -603,6 +638,30 @@ const char* const fxDescriptions[FX_COUNT] = {
     "\n"
     "1 to 63: up, the lowest note first. 65 to 127: down, the highest first. Each unit is 2 ms between two notes"
     " (+10: 20 ms). 0 and 64: off.",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_COND,
+    "Destination: Sample, MIDI \n\nA condition for the other FX of the step. When it fails the note still plays, only the"
+    " other FX of the step is skipped. Same values as Chance."
+    "\n\n"
+    "0-100: Probability %\n"
+    "GL / !L: Group / Not Last\n"
+    "1:1-6:6: Play N / Skip M\n"
+    "S11-S66: Skip N / Play M\n"
+    "1/8-8/8: Pass N of 8\n"
+    "P01-P16: Pass N of 16",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_TAPE,
+    "Destination: Sample, Synth \n\nTape stop and tape start in one FX. Values 1-64 (W) slow the track down like a tape that is stopped:"
+    " the pitch falls to a crawl and the sound fades out. Values 65-128 (Z) start the note like a tape that is switched on: it spins up from a standstill."
+    "\n"
+    "\n"
+    "The run length is in quarters of a step (64 less than the value for a start): 4 is one step, 1 a quarter step, 64 sixteen steps. A stop on a step with a"
+    " note runs down at once, on an empty step it stops what still sounds. A start needs a note.",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_SNAP,
+    "Destination: Sample, MIDI \n\nSets the scale snap of the track from this step on, until the next Snap FX or the end of the pattern."
+    " Then the track goes back to its Scale snap setting (Project Settings > Scale snap)."
+    "\n"
+    "\n"
+    "0: off, 1: nearest scale note, 2: down, 3: up, 4: track (back to the Scale snap setting of the track). The note of this step is snapped too. The scale and the root note are the ones of"
+    " Project Settings. Playback only, the pattern keeps the notes as written.",
     // Sequencer::strFxConsts::enFxType::FX_TYPE_BREAK_PATTERN,
     "Destination: Pattern \n\n"
     "Breaks current pattern playback and jumps to the next pattern.",

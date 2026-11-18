@@ -17,6 +17,9 @@ repository has its own NOTICE.md).
                                 source files of a set at its pinned tag (git show from a local checkout: the repository path in the lock, relative to this checkout,
                                 or $EXTERNAL_SRC_<SET>, SET upper case with - as _), for host tools that compile module source (ui_shot).
                                 FILE is relative to the set's source_root. The tag must still point at tag_commit. Exit 3: no checkout.
+  external.py tree SET DEST     the whole source_root of a set at its pinned tag (git archive from the same local checkout, same tag check as source),
+                                for a host twin that compiles an engine with its includes (ui_shot). DEST holds the files of source_root. A DEST that
+                                already holds this tag_commit is left alone (make tracks timestamps). Exit 3: no checkout.
   external.py list [--visibility ...]   one line per set: name, visibility, repository, tag, commit, file count
   external.py relock SET [--tag TAG]     after a module repository was rebuilt and tagged: tag_commit from its local checkout (the
                                         lock's tag or TAG) and the sha256 of every pinned file from its local_dirs, written back to
@@ -171,7 +174,8 @@ def check(a):
     return 1 if bad else 0
 
 
-def source(a):
+def pinned_checkout(a):
+    """(set, repo) of a source checkout whose tag still points at the pinned commit, else (None, NA) with the reason on stderr"""
     s = lock().get(a.set)
     if not s:
         sys.exit("external: no set '%s' in the lock" % a.set)
@@ -179,11 +183,18 @@ def source(a):
     repo = expand(os.environ[env]) if env in os.environ else lockpath(s["local_repo"])
     if not os.path.isdir(os.path.join(repo, ".git")):
         print("external: %s: no checkout of %s at %s (set %s)" % (a.set, s["repo"], repo, env), file=sys.stderr)
-        return NA
+        return None, NA
     r = subprocess.run(["git", "-C", repo, "rev-parse", s["tag"] + "^{commit}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if r.returncode or r.stdout.strip() != s["tag_commit"]:
         print("external: %s: tag %s is %s in %s, the lock pins %s" % (a.set, s["tag"], r.stdout.strip() or "missing", repo, s["tag_commit"]), file=sys.stderr)
-        return NA
+        return None, NA
+    return s, repo
+
+
+def source(a):
+    s, repo = pinned_checkout(a)
+    if s is None:
+        return repo
     os.makedirs(a.dest, exist_ok=True)
     for f in a.files:
         p = subprocess.run(["git", "-C", repo, "show", "%s:%s" % (s["tag"], s["source_root"] + f)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -194,6 +205,30 @@ def source(a):
         if not os.path.exists(dst) or open(dst, "rb").read() != p.stdout:   # rewrite only a changed file, make tracks timestamps
             open(dst, "wb").write(p.stdout)
     print("external ok: %s at %s (%s): %s" % (a.set, s["tag"], s["tag_commit"][:7], " ".join(os.path.basename(f) for f in a.files)))
+    return 0
+
+
+def tree(a):
+    s, repo = pinned_checkout(a)
+    if s is None:
+        return repo
+    root = s["source_root"].strip("/")
+    stamp = os.path.join(a.dest, ".pinned-commit")
+    if os.path.isfile(stamp) and open(stamp).read().strip() == s["tag_commit"]:
+        print("external ok: %s at %s (%s): %s already extracted" % (a.set, s["tag"], s["tag_commit"][:7], a.dest))
+        return 0
+    shutil.rmtree(a.dest, ignore_errors=True)
+    os.makedirs(a.dest)
+    arc = subprocess.run(["git", "-C", repo, "archive", s["tag"], root], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if arc.returncode:
+        print("external: %s: %s is not in %s" % (a.set, root, s["tag"]), file=sys.stderr)
+        return NA
+    t = subprocess.run(["tar", "-x", "-C", a.dest, "--strip-components", str(len(root.split("/")))], input=arc.stdout, stderr=subprocess.PIPE)
+    if t.returncode:
+        print("external: %s: tar failed: %s" % (a.set, t.stderr.decode(errors="replace")), file=sys.stderr)
+        return NA
+    open(stamp, "w").write(s["tag_commit"] + "\n")
+    print("external ok: %s at %s (%s): source tree in %s" % (a.set, s["tag"], s["tag_commit"][:7], a.dest))
     return 0
 
 
@@ -276,8 +311,11 @@ def main():
     s.add_argument("set")
     s.add_argument("dest")
     s.add_argument("files", nargs="+")
+    t = sp.add_parser("tree")
+    t.add_argument("set")
+    t.add_argument("dest")
     a = ap.parse_args()
-    return {"fetch": fetch, "check": check, "source": source, "list": list_sets, "relock": relock}[a.cmd](a)
+    return {"fetch": fetch, "check": check, "source": source, "tree": tree, "list": list_sets, "relock": relock}[a.cmd](a)
 
 
 if __name__ == "__main__":

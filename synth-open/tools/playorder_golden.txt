@@ -1,0 +1,2 @@
+# sha256 of the 5,120 bytes of the stock custom play order table (strPlayOrderWithEffects pairs, 20 orders of 128), release-1.4.0-int d5420afd
+5120 4c649154f1f9dac73361dc436c114bb69f6e3a811850060a2a4b622d2ecce709

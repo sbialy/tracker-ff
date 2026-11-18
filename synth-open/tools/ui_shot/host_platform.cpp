@@ -1,6 +1,8 @@
 // Host Platform for ui_shot. NOT firmware. See host_platform.h.
 #include "eve_model.h"
 #include "host_platform.h"
+#include "host_pti.h"
+#include "util_string.h"
 
 #include "ConfigManager.h"
 #if __has_include("PowerOffGuard.h")
@@ -11,6 +13,7 @@
 #endif
 
 #include <algorithm>
+#include <map>
 #include <dirent.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -19,6 +22,7 @@
 
 extern double g_audioUs;   // ui_shot_main.cpp: "audio 1" time, "midilog 1" prints every note sent to USB MIDI out with it
 extern bool g_midiLog;
+extern "C" volatile uint32_t systick_millis_count;   // host_stubs.cpp: the firmware's systick, kept in step with the virtual clock
 
 namespace hostp
 {
@@ -41,6 +45,16 @@ int g_startState = 1;       // EEPROM byte 0 (UISHOT_START_STATE, default 1 = th
 int g_returnMirror;         // EEPROM byte 8 (UISHOT_RETURN_MIRROR), PlatformImpl::readPowerReturnMirror
 int g_usbAudioFlag;         // EEPROM byte 9 (UISHOT_USB_FLAG), ffUsbAudioBootFlag
 int g_usbAudioRunning;      // usb_init at the last start (ff_usb_audio_select)
+int g_usbAudioMode;         // EEPROM byte 7 (UISHOT_USB_MODE): 1 = 8+3 mono (0xA5), ffUsbAudioBootFlag
+int g_usbAudioRunningMode;  // the mode usb_init picked at the last start (8+3 needs the flag on too)
+int g_usbAudioStreaming;    // the computer records now (`usbstream 1`), Platform::usbAudioStreaming
+#ifdef FEATURE_USB_MSC
+int g_driveFlag;             // EEPROM byte 7 (UISHOT_DRIVE_FLAG), ffUsbMscBootFlag
+int g_driveRunning;          // usb_init at the last start (ff_usb_msc_select)
+bool g_driveOwned;
+unsigned g_driveBackend, g_driveRefused, g_driveStale;
+std::map<std::string, unsigned> g_driveRefusedBy;
+#endif
 bool g_offMarker;           // RAM marker of a guard reset
 bool g_restartMarker;       // RAM marker of a guard reset in the restart mode (RestartMode.h)
 bool g_restartOnPowerOff;   // Platform::setRestartOnPowerOff
@@ -74,6 +88,10 @@ static void mcuReset(const char* why, bool watchdog)
     // the off branch writes 0 (setPowerMode(false)), the start branch the Power return mirror (PowerControl.cpp checkPowerState)
     g_startState = run && g_returnMirror ? 1 : 0;
     g_usbAudioRunning = g_usbAudioFlag;   // usb_init runs before checkPowerState at every MCU start
+    g_usbAudioRunningMode = g_usbAudioFlag && g_usbAudioMode ? 1 : 0;
+#ifdef FEATURE_USB_MSC
+    g_driveRunning = g_driveFlag;
+#endif
     g_guard.disarm();
     g_wdogBiteAt = 0;
     printf("mcu reset (%s)%s: start %s\n", why, in.watchdogReset ? " wdog" : "", run ? "RUN" : "off");
@@ -101,6 +119,8 @@ void advance(uint32_t ms)
         g_nowMs++;
         sysTick(g_nowMs);
     }
+    systick_millis_count = g_nowMs;   // the firmware's systick follows the virtual clock (rate limits such as the 50 ms of the synth service)
+    audioTick();                      // SIM_AUDIO=1 only (host_simcard.cpp)
 }
 
 void bootModel()
@@ -109,7 +129,13 @@ void bootModel()
     if (const char* e = getenv("UISHOT_START_STATE")) g_startState = atoi(e);
     if (const char* e = getenv("UISHOT_RETURN_MIRROR")) g_returnMirror = atoi(e);
     if (const char* e = getenv("UISHOT_USB_FLAG")) g_usbAudioFlag = atoi(e);
+    if (const char* e = getenv("UISHOT_USB_MODE")) g_usbAudioMode = atoi(e);
     g_usbAudioRunning = g_usbAudioFlag;
+    g_usbAudioRunningMode = g_usbAudioFlag && g_usbAudioMode ? 1 : 0;
+#ifdef FEATURE_USB_MSC
+    if (const char* e = getenv("UISHOT_DRIVE_FLAG")) g_driveFlag = atoi(e);
+    g_driveRunning = g_driveFlag;
+#endif
     power_off_guard::StartInputs in{true, false, false, false, true, uint8_t(g_startState)};
     const bool run = power_off_guard::decideStart(in) == power_off_guard::Start::kRun;
     printf("boot: start state %d: start %s\n", g_startState, run ? "RUN" : "off");
@@ -119,11 +145,17 @@ void bootModel()
 void resetCommand() { mcuReset("reset", false); }
 void stall(uint32_t ms) { advance(ms); }   // the main loop blocked in a call: time and SysTick go on, no main loop pass
 #else
-void advance(uint32_t ms) { g_nowMs += ms; }
+void advance(uint32_t ms)
+{
+    g_nowMs += ms;
+    systick_millis_count = g_nowMs;
+    audioTick();   // SIM_AUDIO=1 only (host_simcard.cpp)
+}
 void bootModel() {}
 void resetCommand() { printf("mcu reset: no model in this tree\n"); }
-void stall(uint32_t ms) { g_nowMs += ms; }
+void stall(uint32_t ms) { advance(ms); }
 #endif
+void syncSystick() { systick_millis_count = g_nowMs; }
 void setHeld(int idx, bool on) { if (idx >= 0 && idx < 64) g_held[idx] = on; }
 void setSdRoot(const std::string& d) { s_root = d; }
 const std::string& sdRoot() { return s_root; }
@@ -131,6 +163,8 @@ const std::string& sdRoot() { return s_root; }
 __attribute__((weak)) bool keyPressed(bool, int) { return false; }
 __attribute__((weak)) const char* simBuildId() { return "uishot"; }
 __attribute__((weak)) void simBootloaderHandoff(const char*) {}
+// the default platform has no extensions: a console build (poly-devtools host_hw.cpp) replaces this and swaps devices in the slots
+__attribute__((weak)) void extendPlatform(HwSlots&) {}
 
 extern "C" void hostPokePoll(); // host_poke.cpp: UISHOT_POKE actions, run from the main loop
 
@@ -166,10 +200,15 @@ class HBattery : public Battery
     bool isEmpty() override { return false; }
 };
 
+// The pad LEDs (cMtPadsBacklight, the keyboard manager): the default does nothing. The console build (poly-devtools host/ui_shot/host_hw.cpp) replaces
+// it through hostp::extendPlatform and records the state of each pad for `_leds` and `_frame`.
 class HLeds : public Leds
 {
   public:
-    void setLed(int, bool, int) override {}
+    void setLed(int n, bool on, int level) override
+    {   // the last state of each pad LED (`padleds` of ui_shot_main.cpp)
+        if (n >= 0 && n < 64) g_padLed[n] = on ? 0x100 | (level & 0xFF) : 0;   // on with level 0 is on (the host config is all zeros)
+    }
 };
 
 class HSwitch : public SwitchGroup
@@ -177,9 +216,22 @@ class HSwitch : public SwitchGroup
   public:
     explicit HSwitch(bool pad = false) : pad_(pad) {}
     void setHoldTime(int) override {}
-    bool isButtonPressed(int i) override { return (!pad_ && i >= 0 && i < 64 && g_held[i]) || keyPressed(pad_, i); }
+    bool isButtonPressed(int i) override
+    {
+        return (!pad_ && i >= 0 && i < 64 && g_held[i]) || (i >= 0 && i < 64 && (remote_ >> i & 1)) || keyPressed(pad_, i);
+    }
     bool pad_;
+    // the MIDI remote's second source, true when the held state changed (as Keys::setRemote of the unit does)
+    bool setRemoteHeld(int i, bool on) override
+    {
+        if (i < 0 || i >= 64 || bool(remote_ >> i & 1) == on) return false;
+        remote_ = on ? remote_ | uint64_t(1) << i : remote_ & ~(uint64_t(1) << i);
+        return true;
+    }
     void setActionCallback(ActionType, void (*)(uint8_t)) override {}
+
+  private:
+    uint64_t remote_ = 0;
 };
 
 class HRadio : public Radio
@@ -240,7 +292,10 @@ class HUsbMidi : public UsbMidi
     bool isReadAvailable() override { return false; }
     void read() override {}
     void sendRealTime(MessageType) override {}
-    void sendControlChange(uint8_t, uint8_t, uint8_t) override {}
+    void sendControlChange(uint8_t index, uint8_t v, uint8_t ch) override
+    {
+        if (::g_midiLog) printf("midi cc %u %u ch %u t %.1f\n", index, v, ch, ::g_audioUs / 1000.0);
+    }
     void sendProgramChange(uint8_t, uint8_t) override {}
     void sendAfterTouch(uint8_t, uint8_t) override {}
     void sendPolyPressure(uint8_t, uint8_t, uint8_t) override {}
@@ -280,8 +335,14 @@ class HUsb : public Usb
     void init() override {}
     void reset() override {}
     void update() override {}
+#ifdef FEATURE_USB_MSC
+    // msc_drive.cpp: kStorage lends the card when the drive was enumerated at start
+    void setClassState(ClassType t, bool on) override;
+    bool getClassState(ClassType t) override;
+#else
     void setClassState(ClassType, bool) override {}
     bool getClassState(ClassType) override { return false; }
+#endif
     bool isAttached() override { return false; }
 };
 
@@ -331,6 +392,9 @@ class HFileSystem : public FileSystem
   public:
     std::string abs(const char* p) const
     {
+#ifdef FEATURE_USB_MSC
+        if (hostp::g_driveOwned) hostp::g_driveBackend++;   // a path reached the card while the computer owns it
+#endif
         HostFaultSuspend keep;   // simulator memory: the device's FatFs paths are fixed buffers
         std::string s = p ? p : "";
         for (char& c : s) if (c == '\\') c = '/';   // FatFs takes '\\' as a separator (IsSeparator): the bank copy and the Synth file paths use it
@@ -357,6 +421,7 @@ class HFileSystem : public FileSystem
     size_t getFileSize(const char* path) override { struct stat st; return stat(abs(path).c_str(), &st) == 0 ? size_t(st.st_size) : 0; }
     size_t getFileSize(FileHandle h) override
     {
+        backendHandle();
         auto* f = static_cast<HFile*>(h);
         if (!f || !f->f) return 0;
         const long cur = ftell(f->f);
@@ -367,6 +432,7 @@ class HFileSystem : public FileSystem
     }
     size_t getFileAvailable(FileHandle h) override
     {
+        backendHandle();
         auto* f = static_cast<HFile*>(h);
         if (!f || !f->f) return 0;
         return getFileSize(h) - size_t(ftell(f->f));
@@ -374,14 +440,19 @@ class HFileSystem : public FileSystem
     std::tuple<bool, FileHandle> openFile(const char* filepath, FileOpenMode mode, FileHandle* fileHandle) override
     {
         HostFaultSuspend keep;   // the device takes its SdFile from a fixed pool (FileSystemImpl::allocateSdFile) and checks it
-        const char* m = mode == kRead ? "rb" : (mode == kWriteOpen ? "r+b" : (mode == kWriteAppend ? "ab" : "wb"));
+        const char* m = mode == kRead ? "rb" : (mode == kWriteOpen ? "r+b" : (mode == kWriteAppend ? "ab" : "w+b"));   // kWriteCreateNew reads back too, as the card does: the IT export reads its own sample offset table
         const std::string p = abs(filepath);
+        // UI_SHOT_FATFS_REOPEN=1: kWriteCreateNew of a handle that holds the same path keeps the bytes, what the device FatFs does when the
+        // cluster chain freed by FA_CREATE_ALWAYS is allocated again in the same order (mtAudioExport::saveMasterBufferToSD reopens the master
+        // WAV at every flush, see ref/export-bpm.md section 9). Default off: "w+b" truncates.
+        if (mode == kWriteCreateNew && fileHandle && *fileHandle && getenv("UI_SHOT_FATFS_REOPEN") && static_cast<HFile*>(*fileHandle)->path == (filepath ? filepath : ""))
+            m = "r+b";
         if (mode == kWriteCreateNew || mode == kWriteAppend)
         {
             const size_t sl = p.rfind('/');
             if (sl != std::string::npos) system(("mkdir -p '" + p.substr(0, sl) + "'").c_str());
         }
-        FILE* f = fopen(p.c_str(), m);
+        FILE* f = cardOpen(filepath ? filepath : "") ? fopen(p.c_str(), m) : nullptr;
         if (!f && mode == kWriteOpen) f = fopen(p.c_str(), "w+b");
         HFile* h = (fileHandle && *fileHandle) ? static_cast<HFile*>(*fileHandle) : new HFile;
         h->f = f;
@@ -391,11 +462,16 @@ class HFileSystem : public FileSystem
     }
     int32_t readFile(void* d, size_t n, FileHandle h) override
     {
+        backendHandle();
         auto* f = static_cast<HFile*>(h);
-        return f && f->f ? int32_t(fread(d, 1, n, f->f)) : -1;
+        if (!f || !f->f) return -1;
+        const long ok = cardRead(f->path, ftell(f->f), long(n));
+        if (ok < 0) return -1;
+        return int32_t(fread(d, 1, size_t(ok), f->f));
     }
     int32_t writeFile(const void* d, size_t n, FileHandle h) override
     {
+        backendHandle();
         auto* f = static_cast<HFile*>(h);
         return f && f->f ? int32_t(fwrite(d, 1, n, f->f)) : -1;
     }
@@ -403,8 +479,9 @@ class HFileSystem : public FileSystem
     bool seekFile(uint32_t pos, FileHandle h) override { auto* f = static_cast<HFile*>(h); return f && f->f && fseek(f->f, long(pos), SEEK_SET) == 0; }
     void closeFile(FileHandle h, bool) override
     {
+        backendHandle();
         auto* f = static_cast<HFile*>(h);
-        if (f && f->f) { fclose(f->f); f->f = nullptr; }
+        if (f && f->f) { cardClose(f->path); fclose(f->f); f->f = nullptr; }
     }
     void endFile(FileHandle h) override { auto* f = static_cast<HFile*>(h); if (f && f->f) { fflush(f->f); if (ftruncate(fileno(f->f), ftell(f->f)) != 0) {} } }
     bool isFileOpen(FileHandle h) override { auto* f = static_cast<HFile*>(h); return f && f->f; }
@@ -433,7 +510,38 @@ class HFileSystem : public FileSystem
         std::sort(v.begin(), v.end());
         return v;
     }
-    int createInstrumentsList(const char*, char**, uint8_t, uint32_t* sizeOut) override { if (sizeOut) *sizeOut = 0; return 0; }
+    // the firmware's SdDir::createInstrumentsList (SD.cpp): the files "N name.pti" of the folder, N = 1..48, list[N - 1] = new char[] with
+    // the name between "N " and ".pti", a second file with the same N is skipped, sizeOut adds up the file sizes. (The older stub returned an
+    // empty list, so a project opened from a card folder came up without its instruments.)
+    int createInstrumentsList(const char* path, char** list, uint8_t length, uint32_t* sizeOut) override
+    {
+        if (sizeOut) *sizeOut = 0;
+        int found = 0;
+        for (const std::string& f : names(abs(path), false))
+        {
+            if (found >= length) break;
+            const size_t n = f.size();
+            if (n < 5 || !hasExt(f, ".pti")) continue;
+            size_t i = 0;
+            if (f[i] < '0' || f[i] > '9') continue;
+            int idx = f[i++] - '0';
+            if (f[i] >= '0' && f[i] <= '9') idx = idx * 10 + (f[i++] - '0');
+            if (f[i] != ' ') continue;
+            i++;
+            if (idx < 1 || idx > 48 || list[idx - 1] != nullptr) continue;
+            const size_t len = n - i - 4;
+            list[idx - 1] = new char[len + 1];
+            memcpy(list[idx - 1], f.c_str() + i, len);
+            list[idx - 1][len] = 0;
+            if (sizeOut)
+            {
+                struct stat st;
+                if (stat((abs(path) + "/" + f).c_str(), &st) == 0) *sizeOut += uint32_t(st.st_size);
+            }
+            found++;
+        }
+        return found;
+    }
     int countContainedFiles(const char* path) override { return int(names(abs(path), false).size()); }
     // the firmware's SdDir::createFilesList: frees what the list held, fills it from slot start_line on with new char[] entries
     // (folders as "/name", files by name), skips skip_count matches and returns the slot after the last entry, kListError when the
@@ -466,28 +574,42 @@ class HFileSystem : public FileSystem
         }
         return n;
     }
+    // the firmware's FileSystemImpl::listDirContents (platforms/mk66/source/FileSystemImpl.cpp): outCount comes in as the capacity of fileList and goes out as the
+    // number of entries, a FOLDER name is stored with a leading '/' ("/New Project", the browser (FileBrowser.cpp) builds its paths as currentPath + name and
+    // "%s%s/project.mt", so a stub without the '/' made every project row of the Open browser look like a plain folder: F8 Open did nothing), an entry longer
+    // than maxNameLen is skipped, the list ends when the names buffer is full, the list is sorted with compareStrings (digits first as numbers, case blind) like the firmware
     void listDirContents(const char* dir, DirContentType type, std::function<bool(const char*)> nameFilter, char* buf, int bufSize, int maxNameLen, int& outCount, char** fileList) override
     {
+        const int cap = outCount;
         outCount = 0;
         auto v = names(abs(dir), type == kFolders);
         int used = 0;
         for (auto& s : v)
         {
+            if (outCount >= cap) break;
             if (nameFilter && !nameFilter(s.c_str())) continue;
-            const int len = int(std::min<size_t>(s.size(), size_t(maxNameLen - 1)));
-            if (used + len + 1 > bufSize) break;
-            memcpy(buf + used, s.c_str(), size_t(len));
-            buf[used + len] = 0;
+            const bool folder = type == kFolders;
+            const int nameLen = int(s.size()) + (folder ? 2 : 1);
+            if (nameLen > bufSize - used) break;
+            if (nameLen > maxNameLen) continue;
+            char* at = buf + used;
+            if (folder) *at++ = '/';
+            memcpy(at, s.c_str(), s.size());
+            at[s.size()] = 0;
             if (fileList) fileList[outCount] = buf + used;
-            used += len + 1;
+            used += nameLen;
             outCount++;
         }
+        if (fileList) std::sort(fileList, fileList + outCount, [](const char* a, const char* b) { return compareStrings(a, b); });
     }
     int readNbFiles(const char*) override { return 0; }
     // one directory walk at a time, like the firmware's
     bool nesDir_open(const char* path) override
     {
         nesDir_close();
+        nesPath_ = path ? path : "";
+        nesIndex_ = 0;
+        cardAccess("dirOpen", nesPath_);
         nesBase_ = abs(path);
         nesDir_ = opendir(nesBase_.c_str());
         return nesDir_ != nullptr;
@@ -500,9 +622,11 @@ class HFileSystem : public FileSystem
             if (e == nullptr) return false;
             struct stat st;
             if (stat((nesBase_ + "/" + e->d_name).c_str(), &st) != 0) continue;
+            bool hid = false;
+            if (!cardDirItem(nesPath_, nesIndex_++, e->d_name, hid)) return false;
             strcpy(name, e->d_name);
             *isDir = S_ISDIR(st.st_mode) ? 1 : 0;
-            *isHid = 0;
+            *isHid = hid ? 1 : 0;
             if (size) *size = uint32_t(st.st_size);
             return true;
         }
@@ -515,9 +639,20 @@ class HFileSystem : public FileSystem
     }
 
   private:
+    static void backendHandle()
+    {
+#ifdef FEATURE_USB_MSC
+        if (hostp::g_driveOwned) hostp::g_driveBackend++;
+#endif
+    }
     DIR* nesDir_ = nullptr;
-    std::string nesBase_;
+    std::string nesBase_, nesPath_;
+    int nesIndex_ = 0;
 };
+
+#ifdef FEATURE_USB_MSC
+#include "host_drive.h"
+#endif
 
 class HPlatform : public Platform
 {
@@ -552,6 +687,17 @@ class HPlatform : public Platform
     bool usbAudioBuilt() { return getenv("UISHOT_NO_USB_AUDIO") == nullptr; }
     bool usbAudioRunning() { return g_usbAudioRunning != 0; }
     void setUsbAudioBoot(bool on) { g_usbAudioFlag = on ? 1 : 0; }
+    // no override: also builds against a tree without the 8+3 mode. The sink is host_usbmc.cpp (the platform's interleave)
+    uint8_t usbAudioRunningMode() { return g_usbAudioRunning && g_usbAudioRunningMode ? 1 : 0; }
+    // no override: also builds against a tree without it
+    uint8_t usbAudioStreaming() { return g_usbAudioRunning && g_usbAudioStreaming ? (usbAudioRunningMode() ? 2 : 1) : 0; }
+    void setUsbAudioBootMode(uint8_t mode) { g_usbAudioMode = mode == 1 ? 1 : 0; }
+    using HostMultiSink = void (*)(const int16_t* const* in);
+    HostMultiSink usbAudioMultiSink() { return usbAudioRunningMode() ? hostUsbMultiSink : nullptr; }
+#ifdef FEATURE_USB_MSC
+    bool usbDriveRunning() override { return g_driveRunning != 0; }
+    void setUsbDriveBoot(bool on) override { g_driveFlag = on ? 1 : 0; }
+#endif
     // no override: also builds against a tree without the guard (bug mode)
     void setPowerOffGuard(bool armed)
     {
@@ -587,22 +733,33 @@ class HPlatform : public Platform
     bool readForceStartUp() override { return true; }
     Sgtl5000* getCodecAudio() override { return &codec; }
     Radio* getRadio() override { return &radio; }
-    SwitchGroup* getButtons() override { return &buttons; }
-    SwitchGroup* getPads() override { return &pads; }
-    Leds* getLeds() override { return &leds; }
-    Battery* getBattery() override { return &battery; }
+    SwitchGroup* getButtons() override { return slots_.buttons; }
+    SwitchGroup* getPads() override { return slots_.pads; }
+    Leds* getLeds() override { return slots_.leds; }
+    Battery* getBattery() override { return slots_.battery; }
     Timer* getTimer() override { return &timer; }
-    Encoder* getEncoder() override { return &encoder; }
-    DisplayDriver* getDisplayDriver() override { return &eve; }
+    Encoder* getEncoder() override { return slots_.encoder; }
+    DisplayDriver* getDisplayDriver() override { return slots_.display; }
     UsbAudio* getUsbAudio() override { return &usbAudio; }
     UartMidi* getUartMidi() override { return &uartMidi; }
     UsbMidi* getUsbMidi() override { return &usbMidi; }
     ConfigManager* getConfigManager() override { return &config; }
-    FileSystem* getFileSystem() override { return &fs; }
+#ifdef FEATURE_USB_MSC
+    FileSystem* getFileSystem() override { return ptiFileSystem(&driveGate); }
+#else
+    FileSystem* getFileSystem() override { return ptiFileSystem(&fs); }   // the card's .pti files in the host's struct (host_pti.cpp)
+#endif
     CrcCalculator* getCrcCalculator() override { return &crc; }
     SystemInfo* getSystemInfo() override { return &info; }
     Usb* getUsb() override { return &usb; }
 
+    HPlatform()
+    {
+        slots_ = {&leds, &buttons, &pads, &battery, &encoder, &eve};
+        extendPlatform(slots_);   // after the members are built: an extension may keep the default it replaces and call through to it
+    }
+
+    HwSlots slots_;
     HTimer timer;
     HEncoder encoder;
     HBattery battery;
@@ -617,6 +774,9 @@ class HPlatform : public Platform
     HCrc crc;
     HConfig config;
     HFileSystem fs;
+#ifdef FEATURE_USB_MSC
+    HDriveGate driveGate{fs};
+#endif
     EveModel eve;
     SystemInfo info = {hostp::simBuildId()};
 };
@@ -630,9 +790,40 @@ Platform* platform()
     return g_platform;
 }
 
+#ifdef FEATURE_USB_MSC
+// msc_drive.cpp on the MK66: the card is lent only when the drive was enumerated at start (ff_usb_msc_on)
+static HDriveGate* driveGate()
+{
+    return &static_cast<HPlatform*>(platform())->driveGate;
+}
+#endif
+
 EveModel& eve()
 {
     platform();
     return g_platform->eve;
 }
 }   // namespace hostp
+
+#ifdef FEATURE_USB_MSC
+namespace hostp
+{
+namespace
+{
+void HUsb::setClassState(ClassType t, bool on)
+{
+    if (t == ClassType::kStorage && on && g_driveRunning) driveGate()->lendToHost();
+}
+
+bool HUsb::getClassState(ClassType t)
+{
+    return t == ClassType::kStorage && driveGate()->hostOwned();
+}
+}   // namespace
+}   // namespace hostp
+#endif
+
+namespace hostp
+{
+int g_padLed[64];
+}

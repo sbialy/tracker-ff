@@ -1,4 +1,5 @@
 #include "WorkspaceProjectSave.h"
+#include "mtFollowChord.h"
 #ifdef FEATURE_PLUG_HOST
 #include "plug_host.h"
 #endif
@@ -13,6 +14,9 @@
 #endif
 
 #include <cstring>
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
 
 void WorkspaceProjectSave::update()
 {

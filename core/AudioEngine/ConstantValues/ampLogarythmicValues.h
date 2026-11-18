@@ -4,7 +4,7 @@
 
 constexpr uint8_t AMP_LOG_VALUES = 101;
 
-const float ampLogValues[AMP_LOG_VALUES] = { 0,
+inline const float ampLogValues[AMP_LOG_VALUES] = { 0,
                                              0.0630957344,
                                              0.0704693069,
                                              0.0744731974,
@@ -108,7 +108,7 @@ const float ampLogValues[AMP_LOG_VALUES] = { 0,
 
 };
 
-const float sendsAmpLogValues[AMP_LOG_VALUES] = { 0,
+inline const float sendsAmpLogValues[AMP_LOG_VALUES] = { 0,
                                                   0.01047128548,
                                                   0.01096478196,
                                                   0.01148153621,
@@ -210,7 +210,7 @@ const float sendsAmpLogValues[AMP_LOG_VALUES] = { 0,
                                                   0.954992586,
                                                   1 };
 
-const float mixAmpLogValues[AMP_LOG_VALUES] = { 0,
+inline const float mixAmpLogValues[AMP_LOG_VALUES] = { 0,
                                                 0.0158489319,
                                                 0.0174582215,
                                                 0.0183231442,
@@ -314,7 +314,7 @@ const float mixAmpLogValues[AMP_LOG_VALUES] = { 0,
 
 };
 
-const uint16_t limiterThresholdValues[AMP_LOG_VALUES] = {
+inline const uint16_t limiterThresholdValues[AMP_LOG_VALUES] = {
     0,     7,     8,     9,     10,    11,    12,    13,    14,    15,    16,    18,    19,
     21,    23,    25,    27,    29,    32,    35,    38,    41,    45,    49,    53,    58,
     63,    69,    75,    81,    88,    96,    105,   114,   124,   135,   147,   160,   174,

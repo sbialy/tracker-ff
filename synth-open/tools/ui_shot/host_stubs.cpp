@@ -84,6 +84,8 @@ void Profiler::stopMeasuringAudio() {}
 void Profiler::resetMeasuringAudio() {}
 
 // ---- plug_nvm.cpp: the FlexNVM flash controller. The host has no flash, nothing is installed, plug_synth sees an empty bank
+// (BRIDGE=1: host_nvm.cpp models the bank on the bridge's window instead)
+#ifndef UISHOT_BRIDGE
 namespace plug
 {
 uint32_t nvmCommands() { return 0; }
@@ -94,6 +96,7 @@ const NvmStats& nvmStats() { static NvmStats s{}; return s; }
 void nvmStatsReset() {}
 void nvmLegacy(bool) {}
 }   // namespace plug
+#endif
 
 #if defined(FEATURE_EXT_HOOKS) && !defined(ENABLE_DEV_CONSOLE)
 // EXTHOOKS=1: LOGE is compiled in (core/source/log.h) and goes to a loaded module, as platforms/mk66/source/util.cpp does

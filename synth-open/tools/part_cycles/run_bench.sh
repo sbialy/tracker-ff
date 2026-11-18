@@ -2,13 +2,13 @@
 # Cost of one synth part inside the open shim (OpenSynth::renderAudioBuffer, real open_synth.cpp / open_cold.cpp / engine) on an emulated
 # Cortex-M4F, per function and per source line with SDRAM accesses counted (device: about 16.9 cycles per SDRAM access). NOT the device.
 #   synth-open/tools/part_cycles/run_bench.sh [ENGINE=VAP] [VOICES=1] [LIVE=1] [ROOT=<tree>]
-# Needs TOOLCHAIN-like TC (default agt/12.3.rel1) and a python with unicorn + capstone (PYTHON=python3).
+# Needs TOOLCHAIN-like TC (default agt/12.3.rel1) and a python with unicorn + capstone (default: the pinned build/pyenv, sh synth-open/tools/pyenv.sh).
 # Env: OUT=<dir> keeps the build there, SCEN=0 (no voice allowed: the part is idle) or 1, EXTRA_FLAGS, TOPN lines shown.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=${ROOT:-$(cd "$HERE/../../.." && pwd)}
 ENGINE=${1:-VAP}; VOICES=${2:-1}; LIVE=${3:-1}
-PY=${PYTHON:-python3}
+PY=${PYTHON:-${PY:-$(sh "$ROOT/synth-open/tools/pyenv.sh" python)}} || exit 2
 TC=${TC:-$ROOT/agt/12.3.rel1/bin/arm-none-eabi}
 OUT=${OUT:-${TMPDIR:-/tmp}/part_cycles_$$}
 mkdir -p "$OUT"

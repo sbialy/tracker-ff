@@ -2,13 +2,16 @@
 """Host harness for a .plg: the firmware loader re-done in Python, the plugin's ARM code run in Unicorn.
 
     python -I emu_plug.py <file.plg> [--base 0x1FFF0BD0] [--blocks 64] [--wav out.wav] [--inwav in.wav] [--param 0=2.5] [--raw PREFIX]
+                          [--image-libm AXF]
 
 Checks the header and CRC, copies the image to --base, applies the rebase table, calls plug_entry, checks the descriptor
 like plug::checkDesc, then init() and process() on stereo 128-frame float blocks. Prints the instruction count per block
 (a lower bound of the M4 cycles: no wait states, no FPU latencies) and an FNV checksum of the output, which must not depend
-on --base. The input is a saw + noise (or --in, a 16-bit stereo wav at 44.1 kHz), the output can be written as a wav.
+on --base. --image-libm AXF answers the libm services with the release image's own code (image_libm.py), else Python's math rounded
+to float. The input is a saw + noise (or --in, a 16-bit stereo wav at 44.1 kHz), the output can be written as a wav.
 """
 import argparse
+import os
 import struct
 import sys
 import wave
@@ -82,8 +85,13 @@ def main():
     ap.add_argument("--param", action="append", default=[], help="INDEX=VALUE, set_param after init (repeatable)")
     ap.add_argument("--param-at", dest="param_at", action="append", default=[],
                     help="BLOCK:INDEX=VALUE, set_param just before that block runs (repeatable, tests the ramps after the first block)")
+    ap.add_argument("--bpm", type=float, default=120.0, help="PLUG_EXT_TEMPO: the sequencer tempo given at every block start (default 120)")
+    ap.add_argument("--play", type=int, default=0, help="PLUG_EXT_TEMPO: 1 = the sequencer plays (beat counts from --beat0), 0 = stopped (beat 0)")
+    ap.add_argument("--beat0", type=float, default=0.0, help="PLUG_EXT_TEMPO: the beat of block 0 when --play 1")
     ap.add_argument("--wav")
     ap.add_argument("--inwav", dest="inwav")
+    ap.add_argument("--image-libm", dest="image_libm", metavar="AXF",
+                    help="answer sinf ... powf with the release image's own newlib code (image_libm.py: the unit's libm, what the ui_shot bridge runs)")
     ap.add_argument("--raw", help="PREFIX: write PREFIX.in.f32 and PREFIX.out.f32, the float blocks as run (per block 128 L then 128 R)")
     a = ap.parse_args()
     data = open(a.plg, "rb").read()
@@ -134,10 +142,20 @@ def main():
     rf = lambda r: struct.unpack("<f", struct.pack("<I", uc.reg_read(r) & 0xFFFFFFFF))[0]
     def wf(r, v):
         uc.reg_write(r, struct.unpack("<I", struct.pack("<f", v))[0])
+    lm = None
+    if a.image_libm:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from image_libm import ImageLibm
+        lm = ImageLibm(a.image_libm)
+        print("libm: the image's newlib from %s (s_host 0x%x)" % (a.image_libm, lm.host))
+
     def service(u, addr, size, ud):
         k = (addr - stubs) // 4
         n = names[k]
-        if n in ("sinf", "cosf", "tanf", "tanhf", "expf", "logf"):
+        if lm is not None and n in ("sinf", "cosf", "tanf", "tanhf", "expf", "logf", "powf"):
+            u.reg_write(UC_ARM_REG_S0, lm.call_bits(n, u.reg_read(UC_ARM_REG_S0) & 0xFFFFFFFF,
+                                                    (u.reg_read(UC_ARM_REG_S1) & 0xFFFFFFFF) if n == "powf" else None))
+        elif n in ("sinf", "cosf", "tanf", "tanhf", "expf", "logf"):
             wf(UC_ARM_REG_S0, f2(getattr(math, n[:-1])(rf(UC_ARM_REG_S0))))
         elif n == "powf":
             wf(UC_ARM_REG_S0, f2(math.pow(rf(UC_ARM_REG_S0), rf(UC_ARM_REG_S1))))
@@ -205,6 +223,37 @@ def main():
         return count[0]
     for pv in a.param:
         set_param(pv)
+    # PLUG_EXT_TEMPO (ABI 1.3), the host's plug_insert.cpp: at every block start set_tempo(inst, bpm) and set_transport(inst, beat, playing)
+    # before the block's set_param calls. The beat comes from integer ticks like Sequencer::timerTicks (2304 per beat, 1 at Play).
+    tempo_fns = (0, 0)
+    if f_query:
+        tp, _ = call(f_query, 4)
+        if tp:
+            tsz, tf_tempo, tf_trans = struct.unpack("<III", bytes(uc.mem_read(tp, 12)))
+            assert tsz >= 8 and lo <= tp < hi, "PLUG_EXT_TEMPO struct outside the text segment"
+            for f in (tf_tempo, tf_trans if tsz >= 12 else 0):
+                assert f == 0 or (f & 1 and lo <= (f & ~1) < hi), "PLUG_EXT_TEMPO function outside the image"
+            tempo_fns = (tf_tempo, tf_trans if tsz >= 12 else 0)
+            print("PLUG_EXT_TEMPO: set_tempo %s, set_transport %s, bpm %g, %s" % (
+                "yes" if tempo_fns[0] else "no", "yes" if tempo_fns[1] else "no", a.bpm,
+                ("playing from beat %g" % a.beat0) if a.play else "stopped"))
+    def tempo_calls(block):
+        if not any(tempo_fns):
+            return
+        ticks = 1 + int(round((a.beat0 + block * N * a.bpm / 60.0 / 44117.64706) * 2304)) if a.play else 0
+        beat = ((ticks - 1) % (2304 * 1024)) / 2304.0 if a.play else 0.0
+        for fn, fargs in ((tempo_fns[0], None), (tempo_fns[1], True)):
+            if not fn:
+                continue
+            uc.reg_write(UC_ARM_REG_SP, WORK + 0xE000)
+            uc.reg_write(UC_ARM_REG_LR, TRAP | 1)
+            uc.reg_write(UC_ARM_REG_R0, inst)
+            if fargs:
+                wf(UC_ARM_REG_S0, f2(beat))
+                uc.reg_write(UC_ARM_REG_R1, 1 if a.play else 0)
+            else:
+                wf(UC_ARM_REG_S0, f2(a.bpm))
+            uc.emu_start(fn | 1, TRAP)
     at = {}
     for pv in a.param_at:
         blk, rest = pv.split(":")
@@ -224,6 +273,7 @@ def main():
         src = bench_input(a.blocks)
     chk, counts, out = 0x811C9DC5, [], []
     for b in range(a.blocks):
+        tempo_calls(b)
         for pv in at.get(b, []):
             print("  (before block %d, set_param took %d instructions)" % (b, set_param(pv)))
         uc.mem_write(L, struct.pack("<%df" % N, *src[b][0]))

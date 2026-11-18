@@ -1,10 +1,15 @@
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
 #include "WorkspaceProjectLoad.h"
+#include "mtFollowChord.h"
 #ifdef FEATURE_PLUG_HOST
 #include "plug_host.h"
 #endif
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
+#include "fx34_io.h"
 #include "fileTransfer.h"
 
 #if FILEMANAGER_HANDLE_SYNTH == 1
@@ -148,6 +153,10 @@ void WorkspaceProjectLoad::loadProjectFromWorkspaceInit()
     // tu czysci flagi zmian plikow bo podczas ladowania moga one zostac ustawione
     // jezeli np ladowany jest starsza wersja pliku i struktura jest modyfikwoana
     newFileManager.clearChangeFlags();
+    fx34io::projectClosing(); // the 4 FX switch of the last project does not carry over: project.mtff turns it on again below
+#ifdef FEATURE_PLUG_HOST
+    plug::projectClosing(); // so does the macro depth mode: a patch the load adds is no patch of the last project
+#endif
 
     currentInstrument = 0;
     sampleLoadStep = 0;
@@ -188,8 +197,12 @@ void WorkspaceProjectLoad::loadProjectFromWorkspaceFinish()
 #endif
 
     newFileManager.loadProjectValues();
+    followchord::workspaceLoaded(false); // no track follows (project.mtff sets it below, a build without it never follows after a load)
+#ifdef FEATURE_PARTS
+    parts::projectLoaded(cWorkspacePath); // an empty Parts list: the Song screen plays the playlist, as stock (project.mtff fills it below)
+#endif
 #ifdef FEATURE_PLUG_HOST
-    plug::projectLoaded(cWorkspacePath); // the master insert plugins of the sidecar (none without one, as stock)
+    plug::projectLoaded(cWorkspacePath); // the master insert plugins of plugins.txt and every setting of project.mtff (none without one, as stock)
 #endif
 
     if (newFileManager.needImportModFileAfterNewProject())

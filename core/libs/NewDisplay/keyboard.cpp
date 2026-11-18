@@ -79,7 +79,7 @@ void cKeyboard::setDefaultColors(uint32_t colors[])
 }
 */
 
-void cKeyboard::setData(void* data)
+void cKeyboard::setData(void* /*data*/)
 {
 }
 

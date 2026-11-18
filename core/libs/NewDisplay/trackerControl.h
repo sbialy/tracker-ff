@@ -15,6 +15,9 @@ struct strTrackerPattern
             char note[5];
             char instr[4]; // 3 znak >0 jesli midi
             char fx[2][5];
+            int8_t vol;     // volume byte of the step, -1 = none (marks, V column)
+            int8_t mm;      // micro-move byte of the step, -1 = none
+            uint8_t hidden; // 1 = the FX bank that is not on screen holds an FX in this step
         } row[15];
 
     } track[kTrackCount];
@@ -52,7 +55,15 @@ struct strTrackerPattern
 
     uint8_t popupMode; // 1 = obcina fill; 2 waski step popup; 4 szeroki step popup
 
+    // the 4 track view with the V and m columns (Config > Pattern V/m columns): 3 tracks of 6 columns, set by the pattern editor
+    bool vmColumns;
+    // the 4 FX bank 3/4 is on screen: the FX columns are tinted and the hidden mark points at slots 1/2
+    bool fxBank34;
+
     uint8_t inactive[kTrackCount];
+    // per-track pattern length (polymeter): bit r set = row r of the track is past the track's own length, drawn dimmed
+    uint16_t beyondLength[kTrackCount];
+    bool isBeyondLength(int t, int r) const { return (beyondLength[t] >> r) & 1; }
 
     bool showTrackNames;
     const char* tracksNames[kTrackCount];
@@ -73,8 +84,12 @@ struct strTrackerPattern
                 {
                     track[t].row[r].instr[i] = 0;
                 }
+                track[t].row[r].vol = -1;
+                track[t].row[r].mm = -1;
+                track[t].row[r].hidden = 0;
             }
             inactive[t] = 0;
+            beyondLength[t] = 0;
             tracksNames[t] = nullptr;
         }
         actualTrack = 0;
@@ -96,6 +111,8 @@ struct strTrackerPattern
         selectEndStep = 0;
         selectColumn = 0;
         popupMode = 0;
+        vmColumns = false;
+        fxBank34 = false;
         showTrackNames = false;
     }
 };
@@ -143,8 +160,11 @@ class cTracker : public cDisplayControl
     void instruments();
     void fxes1();
     void fxes2();
+    void marks();      // the V / m / hidden FX marks of the cells (4 track layout)
+    void vmColumns();  // the V and m columns (3 track layout)
 
     uint8_t displayMode;
+    bool vm;           // the 3 track layout with the V and m columns is on screen
     uint16_t tracksWidth;
     uint8_t columnsCount;
     uint8_t rowCount;

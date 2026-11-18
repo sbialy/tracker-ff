@@ -1,0 +1,313 @@
+### flags: none
+FX_COUNT 50
+0|Random Fx|Random Fx
+1|- - None|None
+2|! - Off|Off
+3|V - Volume/Velocity|Volume
+4|P - Panning|Panning
+5|M - Micro-tune/Pitchbend|Micro-tune
+6|G - Glide|Glide
+7|T - Tempo|Tempo
+8|I - Swing|Swing
+9|m - Micro-move|Micro-move
+10|q - Gate Length|Gate Length
+11|C - Chance|Chance
+12|R - Roll|Roll
+13|A - Arp|Arp
+14|n - Random Note|Rnd Note
+15|i - Random Instrument|Rnd Instrument
+16|x - Random FX value|Rnd FX value
+17|v - Random Volume|Rnd Volume
+18|r - Reverse Sample Playback|Rev Playback
+19|p - Position|Position
+20|S - Slice|Slice
+21|g - Volume LFO|Vol LFO
+22|h - Panning LFO|Pan LFO
+23|j - Filter LFO|Filt LFO
+24|k - Position LFO|Pos LFO
+25|l - Finetune LFO|F.tune LFO
+26|D - Overdrive|Overdrive
+27|L - Low-pass|Low-pass
+28|B - Band-pass|Band-pass
+29|H - High-pass|High-pass
+30|s - Delay Send|Delay Send
+31|t - Reverb Send|Reverb Send
+32|E - Bit Depth|Bit Depth
+33|U - Tune|Tune
+34|F - Slide up|Slide up
+35|J - Slide down|Slide down
+36|w - WT Volume Env|WT Vol Env
+37|y - WT Filter Env|WT Filt Env
+38|z - Granular Length|Gran Length
+39|a - CC A|CC A
+40|b - CC B|CC B
+41|c - CC C|CC C
+42|d - CC D|CC D
+43|e - CC E|CC E
+44|f - CC F|CC F
+45|0 - MIDI Chord|MIDI Chord
+46|u - Strum|Strum
+47|K - Chance FX|Chance FX
+48|W - Tape|Tape
+49|N - Snap|Snap
+50|x - Break pattern|Break pattern
+t0|- - None|None
+t1|! - Off|Off
+t2|V - Volume/Velocity|Volume
+t3|P - Panning|Panning
+t4|M - Micro-tune/Pitchbend|Micro-tune
+t5|G - Glide|Glide
+t6|T - Tempo|Tempo
+t7|I - Swing|Swing
+t8|m - Micro-move|Micro-move
+t9|q - Gate Length|Gate Length
+t10|C - Chance|Chance
+t11|R - Roll|Roll
+t12|A - Arp|Arp
+t13|n - Random Note|Rnd Note
+t14|i - Random Instrument|Rnd Instrument
+t15|x - Random FX value|Rnd FX value
+t16|v - Random Volume|Rnd Volume
+t17|r - Reverse Sample Playback|Rev Playback
+t18|p - Position|Position
+t19|S - Slice|Slice
+t20|g - Volume LFO|Vol LFO
+t21|h - Panning LFO|Pan LFO
+t22|j - Filter LFO|Filt LFO
+t23|k - Position LFO|Pos LFO
+t24|l - Finetune LFO|F.tune LFO
+t25|D - Overdrive|Overdrive
+t26|L - Low-pass|Low-pass
+t27|B - Band-pass|Band-pass
+t28|H - High-pass|High-pass
+t29|s - Delay Send|Delay Send
+t30|t - Reverb Send|Reverb Send
+t31|E - Bit Depth|Bit Depth
+t32|U - Tune|Tune
+t33|F - Slide up|Slide up
+t34|J - Slide down|Slide down
+t35|w - WT Volume Env|WT Vol Env
+t36|y - WT Filter Env|WT Filt Env
+t37|z - Granular Length|Gran Length
+t38|a - CC A|CC A
+t39|b - CC B|CC B
+t40|c - CC C|CC C
+t41|d - CC D|CC D
+t42|e - CC E|CC E
+t43|f - CC F|CC F
+t44|0 - MIDI Chord|MIDI Chord
+t45|u - Strum|Strum
+t46|K - Chance FX|Chance FX
+t47|W - Tape|Tape
+t48|N - Snap|Snap
+t49|x - Break pattern|Break pattern
+### flags: -DFEATURE_SYNTH
+FX_COUNT 50
+0|Random Fx|Random Fx
+1|- - None|None
+2|! - Off|Off
+3|V - Volume/Velocity|Volume
+4|P - Panning|Panning
+5|M - Micro-tune/Pitchbend|Micro-tune
+6|G - Glide|Glide
+7|T - Tempo|Tempo
+8|I - Swing|Swing
+9|m - Micro-move|Micro-move
+10|q - Gate Length|Gate Length
+11|C - Chance|Chance
+12|R - Roll|Roll
+13|A - Arp|Arp
+14|n - Random Note|Rnd Note
+15|i - Random Instrument|Rnd Instrument
+16|x - Random FX value|Rnd FX value
+17|v - Random Volume|Rnd Volume
+18|r - Reverse Sample Playback|Rev Playback
+19|p - Position|Position
+20|S - Slice|Slice
+21|g - Volume LFO|Vol LFO
+22|h - Panning LFO|Pan LFO
+23|j - Filter LFO|Filt LFO
+24|k - Position LFO|Pos LFO
+25|l - Finetune LFO|F.tune LFO
+26|D - Overdrive|Overdrive
+27|L - Low-pass|Low-pass
+28|B - Band-pass|Band-pass
+29|H - High-pass|High-pass
+30|s - Delay Send|Delay Send
+31|t - Reverb Send|Reverb Send
+32|E - Bit Depth|Bit Depth
+33|U - Tune|Tune
+34|F - Slide up|Slide up
+35|J - Slide down|Slide down
+36|w - WT Volume Env|WT Vol Env
+37|y - WT Filter Env|WT Filt Env
+38|z - Granular Length|Gran Length
+39|a - CC A / MACRO 1|CC A / MACRO 1
+40|b - CC B / MACRO 2|CC B / MACRO 2
+41|c - CC C / MACRO 3|CC C / MACRO 3
+42|d - CC D / MACRO 4|CC D / MACRO 4
+43|e - CC E / MACRO 5|CC E / MACRO 5
+44|f - CC F / MACRO 6|CC F / MACRO 6
+45|0 - MIDI Chord|MIDI Chord
+46|u - Strum|Strum
+47|K - Chance FX|Chance FX
+48|W - Tape|Tape
+49|N - Snap|Snap
+50|x - Break pattern|Break pattern
+t0|- - None|None
+t1|! - Off|Off
+t2|V - Volume/Velocity|Volume
+t3|P - Panning|Panning
+t4|M - Micro-tune/Pitchbend|Micro-tune
+t5|G - Glide|Glide
+t6|T - Tempo|Tempo
+t7|I - Swing|Swing
+t8|m - Micro-move|Micro-move
+t9|q - Gate Length|Gate Length
+t10|C - Chance|Chance
+t11|R - Roll|Roll
+t12|A - Arp|Arp
+t13|n - Random Note|Rnd Note
+t14|i - Random Instrument|Rnd Instrument
+t15|x - Random FX value|Rnd FX value
+t16|v - Random Volume|Rnd Volume
+t17|r - Reverse Sample Playback|Rev Playback
+t18|p - Position|Position
+t19|S - Slice|Slice
+t20|g - Volume LFO|Vol LFO
+t21|h - Panning LFO|Pan LFO
+t22|j - Filter LFO|Filt LFO
+t23|k - Position LFO|Pos LFO
+t24|l - Finetune LFO|F.tune LFO
+t25|D - Overdrive|Overdrive
+t26|L - Low-pass|Low-pass
+t27|B - Band-pass|Band-pass
+t28|H - High-pass|High-pass
+t29|s - Delay Send|Delay Send
+t30|t - Reverb Send|Reverb Send
+t31|E - Bit Depth|Bit Depth
+t32|U - Tune|Tune
+t33|F - Slide up|Slide up
+t34|J - Slide down|Slide down
+t35|w - WT Volume Env|WT Vol Env
+t36|y - WT Filter Env|WT Filt Env
+t37|z - Granular Length|Gran Length
+t38|a - CC A / MACRO 1|CC A / MACRO 1
+t39|b - CC B / MACRO 2|CC B / MACRO 2
+t40|c - CC C / MACRO 3|CC C / MACRO 3
+t41|d - CC D / MACRO 4|CC D / MACRO 4
+t42|e - CC E / MACRO 5|CC E / MACRO 5
+t43|f - CC F / MACRO 6|CC F / MACRO 6
+t44|0 - MIDI Chord|MIDI Chord
+t45|u - Strum|Strum
+t46|K - Chance FX|Chance FX
+t47|W - Tape|Tape
+t48|N - Snap|Snap
+t49|x - Break pattern|Break pattern
+### flags: -DFEATURE_SYNTH -DFEATURE_SYNTH_OPEN
+FX_COUNT 52
+0|Random Fx|Random Fx
+1|- - None|None
+2|! - Off|Off
+3|V - Volume/Velocity|Volume
+4|P - Panning|Panning
+5|M - Micro-tune/Pitchbend|Micro-tune
+6|G - Glide|Glide
+7|T - Tempo|Tempo
+8|I - Swing|Swing
+9|m - Micro-move|Micro-move
+10|q - Gate Length|Gate Length
+11|C - Chance|Chance
+12|R - Roll|Roll
+13|A - Arp|Arp
+14|n - Random Note|Rnd Note
+15|i - Random Instrument|Rnd Instrument
+16|x - Random FX value|Rnd FX value
+17|v - Random Volume|Rnd Volume
+18|r - Reverse Sample Playback|Rev Playback
+19|p - Position|Position
+20|S - Slice|Slice
+21|g - Volume LFO|Vol LFO
+22|h - Panning LFO|Pan LFO
+23|j - Filter LFO|Filt LFO
+24|k - Position LFO|Pos LFO
+25|l - Finetune LFO|F.tune LFO
+26|D - Overdrive|Overdrive
+27|L - Low-pass|Low-pass
+28|B - Band-pass|Band-pass
+29|H - High-pass|High-pass
+30|s - Delay Send|Delay Send
+31|t - Reverb Send|Reverb Send
+32|E - Bit Depth|Bit Depth
+33|U - Tune|Tune
+34|F - Slide up|Slide up
+35|J - Slide down|Slide down
+36|w - WT Volume Env|WT Vol Env
+37|y - WT Filter Env|WT Filt Env
+38|z - Granular Length|Gran Length
+39|a - CC A / MACRO 1|CC A / MACRO 1
+40|b - CC B / MACRO 2|CC B / MACRO 2
+41|c - CC C / MACRO 3|CC C / MACRO 3
+42|d - CC D / MACRO 4|CC D / MACRO 4
+43|e - CC E / MACRO 5|CC E / MACRO 5
+44|f - CC F / MACRO 6|CC F / MACRO 6
+45|0 - MIDI Chord|MIDI Chord
+46|u - Strum|Strum
+47|O - Patch|Patch
+48|o - Morph|Morph
+49|K - Chance FX|Chance FX
+50|W - Tape|Tape
+51|N - Snap|Snap
+52|x - Break pattern|Break pattern
+t0|- - None|None
+t1|! - Off|Off
+t2|V - Volume/Velocity|Volume
+t3|P - Panning|Panning
+t4|M - Micro-tune/Pitchbend|Micro-tune
+t5|G - Glide|Glide
+t6|T - Tempo|Tempo
+t7|I - Swing|Swing
+t8|m - Micro-move|Micro-move
+t9|q - Gate Length|Gate Length
+t10|C - Chance|Chance
+t11|R - Roll|Roll
+t12|A - Arp|Arp
+t13|n - Random Note|Rnd Note
+t14|i - Random Instrument|Rnd Instrument
+t15|x - Random FX value|Rnd FX value
+t16|v - Random Volume|Rnd Volume
+t17|r - Reverse Sample Playback|Rev Playback
+t18|p - Position|Position
+t19|S - Slice|Slice
+t20|g - Volume LFO|Vol LFO
+t21|h - Panning LFO|Pan LFO
+t22|j - Filter LFO|Filt LFO
+t23|k - Position LFO|Pos LFO
+t24|l - Finetune LFO|F.tune LFO
+t25|D - Overdrive|Overdrive
+t26|L - Low-pass|Low-pass
+t27|B - Band-pass|Band-pass
+t28|H - High-pass|High-pass
+t29|s - Delay Send|Delay Send
+t30|t - Reverb Send|Reverb Send
+t31|E - Bit Depth|Bit Depth
+t32|U - Tune|Tune
+t33|F - Slide up|Slide up
+t34|J - Slide down|Slide down
+t35|w - WT Volume Env|WT Vol Env
+t36|y - WT Filter Env|WT Filt Env
+t37|z - Granular Length|Gran Length
+t38|a - CC A / MACRO 1|CC A / MACRO 1
+t39|b - CC B / MACRO 2|CC B / MACRO 2
+t40|c - CC C / MACRO 3|CC C / MACRO 3
+t41|d - CC D / MACRO 4|CC D / MACRO 4
+t42|e - CC E / MACRO 5|CC E / MACRO 5
+t43|f - CC F / MACRO 6|CC F / MACRO 6
+t44|0 - MIDI Chord|MIDI Chord
+t45|u - Strum|Strum
+t46|O - Patch|Patch
+t47|o - Morph|Morph
+t48|K - Chance FX|Chance FX
+t49|W - Tape|Tape
+t50|N - Snap|Snap
+t51|x - Break pattern|Break pattern

@@ -1,0 +1,86 @@
+# Interrupt census of the MK66 firmware (original Tracker): every interrupt the image can take and its NVIC level, read from the code.
+# stack_margin.py builds the nest of the static stack bound from this file and FAILS when it no longer matches the image or the sources.
+#
+# Levels are value>>4 of the 8 bit priority (0 = strongest). K66 implements the top 4 bits only (interruptsConfig.h: value2priority).
+# mk20dx128.c:792 sets every NVIC priority to 128 (level 8) at reset, a peripheral that nobody re-prioritises stays at level 8.
+#
+#   isr NAME LEVEL WALKER_REGEX [vec=RAWSYMBOL_REGEX | ram]   # where the level and the enable come from
+#       an interrupt that runs. LEVEL is N, or N,usb_audio=M when the level depends on the USB audio feature (the nest is built for both
+#       modes and the gate takes the worse row). WALKER_REGEX is the demangled root name for stack_depth.py. vec= says the handler sits in
+#       the flash vector table (the census compares it with the image), ram says it is attached at run time (attachInterruptVector or
+#       DMAChannel::attachInterrupt writes _VectorsRam), the census then only requires that the function exists
+#   off NAME RAWSYMBOL_REGEX                                  # a flash vector with a handler that nothing enables, with the reason
+#   src COUNT PATH                                            # source census: number of lines that set a priority, enable an interrupt or write a vector
+#       (NVIC_SET_PRIORITY, NVIC_ENABLE_IRQ, EnableIRQ, attachInterrupt, attachInterruptVector, setInterruptPriority, SCB_SHPR, _VectorsRam[]=,
+#       .priority( ) per file under platforms/mk66, core, synth-open, util (build dirs, tools/ and ui_shot/ left out). A new call site, a new file
+#       or a changed count fails the gate: read the change, add or fix the isr/off row above, then `stack_margin.py --census-print` prints the new src rows
+#
+# Fault handlers (fault_isr and its aliases, the DebugMonitor stub) never nest below a running ISR in a way that adds to the bound: they spin or reset.
+# Reset (vector 1) and the initial SP (vector 0) are not interrupts. An alias of unused_isr is the default and needs no row.
+
+# ---- interrupts that run ----
+isr systick     2  ^systick_isr$              vec=systick_isr           # SCB_SHPR3 = 0x20200000 sets SysTick to 0x20 = level 2 (mk20dx128.c:1107). Cannot be changed by NVIC_SET_PRIORITY
+isr pendsv      2  ^pendablesrvreq_isr$       vec=pendablesrvreq_isr    # same SHPR3 write gives PendSV 0x20 = level 2. EventResponder::attachInterrupt (EventResponder.h:114) would set it to 0xFF, it has no caller in platforms core synth-open
+isr midi_uart   0  ^uart4_status_isr$         vec=uart4_status_isr      # MIDI jack in: serial5.c:54 kIRQPriority = kMidiJackInUARTPriorityLevel = value2priority(0), set at serial5.c:119
+isr midi_clock  0  ^pit0_isr$                 vec=pit0_isr              # TimerImpl.cpp:77 s_midiClockTimer.priority(kMidiJackInUARTPriorityLevel). The only IntervalTimer in the tree, so PIT channel 0
+isr audio_in    4  ^AudioInputI2S::isr\(\)$   ram                       # input_i2s.cpp:67 dma.setInterruptPriority(kAudioInputInterruptLevel) = value2priority(4), handler attached by dma.attachInterrupt(isr) at :66
+isr audio_out   5  ^AudioOutputI2S::isr\(     ram                       # output_i2s.cpp:113 kAudioOutputInterruptLevel = value2priority(5). The entry point of the audio chain, its depth is the chain rows of the table, not this row
+isr sdhc        6  ^sdhc_isr$                 vec=sdhc_isr              # teensyInit.cpp:95 NVIC_SET_PRIORITY(IRQ_SDHC, kSDHCInterruptLevel) = value2priority(6), enabled at :96
+isr usb         7,usb_audio=4  ^usb_isr$      vec=usb_isr               # usb_dev.c:1289: ff_usb_audio_on ? kUSBOTGPriorityLevelAudio (4) : kUSBOTGPriorityLevel (7), enabled at :1293. interruptsConfig.h
+isr i2c0        8  ^i2c0_isr$                 vec=i2c0_isr              # fsl_i2c.c:1558 EnableIRQ(s_i2cIrqs[instance]) with no priority call: level 8 (mk20dx128.c:792). Buses 0 and 2 are used (hardware.cpp:124,131), all four are counted
+isr i2c1        8  ^i2c1_isr$                 vec=i2c1_isr              # as i2c0
+isr i2c2        8  ^i2c2_isr$                 vec=i2c2_isr              # as i2c0
+isr i2c3        8  ^i2c3_isr$                 vec=i2c3_isr              # as i2c0
+isr port_a      8  ^port_A_isr$               ram                       # pins_teensy.c:244-248 attachInterruptVector(IRQ_PORTA..E, port_X_isr) from attachInterrupt(pin), enabled at :548-552, priority stays 128 = level 8
+isr port_b      8  ^port_B_isr$              ram                       # as port_a
+isr port_c      8  ^port_C_isr$               ram                       # as port_a
+isr port_d      8  ^port_D_isr$               ram                       # as port_a
+isr port_e      8  ^port_E_isr$               ram                       # as port_a
+isr display_dma 8  ^dataTransferComplite\(\)$ ram                       # DisplayDriverImpl.cpp:194 dmatx.attachInterrupt(dataTransferComplite), no setInterruptPriority call: level 8 (DMAChannel.h:659 enables it)
+
+# ---- flash vectors with a handler that nothing enables ----
+off uart0   ^uart0_status_isr$   # serial1.c is linked (the HardwareSerial object exists) but nothing calls Serial1.begin: NVIC_ENABLE_IRQ(IRQ_UART0_STATUS) at serial1.c:163 never runs. If it did: level 4 (serial1.c:47 IRQ_PRIORITY 64), +132 B at most
+off uart1   ^uart1_status_isr$   # serial2.c:162-163, nothing calls Serial2.begin. Level 4 if it did
+off uart2   ^uart2_status_isr$   # serial3.c:144-145, nothing calls Serial3.begin. Level 4 if it did
+off uart3   ^uart3_status_isr$   # serial4.c:122-123, nothing calls Serial4.begin. Level 4 if it did
+off lpuart0 ^lpuart0_status_isr$ # serial6_lpuart.c:195-196, nothing calls the LPUART begin. Level 4 if it did
+off pit1    ^pit1_isr$           # IntervalTimer::beginCycles (IntervalTimer.cpp:74-75) is the only enable and the tree has one IntervalTimer (TimerImpl.cpp:9), it takes PIT channel 0
+off pit2    ^pit2_isr$           # as pit1
+off pit3    ^pit3_isr$           # as pit1
+
+# ---- source census ----
+src 3 platforms/mk66/3rdparty/Audio/input_i2s.cpp
+src 3 platforms/mk66/3rdparty/Audio/output_i2s.cpp
+src 1 platforms/mk66/3rdparty/Buttons/Keys.cpp
+src 2 platforms/mk66/3rdparty/I2C/fsl_i2c.c
+src 1 platforms/mk66/3rdparty/SD/drivers/fsl_sdhc.c
+src 2 platforms/mk66/3rdparty/SD/teensyInit.cpp
+src 1 platforms/mk66/3rdparty/SDRAM/fsl_common.c
+src 2 platforms/mk66/3rdparty/SDRAM/fsl_common.h
+src 1 platforms/mk66/3rdparty/radio/Si4703.cpp
+src 8 platforms/mk66/3rdparty/teensy_core/DMAChannel.h
+src 2 platforms/mk66/3rdparty/teensy_core/EventResponder.h
+src 7 platforms/mk66/3rdparty/teensy_core/IntervalTimer.cpp
+src 3 platforms/mk66/3rdparty/teensy_core/IntervalTimer.h
+src 7 platforms/mk66/3rdparty/teensy_core/avr_emulation.h
+src 4 platforms/mk66/3rdparty/teensy_core/core_cm4.h
+src 3 platforms/mk66/3rdparty/teensy_core/core_pins.h
+src 3 platforms/mk66/3rdparty/teensy_core/mk20dx128.c
+src 17 platforms/mk66/3rdparty/teensy_core/pins_teensy.c
+src 2 platforms/mk66/3rdparty/teensy_core/serial1.c
+src 2 platforms/mk66/3rdparty/teensy_core/serial2.c
+src 2 platforms/mk66/3rdparty/teensy_core/serial3.c
+src 2 platforms/mk66/3rdparty/teensy_core/serial4.c
+src 2 platforms/mk66/3rdparty/teensy_core/serial5.c
+src 2 platforms/mk66/3rdparty/teensy_core/serial6.c
+src 2 platforms/mk66/3rdparty/teensy_core/serial6_lpuart.c
+src 3 platforms/mk66/3rdparty/teensy_core/usb_dev.c
+src 1 platforms/mk66/source/DisplayDriverImpl.cpp
+src 1 platforms/mk66/source/TimerImpl.cpp
+src 1 platforms/mk66/source/interruptsControl.cpp
+src 1 platforms/mk66/source/util.cpp
+# msc_drive.cpp:65 NVIC_ENABLE_IRQ(IRQ_USBOTG) only unmasks the usb isr row above after a drive step (no new vector, level unchanged).
+# simregs.h is the host test shim of the USB drive (no-op #defines, never in the image)
+src 1 platforms/mk66/usbmsc/msc_drive.cpp
+src 2 platforms/mk66/usbmsc/test/usb_e2e/simregs.h
+src 5 synth-open/ext_module.cpp

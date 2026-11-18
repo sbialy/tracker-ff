@@ -1,4 +1,5 @@
 #include "mtAudioEngine.h"
+#include "fx_auto_mute.h"
 #include "mtConfig.h"
 #include "mtPadBoard.h"
 #include "mtPadsBacklight.h"
@@ -72,6 +73,9 @@ static void functSelectLimiterRelease();
 static void functSelectLimiterThreshold();
 static void functSelectLimiterSidechain();
 static void functLimiterCancel();
+#ifdef FEATURE_SEND_DUCK
+static void functToggleDuckPage();
+#endif
 // equalizer
 static void functSelectEqualizerBand(uint8_t n, uint8_t state);
 static void functEqualizerCancel();
@@ -116,6 +120,11 @@ void setDefaultLimiterAttack();
 void setDefaultLimiterRelease();
 void setDefaultLimiterTreshold();
 void setDefaultLimiterSidechain();
+
+#ifdef FEATURE_SEND_DUCK
+// send ducking (the limiter screen's second page): field 0 depth, 1 release, 2 threshold, 4 source
+static void duckEdit(int field, int16_t value, bool toDefault);
+#endif
 
 static void functMiniMiddle(uint8_t state);
 
@@ -169,7 +178,12 @@ void cMasterParams::update()
 
     if ((displayType == displayMode::masterValues) && (isLimiterScreen))
     {
-        gainReduceHandler();
+#ifdef FEATURE_SEND_DUCK
+        if (duckPage)
+            duckMeterHandler();
+        else
+#endif
+            gainReduceHandler();
     }
 
     // gdyby byla taka potrzeba mozna sprobowac tu odswiezac rowniez levele, a obliczac w kazdej
@@ -193,6 +207,11 @@ void cMasterParams::update()
     else if (displayType == displayMode::mixerDelayReverb && !keyboardManager.getState() &&
              !mtMenuPopup.isPopupVisible())
     {
+        // USB 8+3 auto mute engaged or released while this page is open: the Mute labels follow
+        if (shownFxAutoMute != fxAutoMuteActive())
+        {
+            showMixerDelayReverbScreen();
+        }
         for (uint8_t i = 0; i < 2; i++)
         {
             if (delayLevel[i].value != delayLevel[i].lastValue)
@@ -1101,6 +1120,9 @@ static void functSelectVolume(uint8_t state)
 
 static void functSwitchToLimiterScreen()
 {
+#ifdef FEATURE_SEND_DUCK
+    MP->duckPage = false;
+#endif
     MP->switchToLimiterScreen();
 }
 
@@ -1168,7 +1190,9 @@ static void functSwitchModule(uint8_t button)
 
     if (MP->sourceModuleButton == interfaceButtonSampleRec)
     {
-        MP->eventFunct(eventSwitchModule, MP, &MP->sourceModuleButton, &button);
+        // The handler reads the options through a uint32_t pointer.
+        uint32_t option = button;
+        MP->eventFunct(eventSwitchModule, MP, &MP->sourceModuleButton, &option);
     }
     else
     {
@@ -1271,6 +1295,9 @@ void cMasterParams::switchToMaster()
     isReverbScreen = false;
     isLimiterScreen = false;
     isEqualizerScreen = false;
+#ifdef FEATURE_SEND_DUCK
+    duckPage = false;
+#endif
 
     showMasterScreen();
 }
@@ -1388,6 +1415,9 @@ void cMasterParams::switchToLimiterScreen()
     ip->setButtonObj(interfaceButton1, buttonPress, functSelectLimiterRelease);
     ip->setButtonObj(interfaceButton2, buttonPress, functSelectLimiterThreshold);
     ip->setButtonObj(interfaceButton4, buttonPress, functSelectLimiterSidechain);
+#ifdef FEATURE_SEND_DUCK
+    ip->setButtonObj(interfaceButton5, buttonPress, functToggleDuckPage);
+#endif
     ip->setButtonObj(interfaceButton7, buttonPress, functLimiterCancel);
 
     keyboardManager.deactivateKeyboard();
@@ -1576,6 +1606,19 @@ static void functSelectLimiterThreshold()
 
 static void functSelectLimiterSidechain()
 {
+#ifdef FEATURE_SEND_DUCK
+    if (MP->duckPage)
+    {
+        if (MP->selectedPlaceLimiter == 4)
+            duckEdit(4, engine.getSendDuck().source >= kDuckSourceMax ? -kDuckSourceMax : 1, false); // steps the list, with a wrap
+        else
+        {
+            MP->selectedPlaceLimiter = 4;
+            MP->refreshLimiterFrame();
+        }
+        return;
+    }
+#endif
     if (MP->selectedPlaceLimiter == 4) // zmienianie pozycji listy przyciskiem pod ekranem
     {
         mtProject.values.limiterSidechain++;
@@ -1596,6 +1639,15 @@ static void functLimiterCancel()
 {
     MP->switchToMaster();
 }
+
+#ifdef FEATURE_SEND_DUCK
+static void functToggleDuckPage()
+{
+    MP->duckPage = !MP->duckPage;
+    MP->selectedPlaceLimiter = 0;
+    MP->switchToLimiterScreen();
+}
+#endif
 
 // equalizer
 static void functSelectEqualizerBand(uint8_t n, uint8_t state)
@@ -1938,6 +1990,12 @@ static void functSoloMuteDelay(uint8_t state)
             return;
         }
 
+        // USB 8+3 auto mute: the key is locked, the project's flags stay as the user set them (fx_auto_mute.h)
+        if (fxAutoMuteActive())
+        {
+            return;
+        }
+
         if (MP->isSolo)
         {
             if (MP->soloTrack == cMasterParams::delayIsSolo)
@@ -1994,6 +2052,12 @@ static void functSoloMuteReverb(uint8_t state)
         if (MP->ignoreMuteReleaseReverb)
         {
             MP->ignoreMuteReleaseReverb = false;
+            return;
+        }
+
+        // USB 8+3 auto mute: the key is locked, the project's flags stay as the user set them (fx_auto_mute.h)
+        if (fxAutoMuteActive())
+        {
             return;
         }
 
@@ -2307,6 +2371,13 @@ void changeVolume(int16_t value)
 
 void changeLimiterAttack(int16_t value)
 {
+#ifdef FEATURE_SEND_DUCK
+    if (MP->duckPage)
+    {
+        duckEdit(0, value, false);
+        return;
+    }
+#endif
     value *= LIMITER_ATTACK_MAX / 1000;
 
     if (mtProject.values.limiterAttack + value < LIMITER_ATTACK_MIN)
@@ -2325,6 +2396,13 @@ void changeLimiterAttack(int16_t value)
 
 void changeLimiterRelease(int16_t value)
 {
+#ifdef FEATURE_SEND_DUCK
+    if (MP->duckPage)
+    {
+        duckEdit(1, value, false);
+        return;
+    }
+#endif
     value *= (LIMITER_RELEASE_MAX / 1000);
 
     if (mtProject.values.limiterRelease + value < LIMITER_RELEASE_MIN)
@@ -2343,6 +2421,13 @@ void changeLimiterRelease(int16_t value)
 
 void changeLimiterTreshold(int16_t value)
 {
+#ifdef FEATURE_SEND_DUCK
+    if (MP->duckPage)
+    {
+        duckEdit(2, value, false);
+        return;
+    }
+#endif
     int32_t val =
       value * LIMITER_THRESHOLD_MAX /
       100; // mnoznik jest na tyle duzy ze przy mocnym pokreceniu iloczyn przekracza 16bit
@@ -2370,6 +2455,13 @@ void changeLimiterTreshold(int16_t value)
 
 void changeLimiterSidechain(int16_t value)
 {
+#ifdef FEATURE_SEND_DUCK
+    if (MP->duckPage)
+    {
+        duckEdit(4, value, false);
+        return;
+    }
+#endif
     if (mtProject.values.limiterSidechain + value < LIMITER_SIDECHAIN_MIN)
         mtProject.values.limiterSidechain = LIMITER_SIDECHAIN_MIN;
     else if (mtProject.values.limiterSidechain + value > LIMITER_SIDECHAIN_MAX)
@@ -2383,6 +2475,44 @@ void changeLimiterSidechain(int16_t value)
 
     MP->showLimiterSidechain();
 }
+
+#ifdef FEATURE_SEND_DUCK
+static void duckEdit(int field, int16_t value, bool toDefault)
+{
+    DuckParams d = engine.getSendDuck();
+    uint8_t* const f[5] = { &d.depth, &d.release, &d.thresh, nullptr, &d.source };
+    const uint8_t dflt[5] = { kDuckDefaults.depth, kDuckDefaults.release, kDuckDefaults.thresh, 0, kDuckDefaults.source };
+    const int hi = field == 4 ? kDuckSourceMax : kDuckPctMax;
+    if (field < 0 || field > 4 || !f[field])
+        return;
+    *f[field] = toDefault ? dflt[field] : (uint8_t)clamp<int>((int)*f[field] + value, 0, hi);
+    plug::duckSet(d); // the engine now, the sidecar at the next save, the project marked changed
+    switch (field)
+    {
+        case 0: MP->showDuckDepth(); break;
+        case 1: MP->showDuckRelease(); break;
+        case 2: MP->showDuckThreshold(); break;
+        default: MP->showDuckSource(); break;
+    }
+}
+
+void cMasterParams::duckMeterHandler()
+{
+    static elapsedMillis meterTimer;
+    if (meterTimer < 60)
+        return;
+    meterTimer = 0;
+    // how far the returns are down now, in percent of full scale
+    const float down = (1.0f - engine.getSendDuckGain()) * 100.0f;
+    const uint8_t v = (uint8_t)clamp<int>((int)(down + 0.5f), 0, 100);
+    if (v != duckMeterValue)
+    {
+        duckMeterValue = v;
+        showDuckMeter();
+        display.synchronizeRefresh();
+    }
+}
+#endif
 
 void changeSaturationType(int16_t value)
 {
@@ -2470,6 +2600,13 @@ void setDefaultSaturationType()
 
 void setDefaultLimiterAttack()
 {
+#ifdef FEATURE_SEND_DUCK
+    if (MP->duckPage)
+    {
+        duckEdit(0, 0, true);
+        return;
+    }
+#endif
     mtProject.values.limiterAttack = 100;
     engine.setLimiterAttack(mtProject.values.limiterAttack);
 
@@ -2479,6 +2616,13 @@ void setDefaultLimiterAttack()
 }
 void setDefaultLimiterRelease()
 {
+#ifdef FEATURE_SEND_DUCK
+    if (MP->duckPage)
+    {
+        duckEdit(1, 0, true);
+        return;
+    }
+#endif
     mtProject.values.limiterRelease = 0.512;
 
     engine.setLimiterRelease(mtProject.values.limiterRelease);
@@ -2489,6 +2633,13 @@ void setDefaultLimiterRelease()
 }
 void setDefaultLimiterTreshold()
 {
+#ifdef FEATURE_SEND_DUCK
+    if (MP->duckPage)
+    {
+        duckEdit(2, 0, true);
+        return;
+    }
+#endif
     mtProject.values.limiterThreshold = LIMITER_THRESHOLD_DEFAULT;
     engine.setLimiterThreshold(mtProject.values.limiterThreshold);
 
@@ -2499,6 +2650,13 @@ void setDefaultLimiterTreshold()
 
 void setDefaultLimiterSidechain()
 {
+#ifdef FEATURE_SEND_DUCK
+    if (MP->duckPage)
+    {
+        duckEdit(4, 0, true);
+        return;
+    }
+#endif
     mtProject.values.limiterSidechain = LIMITER_SIDECHAIN_DEFAULT;
     engine.setLimiterSidechain(mtProject.values.limiterSidechain);
 
@@ -3010,6 +3168,7 @@ void cMasterParams::lightUpPadBoard()
     padsBacklight.clearGlobalPads(0, 1, 1);
 
     bool isBeatSlice =
+      mtProject.values.lastUsedInstrument < kSampleInstrumentsCount &&
       mtProject.instrument[mtProject.values.lastUsedInstrument].playMode == playModeBeatSlice;
 
     if (isBeatSlice)
@@ -3034,6 +3193,7 @@ static void functPads(uint8_t pad, uint8_t state, int16_t velo)
     }
 
     bool isBeatSlice =
+      mtProject.values.lastUsedInstrument < kSampleInstrumentsCount &&
       mtProject.instrument[mtProject.values.lastUsedInstrument].playMode == playModeBeatSlice;
 
     if (state == buttonPress)

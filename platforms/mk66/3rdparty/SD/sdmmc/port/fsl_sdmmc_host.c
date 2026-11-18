@@ -128,7 +128,7 @@ static void SDMMCHOST_DetectCardInsertByHost(SDMMCHOST_TYPE* base, void* userDat
     }
 }
 
-static void SDMMCHOST_DetectCardRemoveByHost(SDMMCHOST_TYPE* base, void* userData)
+static void SDMMCHOST_DetectCardRemoveByHost(SDMMCHOST_TYPE* base __attribute__((unused)), void* userData)
 {
     s_sdInsertedFlag = false;
     /* application callback */
@@ -140,10 +140,10 @@ static void SDMMCHOST_DetectCardRemoveByHost(SDMMCHOST_TYPE* base, void* userDat
     }
 }
 
-static void SDMMCHOST_TransferCompleteCallback(SDMMCHOST_TYPE* base,
-                                               sdhc_handle_t* handle,
+static void SDMMCHOST_TransferCompleteCallback(SDMMCHOST_TYPE* base __attribute__((unused)),
+                                               sdhc_handle_t* handle __attribute__((unused)),
                                                status_t status,
-                                               void* userData)
+                                               void* userData __attribute__((unused)))
 {
     if (status == kStatus_Success)
     {
@@ -386,7 +386,7 @@ void SDMMCHOST_CARD_DETECT_GPIO_INTERRUPT_HANDLER(void)
     SDMMCEVENT_Notify(kSDMMCEVENT_CardDetect);
 }
 
-status_t SDMMCHOST_WaitCardDetectStatus(SDMMCHOST_TYPE* hostBase,
+status_t SDMMCHOST_WaitCardDetectStatus(SDMMCHOST_TYPE* hostBase __attribute__((unused)),
                                         const sdmmchost_detect_card_t* cd,
                                         bool waitCardStatus)
 {
@@ -417,7 +417,7 @@ bool SDMMCHOST_IsCardPresent(void)
     return s_sdInsertedFlag;
 }
 
-void SDMMCHOST_PowerOffCard(SDMMCHOST_TYPE* base, const sdmmchost_pwr_card_t* pwr)
+void SDMMCHOST_PowerOffCard(SDMMCHOST_TYPE* base __attribute__((unused)), const sdmmchost_pwr_card_t* pwr)
 {
     if (pwr != NULL)
     {
@@ -426,7 +426,7 @@ void SDMMCHOST_PowerOffCard(SDMMCHOST_TYPE* base, const sdmmchost_pwr_card_t* pw
     }
 }
 
-void SDMMCHOST_PowerOnCard(SDMMCHOST_TYPE* base, const sdmmchost_pwr_card_t* pwr)
+void SDMMCHOST_PowerOnCard(SDMMCHOST_TYPE* base __attribute__((unused)), const sdmmchost_pwr_card_t* pwr)
 {
     /* use user define the power on function  */
     if (pwr != NULL)

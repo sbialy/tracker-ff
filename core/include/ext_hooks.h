@@ -17,6 +17,7 @@ void ext_boot(void* platform, int develop);   // synth-open/ext_module.cpp
 void ext_update(void);                         // main loop: the crash marker, then the module
 const char* ext_status_short(void);            // Features page: "Loaded", "No module", "Refused", "Crashed", "On"
 void ext_power_down(void);                     // power off, interrupts off: stock vectors back, hooks cleared
+int ext_modit_check(const char** line1, const char** line2);   // MOD/IT: 0 when modit.plg is loaded (loads it on the first use), else the popup lines
 #ifdef __cplusplus
 }
 #endif
@@ -61,18 +62,7 @@ void ext_power_down(void);                     // power off, interrupts off: sto
             const uint8_t event = injQueue[injTail & (kInjectQueue - 1)];                                                      \
             injTail++;                                                                                                         \
             const uint8_t button = event & 0x7F;                                                                               \
-            if (event & 0x80)                                                                                                  \
-            {                                                                                                                  \
-                holdTimeMs[button] = millis();                                                                                 \
-                holdFactor[button] = 0;                                                                                        \
-                onPush(button);                                                                                                \
-                buttonPush[button] = 1;                                                                                        \
-            }                                                                                                                  \
-            else                                                                                                               \
-            {                                                                                                                  \
-                onRelease(button);                                                                                             \
-                buttonPush[button] = 0;                                                                                        \
-            }                                                                                                                  \
+            physical(button, (event & 0x80) != 0); /* as a key of the matrix, the MIDI remote may hold it too */                  \
         }                                                                                                                      \
     } while (0)
 #define DEVHOOK_BUTTONS_PUBLIC                                                                                                 \

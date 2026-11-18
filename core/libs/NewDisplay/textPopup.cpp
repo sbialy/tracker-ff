@@ -201,7 +201,7 @@ void cTextPopup::update()
             if (data->multiLineText[i] != nullptr)
             {
                 // color
-                if (*data->multiLineColors[i] <= 0xffffff && *data->multiLineColors[i] >= 0)
+                if (*data->multiLineColors[i] <= 0xffffff)
                 {
                     API_COLOR(*data->multiLineColors[i]);
                 }

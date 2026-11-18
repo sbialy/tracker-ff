@@ -28,11 +28,16 @@ AUDIO_CORE_RAM void PolySynth::update(void)
 
     static std::array<polysynth::sample_t, polysynth::kAudioBufferSize> tempBufSendsCommonLeft;
     static std::array<polysynth::sample_t, polysynth::kAudioBufferSize> tempBufSendsCommonRight;
+#ifndef FEATURE_SYNTH_OPEN
     static std::array<polysynth::sample_t, polysynth::kAudioBufferSize> tempBufPostfaderLeft;
     static std::array<polysynth::sample_t, polysynth::kAudioBufferSize> tempBufPostfaderRight;
+#endif
 
     static std::array<std::array<polysynth::sample_t, polysynth::kAudioBufferSize>, 2> tempBufSend;
 
+#ifdef FEATURE_SYNTH_OPEN
+    polysynth::open::synthBlock();
+#endif
     for (int partIdx = 0; partIdx < kSynthParts; partIdx++)
     {
         auto& part = trackerSynth->parts[partIdx];
@@ -68,11 +73,19 @@ AUDIO_CORE_RAM void PolySynth::update(void)
         }
 #endif
 
+#ifdef FEATURE_SYNTH_OPEN
+        // Every open part is a mono patch without aux sends (open_cold.cpp fillFromDef sets kMono, no open patch has rendersAuxSends,
+        // the shim never fills the aux buffers). Only the mono path below exists in this build, the stereo and aux branches of the
+        // general path are compiled out.
+        constexpr bool isStereo = false;
+        constexpr bool hasSends = false;
+#else
         bool isStereo =
           part.patch != nullptr && part.patch->getMetadata().outputChannels ==
                                      polysynth::Patch::Metadata::OutputChannels::kStereo;
 
         bool hasSends = part.patch != nullptr && part.patch->getMetadata().rendersAuxSends;
+#endif
 
         const bool reuseUnmodifiedMono = (!hasSends && !isStereo && gainDB[partIdx] == 0.0f);
 
@@ -87,13 +100,20 @@ AUDIO_CORE_RAM void PolySynth::update(void)
                          sendMixer[1]->isInputSilenced(firstSendInput + partIdx);
 #endif
 
+#ifdef FEATURE_SYNTH_OPEN
+        // A part at 0 dB sends the one block it builds to all 4 outputs (post fader left and right, send 1 and 2): the send and the
+        // post block hold the same samples, so there is no second block
+        const bool ownSendBlock = !skipSendBlocks && !reuseUnmodifiedMono;
+#else
+        const bool ownSendBlock = !skipSendBlocks;
+#endif
         audio_block_t* blockPostFaderLeft = allocate();
         audio_block_t* blockPostFaderRight = isStereo ? allocate() : NULL;
-        audio_block_t* blockSendsCommonOrSend1 = skipSendBlocks ? NULL : allocate();
+        audio_block_t* blockSendsCommonOrSend1 = ownSendBlock ? allocate() : NULL;
         audio_block_t* blockSend2 = hasSends ? allocate() : NULL;
 
         if (blockPostFaderLeft == NULL || (isStereo && blockPostFaderRight == NULL) ||
-            (!skipSendBlocks && blockSendsCommonOrSend1 == NULL) || (hasSends && blockSend2 == NULL))
+            (ownSendBlock && blockSendsCommonOrSend1 == NULL) || (hasSends && blockSend2 == NULL))
         {
             if (blockPostFaderLeft != NULL)
             {
@@ -127,7 +147,6 @@ AUDIO_CORE_RAM void PolySynth::update(void)
           partIdx);
 
 #ifdef FEATURE_SYNTH_OPEN
-        if (!hasSends && !isStereo)
         {
             // Mono part: soft clip and int16 in one pass straight from the render buffer (synth_part_clip.h), no float copy for the post
             // fader, no second pass, no memcpy of the int16 block. Same blocks as the general path below.
@@ -142,9 +161,14 @@ AUDIO_CORE_RAM void PolySynth::update(void)
                                                              postGainAmp,
                                                              reuseUnmodifiedMono,
                                                              skipSendBlocks,
-                                                             skipSendBlocks ? nullptr : blockSendsCommonOrSend1->data,
+                                                             ownSendBlock ? blockSendsCommonOrSend1->data : nullptr,
                                                              blockPostFaderLeft->data);
-            if (!skipSendBlocks)
+            if (reuseUnmodifiedMono)
+            {
+                transmit(blockPostFaderLeft, kSend1Offset + partIdx);
+                transmit(blockPostFaderLeft, kSend2Offset + partIdx);
+            }
+            else if (ownSendBlock)
             {
                 transmit(blockSendsCommonOrSend1, kSend1Offset + partIdx);
                 transmit(blockSendsCommonOrSend1, kSend2Offset + partIdx);
@@ -155,8 +179,7 @@ AUDIO_CORE_RAM void PolySynth::update(void)
             release(blockPostFaderLeft);
             continue;
         }
-#endif
-
+#else
         if (!reuseUnmodifiedMono)
         {
             tempBufPostfaderLeft = tempBufSendsCommonLeft;
@@ -273,6 +296,7 @@ AUDIO_CORE_RAM void PolySynth::update(void)
         {
             release(blockPostFaderRight);
         }
+#endif // FEATURE_SYNTH_OPEN
     }
 }
 

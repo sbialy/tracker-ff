@@ -270,7 +270,7 @@ void serial6_set_tx(uint8_t pin, uint8_t opendrain)
 	tx_pin_num = pin;
 }
 
-void serial6_set_rx(uint8_t pin)
+void serial6_set_rx(uint8_t pin __attribute__((unused)))
 {
 }
 

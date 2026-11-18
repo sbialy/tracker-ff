@@ -109,6 +109,7 @@ const EngineDef kAcdDef = {
     kMaxVoicesPerInstrument,
     &ot::audio::synthAcdEngine,
     false,
+    true, // monoOut: the engine writes L only
 };
 
 } // namespace polysynth::open

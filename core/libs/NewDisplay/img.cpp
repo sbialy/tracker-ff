@@ -71,7 +71,7 @@ void cImg::setColors(const uint32_t* colors)
     this->colors = colors;
 }
 
-void cImg::setData(void* data)
+void cImg::setData(void* /*data*/)
 {
 }
 

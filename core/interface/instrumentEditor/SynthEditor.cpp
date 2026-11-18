@@ -215,11 +215,21 @@ static const int synthModelListImages[Synth::kSynthTypes.size()] = {
 static cInstrumentEditor* IE = &instrumentEditor;
 
 #ifdef FEATURE_SYNTH_OPEN
-// Heading of the patch panel on the right of the Synth screen: the open patch slot of the part (0..15, the value of the Patch FX)
+// Heading of the patch panel on the right of the Synth screen: the open patch slot of the part (0..15, the value of the Patch FX) and,
+// when it is not the default, the Morph target (Shift + encoder on the slot)
 static const char* synthPatchPanelLabel(int synthPart)
 {
-    static char text[12];
-    snprintf(text, sizeof(text), "Slot %d:", IE->getSynth()->getPatchSlot(synthPart));
+    static char text[24];
+    Synth* const s = IE->getSynth();
+    const int to = s->getMorphTarget(synthPart);
+    if (to != polysynth::open::kMorphDefault)
+    {
+        snprintf(text, sizeof(text), "Slot %d  Morph %d:", s->getPatchSlot(synthPart), to);
+    }
+    else
+    {
+        snprintf(text, sizeof(text), "Slot %d:", s->getPatchSlot(synthPart));
+    }
     return text;
 }
 #else
@@ -459,7 +469,16 @@ void cInstrumentEditor::changeSynthParamValue(int value, ValueChangeSource sourc
         case 4: changeSynthReverbSend(value); break;
         case 5: changeSynthDelaySend(value); break;
 #ifdef FEATURE_SYNTH_OPEN
-        case 6: changeSynthSlot(value); break;
+        case 6:
+            if (buttons->isButtonPressed(interfaceButtonShift))
+            {
+                changeSynthMorphTarget(value);
+            }
+            else
+            {
+                changeSynthSlot(value);
+            }
+            break;
 #endif
     }
 }
@@ -986,6 +1005,24 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
 }
 
 #ifdef FEATURE_SYNTH_OPEN
+// Morph target (Shift + encoder or Shift + up/down on the slot selector): the slot 0..15 a Morph FX of the part blends to when its step
+// has no Patch FX in the other FX column. Saved in the part's names file only when it is not the default (slot 1).
+void cInstrumentEditor::changeSynthMorphTarget(int16_t value)
+{
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    assert(part >= 0 && part < kSynthInstrumentsCount);
+    if (synthPartMissing(part))
+    {
+        return;
+    }
+    const int to = clamp<int>(synth->getMorphTarget(part) + (value < 0 ? -1 : 1), 0, Synth::kPatchSlots - 1); // one slot a detent
+    synth->setMorphTarget(part, to);
+    static char text[20];
+    snprintf(text, sizeof(text), "Morph target: %d", to);
+    mtPopups.show(0, text);
+    showSynthPatchName(part);
+}
+
 // Slot selector (7th place of the Synth screen, encoder or up/down). Opens slot 0..15 of the part: the open slot is saved if it was
 // edited, the slot's file is loaded, a slot without a file starts as a copy of the open one. A slot that holds a file of another
 // engine cannot be opened (the engine was changed after it was made), the selector steps over it.
@@ -1050,10 +1087,10 @@ void cInstrumentEditor::changeSynthPolyphony(int16_t value)
     int syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
     assert(syntPartIdx >= 0 && syntPartIdx < kSynthInstrumentsCount);
 
+    // steps from the shown value: a stored Voices above the cap (5 to 8 from a 1.4.0 test build) shows and plays as the cap
+    const int maxVoices = synth->getMaxVoiceCount(syntPartIdx);
     mtProject.values.synthPart[syntPartIdx].voiceCount =
-      clamp<int>(mtProject.values.synthPart[syntPartIdx].voiceCount + value,
-                 0,
-                 synth->getMaxVoiceCount(syntPartIdx));
+      clamp<int>(std::min<int>(mtProject.values.synthPart[syntPartIdx].voiceCount, maxVoices) + value, 0, maxVoices);
 
     synth->setVoiceCount(syntPartIdx, mtProject.values.synthPart[syntPartIdx].voiceCount);
 
@@ -1504,6 +1541,7 @@ void cInstrumentEditor::showSynthParamsScreen()
     display.setControlHide(list4Control);
     display.setControlHide(paramsListControl);
     display.setControlHide(imgGridControl);
+    hideSynthView();
 
     display.setControlHide(barControl[0]);
     display.setControlShow(barControl[1]);
@@ -1583,8 +1621,8 @@ void cInstrumentEditor::showSynthModel(uint8_t synthPart)
 
 void cInstrumentEditor::showSynthPolyphony(uint8_t synthPart)
 {
-    int value = mtProject.values.synthPart[synthPart].voiceCount;
     int valueMax = synth->getMaxVoiceCount(synthPart);
+    int value = std::min<int>(mtProject.values.synthPart[synthPart].voiceCount, valueMax);   // shown as it plays
 
     snprintf(labelText[1], sizeof(labelText[1]), "%d", value > 0 && valueMax > 0 ? value : 0);
 

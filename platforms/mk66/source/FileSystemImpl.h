@@ -87,8 +87,24 @@ class FileSystemImpl final : public FileSystem
     void init(int sdDetectPin, Timer* timer);
     void update(bool forcedUpdate = false);
 
+#ifdef FEATURE_USB_MSC
+    // USB_MSC=1, Drive mode (usbmsc/msc_drive.cpp). lendToHost: FatFs unmounted, every call above fails until remount() (false:
+    // no card). The block calls work only while the computer owns the card (512 B blocks, the drive's main loop pump).
+    bool lendToHost();
+    bool hostOwned() const;
+    uint32_t refusedCalls() const;
+    uint32_t hostBlockCount() const;
+    bool hostReadBlocks(uint32_t lba, uint8_t* dst, uint32_t count);
+    bool hostWriteBlocks(uint32_t lba, const uint8_t* src, uint32_t count);
+    // the card detect pin as of the last update() (the drive's pump must not wait for FatFs to know the card left)
+    bool cardIn() const { return lastCardInsertState; }
+#endif
+
   private:
     static constexpr int kCardInitDelayMs = 500;
+#ifdef FEATURE_USB_MSC
+    bool refuseHost();
+#endif
 
     SdDir nesDir;
     CardStateChangeCallback cardStateChangeCallback = nullptr;

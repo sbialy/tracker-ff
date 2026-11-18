@@ -17,7 +17,15 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BUILD="$ROOT/build/ui-shot${CHIP_PLUGIN_SRC:+-chipplg}"
+# BRIDGE=1: the emulator bridge build (bridge_env.sh: the pinned Unicorn, the release axf): the synth .plg files of the card install and run
+# their real bytes, so the CHIP pages exist (CHIP is chip.plg since 1.3.0). Without it every plugin engine says Missing
+BUILD="$ROOT/build/ui-shot${BRIDGE:+-bridge}"
+MAKE_ARGS=()
+if [ "${BRIDGE:-}" = 1 ]; then
+    . "$HERE/bridge_env.sh"
+    bridge_env "$ROOT" || exit 1
+    MAKE_ARGS=("${BRIDGE_ARGS[@]}" OUT="$BUILD")
+fi
 OUT_DIR="${OUT_DIR:-$ROOT/build/ui-shot}"
 BIN="$BUILD/ui_shot"
 EXTERNAL="$ROOT/engines/external.py"
@@ -61,14 +69,17 @@ p Rate=2
 p Tone=40
 p Mix=100'
 SYNTH_PAGES='instr 64; tap Params; wait 1200'
-# chip-*: the part's engine is moved to CHIP in the picker (the list runs ACD FAT VAP WTFM PERC CHIP ..., the part starts on WTFM): needs the CHIP
-# plugin twin (CHIP_PLUGIN_SRC=.../tracker-engines-os/src/synth-open/engine_chip.cpp), else the part says Missing: CHIP
+# chip-*: the part's engine is moved to CHIP in the picker (the list runs ACD FAT VAP WTFM PERC CHIP ..., the part starts on WTFM): needs the
+# BRIDGE=1 build (chip.plg runs under Unicorn), else the part says Missing: CHIP
 CHIP_PICK='tap Down 2; wait 3500'
 
 script_for() {   # page[:state] -> commands, empty when the page does not exist (bash 3.2: no associative arrays)
     case "$1" in
         pattern) echo 'wait 500' ;;
         master) echo 'tap Master; wait 1000' ;;
+        master:limiter) echo 'tap Master; wait 800; tap F4; wait 600' ;;
+        master:duck) echo 'tap Master; wait 800; tap F4; wait 600; tap F6; wait 600' ;;
+        master:duck-on) echo 'tap Master; wait 800; tap F4; wait 600; tap F6; wait 600; tap F5; tap F5; tap F1; enc 10; tap F2; enc -20; tap F3; enc 5; wait 400' ;;
         song) echo 'tap Song; wait 1000' ;;
         config) echo 'tap Config; wait 1000' ;;
         performance) echo 'tap Performance; wait 1000' ;;
@@ -102,10 +113,10 @@ script_for() {   # page[:state] -> commands, empty when the page does not exist 
         *) echo "" ;;
     esac
 }
-ALL_PAGES="pattern master master:inserts song config performance sample-play sample-load instrument inserts:empty inserts:running inserts:bbd inserts:dirt2 inserts:safe inserts:safe-mixed inserts:many inserts:many-end engines engines:library synth-params synth-edit synth-edit:filter synth-macros automation automation:lfo"
+ALL_PAGES="pattern master master:limiter master:duck master:duck-on master:inserts song config performance sample-play sample-load instrument inserts:empty inserts:running inserts:bbd inserts:dirt2 inserts:safe inserts:safe-mixed inserts:many inserts:many-end engines engines:library synth-params synth-edit synth-edit:filter synth-macros automation automation:lfo"
 
-# CHIP is a plugin: its pages need the native twin (CHIP_PLUGIN_SRC), they are part of "all" only then
-[ -z "${CHIP_PLUGIN_SRC:-}" ] || ALL_PAGES="$ALL_PAGES chip-engines chip-params chip-edit chip-edit:filter chip-macros chip-automation chip-automation:lfo"
+# CHIP is a plugin: its pages need the bridge build (BRIDGE=1), they are part of "all" only then
+[ "${BRIDGE:-}" != 1 ] || ALL_PAGES="$ALL_PAGES chip-engines chip-params chip-edit chip-edit:filter chip-macros chip-automation chip-automation:lfo"
 
 # the private modules: the twin sources of Console and Tube at the pinned tag, the published files of all four. Anything missing is skipped
 # with a note, the pages then show those modules as missing
@@ -122,6 +133,15 @@ fetch_private() {
             if cmp -s "$EXT_SRC/$f.c.new" "$EXT_SRC/$f.c"; then rm "$EXT_SRC/$f.c.new"; else mv "$EXT_SRC/$f.c.new" "$EXT_SRC/$f.c"; fi
         done
     fi
+    # Sweep Gate, Dust Bed and Mono Bass (tracker-effects-os, not in a pinned tag yet): FX_EXTRA_SRC = the folder of their sources
+    # (src/synth-open/plug/fx of a tracker-effects-os checkout), else a stub (the three load as failed when a card holds them)
+    for f in ff_sweepgate_plug ff_dustbed_plug ff_monobass_plug; do
+        if [ -n "${FX_EXTRA_SRC:-}" ] && [ -f "$FX_EXTRA_SRC/$f.c" ]; then cp -p "$FX_EXTRA_SRC/$f.c" "$EXT_SRC/$f.c"
+        elif [ ! -f "$EXT_SRC/$f.c" ] || grep -q "stub" "$EXT_SRC/$f.c"; then
+            printf '/* stub: the source of %s was not available */\nconst void *plug_entry(const void *host, unsigned abi) { (void)host; (void)abi; return 0; }\n' "$f" >"$EXT_SRC/$f.c.new"
+            if cmp -s "$EXT_SRC/$f.c.new" "$EXT_SRC/$f.c" 2>/dev/null; then rm "$EXT_SRC/$f.c.new"; else mv "$EXT_SRC/$f.c.new" "$EXT_SRC/$f.c"; fi
+        fi
+    done
     [ -z "${GLUE_SRC:-}" ] || cp "$GLUE_SRC" "$EXT_SRC/ff_glue_plug.c"   # an untagged Glue (make follows the timestamp)
     if [ -n "$EXT_PLG" ]; then
         python3 -I "$EXTERNAL" check "$EXT_PLG" || { echo "ui_shot.sh: EXTERNAL_DIR does not match engines/external.lock.json" >&2; exit 1; }
@@ -131,7 +151,7 @@ fetch_private() {
     fi
 }
 
-build() { make -s -C "$HERE" -j"$(sysctl -n hw.ncpu)" >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 1; }; }
+build() { make -s -C "$HERE" -j"$(sysctl -n hw.ncpu)" ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 1; }; }
 
 stage_sd() {   # stage_sd DIR
     local sd="$1" plg="${PLG_DIR:-}"
@@ -143,6 +163,9 @@ stage_sd() {   # stage_sd DIR
         case "$(basename "$f")" in dirt.plg|bbd.plg|tape.plg|lofi.plg|console.plg|tube.plg|glue.plg|phaser.plg|phz.*|pluck.*) ;; *) cp "$f" "$sd/Plugins/Synth/" ;; esac
     done
     [ -z "${GLUE_PLG:-}" ] || cp "$GLUE_PLG" "$sd/Plugins/Master/glue.plg"
+    # the three new inserts: FX_EXTRA_PLG = the folder with sweepgate.plg dustbed.plg monobass.plg (a tracker-effects-os build/set)
+    if [ -n "${FX_EXTRA_PLG:-}" ]; then for f in sweepgate dustbed monobass; do [ ! -f "$FX_EXTRA_PLG/$f.plg" ] || cp "$FX_EXTRA_PLG/$f.plg" "$sd/Plugins/Master/"; done; fi
+    if [ -n "${WAVES_DIR:-}" ]; then mkdir -p "$sd/Waves" && cp -R "$WAVES_DIR"/. "$sd/Waves/"; fi
     if [ -n "$EXT_PLG" ]; then   # the pinned private files, whatever $PLG_DIR holds of the same names is not used
         for f in console tube; do cp "$EXT_PLG/$f.plg" "$sd/Plugins/Master/"; done
         [ ! -f "$EXT_PLG/glue.plg" ] || cp "$EXT_PLG/glue.plg" "$sd/Plugins/Master/"

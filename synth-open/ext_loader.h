@@ -26,6 +26,7 @@
 namespace ext
 {
 constexpr const char* kPath = "/Plugins/Ext/module.plg";
+constexpr const char* kModitPath = "/Plugins/Ext/modit.plg";   // MOD and IT import, IT export: loaded on first use, never at boot
 constexpr const char* kMarker = "/Plugins/Ext/.loading";   // written before the entry, removed after kMarkerMs of clean running
 constexpr const char* kStatus = "/Plugins/Ext/status.txt";
 constexpr const char* kCrash = "/Plugins/Ext/crash.txt";    // written on the boot that finds the marker, replaced each time
@@ -71,6 +72,7 @@ struct Slot
     uint32_t loadBytes;  // EXT_LOAD_BYTES on the device: the tail after it is the module's reset surviving area
     uintptr_t run;       // the address the module must be linked for (the device: mem)
     uint32_t resetReason = 0;   // RCM_SRS1 << 8 | RCM_SRS0 of this start (the device), what ended the boot before it
+    const char* path = kPath;   // the module file (modit.plg is loaded by the same rules from kModitPath)
 };
 
 // The fault record a module keeps in the slot tail (ext_abi.h EXT_FAULT_*), 4 aligned anywhere in it. Its index, or -1.
@@ -129,7 +131,7 @@ template <class Fs> int crashReport(Fs& fs, const Slot& s)
 // Steps 2 and 3: the file into the slot. h is the header on return (also on a refusal, as far as it was read).
 template <class Fs, class ImageCrc> Status load(Fs& fs, const Slot& s, ImageCrc imageCrc, plug_file_header& h)
 {
-    if (!fs.open(kPath)) return Status::kNone;
+    if (!fs.open(s.path)) return Status::kNone;
     Status st = Status::kLoaded;
     memset(&h, 0, sizeof(h));
     if (!fs.read(reinterpret_cast<uint8_t*>(&h), sizeof(h)) || plug::checkHeader(h, EXT_PLUG_KIND) != plug::kOk)
@@ -195,6 +197,78 @@ Status boot(Fs& fs, bool develop, const Slot& s, ImageCrc imageCrc, Enter enter,
                            static_cast<unsigned long>(h.reserved[0]), static_cast<unsigned long>(h.reserved[1]), diag(st));
     fs.writeText(kStatus, line, n > 0 && n < int(sizeof(line)) ? n : 0);
     return st;
+}
+
+// MOD/IT (modit.plg): the same file rules, a second file, one use at a time of the one slot.
+//   The slot belongs to the console module (module.plg) while that is loaded or about to load (the key window of the develop boot).
+//   Then nothing is read and modit.plg is busy. Otherwise the slot holds nothing that matters (no module, a refused or damaged
+//   file, a crash report already written, the recovery console's reply), so modit.plg is loaded over it. Only the load part is
+//   written, the tail is the console module's reset surviving area and stays as it was.
+//   While modit.plg is loaded the recovery console (ext_recovery.h) answers from the slot tail, not from its first bytes (below).
+enum class ModitState : uint8_t
+{
+    kReady,        // loaded, the hook is set
+    kBusy,         // the console module owns the slot
+    kMissing,      // no /Plugins/Ext/modit.plg
+    kOtherImage,   // built for another firmware image
+    kDamaged,      // anything else: not a module, damaged, too big, linked elsewhere, the entry refused
+};
+
+inline bool slotBusy(Status console, bool consolePending) { return console == Status::kLoaded || consolePending; }
+
+// where the recovery console may write its reply (ext_recovery.h, kReplyBytes): the slot start while nothing is loaded, the slot tail
+// (2 KB, never written by the loader) once modit.plg sits in the load part
+constexpr uint32_t kRecoveryReplyBytes = 320;
+inline uint32_t recoveryReplyOffset(bool moditLoaded) { return moditLoaded ? EXT_LOAD_BYTES : 0; }
+
+inline ModitState moditStateOf(Status st)
+{
+    switch (st)
+    {
+    case Status::kLoaded: return ModitState::kReady;
+    case Status::kNone: return ModitState::kMissing;
+    case Status::kOtherImage: return ModitState::kOtherImage;
+    default: return ModitState::kDamaged;
+    }
+}
+
+// The two lines of the popup of the click that needs the module (empty for kReady). Short: the popup is one screen line each.
+inline const char* moditLine1(ModitState s)
+{
+    switch (s)
+    {
+    case ModitState::kBusy: return "Developer console is on";
+    case ModitState::kMissing: return "MOD/IT module missing";
+    case ModitState::kOtherImage: return "modit.plg is for another firmware";
+    case ModitState::kDamaged: return "modit.plg is damaged";
+    default: return "";
+    }
+}
+inline const char* moditLine2(ModitState s)
+{
+    switch (s)
+    {
+    case ModitState::kBusy: return "Hold Shift at power on for MOD/IT";
+    case ModitState::kMissing: return "Copy modit.plg to Plugins/Ext";
+    case ModitState::kOtherImage: return "Copy the one of this release";
+    case ModitState::kDamaged: return "Copy it from the release again";
+    default: return "";
+    }
+}
+
+// Load /Plugins/Ext/modit.plg on the first use. console / consolePending: the state of the console module (ext_module.cpp). enter(h) calls
+// the entry and returns true when it filled the modit hook. No crash marker (never loaded at boot: a crash costs one reset, the next
+// use tries again), no status file.
+template <class Fs, class ImageCrc, class Enter>
+ModitState moditLoad(Fs& fs, const Slot& s, Status console, bool consolePending, ImageCrc imageCrc, Enter enter)
+{
+    if (slotBusy(console, consolePending)) return ModitState::kBusy;
+    Slot m = s;
+    m.path = kModitPath;
+    plug_file_header h;
+    const Status st = load(fs, m, imageCrc, h);
+    if (st != Status::kLoaded) return moditStateOf(st);
+    return enter(h) ? ModitState::kReady : ModitState::kDamaged;
 }
 
 // Step 4's end: the main loop calls it while the marker is set. True once the marker is removed (kMarkerMs of clean running).

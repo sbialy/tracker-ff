@@ -132,10 +132,10 @@ int main()
     bad[0] = { "k", "K", 7, 0, 1, 0, 0, 0, nullptr, 0, nullptr };
     check(features::add(&d) < 0, "add: unknown param type refused");
     check(features::count() == 0, "add: nothing listed after the refusals");
-    static feat_desc many[9];
-    static char ids[9][4];
+    static feat_desc many[features::kMax + 1];   // one more than the registry holds
+    static char ids[features::kMax + 1][4];
     int added = 0;
-    for (int k = 0; k < 9; k++)
+    for (int k = 0; k < features::kMax + 1; k++)
     {
         snprintf(ids[k], sizeof ids[k], "f%d", k);
         many[k] = make(ids[k]);
@@ -306,6 +306,52 @@ int main()
     features::set(i, true);
     features::restartNow();
     check(s_rn == 1 && s_rnSaw, "restart now: the file is written before the power off starts");
+
+    // ---- FEAT_PR_OMIT_DEFAULT (USB audio Mode): no line while at the default, a missing line is the default, an image without the
+    // parameter reads a file with it as before (the unknown key is skipped)
+    {
+        static const char* const kSM[] = { "Stereo", "8+3 mono" };
+        static const feat_param kOm[] = {
+            { "mode", "Mode", FEAT_P_ENUM, 0, 0, 0, 0, 2, kSM, FEAT_PR_RESTART | FEAT_PR_OMIT_DEFAULT, nullptr },
+        };
+        static feat_desc om = { sizeof(feat_desc), FEAT_ABI, 1, "om", "Omit", "h", FEAT_F_RESTART | FEAT_F_BOOTFLAG, 1, kOm, 0,
+                                nullptr, apply, nullptr, nullptr, nullptr, running };
+        static feat_desc old = { sizeof(feat_desc), FEAT_ABI, 1, "om", "Omit", "h", FEAT_F_RESTART | FEAT_F_BOOTFLAG, 0, nullptr, 0,
+                                 nullptr, apply, nullptr, nullptr, nullptr, running };
+        fresh();
+        s_running = 1;
+        s_files["/Features/om.cfg"] = "feature 1\nid om\nversion 1\non 1\n";   // the file of an image before the mode
+        int k = features::add(&om);
+        features::load(&kIo);
+        check(features::on(k) && features::value(k, 0) == 0 && !features::restartPending(k), "omit: an old file (no mode line) is Stereo");
+        features::set(k, false);
+        features::flush();
+        check(s_files["/Features/om.cfg"].find("mode") == std::string::npos, "omit: Stereo writes no mode line");
+        features::set(k, true);
+        *features::valueRef(k, 0) = 1;
+        features::changed();
+        check(features::restartPending(k), "omit: a mode change asks for a restart");
+        features::flush();
+        check(s_files["/Features/om.cfg"].find("\nmode 1\n") != std::string::npos, "omit: 8+3 mono writes mode 1");
+        *features::valueRef(k, 0) = 0;
+        features::changed();
+        features::flush();
+        check(s_files["/Features/om.cfg"].find("mode") == std::string::npos, "omit: back to Stereo drops the line");
+        check(!features::restartPending(k), "omit: back to the boot mode, no restart");
+        // an image without the parameter reads the file of the new one: on stays on, nothing else changes
+        const std::string withMode = "feature 1\nid om\nversion 1\non 1\nmode 1\n";
+        features::clear();
+        s_files["/Features/om.cfg"] = withMode;
+        k = features::add(&old);
+        features::load(&kIo);
+        check(features::on(k) && !features::restartPending(k), "omit: an older image reads mode 1 as on, the key skipped");
+        features::clear();
+        s_files["/Features/om.cfg"] = "feature 1\non 1\nmode 7\n";
+        k = features::add(&om);
+        features::load(&kIo);
+        check(features::value(k, 0) == 0, "omit: a mode out of range is Stereo");
+        s_running = 0;
+    }
 
     printf("%d checks, %d failed\n", s_checks, s_fail);
     return s_fail ? 1 : 0;

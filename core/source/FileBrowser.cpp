@@ -176,14 +176,14 @@ void FileBrowser::resetPath()
     refresh();
 }
 
-void FileBrowser::processCurrentPathFileList(char* buffer, int bufferSize, int maxNamesCount)
+void FileBrowser::processCurrentPathFileList(char* /*buffer*/, int /*bufferSize*/, int /*maxNamesCount*/)
 {
 }
 
-void FileBrowser::processCurrentPathFolderList(char* buffer,
-                                               int bufferSize,
-                                               int maxNamesCount,
-                                               int selectionListOffset)
+void FileBrowser::processCurrentPathFolderList(char* /*buffer*/,
+                                               int /*bufferSize*/,
+                                               int /*maxNamesCount*/,
+                                               int /*selectionListOffset*/)
 {
 }
 

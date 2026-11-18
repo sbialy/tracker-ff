@@ -8,11 +8,11 @@
 #   BENCH_VOICES=n for another count, scenarios default patch, all parameters max / mid / min, CHIP per model),
 #   engine and voice sources with OPT, libm and libc from the toolchain's newlib-nano as in the firmware link
 # Needs the pinned toolchain in agt/10.3 (or TC=/path/to/arm-none-eabi, the 12.3 release compiler) and a python with unicorn + capstone:
-#   python3 -m venv $VENV && $VENV/bin/pip install unicorn capstone     (PYTHON=$VENV/bin/python)
+#   sh synth-open/tools/pyenv.sh (once, the pinned ~/prj/poly/build/pyenv is the default, PYTHON= or PY= wins)
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 OPT=${1:-fw}
-PY=${PYTHON:-python3}
+PY=${PYTHON:-${PY:-$(sh "$ROOT/synth-open/tools/pyenv.sh" python)}} || exit 2
 TC=${TC:-$ROOT/agt/10.3/bin/arm-none-eabi}
 OUT=${KEEP_DIR:-${TMPDIR:-/tmp}/phz_cycles_$$}
 mkdir -p "$OUT"

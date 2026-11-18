@@ -57,6 +57,11 @@ class Platform
     virtual bool usbAudioBuilt() { return false; }
     virtual bool usbAudioRunning() { return false; }
     virtual void setUsbAudioBoot(bool on) { (void)on; }
+#ifdef FEATURE_USB_MSC
+    // USB_MSC=1 (the original): the USB drive is enumerated this session, and the boot flag of Config > Features > USB drive
+    virtual bool usbDriveRunning() { return false; }
+    virtual void setUsbDriveBoot(bool on) { (void)on; }
+#endif
     virtual void runBootloader(char* fileName) = 0;
     virtual void setPowerButtonCallback(PowerButtonCallback) = 0;
     virtual bool getPowerButtonState() = 0;
@@ -79,6 +84,16 @@ class Platform
     virtual CrcCalculator* getCrcCalculator() = 0;
     virtual SystemInfo* getSystemInfo() = 0;
     virtual Usb* getUsb() = 0;
+    // USB audio mode (Config > USB > Audio mode, USB_AUDIO=1 images, kept last so the slots above do not move): the
+    // stream this session enumerated with (0 stereo, 1 8+3 mono), the writer of the mode for the next start, and the sink of the
+    // 8+3 tap (UsbMultiTap, null unless this session streams 8+3 mono). Default: stereo only.
+    using UsbMultiSink = void (*)(const int16_t* const* in);
+    virtual uint8_t usbAudioRunningMode() { return 0; }
+    virtual void setUsbAudioBootMode(uint8_t mode) { (void)mode; }
+    virtual UsbMultiSink usbAudioMultiSink() { return nullptr; }
+    // the computer is recording the USB audio stream right now (IN packets within the last 4 blocks, UsbAudioOut::streaming()):
+    // 0 no, 1 stereo, 2 8+3 mono. Last, after the slots above
+    virtual uint8_t usbAudioStreaming() { return 0; }
 };
 
 class CrcCalculator
@@ -150,9 +165,12 @@ class UsbMidi : public Midi
         void (*noteOff)(uint8_t, uint8_t, uint8_t);
         void (*songPosition)(uint16_t);
         void (*controlChange)(uint8_t, uint8_t, uint8_t);
+        void (*pitchBend)(uint8_t, int);   // channel, -8192..8191, null: dropped as before
     };
 
     virtual void setReceiveActions(MidiReceiveActions* receiveActions) = 0;
+    // true once after the bus went idle or was reset (cable pulled, host asleep or gone), no note off comes for a note held then
+    virtual bool takeBusLost() { return false; }
 };
 
 class UartMidi : public Midi
@@ -168,6 +186,7 @@ class UartMidi : public Midi
         void (*songPosition)(unsigned);
         void (*continueMessage)(void);
         void (*controlChange)(uint8_t, uint8_t, uint8_t);
+        void (*pitchBend)(uint8_t, int);   // channel, -8192..8191, null: dropped as before
     };
     virtual void init() = 0;
     virtual void setReceiveActions(MidiReceiveActions* receiveActions) = 0;
@@ -228,6 +247,10 @@ class SwitchGroup
 
     virtual void setHoldTime(int timeMs) = 0;
     virtual bool isButtonPressed(int buttonIdx) = 0;
+    // MIDI remote: the key or pad counts as held for isButtonPressed, like a finger. True: the held state changed, send the press or
+    // release event. False: it did not (already held, or still held by a finger). The default sends every event, as a platform without
+    // a second source does.
+    virtual bool setRemoteHeld(int, bool) { return true; }
     virtual void setActionCallback(ActionType action, void (*callback)(uint8_t)) = 0;
 };
 

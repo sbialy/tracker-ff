@@ -91,6 +91,11 @@ class AudioPlayMemory : public AudioStream
                         uint8_t n,
                         uint8_t type); // dla padboard'a - po pamięci
     void setSlideOnPlay(bool upOrDown, uint8_t dstValue, float time);
+    // Tape Stop / Tape Start step FX (core/source/tapeFx.h): the voice runs down to a standstill or spins up from one over `frames` audio
+    // frames. The pitch ramps in a straight line to or from the lowest note, the level follows the speed (update). setTapeOnPlay is
+    // for the note of the step: it starts the run with play(), setTape acts on the voice that sounds now.
+    void setTapeOnPlay(bool start, uint32_t frames);
+    void setTape(bool start, uint32_t frames);
 
     void stop(void); // do noteOff
 
@@ -218,6 +223,7 @@ class AudioPlayMemory : public AudioStream
     };
 
     void setSlidePitch(bool upOrDown, uint8_t dstValue, float time);
+    void tapeProcess(audio_block_t* block);
     void setSamplePointsSource(AudioPlayMemory* sourceObject);
     //******************************************************************ENVELOPE PUBLIC BLOCK
     // END****************************************************************************//
@@ -386,6 +392,18 @@ class AudioPlayMemory : public AudioStream
         uint8_t dstValue;
         float time;
     } stackedSlide;
+
+    struct strTape
+    {
+        uint8_t mode;   // tapefx::Mode: 0 off, 1 stop, 2 start
+        uint32_t pos;   // frames run
+        uint32_t total; // frames of the run
+    } tape = {};
+    struct strStackedTape
+    {
+        uint8_t mode;
+        uint32_t frames;
+    } stackedTape = {};
 
     struct strSamplePoints // pointy umieszczone w pamieci dla konkretnej probki
     {

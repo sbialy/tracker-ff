@@ -41,7 +41,7 @@ void cWtProgress::setStyle(uint32_t style)
     this->style = style;
 }
 
-void cWtProgress::setText(const char* text)
+void cWtProgress::setText(const char* /*text*/)
 {
 }
 

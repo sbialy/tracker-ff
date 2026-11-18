@@ -42,7 +42,7 @@ void cProgressCursor::setStyle(uint32_t style)
     this->style = style;
 }
 
-void cProgressCursor::setText(const char* text)
+void cProgressCursor::setText(const char* /*text*/)
 {
 }
 
@@ -56,7 +56,7 @@ void cProgressCursor::setColors(const uint32_t* colors)
     this->colors = colors;
 }
 
-void cProgressCursor::setData(void* data)
+void cProgressCursor::setData(void* /*data*/)
 {
 }
 

@@ -34,7 +34,13 @@ echo "engines: $SEL"
 SRCS_ABS=""
 for s in $SRCS; do SRCS_ABS="$SRCS_ABS $ROOT/synth-open/$s"; done
 for s in $CORE; do SRCS_ABS="$SRCS_ABS $ROOT/core/$s"; done
-if [ -n "${CHIP_PLUGIN_SRC:-}" ]; then SRCS_ABS="$SRCS_ABS $ROOT/synth-open/tools/chip_smoke_engine.cpp $ROOT/core/synth/engines/ChiptuneSynthVoice.cpp"; fi
+# the voice: CHIP 1.1.1 and later build chip_voice.cpp (next to engine_chip.cpp) in place of the vendored core/synth/engines/ChiptuneSynthVoice.cpp, the
+# twin links the same file as the plugin does. An older CHIP source has no chip_voice.cpp and keeps the vendored voice
+if [ -n "${CHIP_PLUGIN_SRC:-}" ]; then
+  CHIP_VOICE="$ROOT/core/synth/engines/ChiptuneSynthVoice.cpp"
+  [ ! -f "$(dirname "$CHIP_PLUGIN_SRC")/chip_voice.cpp" ] || CHIP_VOICE="$(dirname "$CHIP_PLUGIN_SRC")/chip_voice.cpp"
+  SRCS_ABS="$SRCS_ABS $ROOT/synth-open/tools/chip_smoke_engine.cpp $CHIP_VOICE"
+fi
 OUT=${TMPDIR:-/tmp}/synth_smoke_$$
 ARCH=${SMOKE_ARCH:-x86_64}
 ARCH_DEFS=""

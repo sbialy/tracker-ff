@@ -75,7 +75,9 @@ for b in range(nblocks):
         uc.mem_write(syms[sym], b"\x55" * 256)
     rg.call(uc, rg.find(syms, "bench_run"), 0)
     rg.call(uc, rg.find(syms, "bench_run"), 1)
-    ok = get("gOldPost", 256) == get("gNewPost", 256) and (skip or get("gOldSend", 256) == get("gNewSend", 256))
+    # a 0 dB part builds one block (the post block), PolySynth::update sends it to the send mixers as well: it must equal the old send block
+    new_send = get("gNewPost", 256) if reuse else get("gNewSend", 256)
+    ok = get("gOldPost", 256) == get("gNewPost", 256) and (skip or get("gOldSend", 256) == new_send)
     if not ok:
         bad += 1
         if bad <= 5:

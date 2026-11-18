@@ -4,12 +4,18 @@
 #include "display.h"
 #include "trackerControl.h"
 
+#include <algorithm>
 #include <cstring>
 
 static void Number2Bitmaps(int16_t x, int16_t y, uint8_t font_x, uint8_t font_y, int16_t number);
 static void Number2HexBitmaps(int16_t x, int16_t y, uint8_t font_x, uint8_t font_y, int16_t number);
 
 #define ROW_NUM 1
+
+// the 4 parameter view of cTracker::update(): the stock 4 track layout or the 3 track one with the V and m columns
+#define P4OFF(k) (vm ? sixParamsOffset[k] : fourParamsOffset[k])
+#define P4SELOFF(k) (vm ? sixParamsSelOffset[k] : fourParamsSelOffset[k])
+#define P4SELWIDTH(k) (vm ? sixParamsSelWidth[k] : fourParamsSelWidth[k])
 
 static constexpr uint8_t text_font = 1;
 static int16_t s_lastCell = -1;
@@ -56,6 +62,12 @@ static const uint8_t fourParamsSelWidth[4] = {
     50,
     50,
 };
+
+// The 3 track layout with the V and m columns (Config > Pattern V/m columns, trackerControl.h vmColumns): 248 px a track,
+// 12 px a character: Note 3, Instr 2, FX1 4, FX2 4, V 3, m 3 characters
+static const uint8_t sixParamsOffset[6] = { 5, 44, 72, 124, 176, 214 };
+static const uint8_t sixParamsSelOffset[4] = { 1, 40, 68, 120 };
+static const uint8_t sixParamsSelWidth[4] = { 40, 28, 50, 50 };
 
 static const uint8_t twoParamsSel1Offset[4] = {
     1,
@@ -242,7 +254,7 @@ void cTracker::setStyle(uint32_t style)
     font = &fonts[textFont];
 }
 
-void cTracker::setText(const char* text)
+void cTracker::setText(const char* /*text*/)
 {
 }
 
@@ -298,6 +310,7 @@ void cTracker::update()
 {
     // colors[10] = tracks->selectColor;
     displayMode = value;
+    vm = false;
 
     lastFontHandle = -1;
     s_lastCell = -1; // zerowanie ostatnio uzywanej czcionki
@@ -319,6 +332,14 @@ void cTracker::update()
         columnsCount = (tracks->popupMode & 4) ? 4 : columnsCount;
         paramCount = (displayMode & 1) + ((displayMode & 2) >> 1) + ((displayMode & 4) >> 2) +
                      ((displayMode & 8) >> 3);
+    }
+    else if (tracks->vmColumns)
+    {
+        vm = true;
+        columnsCount = (tracks->popupMode & 2) ? 2 : 3;
+        columnsCount = (tracks->popupMode & 4) ? 1 : columnsCount;
+        tracksWidth = (800 - (rightOffset + leftOffset)) / 3;
+        paramCount = 4;
     }
     else
     {
@@ -396,6 +417,10 @@ void cTracker::update3()
     {
         instruments();
     }
+    if (displayMode == 0 && !vm)
+    {
+        marks();
+    }
 }
 
 void cTracker::update4()
@@ -412,6 +437,10 @@ void cTracker::update5()
     if (displayMode == 0 || displayMode & 8)
     {
         fxes2();
+    }
+    if (vm)
+    {
+        vmColumns();
     }
 
     tracksNumbers();
@@ -691,11 +720,11 @@ void cTracker::selection()
             for (uint8_t i = 0; i < 8; i++)
             {
                 uint16_t SelPosX =
-                  select1_x + fourParamsSelOffset[tracks->selectedParam] + (tracksWidth * i);
+                  select1_x + P4SELOFF(tracks->selectedParam) + (tracksWidth * i);
                 if (SelPosX < select2_x && SelPosX > select1_x)
                 {
                     API_VERTEX2F(SelPosX, select1_y + 1);
-                    API_VERTEX2F(SelPosX + fourParamsSelWidth[tracks->selectedParam], sel2_y_temp);
+                    API_VERTEX2F(SelPosX + P4SELWIDTH(tracks->selectedParam), sel2_y_temp);
                 }
             }
         }
@@ -765,8 +794,8 @@ void cTracker::selection()
         }
         else if (paramCount == 4)
         {
-            rect_select_x = select_x + fourParamsSelOffset[tracks->selectedParam];
-            rect_select_width = fourParamsSelWidth[tracks->selectedParam];
+            rect_select_x = select_x + P4SELOFF(tracks->selectedParam);
+            rect_select_width = P4SELWIDTH(tracks->selectedParam);
         }
 
         API_COLOR(selection_color);
@@ -1008,7 +1037,7 @@ void cTracker::notes()
     API_BEGIN(BITMAPS);
 
     uint8_t offset_y = posY + 12;
-    uint8_t offset_x = rightOffset + fourParamsOffset[0];
+    uint8_t offset_x = rightOffset + P4OFF(0);
 
     // if(paramCount == 1) 		offset_x = 27 + ((tracksSpace/2)-(param_length[1]*12)/2);
     if (paramCount == 1)
@@ -1038,7 +1067,7 @@ void cTracker::notes()
                 actualColor = colors[14];
             else
             {
-                if (tracks->inactive[tracks->firstVisibleTrack + i])
+                if (tracks->inactive[tracks->firstVisibleTrack + i] || tracks->isBeyondLength(tracks->firstVisibleTrack + i, j))
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[6];
@@ -1065,7 +1094,7 @@ void cTracker::instruments()
     API_BEGIN(BITMAPS);
 
     uint8_t offset_y = posY + 12;
-    uint8_t offset_x = rightOffset + fourParamsOffset[1]; // 59
+    uint8_t offset_x = rightOffset + P4OFF(1); // 59
     if (paramCount == 1)
         offset_x = rightOffset + oneParamsOffset[1];
     else if (paramCount == 2)
@@ -1094,7 +1123,7 @@ void cTracker::instruments()
                 actualColor = colors[14];
             else
             {
-                if (tracks->inactive[track])
+                if (tracks->inactive[track] || tracks->isBeyondLength(track, j))
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[7];
@@ -1132,7 +1161,7 @@ void cTracker::fxes1()
     API_BEGIN(BITMAPS);
 
     uint8_t offset_y = posY + 12;
-    uint8_t offset_x = rightOffset + fourParamsOffset[2]; // 99
+    uint8_t offset_x = rightOffset + P4OFF(2); // 99
     if (paramCount == 1)
         offset_x = rightOffset + oneParamsOffset[2];
     else if (paramCount == 2)
@@ -1161,14 +1190,14 @@ void cTracker::fxes1()
                 actualColor = colors[14];
             else
             {
-                if (tracks->inactive[tracks->firstVisibleTrack + i])
+                if (tracks->inactive[tracks->firstVisibleTrack + i] || tracks->isBeyondLength(tracks->firstVisibleTrack + i, j))
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[8];
                 else if (text[1] == '-' && text[2] == '-')
                     actualColor = dimFx1Color;
                 else
-                    actualColor = colors[4];
+                    actualColor = tracks->fxBank34 ? colors[17] : colors[4];
             }
             String2Bitmaps(param_x, param_y, &fonts[text_font], text, param_length[3]);
         }
@@ -1187,7 +1216,7 @@ void cTracker::fxes2()
     API_BEGIN(BITMAPS);
 
     uint8_t offset_y = posY + 12;
-    uint8_t offset_x = rightOffset + fourParamsOffset[3];
+    uint8_t offset_x = rightOffset + P4OFF(3);
     if (paramCount == 1)
         offset_x = rightOffset + oneParamsOffset[3];
     else if (paramCount == 2)
@@ -1215,14 +1244,14 @@ void cTracker::fxes2()
                 actualColor = colors[14];
             else
             {
-                if (tracks->inactive[tracks->firstVisibleTrack + i])
+                if (tracks->inactive[tracks->firstVisibleTrack + i] || tracks->isBeyondLength(tracks->firstVisibleTrack + i, j))
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[9];
                 else if (text[1] == '-' && text[2] == '-')
                     actualColor = dimFx2Color;
                 else
-                    actualColor = colors[5];
+                    actualColor = tracks->fxBank34 ? colors[17] : colors[5];
             }
 
             String2Bitmaps(param_x, param_y, &fonts[text_font], text, param_length[3]);
@@ -1231,6 +1260,123 @@ void cTracker::fxes2()
     API_END();
     API_RESTORE_CONTEXT();
 }
+//===============================================================================================================================
+// What the step byte volume (V, 0..100) and micro-move (m, 0..100) of a cell is, without a column of its own: a bar along the lower edge of the
+// note and instrument whose length is V, a tick on the left edge whose height is m (the later the lower), and a small + at the right edge
+// when the other FX bank (slots 3/4 of the "4 FX" switch, or 1/2 while bank 3/4 is on screen) holds an FX in the step
+void cTracker::marks()
+{
+    bool any = false;
+    for (uint16_t i = 0; i < columnsCount && !any; i++)
+    {
+        const auto& t = tracks->track[tracks->firstVisibleTrack + i];
+        for (uint16_t j = 0; j < rowCount; j++)
+        {
+            if (t.row[j].vol >= 0 || t.row[j].mm >= 0 || t.row[j].hidden)
+            {
+                any = true;
+                break;
+            }
+        }
+    }
+    if (!any)
+    {
+        return;
+    }
+
+    API_SAVE_CONTEXT();
+    API_LINE_WIDTH(8);
+    API_BEGIN(RECTS);
+
+    for (uint16_t i = 0; i < columnsCount; i++)
+    {
+        const uint8_t track = tracks->firstVisibleTrack + i;
+        const int16_t x0 = rightOffset + i * tracksWidth;
+        for (uint16_t j = 0; j < rowCount; j++)
+        {
+            const auto& row = tracks->track[track].row[j];
+            if (row.note[0] == 0 || (row.vol < 0 && row.mm < 0 && !row.hidden))
+            {
+                continue;
+            }
+            const bool dim = tracks->inactive[track] || tracks->isBeyondLength(track, j);
+            const int16_t y0 = posY + j * stepHight;
+
+            if (row.vol >= 0)
+            {
+                const int16_t w = std::max<int16_t>(2, std::min<int16_t>(row.vol, 100) * 70 / 100);
+                API_COLOR(dim ? colors[12] : colors[3]);
+                API_VERTEX2F(x0 + 8, y0 + stepHight - 5);
+                API_VERTEX2F(x0 + 8 + w, y0 + stepHight - 4);
+            }
+            if (row.mm >= 0)
+            {
+                const int16_t y = y0 + 3 + std::min<int16_t>(row.mm, 100) * (stepHight - 11) / 100;
+                API_COLOR(dim ? colors[12] : colors[5]);
+                API_VERTEX2F(x0 + 2, y);
+                API_VERTEX2F(x0 + 4, y + 3);
+            }
+            if (row.hidden)
+            {
+                const int16_t x = x0 + tracksWidth - 11;
+                API_COLOR(dim ? colors[12] : (tracks->fxBank34 ? colors[4] : colors[17]));
+                API_VERTEX2F(x, y0 + 3);
+                API_VERTEX2F(x + 5, y0 + 4);
+                API_VERTEX2F(x + 2, y0 + 1);
+                API_VERTEX2F(x + 3, y0 + 6);
+            }
+        }
+    }
+    API_END();
+    API_RESTORE_CONTEXT();
+}
+
+// V and m as text columns of the 3 track layout. 3 characters each, "---" while the step has none, colored like the FX columns
+void cTracker::vmColumns()
+{
+    API_SAVE_CONTEXT();
+    actualColor = lastFontColor = colors[4];
+    API_COLOR(actualColor);
+    lastFontHandle = -1;
+    s_lastCell = -1;
+    API_BEGIN(BITMAPS);
+
+    const uint8_t offset_y = posY + 12;
+    for (uint8_t col = 0; col < 2; col++)
+    {
+        const int16_t offset_x = rightOffset + sixParamsOffset[4 + col];
+        for (uint16_t i = 0; i < columnsCount; i++)
+        {
+            const uint8_t track = tracks->firstVisibleTrack + i;
+            for (uint16_t j = 0; j < rowCount; j++)
+            {
+                const auto& row = tracks->track[track].row[j];
+                if (row.note[0] == 0)
+                {
+                    continue;
+                }
+                const int8_t val = col == 0 ? row.vol : row.mm;
+                char text[4] = { '-', '-', '-', 0 };
+                if (val >= 0)
+                {
+                    text[0] = val >= 100 ? char('0' + val / 100) : ' ';
+                    text[1] = val >= 10 ? char('0' + (val / 10) % 10) : ' ';
+                    text[2] = char('0' + val % 10);
+                }
+                if (tracks->inactive[track] || tracks->isBeyondLength(track, j))
+                    actualColor = colors[12];
+                else if (val < 0)
+                    actualColor = colors[col == 0 ? 8 : 9];
+                else
+                    actualColor = colors[col == 0 ? 4 : 5];
+                String2Bitmaps(offset_x + i * tracksWidth, offset_y + j * stepHight, &fonts[text_font], text, 3);
+            }
+        }
+    }
+    API_END();
+    API_RESTORE_CONTEXT();
+}
+
 //===============================================================================================================================
 //===============================================================================================================================
 //===============================================================================================================================

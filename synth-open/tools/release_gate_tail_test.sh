@@ -4,12 +4,16 @@
 # Builds small valid .ptf files (vector table, stock flash config, data up to a chosen end) whose last 4 KB sector holds N bytes, and checks:
 #   check_ptf.py --min-tail 0x800   exit 0 for a tail of 0x800 and more (and for 0 = the image ends on a sector line), exit 1 below
 #   release_gate.sh                 exit 1 BEFORE the simulator for a short tail (so the control needs no plugins or old release), exit 2 without an image
+#   check_ptf.py --proven 0xFC2AC  exit 1 for an image that ends past the device-proven end, exit 0 with ALLOW_UNPROVEN_END=1 (and a WARNING line),
+#                                   --warn-proven only warns. release_gate.sh does the same before the simulator (IMAGE_CHECK_ONLY=1 stops after it)
 # With REAL_IMAGE (a built release .ptf) the same image is also cut so that its last sector holds 0x100 B: the gate must fail on it.
+# The SDRAM floor (SDRAM_MIN 16384 B) has its own block at the end: the figure from SDRAM_FREE or from the BUILD.txt next to the image, RED below the floor.
 # The positive case of the gate on a real image is the full release_gate.sh run (it takes minutes, the simulator runs).
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 bad=0
+export SDRAM_FREE=519416   # the 1.4.0 release image, the SDRAM check of the gate has its own block at the end
 ok()   { echo "ok   $*"; }
 fail() { echo "FAIL $*"; bad=$((bad+1)); }
 
@@ -91,6 +95,56 @@ if [ -n "${1:-}" ]; then
     gate 1 "REAL image cut to a 0x100 tail (negative control)" "$tmp/real_short.ptf"
     chk 0 "REAL image as built" "$1"
 fi
+
+# device-proven end (0xFC2AC): fatal for --proven, a warning for --warn-proven, overridable with ALLOW_UNPROVEN_END=1
+chkp() { # <expect rc> <label> <ptf> <check_ptf args...>   (env ALLOW_UNPROVEN_END passes through)
+    local want="$1" label="$2" ptf="$3"; shift 3
+    python3 -I "$here/check_ptf.py" "$@" "$ptf" > "$tmp/o" 2>&1; local rc=$?
+    if [ "$rc" = "$want" ]; then ok "check_ptf $label -> $rc"; else fail "check_ptf $label: want $want got $rc"; sed 's/^/     /' "$tmp/o"; fi
+}
+mk "$tmp/p_end.ptf" 0xFC2AC;  chkp 0 "end 0xFC2AC (the proven end itself) --proven" "$tmp/p_end.ptf" --proven 0xFC2AC
+mk "$tmp/p_over1.ptf" 0xFC2AD; chkp 1 "end 0xFC2AD (one past) --proven" "$tmp/p_over1.ptf" --proven 0xFC2AC
+grep -q "device-proven" "$tmp/o" && grep -q "ALLOW_UNPROVEN_END=1" "$tmp/o" && ok "message names the proven end and the override" || { fail "proven message"; sed 's/^/     /' "$tmp/o"; }
+mk "$tmp/p_good.ptf" 0xFB900;  chkp 0 "end 0xFB900 --proven --min-tail" "$tmp/p_good.ptf" --min-tail 0x800 --proven 0xFC2AC
+grep -q "B under the device-proven 0xFC2AC" "$tmp/o" && ok "ok line reports the free bytes against the proven end" || { fail "ok line"; sed 's/^/     /' "$tmp/o"; }
+mk "$tmp/p_over.ptf" 0xFC900;  chkp 1 "end 0xFC900 --proven --min-tail" "$tmp/p_over.ptf" --min-tail 0x800 --proven 0xFC2AC
+ALLOW_UNPROVEN_END=1 chkp 0 "end 0xFC900 --proven with ALLOW_UNPROVEN_END=1" "$tmp/p_over.ptf" --min-tail 0x800 --proven 0xFC2AC
+grep -q "WARNING" "$tmp/o" && grep -q "ALLOW_UNPROVEN_END=1 is set" "$tmp/o" && ok "override prints a WARNING" || { fail "override warning"; sed 's/^/     /' "$tmp/o"; }
+ALLOW_UNPROVEN_END=0 chkp 1 "end 0xFC900 --proven with ALLOW_UNPROVEN_END=0 (only 1 overrides)" "$tmp/p_over.ptf" --proven 0xFC2AC
+chkp 0 "end 0xFC900 --warn-proven (make original)" "$tmp/p_over.ptf" --warn-proven 0xFC2AC
+grep -q "WARNING" "$tmp/o" && ok "--warn-proven prints a WARNING" || { fail "warn-proven"; sed 's/^/     /' "$tmp/o"; }
+gatep() { # <expect rc> <label> <ptf>   release_gate.sh up to its image check
+    IMAGE="$3" IMAGE_CHECK_ONLY=1 "$here/release_gate.sh" > "$tmp/o" 2>&1; local rc=$?
+    if [ "$rc" = "$1" ]; then ok "release_gate $2 -> $rc"; else fail "release_gate $2: want $1 got $rc"; sed 's/^/     /' "$tmp/o" | head -8; fi
+}
+gatep 0 "end 0xFB900, within the proven end" "$tmp/p_good.ptf"
+gatep 1 "end 0xFC900, past the proven end (negative control)" "$tmp/p_over.ptf"
+grep -q "release gate: FAIL - image check" "$tmp/o" && grep -q "device-proven" "$tmp/o" && ok "gate message names the proven end" || { fail "gate proven message"; sed 's/^/     /' "$tmp/o"; }
+ALLOW_UNPROVEN_END=1 gatep 0 "end 0xFC900 with ALLOW_UNPROVEN_END=1" "$tmp/p_over.ptf"
+grep -q "release gate: WARNING" "$tmp/o" && ok "gate prints the override warning" || { fail "gate override warning"; sed 's/^/     /' "$tmp/o"; }
+PROVEN_END=0xFD000 gatep 0 "end 0xFC900 with PROVEN_END=0xFD000 (a newly proven end)" "$tmp/p_over.ptf"
+
+# SDRAM floor (SDRAM_MIN 16384 B, 16 MiB minus .noinit_RAM4): SDRAM_FREE gives the figure, else the BUILD.txt next to the image
+SDRAM_FREE=16384 gatep 0 "SDRAM free 16384 (the floor itself)" "$tmp/p_good.ptf"
+grep -q "release gate: SDRAM ok (16384 B free" "$tmp/o" && ok "gate prints the SDRAM line" || { fail "SDRAM ok line"; sed 's/^/     /' "$tmp/o"; }
+SDRAM_FREE=16383 gatep 1 "SDRAM free 16383 (one under the floor)" "$tmp/p_good.ptf"
+SDRAM_FREE=1000 gatep 1 "SDRAM free 1000 (negative control)" "$tmp/p_good.ptf"
+grep -q "release gate: FAIL - SDRAM: 1000 B free, the floor is 16384 B" "$tmp/o" && ok "gate message names the SDRAM floor" || { fail "SDRAM message"; sed 's/^/     /' "$tmp/o"; }
+SDRAM_FREE=-5 gatep 1 "SDRAM free -5 (over the 16 MiB)" "$tmp/p_good.ptf"
+SDRAM_FREE=abc gatep 2 "SDRAM free not a number" "$tmp/p_good.ptf"
+SDRAM_FREE=30000 SDRAM_MIN=40000 gatep 1 "SDRAM_MIN raised above the free bytes" "$tmp/p_good.ptf"
+mkdir -p "$tmp/bt"; cp "$tmp/p_good.ptf" "$tmp/bt/PolyendTracker_FF_9.9.9.ptf"
+bt="$tmp/bt/BUILD.txt"
+printf 'firmware: PolyendTracker_FF_9.9.9.ptf\nsdram used: 16257800\nsdram free: 519416\n' > "$bt"
+( unset SDRAM_FREE; gatep 0 "BUILD.txt next to the image, 519416 B free" "$tmp/bt/PolyendTracker_FF_9.9.9.ptf" )
+printf 'firmware: PolyendTracker_FF_9.9.9.ptf\nsdram used: 16770000\nsdram free: 7216\n' > "$bt"
+( unset SDRAM_FREE; gatep 1 "BUILD.txt next to the image, 7216 B free (negative control)" "$tmp/bt/PolyendTracker_FF_9.9.9.ptf" )
+printf 'firmware: PolyendTracker_FF_1.0.0.ptf\nsdram used: 16257800\nsdram free: 519416\n' > "$bt"
+( unset SDRAM_FREE; gatep 2 "BUILD.txt of another image" "$tmp/bt/PolyendTracker_FF_9.9.9.ptf" )
+printf 'firmware: PolyendTracker_FF_9.9.9.ptf\nfree: 25772\n' > "$bt"
+( unset SDRAM_FREE; gatep 2 "BUILD.txt without an sdram line (built before the check)" "$tmp/bt/PolyendTracker_FF_9.9.9.ptf" )
+rm -f "$bt"
+( unset SDRAM_FREE; gatep 2 "no BUILD.txt and no SDRAM_FREE" "$tmp/bt/PolyendTracker_FF_9.9.9.ptf" )
 echo
 [ "$bad" = 0 ] && { echo "release_gate_tail_test: all passed"; exit 0; }
 echo "release_gate_tail_test: $bad failed"; exit 1

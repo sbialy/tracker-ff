@@ -14,8 +14,11 @@
 // slots are not written, the whole field is left out when every slot is Off. A version above 1 is kept raw (a later image's block), a
 // malformed block is dropped (automation Off, the sound still loads). Ranges are checked at import (open_cold.cpp).
 // Field 100: macro depth mode (varint, 1 = Scale, absent = Add; written after the automation block and only for Scale).
+// Field 101: wave file references, repeated, {1 param, 2 path, 3 index} (open_patchdata.h WaveRef), written after field 100 and only for a patch that
+// has one. A reference this codec cannot use (bad path, parameter out of range, a fifth, a duplicate, a sub field it does not know) is kept raw.
 // Built at -Os (cold code).
 #include "open_patchdata.h"
+#include "wave_path.h"
 
 #include "PolySynth/config.h"
 
@@ -221,6 +224,66 @@ ModSlot modZero()
 }
 
 // 1: decoded into out, 0: malformed (dropped), 2: another version (the caller keeps the bytes raw)
+// One field 101 body. False (w untouched) when it is not a reference this release can use: the caller keeps the field raw
+bool decodeWaveRef(Reader r, WaveRefs& w)
+{
+    WaveRef ref;
+    ref.param = -1;
+    bool havePath = false;
+    uint32_t f;
+    uint8_t wt;
+    uint64_t v;
+    Reader s;
+    while (r.p < r.end)
+    {
+        if (!r.tag(f, wt))
+        {
+            return false;
+        }
+        if (f == 1 && wt == 0)
+        {
+            if (!r.varint(v) || v >= uint64_t(kMaxParams))
+            {
+                return false;
+            }
+            ref.param = int16_t(v);
+        }
+        else if (f == 2 && wt == 2)
+        {
+            if (!r.len(s) || s.end - s.p >= kWavePath)
+            {
+                return false;
+            }
+            std::memcpy(ref.path, s.p, size_t(s.end - s.p));
+            ref.path[s.end - s.p] = 0;
+            havePath = true;
+        }
+        else if (f == 3 && wt == 0)
+        {
+            if (!r.varint(v) || v > 32767)
+            {
+                return false;
+            }
+            ref.index = int16_t(v);
+        }
+        else
+        {
+            return false; // a sub field of a later release: the whole field stays as it is
+        }
+    }
+    // field 1 absent = parameter 0 (zero varints are omitted)
+    if (ref.param < 0)
+    {
+        ref.param = 0;
+    }
+    if (!havePath || !plug::wavePathOk(ref.path) || w.n >= kWaveRefs || w.find(ref.param) >= 0)
+    {
+        return false;
+    }
+    w.ref[w.n++] = ref;
+    return true;
+}
+
 int decodeMod(Reader r, ModSlot* out)
 {
     ModSlot tmp[kModSlots];
@@ -577,6 +640,15 @@ bool decodePatch(const uint8_t* data, size_t len, PatchData& out)
                 }
                 // another version: kept raw, as an image without automation keeps it
             }
+            if (f == kWaveField && wt == 2)
+            {
+                Reader whole{ start, r.p };
+                Reader body{};
+                if (whole.tag(f, wt) && whole.len(body) && decodeWaveRef(body, out.waves))
+                {
+                    continue; // taken as a reference
+                }
+            }
             const size_t n = size_t(r.p - start);
             if (out.extra.len + n > kRawMax)
             {
@@ -702,6 +774,29 @@ size_t encodePatch(const PatchData& p, uint8_t* out, size_t cap)
     {
         w.tag(kMacroModeField, 0);
         w.byte(kMacroModeScale);
+    }
+    flush(kWaveField);
+    for (int i = 0; i < p.waves.n; i++)
+    {
+        const WaveRef& ref = p.waves.ref[i];
+        uint8_t buf[8 + kWavePath];
+        Writer b{ buf, buf + sizeof(buf) };
+        if (ref.param > 0)
+        {
+            b.tag(1, 0);
+            b.varint(uint64_t(ref.param));
+        }
+        const size_t n = strnlen(ref.path, kWavePath - 1);
+        b.tag(2, 2);
+        b.varint(n);
+        b.bytes(ref.path, n);
+        if (ref.index > 0)
+        {
+            b.tag(3, 0);
+            b.varint(uint64_t(ref.index));
+        }
+        w.ok = w.ok && b.ok;
+        w.sub(kWaveField, b, buf);
     }
     flush(0xFFFFFFFFu);
     return w.ok && pos == p.extra.len ? size_t(w.p - out) : 0;

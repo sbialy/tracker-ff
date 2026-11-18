@@ -7,7 +7,6 @@ AUDIO_CORE_FLASH void AudioPlayMemory::playBeatSlice(uint8_t instrIdx, int8_t no
     AudioNoInterrupts();
 
     uint8_t localSlice;
-    FIRST_BEAT_SLICE_NOTE;
 
     if (note < FIRST_BEAT_SLICE_NOTE)
         localSlice = 0;

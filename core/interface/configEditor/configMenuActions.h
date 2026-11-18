@@ -13,11 +13,22 @@ void setPadsBrightness();
 void setLineInOutType();
 
 void setPadBoardValues();
+void setScaleSnap();
 void setAntialiasingEnable();
 void setLimiterMode();
 void setSendsMode();
 void setHeadroomMode();
 void setSnapToZeroMode();
+void setRandomSeedValue();      // Project Settings > Random seed: the project changed
+void rerollRandomSeedAction();  // Project Settings > Reroll seed
+#ifdef FEATURE_PLUG_HOST
+// Project Settings page (opened from the File screen, kOpenProjectSettings)
+extern uint8_t projFxSlots, projMacroMode, projStrumVolume;
+void projectPageSync();
+void setProjFxSlots();
+void setProjMacroMode();
+void setProjStrumVolume();
+#endif
 
 void setMetronomValues();
 void setSlaveClockCompValue();
@@ -42,5 +53,6 @@ void setFunctionKey8();
 void resetConfigShowPopup();
 void usbStorageEnter();
 void usbAudioChange();
+void usbMenuRefresh(); // Config > USB follows Features (USB audio, USB drive)
 
 #endif /* INTERFACE_CONFIGEDITOR_CONFIGMENUACTIONS_H_ */

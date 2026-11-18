@@ -1,4 +1,9 @@
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
 #include "ProjectOpen.h"
+#include "fx34_io.h"
+#include "mtFollowChord.h"
 #ifdef FEATURE_PLUG_HOST
 #include "plug_host.h"
 #endif
@@ -229,6 +234,11 @@ bool ProjectOpen::copyPaterns(int& idx)
 
     if (loadStatus == fileTransferEnd)
     {
+        fx34io::copyFile(srcPatternFilePath, destPatternFilePath); // FX3 and FX4 of the pattern travel with it (the 4 FX switch)
+    }
+
+    if (loadStatus == fileTransferEnd)
+    {
         return true;
     }
     else if (loadStatus == fileTransferFileNoExist)
@@ -380,6 +390,7 @@ void ProjectOpen::openProjectFinish()
 #endif
 
     //-----------------------------------
+
 
 #ifdef FEATURE_SYNTH_OPEN
     static_assert(FILEMANAGER_HANDLE_SYNTH == 1, "the open synth always has the bank copy");

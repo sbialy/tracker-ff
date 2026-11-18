@@ -75,7 +75,7 @@ uint8_t EveModel::sendString(const char* s, uint32_t length)
 {
     HostFaultSuspend keep;
     // like the firmware's API_SendString: a length past the end of the string is clamped to it
-    // A null string is read from address 0 on the MCU (readable flash, host_mcunull.h), here it is the empty string
+    // A null string is read from address 0 on the MCU (readable flash: the vector table starts with the stack pointer 0x20030000, its first byte is 0, an empty text), here it is the empty string
     if (!s) s = "";
     const uint32_t have = uint32_t(strlen(s));
     if (!length || length > have) length = have;
@@ -170,6 +170,8 @@ void EveModel::exec(uint32_t id)
         case CMD_DLSTART: dl_.clear(); break;
         case CMD_SWAP:
             if (dl_.empty() || dl_.back() != 0) emit(0);
+            stats.frameWords = uint32_t(dl_.size());
+            if (stats.frameWords > stats.frameWordsMax) stats.frameWordsMax = stats.frameWords;
             render();
             break;
         case CMD_SETBASE: base_ = int(A()); break;
@@ -219,6 +221,17 @@ void EveModel::exec(uint32_t id)
         case CMD_MEMCPY:
         {
             const uint32_t dst = A(), src = A(), num = A();
+            if (src >= kRamDl && dst >= 150000u && dst < 150000u + 80u * 8192u)
+            {   // a control's display list stored into its slot: stage 0 starts at the slot base, later stages follow it
+                const uint32_t off = (dst - 150000u) % 8192u;
+                if (off == 0) stats.curSlot = int((dst - 150000u) / 8192u);
+                if (stats.curSlot >= 0)
+                {
+                    const uint32_t end = dst + num - (150000u + uint32_t(stats.curSlot) * 8192u);
+                    stats.slotBytes[stats.curSlot] = end;
+                    if (end > stats.slotBytesMax[stats.curSlot]) stats.slotBytesMax[stats.curSlot] = end;
+                }
+            }
             std::vector<uint8_t> tmp(num, 0);
             if (src >= kRamDl) { for (uint32_t i = 0; i < num; i++) { const size_t wi = (src - kRamDl + i) / 4; tmp[i] = wi < dl_.size() ? uint8_t(dl_[wi] >> (8 * ((src - kRamDl + i) & 3))) : 0; } }
             else if (src + num <= kRamG) memcpy(tmp.data(), &ramg_[src], num);

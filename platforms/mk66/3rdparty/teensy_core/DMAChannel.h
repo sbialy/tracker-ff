@@ -515,6 +515,7 @@ class DMASetting : public DMABaseClass
         TCD = &tcddata;
         *this = c;
     }
+    DMASetting& operator=(const DMASetting&) = default;
     DMASetting(const DMABaseClass& c)
     {
         TCD = &tcddata;

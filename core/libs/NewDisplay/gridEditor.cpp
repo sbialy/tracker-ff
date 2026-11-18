@@ -152,7 +152,7 @@ void cGridEditorPopup::fillpadMap()
 
     for (uint8_t i = 0; i < 48; i++)
     {
-        if (i >= 0 && (i <= 11))
+        if (i <= 11)
         {
             if (i == 0)
                 padMap[i].x = posX;

@@ -18,6 +18,9 @@ void mtSliceManager::addSlice(strInstrument* instr)
         instr->slices[0] = 0;
         return;
     }
+    // Lowering the slice count can leave the selection past the last slice.
+    if (instr->selectedSlice >= instr->sliceNumber)
+        instr->selectedSlice = instr->sliceNumber - 1;
     if (instr->selectedSlice == (instr->sliceNumber - 1))
     {
         instr->selectedSlice++;
@@ -126,6 +129,8 @@ void mtSliceManager::autoSlice(strInstrument* instr)
 void mtSliceManager::equalSlice(strInstrument* instr, uint8_t n)
 {
     instr->sliceNumber = n;
+    if (instr->selectedSlice >= n)
+        instr->selectedSlice = (n > 0) ? n - 1 : 0;
 
     for (uint8_t i = 0; i < n; i++)
     {

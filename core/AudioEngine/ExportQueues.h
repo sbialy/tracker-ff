@@ -14,11 +14,9 @@ class ExportQueues
         kChannelsCount
     };
 
-    AudioAnalyzeRMS* getChannelRms(ExportChannels channel);
     AudioRecordQueue* getQueue(ExportChannels channel, mtAudioExport::enStem stem);
 
   private:
-    AudioAnalyzeRMS channelRMS[ExportChannels::kChannelsCount];
     AudioRecordQueue queue[ExportChannels::kChannelsCount][mtAudioExport::stem_totalCount];
 };
 

@@ -11,8 +11,14 @@
 #include "Platform.h"
 #include "TrackerImpl.h"
 #include "core/interface.h"
+#ifdef FEATURE_EXT_HOOKS
+#include "midiRemote.h"
+#endif
 #include "util_math.h"
 #include <cmath>
+#ifdef FEATURE_SYNTH_OPEN
+#include "synthPlayRouter.h"
+#endif
 
 extern cPatternEditor patternEditor;
 
@@ -47,6 +53,7 @@ void midiInit(UartMidi* uartMidi, UsbMidi* usbMidi)
     uartMidiReceiveActions.songPosition = handleJackSongPosition;
     uartMidiReceiveActions.continueMessage = receiveJackContinue;
     uartMidiReceiveActions.controlChange = handleJackControlChange;
+    uartMidiReceiveActions.pitchBend = handleJackPitchBend;
     uartMidi->setReceiveActions(&uartMidiReceiveActions);
 
     // usb
@@ -56,6 +63,7 @@ void midiInit(UartMidi* uartMidi, UsbMidi* usbMidi)
     usbMidiReceiveActions.noteOff = handleUsbNoteOff;
     usbMidiReceiveActions.songPosition = handleUsbSongPosition;
     usbMidiReceiveActions.controlChange = handleUSBControlChange;
+    usbMidiReceiveActions.pitchBend = handleUsbPitchBend;
 
     usbMidi->setReceiveActions(&usbMidiReceiveActions);
 }
@@ -79,8 +87,28 @@ void midiUpdate()
         {
             usbMidi->read();
         }
+#ifdef FEATURE_EXT_HOOKS
+        // after the queue: a note on read above is let go with the rest, no note off follows a pulled cable
+        if (usbMidi->takeBusLost())
+        {
+            midi_remote::releaseSource(midi_remote::kSourceUsb);
+        }
+#endif
     }
 }
+
+#ifdef FEATURE_SYNTH_OPEN
+// The Synth play page owns the MIDI in (mtSequencer.h, enMidiInVoiceMode): its own Input and Channel, no Config > MIDI gates, no song transport
+static bool playPage()
+{
+    return sequencer.getMidiInVoiceMode() == Sequencer::midiInVoiceMode_SynthPlay;
+}
+#else
+static constexpr bool playPage()
+{
+    return false;
+}
+#endif
 
 uint8_t isIncomingChannelDesired(uint8_t chan)
 {
@@ -161,6 +189,17 @@ static bool handleTrackMidiNoteOff(uint8_t channel, uint8_t pitch)
 
 void handleJackNoteOn(byte channel, byte pitch, byte velocity)
 {
+#ifdef FEATURE_EXT_HOOKS
+    if (midi_remote::note(channel, pitch, velocity, velocity != 0, midi_remote::kSourceDin))
+        return;
+#endif
+#ifdef FEATURE_SYNTH_OPEN
+    if (playPage())
+    {
+        synthplay::noteOn(synthplay::kDin, channel, pitch, velocity);
+        return;
+    }
+#endif
     //	Serial.printf("ON\tch: %d, pitch: %d, velo: %d \r\n", channel, pitch,
     //					velocity);
     //	MIDI.sendNoteOn(pitch, velocity, channel);
@@ -209,6 +248,17 @@ void handleJackNoteOn(byte channel, byte pitch, byte velocity)
 }
 void handleUsbNoteOn(byte channel, byte pitch, byte velocity)
 {
+#ifdef FEATURE_EXT_HOOKS
+    if (midi_remote::note(channel, pitch, velocity, velocity != 0))
+        return;
+#endif
+#ifdef FEATURE_SYNTH_OPEN
+    if (playPage())
+    {
+        synthplay::noteOn(synthplay::kUsb, channel, pitch, velocity);
+        return;
+    }
+#endif
     //	Serial.printf("ON\tch: %d, pitch: %d, velo: %d \r\n", channel, pitch,
     //					velocity);
     //	MIDI.sendNoteOn(pitch, velocity, channel);
@@ -257,6 +307,17 @@ void handleUsbNoteOn(byte channel, byte pitch, byte velocity)
 
 void handleJackNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
 {
+#ifdef FEATURE_EXT_HOOKS
+    if (midi_remote::note(channel, pitch, 0, false, midi_remote::kSourceDin))
+        return;
+#endif
+#ifdef FEATURE_SYNTH_OPEN
+    if (playPage())
+    {
+        synthplay::noteOff(synthplay::kDin, channel, pitch);
+        return;
+    }
+#endif
 
     //	Serial.printf("OFF\tch: %d, pitch: %d, velo: %d\r\n", channel, pitch,
     //					velocity);
@@ -306,6 +367,17 @@ void handleJackNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
 
 void handleUsbNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
 {
+#ifdef FEATURE_EXT_HOOKS
+    if (midi_remote::note(channel, pitch, 0, false))
+        return;
+#endif
+#ifdef FEATURE_SYNTH_OPEN
+    if (playPage())
+    {
+        synthplay::noteOff(synthplay::kUsb, channel, pitch);
+        return;
+    }
+#endif
 
     //	Serial.printf("OFF\tch: %d, pitch: %d, velo: %d\r\n", channel, pitch,
     //					velocity);
@@ -353,6 +425,14 @@ void handleUsbNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
 
 void handleJackControlChange(byte channel, byte number, byte value)
 {
+#ifdef FEATURE_EXT_HOOKS
+    if (midi_remote::cc(channel, number, value))
+        return;
+#endif
+#ifdef FEATURE_SYNTH_OPEN
+    if (playPage() && synthplay::controlChange(synthplay::kDin, channel, number, value))
+        return;
+#endif
 
     if ((mtConfig.midi.ccInMode == ccIn_None) || (mtConfig.midi.ccInMode == ccIn_usb))
         return;
@@ -371,6 +451,14 @@ void handleJackControlChange(byte channel, byte number, byte value)
 
 void handleUSBControlChange(byte channel, byte number, byte value)
 {
+#ifdef FEATURE_EXT_HOOKS
+    if (midi_remote::cc(channel, number, value))
+        return;
+#endif
+#ifdef FEATURE_SYNTH_OPEN
+    if (playPage() && synthplay::controlChange(synthplay::kUsb, channel, number, value))
+        return;
+#endif
     if ((mtConfig.midi.ccInMode == ccIn_None) || (mtConfig.midi.ccInMode == ccIn_jack))
         return;
 
@@ -384,6 +472,23 @@ void handleUSBControlChange(byte channel, byte number, byte value)
         IE->onControlChangeReceive(number, value);
         SP->onControlChangeReceive(number, value);
     }
+}
+
+// Pitch bend in: only the Synth play page uses it (the part scales it by its live bend range), every other page drops it as before
+void handleJackPitchBend([[maybe_unused]] uint8_t channel, [[maybe_unused]] int bend)
+{
+#ifdef FEATURE_SYNTH_OPEN
+    if (playPage())
+        synthplay::pitchBend(synthplay::kDin, channel, bend);
+#endif
+}
+
+void handleUsbPitchBend([[maybe_unused]] uint8_t channel, [[maybe_unused]] int bend)
+{
+#ifdef FEATURE_SYNTH_OPEN
+    if (playPage())
+        synthplay::pitchBend(synthplay::kUsb, channel, bend);
+#endif
 }
 
 static uint32_t s_audioBlockStartUs = 0;
@@ -558,18 +663,24 @@ void receiveClock()
 
 void receiveStart()
 {
+    if (playPage())
+        return;
     bool songMode = mtInterface.isSongScreenActive();
     sequencer.handleMidiInStart(false, songMode);
 }
 
 void receiveContinue()
 {
+    if (playPage())
+        return;
     bool songMode = mtInterface.isSongScreenActive();
     sequencer.handleMidiInStart(true, songMode);
 }
 
 void receiveStop()
 {
+    if (playPage())
+        return;
     sequencer.handleMidiInStop();
 }
 
@@ -578,7 +689,7 @@ void handleUsbSongPosition(uint16_t beats)
     //	Serial.printf("song pos: %d beats\n", beats);
     //	sequencer.forcePosition(beats);
 
-    if (mtConfig.midi.transportIn == clockIn_Usb)
+    if (mtConfig.midi.transportIn == clockIn_Usb && !playPage())
     {
         lastSongPosition = beats;
         sequencer.handleMidiInSongPosition(beats);
@@ -589,7 +700,7 @@ void handleJackSongPosition(unsigned int beats)
 {
     //	Serial.printf("song pos: %d beasts\n", beats);
     //	sequencer.forcePosition(beats);
-    if (mtConfig.midi.transportIn == clockIn_Jack)
+    if (mtConfig.midi.transportIn == clockIn_Jack && !playPage())
     {
         lastSongPosition = beats;
         sequencer.handleMidiInSongPosition(static_cast<uint16_t>(beats));

@@ -23,8 +23,8 @@ void check(bool ok, const char* what)
 
 int main()
 {
-    const unsigned ids[] = { PLUG_EXT_STATE, PLUG_EXT_TAIL, PLUG_EXT_SYNTH, PLUG_EXT_TEMPO, PLUG_EXT_CHORD };
-    const char* names[] = { "STATE", "TAIL", "SYNTH", "TEMPO", "CHORD" };
+    const unsigned ids[] = { PLUG_EXT_STATE, PLUG_EXT_TAIL, PLUG_EXT_SYNTH, PLUG_EXT_TEMPO, PLUG_EXT_CHORD, PLUG_EXT_STRUM };
+    const char* names[] = { "STATE", "TAIL", "SYNTH", "TEMPO", "CHORD", "STRUM" };
     const unsigned n = sizeof(ids) / sizeof(ids[0]);
     for (unsigned i = 0; i < n; i++)
     {
@@ -38,6 +38,8 @@ int main()
     check(PLUG_EXT_STATE == 1 && PLUG_EXT_TAIL == 2 && PLUG_EXT_SYNTH == 3 && PLUG_EXT_TEMPO == 4, "ids 1 to 4 are the 1.0 and 1.1 values");
     check(PLUG_EXT_CHORD != 5, "PLUG_EXT_CHORD does not sit on 5 (PLUG_EXT_FILES of the host level 2 line)");
     check(PLUG_EXT_CHORD == 6, "PLUG_EXT_CHORD is 6");
+    check(PLUG_EXT_STRUM == 7 && PLUG_EXT_STRUM != 5, "PLUG_EXT_STRUM is 7 (host query), off the 5 of PLUG_EXT_FILES");
+    check(sizeof(plug_ext_strum) == 8 && offsetof(plug_ext_strum, ramp_pct) == 4, "plug_ext_strum is { struct_size, ramp_pct }, 8 bytes");
     printf("plug_abi_ids_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

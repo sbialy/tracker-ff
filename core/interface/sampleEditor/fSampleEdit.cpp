@@ -175,21 +175,7 @@ void cSampleEditor::start([[maybe_unused]] uint32_t options)
         selectedEffectListIdx = 0;
     }
 
-    if (selectedEffectListIdx < kBuiltInEffectsCount)
-    {
-        currentEffectIdx = (uint8_t)selectedEffectListIdx;
-        currentEffect = sampleEditorEffect[currentEffectIdx];
-    }
-    else
-    {
-        currentEffectIdx = editorEffectModular;
-        currentModularPluginIdx = selectedEffectListIdx - kBuiltInEffectsCount;
-        currentEffect = sampleEditorEffect[editorEffectModular];
-        if (PtfxManager::loadPlugin(currentModularPluginIdx, sampleEditorModular))
-        {
-            loadModularEffectUI(PtfxManager::getActiveHeader());
-        }
-    }
+    selectListedEffect();
     currentEffect->undoParams.isEnable = false;
 
     screenType = mainScreen;
@@ -224,13 +210,19 @@ void cSampleEditor::start([[maybe_unused]] uint32_t options)
         }
     }
 
+    if (zoom.zoomValue > 1.0f)
+    {
+        // the zoom may have been set on a sample of another length
+        GP.spectrumChangeZoom(0, editorInstrument->sample.length, &zoom);
+    }
+
     prepareDisplayDataMainScreen();
     showMainScreen();
 
     assert(sizeof(effectDisplayParamsToAdjust) == sizeof(effectDefaultParamsTable));
     memcpy(effectDisplayParamsToAdjust, effectDefaultParamsTable, sizeof(effectDefaultParamsTable));
 
-    if (currentEffectIdx == editorEffectModular)
+    if (currentEffectIdx == editorEffectModular && sampleEditorModular.hasPlugin())
     {
         loadModularEffectUI(PtfxManager::getActiveHeader());
     }
@@ -568,6 +560,11 @@ bool cSampleEditor::isParametersScreen()
 
 bool cSampleEditor::canApplyCurrentEffect() const
 {
+    if (currentEffectIdx == editorEffectModular && !sampleEditorModular.hasPlugin())
+    {
+        return false; // the .ptfx of this row is not on the card, or did not load
+    }
+
     bool hasSampleData = (editorInstrument != nullptr &&
                           editorInstrument->isActive &&
                           editorInstrument->sample.length > 0) ||
@@ -983,7 +980,9 @@ void cSampleEditor::prepareDisplayDataParamsScreen()
     if (currentEffectIdx == editorEffectModular)
     {
         snprintf(paramsScreenLabel, 40, "Sample Editor %s",
-                 PtfxManager::getPluginDisplayName(currentModularPluginIdx));
+                 selectedEffectListIdx < kBuiltInEffectsCount
+                   ? effectNamesLabels[selectedEffectListIdx]
+                   : PtfxManager::getPluginDisplayName(currentModularPluginIdx));
     }
     else
     {
@@ -1294,6 +1293,42 @@ void cSampleEditor::resetZoom()
     needRefreshSpectrum = 1;
 }
 
+// Makes the effect of the selected list row the current one. A built in row selects its class. A row that lives on the card (an
+// extra .ptfx, or a moved built in slot with FW_SE_PTFX) goes through the modular effect. When the file cannot be loaded the
+// modular effect holds no plugin and no parameters, canApplyCurrentEffect() is then false (the row reads "Missing: <name>").
+void cSampleEditor::selectListedEffect()
+{
+    if (selectedEffectListIdx < kBuiltInEffectsCount && !PtfxManager::isMovedSlot(selectedEffectListIdx))
+    {
+        currentEffectIdx = (uint8_t)selectedEffectListIdx;
+        currentEffect = sampleEditorEffect[currentEffectIdx];
+        return;
+    }
+
+    currentEffectIdx = editorEffectModular;
+    currentEffect = sampleEditorEffect[editorEffectModular];
+    bool loaded;
+#ifdef FW_SE_PTFX
+    if (selectedEffectListIdx < kBuiltInEffectsCount)
+    {
+        loaded = PtfxManager::loadMoved(selectedEffectListIdx, sampleEditorModular);
+    }
+    else
+#endif
+    {
+        currentModularPluginIdx = selectedEffectListIdx - kBuiltInEffectsCount;
+        loaded = PtfxManager::loadPlugin(currentModularPluginIdx, sampleEditorModular);
+    }
+    if (loaded)
+    {
+        loadModularEffectUI(PtfxManager::getActiveHeader());
+    }
+    else
+    {
+        s_modularEffectParams.paramsNumber = 0;
+    }
+}
+
 void cSampleEditor::modSelectedEffect(int16_t val)
 {
     val = clamp<int>(val, -5, 5);
@@ -1312,43 +1347,17 @@ void cSampleEditor::modSelectedEffect(int16_t val)
 
     if (selectedEffectListIdx != lastSelectedIdx)
     {
-        if (selectedEffectListIdx < kBuiltInEffectsCount)
+        selectListedEffect();
+        reloadCurrentEffect();
+
+        currentEffect->clearProcessedData();
+        currentEffect->setBaseSampleLength(editorInstrument->sample.length);
+        currentEffect->changeSelectionRange(selection.startPoint, selection.endPoint);
+
+        for (uint8_t idx = 0; idx < getCurrentEffectDisplayParams().paramsNumber; idx++)
         {
-            currentEffectIdx = (uint8_t)selectedEffectListIdx;
-            currentEffect = sampleEditorEffect[currentEffectIdx];
-            reloadCurrentEffect();
-
-            currentEffect->clearProcessedData();
-            currentEffect->setBaseSampleLength(editorInstrument->sample.length);
-            currentEffect->changeSelectionRange(selection.startPoint, selection.endPoint);
-
-            for (uint8_t idx = 0; idx < getCurrentEffectDisplayParams().paramsNumber; idx++)
-            {
-                currentEffect->setParameter(
-                  effectDisplayParamsToAdjust[currentEffectIdx].parameter[idx], idx);
-            }
-        }
-        else
-        {
-            currentEffectIdx = editorEffectModular;
-            currentModularPluginIdx = selectedEffectListIdx - kBuiltInEffectsCount;
-            currentEffect = sampleEditorEffect[editorEffectModular];
-
-            if (PtfxManager::loadPlugin(currentModularPluginIdx, sampleEditorModular))
-            {
-                loadModularEffectUI(PtfxManager::getActiveHeader());
-            }
-            reloadCurrentEffect();
-
-            currentEffect->clearProcessedData();
-            currentEffect->setBaseSampleLength(editorInstrument->sample.length);
-            currentEffect->changeSelectionRange(selection.startPoint, selection.endPoint);
-
-            for (uint8_t idx = 0; idx < getCurrentEffectDisplayParams().paramsNumber; idx++)
-            {
-                currentEffect->setParameter(
-                  effectDisplayParamsToAdjust[currentEffectIdx].parameter[idx], idx);
-            }
+            currentEffect->setParameter(
+              effectDisplayParamsToAdjust[currentEffectIdx].parameter[idx], idx);
         }
 
         refreshEffectList();

@@ -1,4 +1,6 @@
 #include "core/interface.h"
+#include "mtCapture.h"
+#include "mtSequencer.h"
 
 #include "projectEditor/projectEditor.h"
 
@@ -7,6 +9,9 @@
 
 #include "Platform.h"
 #include "mtSleep.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 #include <display.h>
 #include <mtAudioExport.h>
 
@@ -116,7 +121,7 @@ void Interface::refreshStartScreen()
         }
     }
 
-    if (startProjectLoadingProgress >= 0 && fileManagerLastProgress < startProjectLoadingProgress)
+    if (fileManagerLastProgress < startProjectLoadingProgress)
     {
         noProgressChangeCounter = 0;
         fileManagerLastProgress = startProjectLoadingProgress;
@@ -337,6 +342,14 @@ void Interface::commonThingsUpdate()
 
     titleBar.refresh();
 
+    // the Capture indicator in the title bar: polled here so every screen shows it, the bar redraws only when the state changed
+    static elapsedMillis captureIndicatorTimer;
+    if (captureIndicatorTimer >= 60)
+    {
+        captureIndicatorTimer = 0;
+        titleBar.setCaptureState(sequencer.captureIndicator());
+    }
+
     if (fileManagerPopupEnabled)
     {
         uint8_t managerStatus = newFileManager.getStatus();
@@ -407,6 +420,14 @@ void Interface::commonThingsUpdate()
                 fileManagerLastProgress = 0;
                 noProgressChangeCounter = 0;
             }
+#ifdef FEATURE_PLUG_HOST
+            // a project open found a project.mtff of a newer FF (project.mtff versions): once, after the load popup is gone
+            static char mtffNotice[2][36];
+            if (plug::takeOpenNotice(mtffNotice[0], sizeof(mtffNotice[0]), mtffNotice[1], sizeof(mtffNotice[1])))
+            {
+                mtPopups.show(0, mtffNotice[0], mtffNotice[1], 4);
+            }
+#endif
         }
     }
 }

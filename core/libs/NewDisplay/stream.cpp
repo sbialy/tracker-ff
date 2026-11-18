@@ -203,7 +203,7 @@ void cDisplay::writeScreen(int width, int height, int stride, uint8_t *buf, uint
 */
 
 void cDisplay::writeLine(int width,
-                         int height,
+                         int /*height*/,
                          int stride,
                          uint8_t* buf,
                          uint8_t* palette8,

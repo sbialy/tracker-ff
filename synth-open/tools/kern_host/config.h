@@ -9,4 +9,9 @@
 #define AUDIO_CORE_FLASH
 #define AUDIO_CORE_RAM
 
+// the number of synth parts, as core/config/config.h (a test that builds with -DFEATURE_SYNTH has the 3 part mux)
+#ifdef FEATURE_SYNTH
+static constexpr int kSynthParts = 3;
+#endif
+
 #endif

@@ -8,6 +8,13 @@
 #define AUDIO_CORE_FLASH  __attribute__((section(".audio_flash_functions"), used))
 #define AUDIO_CORE_RAM    __attribute__((section(".audio_ram_functions"), used))
 #define OCRAM_BSS_SECTION __attribute__((section(".bss.$RAM3"), used))
+// Cold audio engine code (graph construction, setup, UI side setters): -Os in the trimmed image (FW_TRIM, GCC), the realtime functions
+// (AUDIO_CORE_RAM / AUDIO_CORE_FLASH and everything they call) keep the command line -O2. synth-open/tools/audio_hot_set.py picks and proves it.
+#if defined(FW_TRIM) && defined(__GNUC__) && !defined(__clang__)
+#define AUDIO_COLD_OS __attribute__((optimize("Os")))
+#else
+#define AUDIO_COLD_OS
+#endif
 
 static constexpr int kMaxFilesListLength = 256;
 static constexpr int kMaxFilePathLen = 255;

@@ -69,7 +69,7 @@ void cSimpleText::setColors(const uint32_t* colors)
     this->colors = colors;
 }
 
-void cSimpleText::setData(void* data)
+void cSimpleText::setData(void* /*data*/)
 {
 }
 

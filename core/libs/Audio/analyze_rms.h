@@ -35,6 +35,12 @@ class AudioAnalyzeRMS : public AudioStream
     audio_block_t* inputQueueArray[1];
     int64_t accum;
     uint32_t count;
+    // Blocks left that update() keeps summing for. A reader (available, read) sets it to kHold again, so a meter nobody reads stops costing the
+    // multiply-accumulate pass after kHold blocks (0.74 s), and starts again at the next read: the read that wakes it finds count == 0 and
+    // available() says no (a screen draws no bar for that one frame). The sums of a meter that went to sleep are dropped, so a later read never
+    // averages over a stale stretch. The audio is not touched, the node still takes its block and releases it.
+    static constexpr uint8_t kHold = 255;
+    uint8_t wanted = kHold; // starts awake: the first reads (and the host benches that read every few blocks) see the values they always saw
 
   public:
     AudioAnalyzeRMS(void)
@@ -43,7 +49,11 @@ class AudioAnalyzeRMS : public AudioStream
         accum = 0;
         count = 0;
     }
-    bool available(void) { return count > 0; }
+    bool available(void)
+    {
+        wanted = kHold;
+        return count > 0;
+    }
     float read(void);
     virtual void update(void);
 };

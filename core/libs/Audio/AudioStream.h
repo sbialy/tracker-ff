@@ -158,6 +158,13 @@ class AudioStream
     }
     static void initialize_memory(audio_block_t* data, unsigned int num);
     bool isActive(void) { return active; }
+#ifdef AUDIO_NULL_IS_SILENCE
+    // FX mute (fx_mute_gate.h), audio interrupt: out of update_all, the input blocks in the queue released. transmit() drops blocks for
+    // an inactive stream, so nothing reaches the queue until wakeStream().
+    void sleepStream();
+    // FX mute, main loop: back into update_all, active as AudioConnection::connect leaves it
+    void wakeStream() { active = numConnections > 0; }
+#endif
     static uint16_t memory_used;
     static uint16_t memory_used_max;
     static bool renderMode;

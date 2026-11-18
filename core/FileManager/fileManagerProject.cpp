@@ -1,4 +1,7 @@
 #include "fileManagerDefs.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#endif
 #include "mtStructs.h"
 
 #include "fileManager.h"
@@ -78,10 +81,10 @@ bool cFileManager::loadProjectFileFormFileStruct(strMtProject* project, strProje
     uint16_t projectDataSize = projectFileSize - sizeof(uint32_t);
     uint32_t storedCRC;
     memcpy(&storedCRC, (uint8_t*)pFile + projectDataSize, sizeof(storedCRC));
-    uint32_t checkCRC =
+    [[maybe_unused]] uint32_t checkCRC =
       crcCalculator->calculate32bitCrc((uint8_t*)pFile, projectDataSize);
     // Older IMX firmware wrote zero because its CRC calculator was a stub.
-    const bool hasStoredCRC = storedCRC != 0;
+    [[maybe_unused]] const bool hasStoredCRC = storedCRC != 0;
 
 #ifdef FILEMANAGER_DEBUGLOG
     char line[60];
@@ -152,6 +155,9 @@ bool cFileManager::loadProjectFileFormFileStruct(strMtProject* project, strProje
         projectPatchfromProjectFile[PATCH_SIZE - PROJECT_NAME_SIZE - 1] = 0;
     }
 
+#ifdef FEATURE_PLUG_HOST
+    plug::projectStamp(storedCRC, projectFileSize); // project.mtff compares it with the stamp it was written with
+#endif
     memcpy(&project->song, &pFile->projectDataAndHeader.project.song, sizeof(strSong));
     memcpy(&project->values, &pFile->projectDataAndHeader.project.values, sizeof(strMtValues));
     //*proj=pFile.projectDataAndHeader.project;
@@ -187,6 +193,9 @@ bool cFileManager::writeProjectFileToFileStruct(strMtProject* project, strProjec
 
     pFile->crc = crcCalculator->calculate32bitCrc((uint8_t*)&pFile->projectDataAndHeader,
                                                   sizeof(pFile->projectDataAndHeader));
+#ifdef FEATURE_PLUG_HOST
+    plug::projectStamp(pFile->crc, sizeof(strProjectFile)); // the project.mt this buffer becomes (project.mtff stamp)
+#endif
 
     return true;
 }
@@ -404,7 +413,7 @@ void cFileManager::getCurrentProjectPathWithName(char* path, int maxLen)
 
     strncpy(path, currentProjectPatch, maxLen);
 
-    if (pathLen > 0)
+    if (pathLen > 0 && pathLen < maxLen - 1)
     {
         strcat(path, "/");
     }
@@ -413,14 +422,24 @@ void cFileManager::getCurrentProjectPathWithName(char* path, int maxLen)
 
     assert(nameMaxLen > (int)strlen(currentProjectName));
 
-    strncat(path, currentProjectName, nameMaxLen);
+    // strncat takes the limit as an unsigned number, so a negative one is no limit at all.
+    if (nameMaxLen > 0)
+    {
+        strncat(path, currentProjectName, nameMaxLen);
+    }
 }
 
-void cFileManager::createCurrentProjectFolderTree()
+bool cFileManager::createCurrentProjectFolderTree()
 {
     char fullProjectPath[PATCH_SIZE];
     getCurrentProjectPathWithName(fullProjectPath, PATCH_SIZE);
     char tempPath[PATCH_SIZE];
+
+    // A pass creates the next missing folder of the path, so one pass per character is
+    // always enough. The limit ends the loop for a path that never comes to exist even
+    // though no mkdir fails.
+    int passesLeft = strlen(fullProjectPath);
+    bool mkdirFailed = false;
 
     while (1)
     {
@@ -428,7 +447,12 @@ void cFileManager::createCurrentProjectFolderTree()
         tempPath[PATCH_SIZE - 1] = 0;
         if (fileSystem->exists(tempPath))
         {
-            break;
+            return true;
+        }
+
+        if (mkdirFailed || passesLeft-- <= 0)
+        {
+            return false;
         }
 
         int pathLen = strlen(tempPath);
@@ -448,7 +472,7 @@ void cFileManager::createCurrentProjectFolderTree()
                 {
                     strncpy(tempPath, fullProjectPath, PATCH_SIZE);
                     tempPath[lastSlash] = 0;
-                    fileSystem->mkdir(0, tempPath);
+                    mkdirFailed |= !fileSystem->mkdir(0, tempPath);
                 }
             }
             pathLen--;

@@ -453,7 +453,7 @@ uint32_t mtEffect::getExpectedProcessedSampleLength()
     return expectedAreaLength;
 }
 //***********PREVIEW GETTERS
-int16_t* const mtEffect::getSampleAddresToPreview(Channel channel)
+int16_t* mtEffect::getSampleAddresToPreview(Channel channel)
 {
     if (channel >= kChannels)
     {

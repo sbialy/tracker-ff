@@ -1,4 +1,4 @@
-# Tracker FF plugin SDK (`.plg`, ABI 1.2)
+# Tracker FF plugin SDK (`.plg`, ABI 1.4)
 
 Runtime plugins for tracker-ff on the original Polyend Tracker (MK66, Cortex-M4F). The first plugin kind
 hosts **master inserts**: two slots after the tracks and sends mixer (and the
@@ -28,7 +28,7 @@ release files, `engines/README.md` has the map.
 ## Shipped plugins
 
 Seven master inserts. File sizes are the `.plg` bytes. Every image is text only (no writable data) plus 8 B of bss, far
-below the 8,192 B limit, so each runs from either insert. The instance (state, the BBD line) is allocated by the host from the
+below the 9,728 B limit, so each runs from either insert. The instance (state, the BBD line) is allocated by the host from the
 SRAM heap and counts against neither limit. Emulated instructions are per stereo block of 128 frames (a lower bound, the
 device measured 1.5 times that for Dirt). Console, Tube, BBD and Phaser ramp every setting over the block, so a change
 never clicks.
@@ -153,8 +153,8 @@ Contract:
 - CPU: a slot that takes more than 60,000 cycles (11.5 % of a 522,240 cycle block) three blocks in a row is bypassed until
   it is loaded again. `emu_plug.py` gives instructions per block, a lower bound: the device measured 1.5 times the emulated
   count for Dirt (design section 11). Add the host's conversion pair (6,496 cycles measured, shared by the two slots).
-- Size: both inserts share one 8 KB SRAM_L slot. Insert 1 holds its image + bss from the bottom, insert 2 from the top (its
-  start aligned down to 16 B), so the two plugins' image + bss together must fit 8,192 B, less up to 15 B of alignment
+- Size: both inserts share one 9,728 B (9.5 KB) SRAM_L slot (8,192 B before 1.4.0). Insert 1 holds its image + bss from the bottom, insert 2 from the top (its
+  start aligned down to 16 B), so the two plugins' image + bss together must fit 9,728 B, less up to 15 B of alignment
   (`plug_index.h` `insertPlace`). One plugin alone may take the whole slot in either insert. The second one of a pair that
   does not fit is refused before any card read: its column shows `Full:<name>`, the audio passes, its values are kept and
   saved back, `host.txt` says how many bytes it needs and how many are free, and it loads by itself once the other insert
@@ -218,7 +218,7 @@ $PY -I emu_plug.py gain.plg --base 0x1FFF0BD0 --param 0=150 --wav gain.wav
   the plugin name, `None`, `Loading`, `Bypassed`, or a tag and as much of the name as fits (`Safe:BBD`, `Miss:Lo-Fi`,
   `Fail:Dirt`, `CPU:Phase`, `Full:Phas`: no room beside the other insert). Picking a plugin while a built-in Saturation
   entry is on switches the Saturation to Inserts.
-- Both inserts run from the 8 KB SRAM_L slot, insert 1 from the bottom and insert 2 from the top. Loading one never
+- Both inserts run from the 9.5 KB SRAM_L slot, insert 1 from the bottom and insert 2 from the top. Loading one never
   writes the bytes of the other, which keeps playing, and the new one is attached with the audio interrupt off. Until
   insert2-sram, insert 2 ran from the last two FlexNVM sectors (0x1001E000), which the synth bank now uses.
 - The project stores the inserts in `plugins.txt` next to the project file (`tffplug 1`, `format 2`, `mixer <n>` when the
@@ -233,14 +233,14 @@ $PY -I emu_plug.py gain.plg --base 0x1FFF0BD0 --param 0=150 --wav gain.wav
   If the Tracker died in between, the next boot loads no plugin on its own and the Inserts page title says which one
   crashed. Holding Shift during the first 4 s after power on does the same. Picking a plugin by hand still works in both.
 
-## Synth engine plugins (ABI 1.1)
+## Synth engine plugins (ABI 1.1, 1.4 adds service, view and PLUG_EXT_FILES: docs/plugin_sdk.md section 7)
 
 A `PLUG_KIND_SYNTH` plugin answers `query(PLUG_EXT_SYNTH)` with a `plug_ext_synth` (plug_abi.h): the engine's numbers
 (`stored` for projects, `patch_engine` for `.patch` field 1, `type_id`), its name (on screen and the `Patches/<name>/`
 folder), parameter, section and macro tables in the shim's `ParamDef` / `SectionDef` / `MacroDef` layout, and the
 `ISynthEngine` calls as C functions. An engine that used to be built in keeps its numbers (JU6 7 / 0x81, PHZ 8 / 0x82, FM4 9 / 0x80,
 D-Type 10 / 0xA2, CS-Type 11 / 0x83, A-Type 12 / 0x84, T-Type 13 / 0x85, 8-Type 14 / 0x86, Hand-Type 15 / 0x87, B-Type 16 / 0x88,
-Arc-Type 17 / 0x89, PLK 18 / 0x8A), so old projects and patches find it. PHZ and PLK are private modules, their source and build are in the private repository `tracker-engines`, this repository keeps their numbers. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
+Arc-Type 17 / 0x89, PLK 18 / 0x8A), so old projects and patches find it. PHZ, PLK and ALCO (22 / 0x8E, new in 1.4.0, no built-in past) are private modules, their source and build are in the private repository `tracker-engines`, this repository keeps their numbers. `synth_plug.h` turns an `open::EngineDef` and its `ISynthEngine` into a plugin in three
 lines (`synth/ju6_plug.cpp`), `PLUG_SYNTH_PLUGIN_WORK` adds work memory (PLK, source in the private repository `tracker-engines`). Large working RAM comes
 from the host (`work_bytes`, `set_work`), not from bss: the host hands it out of a 16 KB SDRAM arena (a block per attached engine,
 `plug_work.h`, reused for another engine when no part plays this one, a fresh `init` comes with a zeroed block), so keep only state there
@@ -294,8 +294,8 @@ Budgets (`tools/plug_bank_test.cpp`, engine DSP at `-O2`): the thirteen need 50 
 never decides what is evicted. The worst 3 at once need 6,016 B (6,136 B with the one being picked): a pool of 6,656 B would
 save 1,024 B of SRAM but then hold CHIP, JU6 and a few others only, and the 5th engine picked could rewrite the flash.
 
-The shipped synth plugins are the thirteen engines (`engines/engines.json`, the release image builds in only ACD FAT VAP
-WTFM PERC). Eleven are built in the public module repository (the ten OpenTracker ports and CHIP), PHZ and PLK are private modules built from the private repository `tracker-engines`:
+The shipped synth plugins are the fourteen engines (`engines/engines.json`, the release image builds in only ACD FAT VAP
+WTFM PERC). Eleven are built in the public module repository (the ten OpenTracker ports and CHIP), PHZ, PLK and ALCO are private modules built from the private repository `tracker-engines`:
 
 | Plugin | Engine | Image B | rw + bss B | Worst block, 4 voices (instructions, scenario 1, engine DSP at `-Os` as in 1.1.0) |
 |---|---|---|---|---|
@@ -316,8 +316,9 @@ WTFM PERC). Eleven are built in the public module repository (the ten OpenTracke
 Instructions are a lower bound of cycles (the device measured 1.5 times the emulated count for Dirt), the percentage is of a
 522,240 cycle block, and the built-in engine executes the same count. The `-O2` figures are in `synth-open/README.md`, CPU at four
 voices. Image B is the code and data, the `.plg` file adds the
-header, manifest and rebase table. Together the thirteen need more than the 122,880 B bank: the bank is a cache (below). Logos:
-one `.plgi` per plugin, `previews/sheet.png` shows all thirteen.
+header, manifest and rebase table. Together the fourteen need more than the 122,880 B bank: the bank is a cache (below). Logos:
+one `.plgi` per plugin, `previews/sheet.png` shows all fourteen.
+ALCO, the private plugin added in 1.4.0 (source in the private repository `tracker-engines`, like PHZ and PLK), is not in this table: their sizes are in the `SET.json` of the pinned engines set.
 
 ### Engine logos
 
@@ -336,7 +337,7 @@ comes near an engine or the patch editor opens), so every listed engine shows it
 `/Plugins/synth.txt` (`logo <file> sidecar|trailer|text err <n>`). Make a record
 with `synth-open/tools/make_plgi.py`: from a PNG (white or opaque is drawn, black or transparent is not, scaled to both
 sizes), from two PNGs, or `--text NAME` for a text logo in the stock style. `--check` tests a `.plgi` or a `.plg` trailer,
-`--selftest` round-trips the stock logos. The thirteen shipped `.plgi` files are text logos (`logo` in `engines/engines.json`), `tools/plgi_sheet.py` stacks
+`--selftest` round-trips the stock logos. The fourteen shipped `.plgi` files are text logos (`logo` in `engines/engines.json`), `tools/plgi_sheet.py` stacks
 their previews into one sheet.
 
 ### Paraphony (ABI 1.2, `PLUG_EXT_CHORD`)
@@ -346,3 +347,17 @@ contract) built with `PLUG_SYNTH_PLUGIN_CHORD` answers `query(PLUG_EXT_CHORD)`. 
 one note-on with the step's chord in `Chord` for that note-on, the engine latches it in `note_on`. Without the query nothing changes.
 An optional `Strum` parameter (`strum_param`, integer -63..63, 2 ms units, `PLUG_SYNTH_PLUGIN_CHORD_STRUM`) gets a Strum FX the same way.
 Details: `docs/plugin_sdk.md` section 7, "Paraphony and the chord table".
+
+### Synced inserts (ABI 1.3, `PLUG_EXT_TEMPO`)
+
+A master insert that answers `query(PLUG_EXT_TEMPO)` with a `plug_ext_tempo` gets the sequencer's clock at the start of every block, in
+the audio context before `set_param` and `process`: `set_tempo(inst, bpm)` (project tempo, tempo FX or external clock) and, in the tail
+field, `set_transport(inst, beat, playing)` (`beat` = quarter notes since Play, 4 steps per beat, wrapping at `PLUG_TEMPO_BEAT_WRAP` = 1024,
+0 while stopped). A gater or a synced delay derives its phase from `beat` and stays locked to the pattern through loops, pattern and
+song changes. The host validates the struct and both functions like the descriptor (text segment). A host before ABI 1.3 never calls
+them, so a synced plugin carries a Tempo parameter that can take over (its default "Host" follows the sequencer). Without the query
+nothing changes: the shipped inserts are untouched. `emu_plug.py --bpm B --play 1 --beat0 N` drives the same calls in the emulator.
+
+A master insert that makes sound of its own (a noise or crackle bed) also answers `query(PLUG_EXT_TAIL)`: on a silent input bus the host
+asks its `quiet(inst)` and runs `process()` on zeros when it is not quiet, so the bed plays in the gaps. Without the query the plugin is
+skipped on a silent bus as before.

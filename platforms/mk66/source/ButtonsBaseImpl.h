@@ -9,6 +9,7 @@ class ButtonsBaseImpl : public SwitchGroup
   public:
     virtual void setHoldTime(int timeMs) override;
     virtual bool isButtonPressed(int buttonIdx) override;
+    virtual bool setRemoteHeld(int buttonIdx, bool held) override;
     virtual void setActionCallback(ActionType action, void (*callback)(uint8_t)) override;
     void disableInterrupts();
     bool update();

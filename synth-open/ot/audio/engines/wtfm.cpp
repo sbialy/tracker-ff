@@ -218,7 +218,7 @@ inline SvfRamp svfRamp(float g0, float k0, float g1, float k1) {
 }
 
 template <int kMode, int kSat, bool kOut>
-void svfKernel(float* buf, float* s, SvfRamp c, float* L, float* R, float g, float dg) {
+void svfKernel(float* buf, float* s, SvfRamp c, float* L, float* /*R: mono engine, never written*/, float g, float dg) {
     float s1 = s[0], s2 = s[1];
     for (uint32_t i = 0; i < kBlock; ++i) {
         const float x = buf[i];
@@ -235,8 +235,7 @@ void svfKernel(float* buf, float* s, SvfRamp c, float* L, float* R, float g, flo
         if (kSat == 2) y = softClip2(y);
         if (kOut) {
             const float o = y * g;
-            L[i] += o;
-            R[i] += o;
+            L[i] += o;   // mono engine (EngineDef::monoOut): the shim reads L only, R is not written
             g += dg;
         } else {
             buf[i] = y;

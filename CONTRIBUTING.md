@@ -32,14 +32,14 @@ Thank you for contributing to the firmware! Whether you are fixing a bug, creati
      * **Original Polyend Tracker** (`PLATFORM=MK66`, `PRODUCT=ORIGINAL`)
      * **Polyend Tracker+** (`PLATFORM=IMX`, `PRODUCT=PLUS`)
      * **Polyend Tracker Mini** (`PLATFORM=IMX`, `PRODUCT=MINI`)
-   * Even if your feature is specific to `IMX` (`#ifdef PLATFORM_IMX`) or `MK66` (`#ifndef PLATFORM_IMX`), **all three firmware targets must compile cleanly via `make all`**.
+   * Even if your feature is specific to `IMX` (`#ifdef PLATFORM_IMX`) or `MK66` (`#ifndef PLATFORM_IMX`), **the Original target must compile cleanly via `make original`**. Tracker+ and Tracker Mini (`make plus`, `make mini`) are checked before a release, not on every branch. A PR meant for upstream `polyend/tracker-ce` still needs all three targets to compile cleanly via `make all`.
 
 4. **Declare Hardware Testing Status & Coordinate Community Testing**
    * Most contributors do not own all three hardware units. In your PR description, honestly mark:
      * Which devices you have **tested on physical hardware**.
      * Which devices **need hardware testing from the community**.
    * **Testing PR Builds via GitHub Actions**:
-     * Every PR automatically triggers the [GitHub Actions build workflow](.github/workflows/build.yml), which compiles `.ptf` firmware files for all three devices and uploads them as the `polyend-tracker-ce-firmware` artifact on the PR's **Checks** tab.
+     * Every PR automatically triggers the [GitHub Actions build workflow](.github/workflows/build.yml), which compiles the `.ptf` firmware file for the Original Tracker (Tracker+ and Tracker Mini only on version tags and manual runs, the check before a release) and uploads it as the `polyend-tracker-ce-firmware` artifact on the PR's **Checks** tab.
      * Community testers who own the remaining devices can download the `.ptf` artifact, flash it via **Config > Firmware > Firmware update**, run through your **How to Test** steps, and leave a comment on the PR confirming their results.
 
 ---
@@ -49,7 +49,7 @@ Thank you for contributing to the firmware! Whether you are fixing a bug, creati
 Before submitting your PR, verify the following:
 
 * **Full Build Verification**:
-  * Run `make all` (and `make ptfx` if modifying `editor-fx-sdk/`) locally and confirm zero compiler or linker errors across Original, Plus, and Mini.
+  * Run `make original` (and `make ptfx` if modifying `editor-fx-sdk/`) locally and confirm zero compiler or linker errors. Plus and Mini are checked before a release. For a PR meant for upstream `polyend/tracker-ce` run `make all` and confirm zero errors across Original, Plus, and Mini.
 * **Memory Headroom (`SRAM_DTC` / `RAM` & `EXTERNAL_RAM`)**:
   * Check the linker memory output (also reported automatically in the GitHub Actions job summary).
   * On **Tracker+ and Tracker Mini (`IMX`)**, `SRAM_DTC` has `~22–23 KB` free and `EXTERNAL_RAM` has `~92 KB` immediately free (plus up to `~29 MB` theoretically reclaimable from `SAMPLE_MEMORY_SIZE` thanks to Hybrid SD Sample Streaming); on **Original Tracker (`MK66`)**, internal `RAM` has `~128 KB` free and `EXTERNAL_RAM` has `~1.39 MB` immediately free (plus up to `~3.5–4.0 MB` theoretically reclaimable from `SAMPLE_MEMORY_SIZE`), alongside the `768 KB` shared `externalRamScratchBuff` across all devices. Avoid adding large static arrays to default `.bss` without checking linker headroom (see [`docs/developer_guide.md`](docs/developer_guide.md#1-memory-budget--free-headroom)).

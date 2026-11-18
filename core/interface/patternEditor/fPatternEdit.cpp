@@ -1,4 +1,10 @@
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
+#include "tapeFx.h"
+#include "mtCapture.h"
 #include "mtStructs.h"
+#include "mtFollowChord.h"
 #include "patternEditor/patternEditor.h"
 #include <assert.h>
 #include <limits.h>
@@ -7,6 +13,7 @@
 #include "fileManager.h"
 #include "mtAudioEngine.h"
 #include "mtPadBoard.h"
+#include "mtPatternGen.h"
 #include "mtPadsBacklight.h"
 #include "mtSequencer.h"
 
@@ -42,6 +49,7 @@ static void functChangePattern(uint8_t state);
 static void functChangePatternLength(uint8_t state);
 static void functChangePatternEditStep(uint8_t state);
 static void functFill();
+static void functCapture(uint8_t state);
 static void functPreview();
 static void functUndo(uint8_t state);
 static void functRedo(uint8_t state);
@@ -56,6 +64,10 @@ static void functPastePattern();
 
 static void functNamePattern();
 static void functNameTrack();
+static void functGroove(uint8_t state);
+static void functFollowMode();
+static void functFollowSource();
+static void functMoveVmFx();
 
 static void functClockWarningPopupButtons(uint8_t button, uint8_t state);
 
@@ -134,6 +146,17 @@ static void functRecArmTrack(uint8_t button, uint8_t state);
 //--------------------------------------------
 static uint8_t getSelectedElement();
 
+// The element a column of the FX pair stands for: the right column is fx[0] and V, the left one fx[1] and m, and in the
+// bank 3/4 of the "4 FX" switch rank 2 (FX4) and rank 3 (FX3). The one place that maps a column to Sequencer::ELEMENTS_*
+static uint8_t elementOfFxColumn(bool rightColumn)
+{
+    if (PTE->isMicVolView)
+        return rightColumn ? Sequencer::ELEMENTS_VOLUME : Sequencer::ELEMENTS_MICROMOVE;
+    if (PTE->fxBankActive())
+        return rightColumn ? Sequencer::ELEMENTS_FX_RANK2 : Sequencer::ELEMENTS_FX_RANK3;
+    return rightColumn ? Sequencer::ELEMENTS_FX1 : Sequencer::ELEMENTS_FX2;
+}
+
 char getHexFromInt(int16_t val, uint8_t index);
 
 enum moveDirection
@@ -168,6 +191,7 @@ void cPatternEditor::initExternalRamState()
         fillData[i].density[Sequencer::fillStepByStep] = 1;
         fillData[i].density[Sequencer::fillStepEuclidean] = 3;
         fillData[i].fillStep = Sequencer::fillStepByStep;
+        fillData[i].quantize = 100;
     }
     fillData[5].from = 50;
     fillData[5].to = 50;
@@ -178,6 +202,17 @@ elapsedMillis playheadBlinkTimer;
 
 void cPatternEditor::update()
 {
+    // an edit that did not fit the 256 extra FX of the pattern (fx34.h): said, never dropped silently
+    if (fx34::takeRefusal())
+    {
+        mtPopups.showInfoPopup("No room for more FX3 / FX4", "256 a pattern, what did not fit was not stored");
+    }
+
+    if (actualActionButtonsPage == 2 && trackerPattern.actualTrack != followShownTrack)
+    {
+        showFollowChordLabels(); // the cursor moved to another track: its Follow chord setting
+    }
+
     // zarzadznie renderowaniem zaznaczenia ---------------------------
     uint8_t managerStatus = newFileManager.getStatus();
 
@@ -198,7 +233,9 @@ void cPatternEditor::update()
 
         uint8_t button = interfaceButtonSampleLoad;
         PTE->firstFreeInstrumentSlotFound++;
-        PTE->eventFunct(eventSwitchModule, PTE, &button, &PTE->firstFreeInstrumentSlotFound);
+        // The handler reads the options through a uint32_t pointer.
+        uint32_t slot = static_cast<uint8_t>(PTE->firstFreeInstrumentSlotFound);
+        PTE->eventFunct(eventSwitchModule, PTE, &button, &slot);
     }
     else if (managerStatus >= fmLoadEnd && managerStatus < fmError) // 	lapie cala reszte Endow
     {
@@ -622,12 +659,24 @@ void cPatternEditor::refreshPattern()
         trackerPattern.middleVisibleStep = trackerPattern.actualStep;
     }
 
+    // the extra FX of the pattern (nullptr while the "4 FX" switch is off) and the two layouts of this refresh
+    const fx34::Set* const xs = fx34::setOf(seq);
+    if (!fx34::enabled())
+        fxBank = 0;   // a project without the switch always opens on the slots 1/2
+    const bool bank34 = fxBankActive();
+    trackerPattern.fxBank34 = bank34;
+    trackerPattern.vmColumns = vmColumnsOn();
+
     for (uint8_t trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
     {
         // sprawdzanie mutow
         trackerPattern.inactive[trackIdx] = isSampleTrack(trackIdx)
                                               ? mtProject.values.trackMute[trackIdx]
                                               : mtProject.values.midiTrackMute[trackIdx % 8];
+
+        // polymeter: the steps past the track's own length stay editable but are drawn dimmed
+        const uint8_t trackLastStep = Sequencer::getTrackLastStep(seq, trackIdx);
+        trackerPattern.beyondLength[trackIdx] = 0;
 
         for (uint8_t rowIdx = 0; rowIdx < 15; rowIdx++)
         {
@@ -682,12 +731,26 @@ void cPatternEditor::refreshPattern()
                 row.fx[1][2] = 0;
                 row.fx[1][3] = 0;
                 row.fx[1][4] = 0;
+                row.vol = -1;
+                row.mm = -1;
+                row.hidden = 0;
                 continue;
             }
+
+            if (seqStepIdx > trackLastStep)
+                trackerPattern.beyondLength[trackIdx] |= uint16_t(1u << rowIdx);
 
             bool showInstrument = false;
             Sequencer::strPattern::strTrack::strStep& seqStep =
               seq->track[trackIdx].step[seqStepIdx];
+
+            // volume and micro-move of the step for the marks and the V / m columns (the Mic/Vol view shows them as columns itself)
+            row.vol = isMicVolView ? int8_t(-1) : seqStep.volume;
+            row.mm = isMicVolView ? int8_t(-1) : seqStep.micromove;
+            // the FX bank that is not on screen holds something here
+            row.hidden = isMicVolView ? 0
+                         : (bank34 ? ((seqStep.fx[0].type != 0 || seqStep.fx[1].type != 0) ? 1 : 0)
+                                   : (xs && fx34::stepHasAny(xs, trackIdx, seqStepIdx) ? 1 : 0));
 
             if (seqStep.note >= 0)
             {
@@ -815,16 +878,20 @@ void cPatternEditor::refreshPattern()
             }
             else
             {
-                uint8_t type_temp = (seqStep.fx[1].type != 0) ? interfaceGlobals.fxIdToName(seqStep.fx[1].type) : 0;
+                const uint8_t rankL = fxRankOf(EditFx1);
+                const uint8_t rankR = fxRankOf(EditFx2);
+                const fx34::Fx fxL = fx34::fxAt(seqStep, xs, trackIdx, seqStepIdx, rankL);
+                const fx34::Fx fxR = fx34::fxAt(seqStep, xs, trackIdx, seqStepIdx, rankR);
+                uint8_t type_temp = (fxL.type != 0) ? interfaceGlobals.fxIdToName(fxL.type) : 0;
                 if (type_temp > 0 && type_temp < FX_COUNT)
                 {
                     row.fx[0][0] = 0;
                     row.fx[0][1] = 0;
                     row.fx[0][2] = 0;
 
-                    row.fx[0][0] = interfaceGlobals.fxNames[type_temp][0];
+                    row.fx[0][0] = fxL.type == sequencer.fx.FX_TYPE_TAPE ? tapefx::letter(fxL.value) : interfaceGlobals.ptrFxNames[type_temp][0];
 
-                    sequencer.makeFxValLabelForSeqStep(&row.fx[0][1], 4, 1, trackIdx, seqStepIdx);
+                    sequencer.makeFxValLabelForSeqStep(&row.fx[0][1], 4, rankL, trackIdx, seqStepIdx);
                 }
                 else
                 {
@@ -834,16 +901,16 @@ void cPatternEditor::refreshPattern()
                     row.fx[0][3] = '-';
                 }
                 //--------------------------------------------------------------------------------------------
-                type_temp = (seqStep.fx[0].type != 0) ? interfaceGlobals.fxIdToName(seqStep.fx[0].type) : 0;
+                type_temp = (fxR.type != 0) ? interfaceGlobals.fxIdToName(fxR.type) : 0;
                 if (type_temp > 0 && type_temp < FX_COUNT)
                 {
                     row.fx[1][0] = 0;
                     row.fx[1][1] = 0;
                     row.fx[1][2] = 0;
 
-                    row.fx[1][0] = interfaceGlobals.fxNames[type_temp][0];
+                    row.fx[1][0] = fxR.type == sequencer.fx.FX_TYPE_TAPE ? tapefx::letter(fxR.value) : interfaceGlobals.ptrFxNames[type_temp][0];
 
-                    sequencer.makeFxValLabelForSeqStep(&row.fx[1][1], 4, 0, trackIdx, seqStepIdx);
+                    sequencer.makeFxValLabelForSeqStep(&row.fx[1][1], 4, rankR, trackIdx, seqStepIdx);
                 }
                 else
                 {
@@ -863,6 +930,10 @@ void cPatternEditor::refreshPattern()
     }
 
     display.refreshControl(patternControl);
+
+    // polymeter: the Length label follows the cursor track ("track/pattern")
+    if (moduleRefresh)
+        showLength();
 }
 
 void cPatternEditor::showFxInfo()
@@ -881,7 +952,7 @@ void cPatternEditor::showFxInfo()
     // interfaceGlobals.fxIdToName(seq->track[trackerPattern.actualTrack].step[trackerPattern.actualStep].fx[1-(editParam-2)].type);
     //	if(type_temp > 0 && type_temp < FX_MAX)
     //	{
-    //		debugLog.addLine(&interfaceGlobals.fxNames[type_temp][0]);
+    //		debugLog.addLine(&interfaceGlobals.ptrFxNames[type_temp][0]);
     //	}
 }
 
@@ -921,17 +992,37 @@ void cPatternEditor::readPatternState()
     trackerPattern.playheadPosition = sequencer.getActualPos();
 }
 
+bool cPatternEditor::vmColumnsOn() const
+{
+    return mtConfig.common.patternVmColumns != 0 && patternViewMode == 0 && !isMicVolView &&
+           mtConfig.general.patternArrangement != kHorizontal;
+}
+
+// "V100 m12" for the cursor step: what the V and m marks of the cells stand for, only the ones the step has
+void cPatternEditor::makeStepVmText(char* out, size_t outSize) const
+{
+    out[0] = 0;
+    const int8_t track = trackerPattern.actualTrack;
+    const int16_t step = trackerPattern.actualStep;
+    const Sequencer::strPattern* pat = sequencer.getPatternToUI();
+    if (!pat || track < 0 || track >= kAllTracks || step < 0 || step > Sequencer::MAXSTEP)
+        return;
+    const auto& st = pat->track[track].step[step];
+    size_t n = 0;
+    if (st.volume >= 0)
+        n += snprintf(out + n, outSize - n, "V%d", st.volume);
+    if (st.micromove >= 0 && n < outSize)
+        n += snprintf(out + n, outSize - n, "%sm%d", n ? " " : "", st.micromove);
+}
+
 uint8_t cPatternEditor::getStepFx()
 {
     uint8_t selectedFx = 0;
 
-    uint8_t fx_index = PTE->editParam == EditFx1 ? 1 : 0;
+    uint8_t fx_index = PTE->fxRank();
 
-    uint8_t fx_type = interfaceGlobals.fxIdToName(sequencer.getPatternToUI()
-                                                    ->track[trackerPattern.actualTrack]
-                                                    .step[trackerPattern.actualStep]
-                                                    .fx[fx_index]
-                                                    .type);
+    uint8_t fx_type = interfaceGlobals.fxIdToName(
+      fx34::getFx(&sequencer.getPatternToUI()->track[trackerPattern.actualTrack].step[trackerPattern.actualStep], fx_index).type);
 
     if (fx_type < FX_COUNT - FX_COUNT_HIDDEN_FXes)
         selectedFx = fx_type;
@@ -957,7 +1048,7 @@ int8_t cPatternEditor::getStepVol()
 // focusowanie trackow na kursorze, jesli jest poza ekranem
 void cPatternEditor::focusOnActual()
 {
-    int columnCounts = patternViewMode > 0 ? 8 : 4;
+    int columnCounts = patternViewMode > 0 ? 8 : (vmColumnsOn() ? 3 : 4);
 
     if (trackerPattern.actualTrack >= trackerPattern.firstVisibleTrack + columnCounts)
     {
@@ -970,6 +1061,10 @@ void cPatternEditor::focusOnActual()
 
     trackerPattern.firstVisibleTrack =
       clamp<int8_t>(trackerPattern.firstVisibleTrack, 0, kAllTracks - columnCounts);
+
+    // polymeter: the Length label shows the cursor track
+    if (moduleRefresh)
+        showLength();
 }
 
 void cPatternEditor::moveCursorByStep()
@@ -990,8 +1085,11 @@ void cPatternEditor::moveCursorByStep(uint8_t val)
     }
     else
     {
-        trackerPattern.actualStep = mtProject.values.patternEditStep + val -
-                                    ((patternLength + 1) - trackerPattern.actualStep);
+        // The move can be longer than the pattern, as after pasting a tall block into a
+        // short pattern, so wrapping once is not enough.
+        trackerPattern.actualStep =
+          (trackerPattern.actualStep + mtProject.values.patternEditStep + val) %
+          (patternLength + 1);
     }
 
     PTE->trackerPattern.selectState = 1;
@@ -1019,7 +1117,7 @@ void cPatternEditor::moveCursorByStepParallel()
     else
     {
         trackerPattern.actualStep =
-          mtProject.values.patternEditStep - ((patternLength + 1) - trackerPattern.actualStep);
+          (trackerPattern.actualStep + mtProject.values.patternEditStep) % (patternLength + 1);
     }
     PTE->trackerPattern.selectStartStep = trackerPattern.actualStep;
     PTE->trackerPattern.selectEndStep = trackerPattern.actualStep;
@@ -1048,7 +1146,7 @@ void cPatternEditor::cancelPopups()
                 case stepPopupFx:
                     if (!isMultiSelection())
                     {
-                        uint8_t fx_index = PTE->editParam == EditFx1 ? 1 : 0;
+                        uint8_t fx_index = PTE->fxRank();
 
                         // uint8_t fx_name = interfaceGlobals.fxIdToName(
                         //		sequencer.getPatternToUI()->track[trackerPattern.actualTrack].step[trackerPattern.actualStep].fx[fx_index].type);
@@ -1276,19 +1374,30 @@ const uint8_t changeLengthVals[changeLengthVals_elements] = { 1,  2,  4,  8,  16
                                                               48, 64, 80, 96, 128 };
 const uint8_t changeStepVals_elements = 7;
 const uint8_t changeStepVals[changeLengthVals_elements] = { 0, 1, 2, 4, 8, 16, 32 };
+#ifdef FEATURE_PARTS
+// the screen shows the playing Part: its length is the Part's (the Parts list), the source patterns keep theirs
+static bool partLengthLocked()
+{
+    if (!parts::playing()) return false;
+    mtPopups.showInfoPopup("A Part is playing", "set its length in the Parts list");
+    return true;
+}
+#endif
+
 void cPatternEditor::changeActualPatternLength(int16_t value)
 {
+#ifdef FEATURE_PARTS
+    if (partLengthLocked()) return;
+#endif
+    if (buttons->isButtonPressed(interfaceButtonShift))
+    {   // Shift: the length of the cursor track only (polymeter)
+        changeActualTrackLength(value, false);
+        return;
+    }
+
     Sequencer::strPattern* pattern = sequencer.getPatternToUI();
 
-    if (pattern->track[0].length + value < 0)
-        pattern->track[0].length = 0;
-    else if (pattern->track[0].length + value > Sequencer::MAXSTEP)
-        pattern->track[0].length = Sequencer::MAXSTEP;
-    else
-        pattern->track[0].length += value;
-
-    for (uint8_t i = 1; i < 8; i++)
-        pattern->track[i].length = pattern->track[0].length;
+    sequencer.setPatternLastStep(pattern, pattern->track[0].length + value);
 
     trackerPattern.patternLength = pattern->track[0].length + 1;
 
@@ -1301,35 +1410,59 @@ void cPatternEditor::changeActualPatternLength(int16_t value)
 
     newFileManager.setActualPatternStructChanged();
 }
-void cPatternEditor::changeActualPatternLengthByDefinedValues(int16_t dir)
-{
-    Sequencer::strPattern* pattern = sequencer.getPatternToUI();
 
+// the next or previous length of changeLengthVals from last (a last step index), last itself at the ends
+static int nextDefinedLastStep(int last, int16_t dir)
+{
     if (dir > 0)
     {
         for (int8_t a = 0; a < changeLengthVals_elements; a++)
-        {
-            if (pattern->track[0].length < changeLengthVals[a] - 1)
-            {
-                pattern->track[0].length = changeLengthVals[a] - 1;
-                break;
-            }
-        }
+            if (last < changeLengthVals[a] - 1)
+                return changeLengthVals[a] - 1;
     }
     else if (dir < 0)
     {
         for (int8_t a = changeLengthVals_elements - 1; a >= 0; a--)
-        {
-            if (pattern->track[0].length > changeLengthVals[a] - 1)
-            {
-                pattern->track[0].length = changeLengthVals[a] - 1;
-                break;
-            }
-        }
+            if (last > changeLengthVals[a] - 1)
+                return changeLengthVals[a] - 1;
+    }
+    return last;
+}
+
+void cPatternEditor::changeActualTrackLength(int16_t value, bool definedValues)
+{
+#ifdef FEATURE_PARTS
+    if (partLengthLocked()) return;
+#endif
+    Sequencer::strPattern* pattern = sequencer.getPatternToUI();
+    const int track = trackerPattern.actualTrack;
+    const int last = Sequencer::getTrackLastStep(pattern, track);
+
+    if (!sequencer.setTrackLastStep(
+          pattern, track, definedValues ? nextDefinedLastStep(last, value) : last + value))
+        return;
+
+    showLength(1);
+
+    refreshPattern();
+
+    newFileManager.setActualPatternStructChanged();
+}
+
+void cPatternEditor::changeActualPatternLengthByDefinedValues(int16_t dir)
+{
+#ifdef FEATURE_PARTS
+    if (partLengthLocked()) return;
+#endif
+    if (buttons->isButtonPressed(interfaceButtonShift))
+    {
+        changeActualTrackLength(dir, true);
+        return;
     }
 
-    for (uint8_t i = 1; i < 8; i++)
-        pattern->track[i].length = pattern->track[0].length;
+    Sequencer::strPattern* pattern = sequencer.getPatternToUI();
+
+    sequencer.setPatternLastStep(pattern, nextDefinedLastStep(pattern->track[0].length, dir));
 
     trackerPattern.patternLength = pattern->track[0].length + 1;
 
@@ -1347,10 +1480,7 @@ void cPatternEditor::setActualPatternLength(int16_t value)
 {
     Sequencer::strPattern* pattern = sequencer.getPatternToUI();
 
-    pattern->track[0].length = clamp<int>(value, 0, Sequencer::MAXSTEP);
-
-    for (uint8_t i = 1; i < 8; i++)
-        pattern->track[i].length = pattern->track[0].length;
+    sequencer.setPatternLastStep(pattern, value);
 
     trackerPattern.patternLength = pattern->track[0].length + 1;
 
@@ -1518,6 +1648,7 @@ void cPatternEditor::changeFillData(int16_t value, bool rollListOver)
     int16_t min = 0, max;
     uint8_t fillParam = fillPlace;
     uint8_t fillIdx = getFillDataIdx();
+    uint8_t fillFx = interfaceGlobals.fxNameToId(fillData[fillIdx].param);
 
     switch (fillPlace)
     {
@@ -1544,8 +1675,14 @@ void cPatternEditor::changeFillData(int16_t value, bool rollListOver)
             {
                 value = clamp<int>(value, -5, 5);
             }
-            ptrVal = &fillData[fillIdx].from;
-            if (isMicVolView && editParam >= EditFx1)
+            ptrVal = isQuantizeFill() ? &fillData[fillIdx].quantize : &fillData[fillIdx].from;
+            if (isFillRole())
+            {
+                ptrVal = &fillData[fillIdx].role;
+                min = 0;
+                max = patternGen::roleCount - 1;
+            }
+            else if (isMicVolView && editParam >= EditFx1)
             {
                 min = 0;
                 max = 100;
@@ -1554,16 +1691,16 @@ void cPatternEditor::changeFillData(int16_t value, bool rollListOver)
             {
                 min = (editParam < EditFx1
                          ? 0
-                         : sequencer.getFxMin(interfaceGlobals.fxIDs[fillData[fillIdx].param]));
+                         : sequencer.getFxMin(fillFx));
                 max = (editParam == EditNote
                          ? 127
                          : (editParam == EditInstr
                               ? kTotalInstrumentsCount - 1
-                              : sequencer.getFxMax(interfaceGlobals.fxIDs[fillData[fillIdx].param])));
+                              : sequencer.getFxMax(fillFx)));
             }
             break;
         case 3: // to
-            if (fillData[fillIdx].type == 0)
+            if (fillData[fillIdx].oneValue() || isFillRole())
             {
                 return;
             }
@@ -1581,12 +1718,12 @@ void cPatternEditor::changeFillData(int16_t value, bool rollListOver)
             {
                 min = (editParam < EditFx1
                          ? 0
-                         : sequencer.getFxMin(interfaceGlobals.fxIDs[fillData[fillIdx].param]));
+                         : sequencer.getFxMin(fillFx));
                 max = (editParam == EditNote
                          ? 127
                          : (editParam == EditInstr
                               ? kTotalInstrumentsCount - 1
-                              : sequencer.getFxMax(interfaceGlobals.fxIDs[fillData[fillIdx].param])));
+                              : sequencer.getFxMax(fillFx)));
             }
             break;
         case 4: // param
@@ -1600,7 +1737,7 @@ void cPatternEditor::changeFillData(int16_t value, bool rollListOver)
             max = (editParam == EditNote ? MAX_SCALE : FX_COUNT - 1 - FX_COUNT_HIDDEN_FXes);
             break;
         case 5: // density
-            ptrVal = &fillData[fillIdx].density[fillData[fillIdx].fillStep];
+            ptrVal = &fillData[fillIdx].density[fillDensityStep(fillIdx)];
             min = 1;
             max = Sequencer::MAX_FILL_DENSITY;
             break;
@@ -1651,13 +1788,18 @@ void cPatternEditor::changneFillDataByPad(uint8_t pad)
         }
         case 1: // type
         {
-            if (pad < 3)
+            if (pad < fillTypeList.length)
                 fillData[fillIdx].type = pad;
             break;
         }
         case 2: // from
         {
-            if (editParam == EditNote)
+            if (isFillRole())
+            {
+                if (pad < patternGen::roleCount)
+                    fillData[fillIdx].role = pad;
+            }
+            else if (editParam == EditNote)
             {
                 bool isBeatSlice =
                   lastUsedInstrumentIsBeatSlice();
@@ -1667,13 +1809,14 @@ void cPatternEditor::changneFillDataByPad(uint8_t pad)
             else if (editParam == EditInstr)
                 fillData[fillIdx].from = pad;
             else if (isMicVolView)
-                fillData[fillIdx].from = roundf(mapClamped<float>(pad, 0, 47, 0, 100));
+                (isQuantizeFill() ? fillData[fillIdx].quantize : fillData[fillIdx].from) =
+                  roundf(mapClamped<float>(pad, 0, 47, 0, 100));
             else
             {
                 int16_t min_fx =
-                  sequencer.getFxMin(interfaceGlobals.fxIDs[fillData[fillIdx].param]);
+                  sequencer.getFxMin(interfaceGlobals.fxNameToId(fillData[fillIdx].param));
                 int16_t max_fx =
-                  sequencer.getFxMax(interfaceGlobals.fxIDs[fillData[fillIdx].param]);
+                  sequencer.getFxMax(interfaceGlobals.fxNameToId(fillData[fillIdx].param));
 
                 fillData[fillIdx].from = mapClamped<int>(pad, 0, 47, min_fx, max_fx);
 
@@ -1686,7 +1829,10 @@ void cPatternEditor::changneFillDataByPad(uint8_t pad)
         }
         case 3: // to
         {
-            if (editParam == EditNote)
+            if (isFillRole())
+            {
+            }
+            else if (editParam == EditNote)
             {
                 bool isBeatSlice =
                   lastUsedInstrumentIsBeatSlice();
@@ -1700,9 +1846,9 @@ void cPatternEditor::changneFillDataByPad(uint8_t pad)
             else
             {
                 int16_t min_fx =
-                  sequencer.getFxMin(interfaceGlobals.fxIDs[fillData[fillIdx].param]);
+                  sequencer.getFxMin(interfaceGlobals.fxNameToId(fillData[fillIdx].param));
                 int16_t max_fx =
-                  sequencer.getFxMax(interfaceGlobals.fxIDs[fillData[fillIdx].param]);
+                  sequencer.getFxMax(interfaceGlobals.fxNameToId(fillData[fillIdx].param));
 
                 fillData[fillIdx].to = mapClamped<int>(pad, 0, 47, min_fx, max_fx);
 
@@ -1758,14 +1904,17 @@ bool cPatternEditor::isFillPlaceValid(uint8_t place)
     uint8_t fillIdx = getFillDataIdx();
     // place 2 not available in instrument mode or mic/vol mode
     // place 1 not available in some step modes
+    // a role (Note column): no Where? list, the density is always there, no To
+    if (isFillRole())
+        return place != 0 && place <= 4;
     return !(((editParam == EditInstr || (isMicVolView && editParam >= EditFx1)) && place == 2) ||
              (fillData[fillIdx].fillStep < Sequencer::fillStepRandom && place == 1) ||
-             (fillData[fillIdx].type == 0 && place > 4));
+             (fillData[fillIdx].oneValue() && place > 4));
 }
 
 void cPatternEditor::setFillPlace(uint8_t place, int8_t dir)
 {
-    if (place < 0 || place > 5)
+    if (place > 5)
         return;
 
     if (dir == 0)
@@ -2010,7 +2159,7 @@ void functEncoder(int16_t value)
         {
             case 0: PTE->changeActualPattern(value); break;
             case 1: PTE->changeActualPatternLength(value); break;
-            case 2: PTE->changeActualPatternEditStep(value); break;
+            case 2: PTE->changePlaceTwo(value); break;
             case 5:
             case 6: functUndoRedoOnLeftRight(value); break;
         }
@@ -2154,7 +2303,7 @@ static void functLeft()
                 return;
             }
             case 1: PTE->changeActualPatternLengthByDefinedValues(-1); return;
-            case 2: PTE->changeActualPatternEditStepByDefinedValues(-1); return;
+            case 2: PTE->changePlaceTwo(-1, true); return;
             case 5:
             case 6: functUndoRedoOnLeftRight(-1); return;
             default: break;
@@ -2204,7 +2353,7 @@ static void functRight()
                 return;
             }
             case 1: PTE->changeActualPatternLengthByDefinedValues(1); return;
-            case 2: PTE->changeActualPatternEditStepByDefinedValues(1); return;
+            case 2: PTE->changePlaceTwo(1, true); return;
             case 5:
             case 6: functUndoRedoOnLeftRight(1); return;
             default: break;
@@ -2246,7 +2395,7 @@ static void functUp()
             // case 0: PTE->changeActualTempo(1); 			 return 1;
             case 0: PTE->changeActualPattern(1); return;
             case 1: PTE->changeActualPatternLength(1); return;
-            case 2: PTE->changeActualPatternEditStep(1); return;
+            case 2: PTE->changePlaceTwo(1); return;
             default: break;
         }
         return;
@@ -2279,7 +2428,7 @@ static void functDown()
             // case 0: PTE->changeActualTempo(-1); 			return 1;
             case 0: PTE->changeActualPattern(-1); return;
             case 1: PTE->changeActualPatternLength(-1); return;
-            case 2: PTE->changeActualPatternEditStep(-1); return;
+            case 2: PTE->changePlaceTwo(-1); return;
             default: break;
         }
 
@@ -2318,6 +2467,30 @@ void cPatternEditor::changeActualStep(uint8_t direction)
         case moveLeft: previousTrack(); break;
         default: break;
     }
+
+    if (actualActionButtonsPage == 2)
+        showGrooveLabel(); // the Groove button shows the value of the track under the cursor
+}
+
+// the button of place 2: Step jump on page 1, Groove (the track under the cursor) on page 3
+void cPatternEditor::changePlaceTwo(int16_t value, bool byDefinedValues)
+{
+    if (actualActionButtonsPage == 2)
+        changeTrackGroove(value);
+    else if (byDefinedValues)
+        changeActualPatternEditStepByDefinedValues(value);
+    else
+        changeActualPatternEditStep(value);
+}
+
+void cPatternEditor::changeTrackGroove(int16_t value)
+{
+    const uint8_t track = uint8_t(clamp<int>(trackerPattern.actualTrack, 0, kAllTracks - 1));
+    const int now = sequencer.getTrackGroove(track);
+    sequencer.setTrackGroove(track, clamp<int>(now + value, -Sequencer::kGrooveMax, Sequencer::kGrooveMax));
+    if (sequencer.getTrackGroove(track) != now)
+        newFileManager.setProjectStructChanged(); // the groove file is written with the next project save
+    showGrooveLabel();
 }
 
 void cPatternEditor::previousTrack()
@@ -2735,10 +2908,40 @@ static void functInstrument(uint8_t state)
 }
 
 //-----------------------------------------------------------------------------------
+// "4 FX" project switch: a second press of the FX1 or FX2 button, while the cursor already sits in that column, flips the two FX
+// columns between the slots 1/2 and 3/4 (D7). The same gesture and the same conditions as the second press of Note for the Mic/Vol view
+// The flip waits for the button to come up: the FX button is also a modifier (hold + encoder or pad sets the FX type, hold + Delete or
+// Copy picks the column, a long hold opens the FX list), and every one of those cancels the pending flip.
+static void armFxBankToggle(uint8_t column)
+{
+    PTE->fxBankTogglePending = fx34::enabled() && PTE->editParam == column && !PTE->isMicVolView && PTE->fillState == 0 &&
+                               PTE->patternViewMode == 0 && !PTE->buttons->isButtonPressed(interfaceButtonPattern) &&
+                               !PTE->buttons->isButtonPressed(interfaceButtonShift) &&
+                               !PTE->buttons->isButtonPressed(interfaceButtonDelete) &&
+                               !PTE->buttons->isButtonPressed(interfaceButtonCopy) && !mtPopups.isNoteKeyboardPopupActive();
+}
+
+static void applyFxBankToggle()
+{
+    if (!PTE->fxBankTogglePending)
+    {
+        return;
+    }
+    PTE->fxBankTogglePending = false;
+    if (!fx34::enabled())
+    {
+        return;
+    }
+    PTE->fxBank ^= 1;
+    PTE->refreshPattern();
+    PTE->showActualParamOnBar(true);
+}
+
 static void functFx1(uint8_t state)
 {
     if (state == buttonPress)
     {
+        armFxBankToggle(cPatternEditor::EditFx1);
         PTE->setStepButtonState(2, 1);
         PTE->wasNotesEditBefore = 0;
         PTE->previousEditParam = PTE->editParam;
@@ -2781,6 +2984,7 @@ static void functFx1(uint8_t state)
     }
     else if (state == buttonRelease)
     {
+        applyFxBankToggle();
         PTE->setStepButtonState(2, 0);
         PTE->cancelPopups();
         PTE->dontShowPopupsUntilButtonRelease = 0;
@@ -2795,6 +2999,7 @@ static void functFx2(uint8_t state)
 {
     if (state == buttonPress)
     {
+        armFxBankToggle(cPatternEditor::EditFx2);
         PTE->setStepButtonState(3, 1);
         //		PTE->wasNotesEditBefore = 0;
         PTE->previousEditParam = PTE->editParam;
@@ -2837,6 +3042,7 @@ static void functFx2(uint8_t state)
     }
     else if (state == buttonRelease)
     {
+        applyFxBankToggle();
         PTE->setStepButtonState(3, 0);
         PTE->cancelPopups();
         PTE->dontShowPopupsUntilButtonRelease = 0;
@@ -2976,8 +3182,18 @@ static void functRecAction(uint8_t state)
                 sequencer.recEnable(false);
                 PTE->editMode = 0;
             }
+            else if (!PTE->editMode && sequencer.isPerformanceImageMixed() && sequencer.isPerformanceMode())
+            {
+                // Performance still runs (it turns off at the end of the pattern): an edit would land in its mixed tracks
+                mtPopups.showInfoPopup("Performance tracks are switched", "edit after the pattern ends");
+            }
             else
             {
+                if (!PTE->editMode && sequencer.isPerformanceImageMixed())
+                {
+                    // Performance is off but its switched tracks still play: edit the pattern itself, as a pattern change does
+                    PTE->setActualPattern(mtProject.values.actualPattern);
+                }
                 PTE->editMode = !PTE->editMode;
             }
             PTE->refreshEditState();
@@ -3054,11 +3270,13 @@ static uint8_t getSelectedElement()
     }
     else if (PTE->buttons->isButtonPressed(interfaceButtonFx1))
     {
-        return PTE->isMicVolView ? Sequencer::ELEMENTS_MICROMOVE : Sequencer::ELEMENTS_FX1;
+        PTE->fxBankTogglePending = false;
+        return elementOfFxColumn(true); // the Fx1 button is the RIGHT column (V, fx[0])
     }
     else if (PTE->buttons->isButtonPressed(interfaceButtonFx2))
     {
-        return PTE->isMicVolView ? Sequencer::ELEMENTS_VOLUME : Sequencer::ELEMENTS_FX2;
+        PTE->fxBankTogglePending = false;
+        return elementOfFxColumn(false); // the Fx2 button is the LEFT column (m, fx[1])
     }
     else if (PTE->buttons->isButtonPressed(interfaceButtonPattern))
     {
@@ -3117,6 +3335,7 @@ static void functDeleteBackspace(uint8_t state)
     {
         if (PTE->editMode == 1)
         {
+            PTE->fxBankTogglePending = false;   // Delete with an FX button held picks the column, the button is no tap
             newFileManager.storePatternUndoRevision();
 
             // backspace
@@ -3164,13 +3383,11 @@ static void functDeleteBackspace(uint8_t state)
                 sendSelection();
                 if (PTE->editParam == cPatternEditor::EditFx2)
                 {
-                    sequencer.clearSelected(PTE->isMicVolView ? Sequencer::ELEMENTS_VOLUME
-                                                              : Sequencer::ELEMENTS_FX1);
+                    sequencer.clearSelected(elementOfFxColumn(true));
                 }
                 else if (PTE->editParam == cPatternEditor::EditFx1)
                 {
-                    sequencer.clearSelected(PTE->isMicVolView ? Sequencer::ELEMENTS_MICROMOVE
-                                                              : Sequencer::ELEMENTS_FX2);
+                    sequencer.clearSelected(elementOfFxColumn(false));
                 }
                 else if (PTE->editParam == cPatternEditor::EditNote)
                 {
@@ -3218,11 +3435,12 @@ void changeSelectedStepValue(int16_t value)
                 break;
             }
 
-            uint8_t fx_index = PTE->editParam == cPatternEditor::EditFx1 ? 1 : 0;
+            uint8_t fx_index = PTE->fxRank();
 
             if (PTE->buttons->isButtonPressed(interfaceButtonFx1) ||
                 PTE->buttons->isButtonPressed(interfaceButtonFx2))
             {
+                PTE->fxBankTogglePending = false;   // the button is a modifier now, not a tap
                 sequencer.changeSelectionFxType(fx_index, value);
             }
             else
@@ -3373,6 +3591,12 @@ static void functChangePatternLength(uint8_t state)
     }
 }
 
+// page 3, Groove: hold the button and turn the encoder, the value is the one of the track under the cursor (place 2 as Step jump)
+static void functGroove(uint8_t state)
+{
+    functChangePatternEditStep(state);
+}
+
 static void functChangePatternEditStep(uint8_t state)
 {
     if (state == buttonPress)
@@ -3402,6 +3626,36 @@ static void functPreview()
     PTE->setPlayheadRangeFromSelection();
     sendSelection();
     sequencer.playSelection();
+}
+
+// Capture (Config > Features, green mode, button 3): a short press, taken on the release, puts the notes played in the last pass of the
+// playing pattern in the copy buffer. A long press (the first hold event of the button, 333 ms) forgets the played notes instead and its
+// release captures nothing. Shift + button 3 is the track mute, which takes the button over while Shift is down.
+static void functCapture(uint8_t state)
+{
+    static bool pressed = false;
+    static bool cleared = false;
+    if (state == buttonPress)
+    {
+        pressed = true;
+        cleared = false;
+    }
+    else if (state == buttonHold)
+    {
+        if (pressed && !cleared)
+        {
+            cleared = true;
+            sequencer.captureClear();
+        }
+    }
+    else if (state == buttonRelease)
+    {
+        if (pressed && !cleared)
+        {
+            sequencer.captureCommit();
+        }
+        pressed = false;
+    }
 }
 
 // ##############################################################################################
@@ -3464,7 +3718,13 @@ static void functFillApply()
         switch (PTE->editParam)
         {
             case cPatternEditor::EditNote:
-                if (fillData->type == 2)
+                if (fillData->type == cPatternEditor::fillTypeRole)
+                {
+                    sequencer.fillRoleNotes(fillData->role,
+                                            fillData->param,
+                                            fillData->density[Sequencer::fillStepRandom]);
+                }
+                else if (fillData->type == 2)
                 {
                     sequencer.fillRandomNotes(fillData->fillStep,
                                               fillData->param,
@@ -3543,6 +3803,12 @@ static void functFillApply()
                                                           fillData->to,
                                                           fillData->density[fillData->fillStep]);
                         }
+                        else if (fillData->type == 3)
+                        {
+                            sequencer.quantizeMicromove(fillData->fillStep,
+                                                        fillData->quantize,
+                                                        fillData->density[fillData->fillStep]);
+                        }
                     }
                     else
                     {
@@ -3571,7 +3837,7 @@ static void functFillApply()
                     break;
                 }
 
-                uint8_t fx_index = PTE->editParam == cPatternEditor::EditFx1 ? 1 : 0;
+                uint8_t fx_index = PTE->fxRank();
 
                 if (fillData->type == 0)
                 {
@@ -3913,6 +4179,45 @@ static void functNamePattern()
     PTE->keyboardManager.activateKeyboard(PATTERN_NAME_LENGTH);
     PTE->showKeyboardNameEdit(PTE->cTitlePattern, true);
     PTE->setKeyboardNamePatternFunctions(functConfirmNamePattern, true);
+}
+
+// Follow chord (mtFollowChord.h): F3 steps the cursor track's mode Off, Snap, Transp, Tr+Snap, F4 its chord track (and turns Snap on)
+static void functFollowMode()
+{
+    if (PTE->trackerPattern.actualTrack < 0 || PTE->trackerPattern.actualTrack >= kAllTracks)
+    {
+        return;
+    }
+    followchord::cycleMode(PTE->trackerPattern.actualTrack);
+    PTE->showFollowChordLabels();
+}
+
+static void functFollowSource()
+{
+    if (PTE->trackerPattern.actualTrack < 0 || PTE->trackerPattern.actualTrack >= kAllTracks)
+    {
+        return;
+    }
+    followchord::cycleSource(PTE->trackerPattern.actualTrack);
+    PTE->showFollowChordLabels();
+}
+
+// D6: the V and m FX of the pattern into the volume and micro-move fields of their steps. Manual, undoable, says what it did
+static void functMoveVmFx()
+{
+    if (!PTE->editMode)
+    {
+        return;
+    }
+    sendSelection();
+    newFileManager.storePatternUndoRevision();
+    uint16_t skipped = 0;
+    const uint16_t moved = sequencer.moveVmFxToFields(&skipped);
+    static char line[48];
+    snprintf(line, sizeof(line), "%u moved, %u left as they are", moved, skipped);
+    PTE->refreshPattern();
+    PTE->showActualParamOnBar(true);
+    mtPopups.showInfoPopup("V / m FX to the step fields", line);
 }
 
 static void functNameTrack()
@@ -4315,55 +4620,40 @@ void cPatternEditor::lightUpPadBoard()
                 {
                     show_fx = mtPopups.getStepPopupValue();
 
-                    if (show_fx < 0 || show_fx > FX_MAX)
+                    if (show_fx > FX_MAX)
                         break;
 
                     padsBacklight.setBackLayer(1, mtConfig.values.padsLightBack, show_fx);
                 }
                 else
                 {
-                    uint8_t fx_index = PTE->editParam == EditFx1 ? 1 : 0;
+                    uint8_t fx_index = PTE->fxRank();
+                    const fx34::Fx cellFx =
+                      fx34::getFx(&seq->track[trackerPattern.actualTrack].step[trackerPattern.actualStep], fx_index);
 
-                    if (seq->track[trackerPattern.actualTrack]
-                          .step[trackerPattern.actualStep]
-                          .fx[fx_index]
-                          .type != 0)
+                    if (cellFx.type != 0)
                     {
                         // co pokazywac na padach:
                         if (buttons->isButtonPressed(interfaceButtonFx1) ||
                             buttons->isButtonPressed(interfaceButtonFx2))
                         {
-                            show_fx =
-                              interfaceGlobals.fxIdToName(seq->track[trackerPattern.actualTrack]
-                                                            .step[trackerPattern.actualStep]
-                                                            .fx[fx_index]
-                                                            .type); // typ
+                            show_fx = interfaceGlobals.fxIdToName(cellFx.type); // typ
                             if (show_fx > FX_MAX)
                                 break;
                         }
                         else
                         {
-                            Sequencer::strPattern::strTrack::strStep& tempStep =
-                              seq->track[trackerPattern.actualTrack]
-                                .step[trackerPattern.actualStep];
-
-                            show_fx = tempStep.fx[fx_index].value; // wartosc
-                            if (show_fx > sequencer.getFxMax(tempStep.fx[fx_index].type))
+                            show_fx = cellFx.value; // wartosc
+                            if (show_fx > sequencer.getFxMax(cellFx.type))
                             {
                                 break;
                             }
 
                             int lastHandledPad =
-                              std::min(47,
-                                       sequencer.getFxMax(tempStep.fx[fx_index].type) -
-                                         sequencer.getFxMin(tempStep.fx[fx_index].type));
+                              std::min(47, sequencer.getFxMax(cellFx.type) - sequencer.getFxMin(cellFx.type));
 
-                            float showFxTemp =
-                              map<float>((float)show_fx,
-                                         sequencer.getFxMin(tempStep.fx[fx_index].type),
-                                         sequencer.getFxMax(tempStep.fx[fx_index].type),
-                                         0,
-                                         lastHandledPad);
+                            float showFxTemp = map<float>(
+                              (float)show_fx, sequencer.getFxMin(cellFx.type), sequencer.getFxMax(cellFx.type), 0, lastHandledPad);
 
                             show_fx = roundf(showFxTemp);
                         }
@@ -4532,12 +4822,13 @@ static void functMiniMiddle(uint8_t state)
                     break;
                 }
 
-                uint8_t fx_index = PTE->editParam == cPatternEditor::EditFx1 ? 1 : 0;
+                uint8_t fx_index = PTE->fxRank();
 
                 if ((PTE->buttons->isButtonPressed(interfaceButtonFx1) ||
                      PTE->buttons->isButtonPressed(
                        interfaceButtonFx2))) //&& mtPopups.getStepPopupState() == stepPopupNone)
                 {
+                    PTE->fxBankTogglePending = false;
                     PTE->dontShowPopupsUntilButtonRelease = 1;
                     sequencer.setSelectionFxType(fx_index,
                                                  interfaceGlobals.fxIDs[PTE->getPreviousUsedFx()]);
@@ -4600,6 +4891,8 @@ static void functPads(uint8_t pad, uint8_t state, int16_t velo)
                 PTE->showLength();
                 break;
             case 2:
+                if (PTE->actualActionButtonsPage == 2)
+                    break; // page 3: the Groove button, pads do not set it
                 PTE->setActualPatternEditStep(pad);
                 newFileManager.setProjectStructChanged();
                 PTE->showStep();
@@ -4766,7 +5059,7 @@ static void functPads(uint8_t pad, uint8_t state, int16_t velo)
             {
                 // chord capture: on a MIDI Chord cell of a MIDI or synth step the pads play notes, the held chord becomes the step's
                 // note and chord (mtSequencer_chord.cpp), the cursor moves on when the last pad comes up
-                if (!PTE->isMicVolView &&
+                if (!PTE->isMicVolView && !PTE->fxBankActive() &&   // the chord helper reads the two stored slots only
                     (state != buttonPress || (!PTE->buttons->isButtonPressed(interfaceButtonFx1) &&
                                               !PTE->buttons->isButtonPressed(interfaceButtonFx2))))
                 {
@@ -4807,12 +5100,13 @@ static void functPads(uint8_t pad, uint8_t state, int16_t velo)
                         break;
                     }
 
-                    uint8_t fx_index = PTE->editParam == cPatternEditor::EditFx1 ? 1 : 0;
+                    uint8_t fx_index = PTE->fxRank();
 
                     if ((PTE->buttons->isButtonPressed(interfaceButtonFx1) ||
                          PTE->buttons->isButtonPressed(
                            interfaceButtonFx2))) //&& mtPopups.getStepPopupState() == stepPopupNone)
                     {
+                        PTE->fxBankTogglePending = false;
                         PTE->dontShowPopupsUntilButtonRelease = 1;
                         sequencer.setSelectionFxType(fx_index, interfaceGlobals.fxIDs[pad]);
                     }
@@ -4953,6 +5247,7 @@ void cPatternEditor::showFx1Popup()
     {
         return;
     }
+    PTE->fxBankTogglePending = false;   // a long hold opens the FX list, it is not a tap
 
     songTimer.hide();
     hideActualParamOnBar();
@@ -4977,6 +5272,7 @@ void cPatternEditor::showFx2Popup()
     {
         return;
     }
+    PTE->fxBankTogglePending = false;
 
     songTimer.hide();
     hideActualParamOnBar();
@@ -5153,6 +5449,10 @@ void cPatternEditor::setActionButtonPage1Funct()
     }
     else
     {
+        if (captureFeatureOn)
+        {
+            ip->setButtonObj(interfaceButton3, functCapture);
+        }
         ip->setButtonObj(interfaceButton4, buttonPress, functPreview);
     }
 
@@ -5188,6 +5488,16 @@ void cPatternEditor::setActionButtonPage3Funct()
 
     ip->setButtonObj(interfaceButton0, buttonPress, functNamePattern);
     ip->setButtonObj(interfaceButton1, buttonPress, functNameTrack);
+#ifdef FEATURE_PLUG_HOST // the groove is kept in project.mtff (track.N.groove), written by the plugin host's project calls (plug_host.cpp)
+    ip->setButtonObj(interfaceButton2, functGroove);
+#endif
+    // features-140: Follow chord on F4 and F5 (idea-groove has F3 on this page)
+    ip->setButtonObj(interfaceButton3, buttonPress, functFollowMode);
+    ip->setButtonObj(interfaceButton4, buttonPress, functFollowSource);
+    if (editMode)
+    {
+        ip->setButtonObj(interfaceButton5, buttonPress, functMoveVmFx);
+    }
 
     ip->setButtonObj(interfaceButton7, buttonPress, functNextActionButtonPage);
 }

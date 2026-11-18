@@ -71,7 +71,7 @@ void cHorizontalBar::setColors(const uint32_t* colors)
     this->colors = colors;
 }
 
-void cHorizontalBar::setData(void* data)
+void cHorizontalBar::setData(void* /*data*/)
 {
 }
 

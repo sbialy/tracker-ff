@@ -7,6 +7,7 @@
 #pragma once
 
 #include "open_engine.h"
+#include "open_load.h"
 #include "open_patchdata.h"
 
 #include <cstdint>
@@ -26,7 +27,7 @@ constexpr int kModPickMax = kMaxParams + kModMacros;           // picker entries
 constexpr int16_t kModPickMacro = 0x100;                       // picker code of macro m: kModPickMacro + m, a param is its index
 
 // Steps of the period per speed, 128 steps .. 1/64 step (tempoSyncRatesOthers)
-constexpr float kModRate[kLfoSpeeds] = { 128,    96,       64,    48,       32,     24,       16,      12,       8,        6,
+inline constexpr float kModRate[kLfoSpeeds] = { 128,    96,       64,    48,       32,     24,       16,      12,       8,        6,
                                          4,      3,        2,     1.5,      1,      0.75,     0.5,     0.375,    0.333333, 0.25,
                                          0.1875, 0.166667, 0.125, 0.083333, 0.0625, 0.041667, 0.03125, 0.020833, 0.015625 };
 
@@ -282,6 +283,8 @@ inline bool isWaveParam(const char* name)
     return false;
 }
 
+inline bool waveFileShape(const ParamDef& d) { return waveFileShape(d.name, d.fmt == Fmt::kInt, d.min, d.max); }
+
 inline bool modNameIs(const char* a, const char* stored) { return a && std::strncmp(a, stored, kModNameMax) == 0; }
 
 // Which occurrence of its name (as stored, cut to kModNameMax) param i is
@@ -295,14 +298,15 @@ inline int modOccurrence(const EngineDef& def, int i)
     return n;
 }
 
-// Picker order: wave group (engine order), Macro 1..6, every other eligible param. Returns the count.
-inline int modPicker(const EngineDef* def, int16_t* out)
+// Picker order: wave group (engine order), Macro 1..6, every other eligible param. Returns the count. noFiles: /Waves has no wave, the wave file
+// parameters (waveFileShape) are left out like they are in the parameter list.
+inline int modPicker(const EngineDef* def, int16_t* out, bool noFiles = false)
 {
     int n = 0;
     const int count = def ? (def->paramCount < kMaxParams ? def->paramCount : kMaxParams) : 0;
     for (int i = 0; i < count; i++)
     {
-        if (modEligible(def->params[i]) && isWaveParam(def->params[i].name))
+        if (modEligible(def->params[i]) && isWaveParam(def->params[i].name) && !(noFiles && waveFileShape(def->params[i])))
         {
             out[n++] = int16_t(i);
         }
@@ -313,7 +317,7 @@ inline int modPicker(const EngineDef* def, int16_t* out)
     }
     for (int i = 0; i < count; i++)
     {
-        if (modEligible(def->params[i]) && !isWaveParam(def->params[i].name))
+        if (modEligible(def->params[i]) && !isWaveParam(def->params[i].name) && !(noFiles && waveFileShape(def->params[i])))
         {
             out[n++] = int16_t(i);
         }
@@ -416,10 +420,22 @@ void modSlotSet(Patch& p, int s, const ModSlot& v);
 const EngineDef* modEngineOf(const Patch& p);
 const char* modDestName(const Patch& p, int code); // the param's name or the macro's display name, "" for none
 
+// Patch Vary (open_cold.cpp, cold, editor only). One loop over the patch's parameter array, ranges and curves from the engine definition,
+// so it works for every engine including plugin engines. `percent` 1..100 is the share of each parameter's knob range a value may move
+// (+- percent, clamped, in the knob curve), 100 draws every parameter anew inside its range. The volume parameter stays. A discrete
+// parameter (enum, on/off) stays below 50 percent, from 50 it is drawn anew with a probability of percent / 100. `rng` is an xorshift32
+// state (non zero). `prev` (patchParamCount values) gets the values before, for patchSetValues (the undo). Audio interrupts disabled by
+// the caller, like every parameter write. Returns how many parameters changed.
+int patchParamCount(const Patch& p);
+int patchVary(Patch& p, int percent, uint32_t& rng, float* prev);
+void patchSetValues(Patch& p, const float* values, int n);   // the undo: every value back through the normal setter (clamped)
+
 #ifdef OPEN_HOST_TEST
 // Host test hooks (open_synth.cpp): the params the engine got last block and a slot's output, of the latest synth's part
 const ot::audio::SynthParams* testParams(int part);
 float testModOut(int part, int slot);
+// Voice record `slot` of a part: false when it is not on. note, id (open::noteTag, 0 none) and the gate of the voice (synth_nna_sim.sh, host_smoke_test.cpp)
+bool testVoice(int part, int slot, bool& gate, int& note, int& id);
 #endif
 
 } // namespace polysynth::open

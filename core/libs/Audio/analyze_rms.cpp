@@ -32,6 +32,28 @@
 AUDIO_CORE_RAM void AudioAnalyzeRMS::update(void)
 {
     audio_block_t* block = receiveReadOnly();
+    const uint8_t left = wanted;
+    if (left == 0)
+    {
+        // nobody reads this meter: no sums
+        if (block)
+        {
+            release(block);
+        }
+        return;
+    }
+    wanted = left - 1;
+    if (left == 1)
+    {
+        // asleep from the next block on: the sums so far are stale by the time a reader comes back
+        accum = 0;
+        count = 0;
+        if (block)
+        {
+            release(block);
+        }
+        return;
+    }
     if (!block)
     {
         count++;
@@ -71,6 +93,7 @@ AUDIO_CORE_RAM void AudioAnalyzeRMS::update(void)
 
 AUDIO_CORE_FLASH float AudioAnalyzeRMS::read(void)
 {
+    wanted = kHold;
     DISABLE_GLOBAL_INTERRUPTS();
     int64_t sum = accum;
     accum = 0;

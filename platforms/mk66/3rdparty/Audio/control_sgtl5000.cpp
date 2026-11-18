@@ -1051,7 +1051,7 @@ unsigned short AudioControlSGTL5000::dap_audio_eq_band(
     return modify(DAP_AUDIO_EQ_BASS_BAND0 + (bandNum * 2), (unsigned int)n, 127);
 }
 
-void AudioControlSGTL5000::automate(uint8_t dap, uint8_t eq)
+void AudioControlSGTL5000::automate(uint8_t /*dap*/, uint8_t eq)
 {
     // if((dap!=0)&&(!(read(DAP_CONTROL)&1))) audioProcessorEnable();
     if ((read(DAP_AUDIO_EQ) & 3) != eq)
@@ -1158,6 +1158,7 @@ void calcBiquad(uint8_t filtertype,
             a0 = (A + 1.0F) - ((A - 1.0F) * cosw) + (beta * sinw);
             a1 = -2.0F * ((A - 1.0F) - ((A + 1.0F) * cosw));
             a2 = -((A + 1.0F) - ((A - 1.0F) * cosw) - (beta * sinw));
+            break;
         default:
             b0 = 0.5;
             b1 = 0.0;

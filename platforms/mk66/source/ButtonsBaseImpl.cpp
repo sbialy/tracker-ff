@@ -10,6 +10,11 @@ bool ButtonsBaseImpl::isButtonPressed(int buttonIdx)
     return buttonsDriver.isButtonPressed(buttonIdx);
 }
 
+bool ButtonsBaseImpl::setRemoteHeld(int buttonIdx, bool held)
+{
+    return buttonIdx >= 0 && buttonsDriver.setRemote(uint8_t(buttonIdx), held);
+}
+
 void ButtonsBaseImpl::setActionCallback(ActionType action, void (*callback)(uint8_t))
 {
     switch (action)

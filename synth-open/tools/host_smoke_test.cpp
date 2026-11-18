@@ -224,6 +224,77 @@ int main() {
   }
   printf(bad ? "ENGINE CHECK FAILED\n" : "all engines OK\n");
 
+  // ---- Patch Vary / Randomize (open::patchVary, the patch editor's button 3): one loop over the parameter array, every engine
+  {
+    auto varyCheck = [&](int typeId, const char* name) {
+      auto vp = std::shared_ptr<Patch>(store->createPatch(typeId));
+      const open::EngineDef* vd = static_cast<open::OpenPatch*>(vp.get())->getDef();
+      const int n = open::patchParamCount(*vp);
+      bool ok = vd && n > 0 && n == int(vp->getMetadata().params.size());
+      float v0[open::kMaxParams], prev[open::kMaxParams], a[open::kMaxParams], b[open::kMaxParams];
+      for (int i = 0; i < n; i++) v0[i] = *vp->getParamValue(i);
+      // 10 %: every continuous parameter within +-10 % of its knob range, the volume and every enum untouched, undo restores exactly
+      uint32_t rng = 12345;
+      const int ch10 = open::patchVary(*vp, 10, rng, prev);
+      int moved10 = 0;
+      for (int i = 0; ok && i < n; i++) {
+        const auto& d = vd->params[i];
+        const float v = *vp->getParamValue(i);
+        ok = ok && prev[i] == v0[i] && std::isfinite(v) && v >= d.min && v <= d.max;
+        const bool discrete = d.fmt == open::Fmt::kEnum || d.fmt == open::Fmt::kOnOff;
+        if (i == vd->volumeParam || discrete) ok = ok && v == v0[i];
+        else if (d.fmt != open::Fmt::kInt && d.fmt != open::Fmt::kSemi && d.fmt != open::Fmt::kRatio)
+          ok = ok && std::fabs(open::valueToCurve(d, v) - open::valueToCurve(d, v0[i])) <= 0.1f + 1e-4f;
+        moved10 += v != v0[i];
+      }
+      ok = ok && ch10 == moved10 && ch10 > 0;
+      for (int i = 0; i < n; i++) a[i] = *vp->getParamValue(i);
+      open::patchSetValues(*vp, prev, n);
+      for (int i = 0; ok && i < n; i++) ok = ok && *vp->getParamValue(i) == v0[i];
+      // the same seed draws the same patch
+      uint32_t rng2 = 12345; float prev2[open::kMaxParams];
+      open::patchVary(*vp, 10, rng2, prev2);
+      for (int i = 0; ok && i < n; i++) ok = ok && *vp->getParamValue(i) == a[i];
+      open::patchSetValues(*vp, v0, n);
+      // 100 %: every parameter drawn in its range, the volume stays, most continuous parameters move
+      uint32_t rng3 = 777;
+      const int ch100 = open::patchVary(*vp, 100, rng3, prev);
+      int cont = 0, contMoved = 0, enumMoved = 0;
+      for (int i = 0; ok && i < n; i++) {
+        const auto& d = vd->params[i];
+        const float v = *vp->getParamValue(i);
+        b[i] = v;
+        ok = ok && std::isfinite(v) && v >= d.min && v <= d.max;
+        if (i == vd->volumeParam) { ok = ok && v == v0[i]; continue; }
+        if (d.fmt == open::Fmt::kEnum || d.fmt == open::Fmt::kOnOff) { enumMoved += v != v0[i]; continue; }
+        if (d.max > d.min) { cont++; contMoved += v != v0[i]; }
+      }
+      ok = ok && ch100 > 0 && contMoved * 2 >= cont;
+      // a second draw differs from the first (the state moved on)
+      open::patchSetValues(*vp, v0, n);
+      open::patchVary(*vp, 100, rng3, prev);
+      int differs = 0;
+      for (int i = 0; i < n; i++) differs += *vp->getParamValue(i) != b[i];
+      ok = ok && differs > 0;
+      // the varied patch still plays: finite and not silent
+      open::patchSetValues(*vp, b, n);
+      auto vi = synth->createInstrument(0);
+      Src vs; vi->assignPatch(vp); vi->connect(vs); vi->setVoiceCount(2); vi->setMidiChannel(0);
+      std::shared_ptr<Instrument> varr[1] = { vi };
+      synth->setup(std::span<std::shared_ptr<Instrument>>(varr,1), {}, nullptr, []{ return tiny::optional<float>(120.0f); });
+      vs.send(MidiEvent::Type::kNoteOn, 0, 57, 100);
+      float vpk = 0; bool fin = true;
+      for (int k = 0; k < 40; k++) { float p = blk(); vpk = std::max(vpk, p); fin = fin && std::isfinite(p); }
+      ok = ok && fin;   // random patches can be quiet or loud, only a finite output is required
+      printf("  vary %-6s params=%d 10%% moved=%d 100%% moved=%d (continuous %d/%d, enums %d) peak=%.3f %s\n", name, n, ch10, ch100, contMoved, cont, enumMoved, vpk, ok ? "OK" : "FAIL");
+      bad += !ok;
+    };
+    for (const auto& e : engines) varyCheck(int(e.id), e.name);
+#ifdef SMOKE_PLUGIN_ENGINE
+    varyCheck(0x81, "plugin");
+#endif
+  }
+
 #ifdef SYNTH_ENGINE_ACD
   // ---- paraphony (PLUG_EXT_CHORD, ACD built in): Chord Mode / Chord, the sequencer's routing (partChordPara, partNoteChord)
   {
@@ -342,7 +413,7 @@ int main() {
   s3->setup(std::span<std::shared_ptr<Instrument>>(ins3,3), {}, nullptr, []{ return tiny::optional<float>(120.0f); });
   float slotPk[3];
   auto renderAll = [&]() { for (int k = 0; k < 3; k++) { s3->renderAudioBuffer({AudioBufferRef(L),AudioBufferRef(R)}, std::span<AudioBufferRef>(aux), k); slotPk[k] = peakOf(L); } };
-  printf("voice pool: budget=%d cap=%d (default 4, max 8)\n", open::voiceBudget(), open::voiceCap());
+  printf("voice pool: budget=%d cap=%d (default 4, max 16)\n", open::voiceBudget(), open::voiceCap());
   check(open::voiceBudget() == 4 && open::voiceCap() == 4, "default budget 4");
   int maxSounding = 0;
   const int notes[6][2] = {{0,60},{0,64},{1,67},{1,71},{2,72},{2,76}};   // {slot, note}: 6 notes over 3 slots
@@ -357,9 +428,9 @@ int main() {
   check(maxSounding <= 4 && open::voicesSounding() == 4, "6 notes sound at most 4 voices (pool full)");
   check(slotPk[0] < 1e-4f && slotPk[1] > 1e-3f && slotPk[2] > 1e-3f, "the two oldest notes (slot 0) were stolen and went silent");
   open::setVoiceBudget(99);
-  check(open::voiceBudget() == 8, "budget clamps to 8");
+  check(open::voiceBudget() == 16 && open::voiceBudget() == open::kMaxVoiceBudget, "budget clamps to 16 (the A/B Synth play page: two parts of 8)");
   src3[0].send(MidiEvent::Type::kNoteOn, 0, 60, 100); src3[0].send(MidiEvent::Type::kNoteOn, 0, 64, 100); renderAll();
-  check(open::voicesSounding() == 6, "budget 8: 3 slots x 2 voices = 6 (per-instrument cap 2 kept)");
+  check(open::voicesSounding() == 6, "budget 16: 3 slots x 2 voices = 6 (per-instrument cap 2 kept)");
   src3[0].send(MidiEvent::Type::kNoteOn, 0, 62, 100);
   check(open::voicesSounding() == 6, "third note on one slot steals inside the slot (cap 2)");
   open::setVoiceBudget(4);
@@ -408,10 +479,10 @@ int main() {
   open::reportBlockCycles(kOver);
   check(open::voiceCap() < 4, "project load clears the hold-off: next overrun cuts at once");
   open::resetOnProjectLoad();
-  // ---- 4 voices per instrument: the cap clamps at 4, one slot can fill the default pool, a fifth note steals inside the slot
+  // ---- 8 voices per instrument (4 before the Synth play page): the cap clamps at 8, one slot can fill the default pool of 4, a fifth note steals inside the slot
   {
     ins3[0]->setVoiceCount(9);
-    check(ins3[0]->getVoiceCount() == 4, "Voices above 4 clamp to 4 (was 2)");
+    check(ins3[0]->getVoiceCount() == 8, "Voices above 8 clamp to 8 (was 2)");
     ins3[0]->setVoiceCount(4); ins3[1]->setVoiceCount(4); ins3[2]->setVoiceCount(4);
     const int chord[5] = {48, 55, 60, 64, 67};
     for (int k = 0; k < 4; k++) { src3[0].send(MidiEvent::Type::kNoteOn, 0, chord[k], 100); renderAll(); renderAll(); }
@@ -428,6 +499,27 @@ int main() {
     open::setVoiceBudget(4);
     for (int b = 0; b < 4; b++) renderAll();
     check(open::voicesSounding() == 4, "budget 4 again: down to 4");
+    for (int k = 0; k < 3; k++) ins3[k]->setVoiceCount(2);
+    open::resetOnProjectLoad();
+    // the Synth play page: budget 8, one slot with 8 voices takes the whole pool, the ninth note steals the oldest voice of the slot, the exit puts 4 back
+    open::setVoiceBudget(8);
+    ins3[0]->setVoiceCount(8);
+    const int chord8[9] = {36, 40, 43, 48, 52, 55, 60, 64, 67};
+    for (int k = 0; k < 8; k++) { src3[0].send(MidiEvent::Type::kNoteOn, 0, chord8[k], 100); renderAll(); renderAll(); }
+    check(open::voicesSounding() == 8, "8 voices per instrument: 8 notes on one slot, 8 voices sound (budget 8)");
+    auto hasNote = [&](int note) {
+      for (int sl = 0; sl < 8; sl++) { bool g; int n, id; if (open::testVoice(0, sl, g, n, id) && n == note && g) return true; }
+      return false;
+    };
+    check(hasNote(36) && hasNote(55) && hasNote(60), "the 8 notes are on 8 records");
+    src3[0].send(MidiEvent::Type::kNoteOn, 0, chord8[8], 100); renderAll(); renderAll();
+    check(open::voicesSounding() == 8 && hasNote(67) && !hasNote(36) && hasNote(40), "a ninth note steals the oldest voice (36) of the slot, still 8");
+    src3[0].send(MidiEvent::Type::kControlChange, 0, 123, 0); renderAll();
+    check(!hasNote(40) && !hasNote(67) && !hasNote(52), "CC 123 on the part releases all 8 (no gated voice)");
+    for (int k = 0; k < 8; k++) { src3[0].send(MidiEvent::Type::kNoteOn, 0, chord8[k], 100); renderAll(); }
+    open::setVoiceBudget(4);
+    for (int b = 0; b < 4; b++) renderAll();
+    check(open::voicesSounding() == 4, "the exit of the page: budget 4 steals down to 4 at once");
     for (int k = 0; k < 3; k++) ins3[k]->setVoiceCount(2);
     open::resetOnProjectLoad();
   }
@@ -573,6 +665,54 @@ int main() {
       open::resetOnProjectLoad();
     }
 #endif
+    {   // note ids (open::noteTag, S-ID4): a note-off with an id ends the voice of that note only, a note-on that waits keeps its id
+      auto gated = [&](int part, int note, int id) { int n = 0; for (int k = 0; k < 4; k++) { bool g; int nn, ii; n += open::testVoice(part, k, g, nn, ii) && g && nn == note && ii == id; } return n; };
+      auto on = [&](int part) { int n = 0; for (int k = 0; k < 4; k++) { bool g; int nn, ii; n += open::testVoice(part, k, g, nn, ii); } return n; };
+      const uint32_t T = 60000000;
+      open::resetOnProjectLoad();
+      hostBlock(T, 490000, false, []{});
+      hostBlock(T + 500000, 490000, true, [&]{
+        open::noteTag(7); src3[0].send(MidiEvent::Type::kNoteOn, 0, 72, 100);
+        open::noteTag(8); src3[0].send(MidiEvent::Type::kNoteOff, 0, 72, 0);   // another note's off for the same pitch
+        open::noteTag(0); });
+      open::loadStats(st);
+      const bool waited = st.deferred > 0 && on(0) == 0;
+      fakeNow = T + 1000000; open::reportBlockStart(T + 1000000, fclk);
+      check(waited && gated(0, 72, 7) == 1, "S-ID4 a waiting note-on keeps its id, the off of another note (same pitch) does not end it");
+      open::noteTag(8); src3[0].send(MidiEvent::Type::kNoteOff, 0, 72, 0); open::noteTag(0);
+      check(gated(0, 72, 7) == 1, "S-ID4 and another note's off later does not either");
+      open::noteTag(7); src3[0].send(MidiEvent::Type::kNoteOff, 0, 72, 0); open::noteTag(0);
+      check(gated(0, 72, 7) == 0 && on(0) == 1, "S-ID4 its own off ends it (the voice is on, released)");
+      hostBlock(T + 1500000, 490000, false, []{});
+      hostBlock(T + 2000000, 490000, true, [&]{
+        open::noteTag(9); src3[1].send(MidiEvent::Type::kNoteOn, 0, 74, 100); src3[1].send(MidiEvent::Type::kNoteOff, 0, 74, 0); open::noteTag(0); });
+      fakeNow = T + 2500000; open::reportBlockStart(T + 2500000, fclk);
+      check(on(1) == 1 && gated(1, 74, 9) == 0, "S-ID4 a note-on that waits with its own off (same id) starts and is released");
+      // the same pitch of two notes in one part (S-ID1) and a mono part (S-ID2), without the admission queue (offline: every note-on starts at once)
+      open::resetOnProjectLoad();
+      open::setOffline(true);
+      open::noteTag(1); src3[2].send(MidiEvent::Type::kNoteOn, 0, 60, 100);
+      open::noteTag(2); src3[2].send(MidiEvent::Type::kNoteOn, 0, 60, 100);
+      open::noteTag(1); src3[2].send(MidiEvent::Type::kNoteOff, 0, 60, 0); open::noteTag(0);
+      check(gated(2, 60, 2) == 1 && gated(2, 60, 1) == 0, "S-ID1 two notes of one pitch: the first note's off ends the first voice only");
+      src3[2].send(MidiEvent::Type::kNoteOff, 0, 60, 0);
+      check(gated(2, 60, 2) == 0, "S-ID5 an off without an id ends the voice of the pitch (as before)");
+      open::noteTag(3); src3[2].send(MidiEvent::Type::kNoteOn, 0, 62, 100); open::noteTag(0);
+      src3[2].send(MidiEvent::Type::kNoteOn, 0, 62, 100);
+      open::noteTag(3); src3[2].send(MidiEvent::Type::kNoteOff, 0, 62, 0); open::noteTag(0);
+      check(gated(2, 62, 3) == 0 && gated(2, 62, 0) == 1, "S-ID5 a note without an id (pad, MIDI in) is not ended by the off of a sequencer note of that pitch");
+      open::resetOnProjectLoad();
+      ins3[1]->setVoiceCount(1);
+      open::noteTag(1); src3[1].send(MidiEvent::Type::kNoteOn, 0, 60, 100);
+      open::noteTag(2); src3[1].send(MidiEvent::Type::kNoteOn, 0, 60, 100);
+      open::noteTag(1); src3[1].send(MidiEvent::Type::kNoteOff, 0, 60, 0); open::noteTag(0);
+      check(on(1) == 1 && gated(1, 60, 2) == 1, "S-ID2 mono part: the voice reused by the second note, the first note's off leaves it");
+      open::noteTag(2); src3[1].send(MidiEvent::Type::kNoteOff, 0, 60, 0); open::noteTag(0);
+      check(gated(1, 60, 2) == 0, "S-ID2 and the second note's own off ends it");
+      ins3[1]->setVoiceCount(2);
+      open::setOffline(false);
+      open::resetOnProjectLoad();
+    }
     open::setAdmitPermille(open::kAdmitPermille);
     check(open::admitPermille() == 870, "admission limit back at the default");
     open::resetOnProjectLoad();
@@ -682,6 +822,49 @@ int main() {
       auto cmpm = ps->createPatch(int(kinds[0].id)); ps->loadPatch("ms", *cmpm, true);
       check(*cmpm->getMacroModifierAmount(0, 0) == 0.75f && *cmpm->getParamValue(pid) == base, "codec: macro amount and parameter survive in Scale mode");
       // Persistence into project / patch FX copies: every patch is built by createPatch + loadPatch, so the default (Scale) only applies to new ones
+    }
+    // Wave file references (patch field 101, a wave parameter by file name): a patch holds the path of the file an engine parameter's index stands for. A patch
+    // without one saves as before (no field), the path is in force only while the parameter still has the value it was stored with, an edit of the value
+    // drops it, a file keeps what it cannot use
+    {
+      const std::string kn = kinds[0].name;
+      auto wp = ps->createPatch(int(kinds[0].id)); auto& wop = static_cast<open::OpenPatch&>(*wp);
+      int p = -1; for (int i = 0; i < wop.paramCount() && p < 0; i++) { const auto& d = wop.getDef()->params[i]; if (d.min <= 0 && d.max >= 5) p = i; }
+      char path[open::kWavePath]; check(p >= 0, "waves: the engine has a parameter that takes the values 0 to 5 (a stand in for User)");
+      if (p >= 0)
+      {
+        ps->savePatch("w0", wop); const auto plain = mp->files[kn + "/w0.patch"];
+        check(wop.waveRefs().n == 0 && wop.waveRef(p, path, sizeof(path)) < 0 && plain.size() > 100, "waves: a new patch has no reference");
+        wop.setParamValue(p, 3.0f, Patch::ParamChangeSource::kKnob);
+        ps->savePatch("w1", wop); const auto three = mp->files[kn + "/w1.patch"];
+        check(three.size() == plain.size(), "waves: a patch without a reference saves no field 101 (same size as before, only the value differs)");
+        check(wop.setWaveRef(p, "AKWF_0004/AKWF_0301.wav") && wop.waveRef(p, path, sizeof(path)) == 23 && !std::strcmp(path, "AKWF_0004/AKWF_0301.wav"), "waves: setWaveRef stores the path with the current value");
+        check(!wop.setWaveRef(p, "../x.wav") && !wop.setWaveRef(p, "x.txt") && !wop.setWaveRef(-1, "a.wav") && !wop.setWaveRef(1000, "a.wav") && wop.waveRefs().n == 1, "waves: a bad path or parameter is refused");
+        ps->savePatch("w2", wop); const auto withRef = mp->files[kn + "/w2.patch"];
+        const uint8_t tag[] = { 0xAA, 0x06 };
+        check(withRef.size() > three.size() && std::search(withRef.begin(), withRef.end(), tag, tag + 2) != withRef.end() &&
+                std::equal(three.begin(), three.begin() + 100, withRef.begin()), "waves: a patch with a reference is the same bytes plus field 101");
+        auto rp = ps->createPatch(int(kinds[0].id)); auto& rop = static_cast<open::OpenPatch&>(*rp);
+        check(ps->loadPatch("w2", *rp, true) && rop.waveRef(p, path, sizeof(path)) == 23 && !std::strcmp(path, "AKWF_0004/AKWF_0301.wav"), "waves: load reads the reference");
+        ps->savePatch("w3", rop); check(mp->files[kn + "/w3.patch"] == withRef, "waves: load -> save keeps the exact bytes");
+        // the same value again keeps it, another value drops it, the next save has no field
+        rop.setParamValue(p, 3.0f, Patch::ParamChangeSource::kKnob); check(rop.waveRefs().n == 1, "waves: setting the value it has keeps the path");
+        std::vector<float> keep(size_t(rop.paramCount())); rop.getValuesRaw(keep.data()); std::vector<float> other = keep; other[size_t(p)] = 4.0f;
+        rop.setValuesRaw(other.data()); check(rop.waveRef(p, path, sizeof(path)) < 0 && rop.waveRefs().n == 1, "waves: Patch FX values that move the parameter switch the path off, it stays in the patch");
+        rop.setValuesRaw(keep.data()); check(rop.waveRef(p, path, sizeof(path)) == 23, "waves: and back on with the value");
+        rop.setParamValue(p, 4.0f, Patch::ParamChangeSource::kKnob);
+        check(rop.waveRefs().n == 0 && rop.waveRef(p, path, sizeof(path)) < 0, "waves: the user picks another value: the path is dropped");
+        ps->savePatch("w4", rop); auto w4 = mp->files[kn + "/w4.patch"]; check(w4.size() == three.size(), "waves: and the next save writes no field 101");
+        // a file with no reference replaces one
+        check(wop.waveRefs().n == 1 && ps->loadPatch("w1", wop, true) && wop.waveRefs().n == 0, "waves: loading a file without a reference clears the patch's");
+        // a reference on a parameter this engine does not have is kept and written back
+        auto d2 = std::make_unique<open::PatchData>(); wop.exportData(*d2);
+        d2->waves.ref[0].param = int16_t(open::kMaxParams - 1); d2->waves.ref[0].index = 0; std::strcpy(d2->waves.ref[0].path, "z/far.wav"); d2->waves.n = 1;
+        std::vector<uint8_t> fb(open::kPatchFileMax); fb.resize(open::encodePatch(*d2, fb.data(), fb.size()));
+        auto dd = std::make_unique<open::PatchData>(); const bool dec = open::decodePatch(fb.data(), fb.size(), *dd); wop.importData(*dd);
+        auto d3 = std::make_unique<open::PatchData>(); wop.exportData(*d3); std::vector<uint8_t> fb2(open::kPatchFileMax); fb2.resize(open::encodePatch(*d3, fb2.data(), fb2.size()));
+        check(dec && wop.waveRef(open::kMaxParams - 1, path, sizeof(path)) < 0 && fb2 == fb, "waves: a reference on a parameter the engine lacks is not used and is written back byte for byte");
+      }
     }
     // wrong engine, damaged file, missing file: load fails and leaves the patch alone
     const auto& kLast = kinds[nKinds - 1]; const std::string lastName = kLast.name, firstName = kinds[0].name;
@@ -919,6 +1102,124 @@ int main() {
       check(edits, "a saved slot reaches the bank and the files, a project reload rebuilds the same bank on slot 0");
       check(nKinds < 2 || engineKeeps, "engine change: old slot files stay, are ignored and cannot be opened, empty slots still open");
       check(nKinds < 2 || engineBack, "engine change: switching back brings slots 1..15 of that engine back, slot 0 is the new Init");
+    }
+    // ---- Morph step FX (patchBankMorph): blend of the open slot (A) and a bank slot (B) by 0..100, every engine of this build
+    {
+      mw->files.clear();
+      auto raw = [](Patch& p) { std::vector<float> v(p.getMetadata().params.size()); static_cast<open::OpenPatch&>(p).getValuesRaw(v.data()); return v; };
+      auto fill = [](Patch& p, float t) { const auto& m = p.getMetadata();
+        for (size_t i = 0; i < m.params.size(); i++) { const float a = float(m.params[i].minValue), b = float(m.params[i].maxValue); p.setParamValue(int(i), a + (b - a) * t, Patch::ParamChangeSource::kKnob); } };
+      auto nameOf = [](int part, int slot) { char n[8]; open::patchSlotName(part, slot, n); return std::string(n); };
+      // the kind of every parameter, written out again here from the Fmt list (not the firmware's morphKind): 0 lerp, 1 rounded, 2 switch at 50
+      auto kindOf = [](open::Fmt f) { switch (f) {
+          case open::Fmt::kEnum: case open::Fmt::kOnOff: case open::Fmt::kRatio:
+#ifdef SYNTH_ENGINE_PERC
+          case open::Fmt::kNote: case open::Fmt::kBodyWave:
+#endif
+            return 2;
+          case open::Fmt::kInt: case open::Fmt::kSemi: return 1;
+          default: return 0; } };
+      bool ends = true, mid = true, half = true, target = true, bad = true, back = true, editor = true, cfg = true, step = true, anySwitch = false, anyLerp = false;
+      int part = 0;
+      for (const auto& k : kinds) {
+        const int myPart = part++ % open::kPatchBankParts;
+        auto base = ws->createPatch(int(k.id)), lo = ws->createPatch(int(k.id)), hi = ws->createPatch(int(k.id));
+        fill(*base, 0.5f); fill(*lo, 0.1f); fill(*hi, 0.9f);
+        ws->savePatch(nameOf(myPart, 0), *base); ws->savePatch(nameOf(myPart, 1), *lo); ws->savePatch(nameOf(myPart, 3), *hi);
+        auto live = ws->createPatch(int(k.id));
+        ws->loadPatch(nameOf(myPart, 0), *live, true);
+        open::patchBankSetLive(myPart, live.get());
+        open::patchBankPreload(myPart, *live, *ws);
+        open::patchBankSetMorphTarget(myPart, -1);
+        const auto A = raw(*live), L = raw(*lo), H = raw(*hi);
+        const open::EngineDef* def = static_cast<open::OpenPatch&>(*live).getDef();
+        // the ends are exactly the slots (the Patch FX path)
+        ends = ends && open::patchBankMorph(myPart, 3, 100) && raw(*live) == H;
+        ends = ends && open::patchBankMorph(myPart, 3, 0) && raw(*live) == A;
+        ends = ends && open::patchBankMorph(myPart, 3, 255) && raw(*live) == H;   // past 100 is 100
+        // 25 / 49 / 50 / 75: every parameter by its kind
+        for (int amt : {25, 49, 50, 75}) {
+          const bool ok = open::patchBankMorph(myPart, 3, amt);
+          const auto V = raw(*live);
+          bool same = ok && V.size() == A.size();
+          for (size_t i = 0; same && i < V.size(); i++) {
+            const int kd = def ? kindOf(def->params[i].fmt) : 0;
+            const float lerp = A[i] + (H[i] - A[i]) * (float(amt) / 100.0f);
+            float want = kd == 2 ? (amt >= 50 ? H[i] : A[i]) : kd == 1 ? std::nearbyint(lerp) : lerp;
+            same = std::fabs(V[i] - want) <= 1e-4f * std::max(1.0f, std::fabs(want));
+            const float lo_ = std::min(A[i], H[i]), hi_ = std::max(A[i], H[i]);
+            same = same && V[i] >= lo_ - 0.5f && V[i] <= hi_ + 0.5f;   // never outside the two slots (a rounded one by half a step at most)
+            if (kd == 2 && A[i] != H[i]) anySwitch = true;
+            if (kd == 0 && A[i] != H[i]) anyLerp = true;
+          }
+          (amt == 50 || amt == 49 ? half : mid) = (amt == 50 || amt == 49 ? half : mid) && same;
+        }
+        // the macros and automation: A's below the half, B's from it
+        open::patchBankMorph(myPart, 3, 49);
+        cfg = cfg && &static_cast<open::OpenPatch&>(*live).live() == static_cast<open::OpenPatch&>(*live).ownCfg();
+        open::patchBankMorph(myPart, 3, 50);
+        cfg = cfg && &static_cast<open::OpenPatch&>(*live).live() != static_cast<open::OpenPatch&>(*live).ownCfg();
+        // the editor shows the edited values while a blend plays
+        for (size_t i = 0; i < A.size(); i++) editor = editor && *live->getParamValue(int(i)) == A[i];
+        // the part's Morph target: -1 is slot 1 by default, then the slot that was set
+        target = target && open::patchBankMorphTarget(myPart) == open::kMorphDefault;
+        target = target && open::patchBankMorph(myPart, -1, 100) && raw(*live) == L;
+        open::patchBankSetMorphTarget(myPart, 3);
+        target = target && open::patchBankMorphTarget(myPart) == 3 && open::patchBankMorph(myPart, -1, 100) && raw(*live) == H;
+        open::patchBankSetMorphTarget(myPart, 99);   // out of range: the default
+        target = target && open::patchBankMorphTarget(myPart) == open::kMorphDefault;
+        // B with no file (2), out of range or of no part: nothing changes
+        open::patchBankMorph(myPart, 3, 30); const auto before = raw(*live);
+        for (int ign : {2, 4, 16, 99}) bad = bad && !open::patchBankMorph(myPart, ign, 50) && raw(*live) == before;
+        bad = bad && !open::patchBankMorph(-1, 3, 50) && !open::patchBankMorph(open::kPatchBankParts, 3, 50);
+        // B = the open slot: A whatever the amount
+        bad = bad && open::patchBankMorph(myPart, 0, 60) && raw(*live) == A;
+        // after any blend the open slot's values come back (restore, Patch FX to the open slot, Morph 0)
+        open::patchBankMorph(myPart, 3, 40); open::patchBankRestore(myPart); back = back && raw(*live) == A;
+        open::patchBankMorph(myPart, 3, 40); back = back && open::patchBankApply(myPart, 0) && raw(*live) == A;
+        open::patchBankMorph(myPart, 3, 40); back = back && open::patchBankMorph(myPart, 3, 0) && raw(*live) == A;
+        // a blend after a Patch FX to slot 1 still starts from the open slot (A), not from slot 1
+        open::patchBankApply(myPart, 1); const bool m1 = open::patchBankMorph(myPart, 3, 100) && raw(*live) == H;
+        open::patchBankApply(myPart, 1); step = step && m1 && open::patchBankMorph(myPart, 1, 0) && raw(*live) == A;
+        open::patchBankSetLive(myPart, nullptr);
+        for (int sl = 0; sl < 16; sl++) mw->files.erase(nameOf(myPart, sl) + ".patch");
+      }
+      check(ends, "Morph FX: 0 plays the open slot, 100 (and more) the target slot, exactly (all engines)");
+      check(mid, "Morph FX: 25 and 75 lerp numbers, round Int and Semi, keep discrete ones on the near slot (all engines)");
+      check(half, "Morph FX: discrete parameters (Enum, On/Off, Ratio) switch at 50, 49 keeps the open slot's (all engines)");
+      check(anyLerp && (nKinds < 2 || anySwitch), "Morph FX test patches have numeric and discrete parameters that differ");
+      check(cfg, "Morph FX: the macros and automation are the open slot's below 50 and the target's from 50");
+      check(editor, "Morph FX: the editor shows the open slot's edited values while a blend plays");
+      check(target, "Morph target: default slot 1, a set target is used by a Morph FX without a Patch FX, out of range is the default");
+      check(bad, "Morph FX: a target with no file, out of range or a bad part changes nothing, the open slot as target is the open slot");
+      check(back, "Morph FX: restore, Patch FX to the open slot and Morph 0 all bring the open slot's values back");
+      check(step, "Morph FX after a Patch FX blends from the open slot, not from the slot the Patch FX put in");
+    }
+    // ---- Morph target in the names file (m= line)
+    {
+      auto bytesOf = [](const char* t) { return std::vector<uint8_t>(t, t + std::strlen(t)); };
+      uint8_t buf[open::kSlotNamesFileMax]; open::SlotNames in, out;
+      in.morph = 1; bool m = open::encodeSlotNames(in, buf, sizeof(buf)) == 11;                     // the default: no line, no reason for a file
+      m = m && !open::morphTargetSet(in);
+      in.morph = 12; std::snprintf(in.name[2], sizeof(in.name[2]), "Pad");
+      size_t n = open::encodeSlotNames(in, buf, sizeof(buf));
+      m = m && std::string(reinterpret_cast<char*>(buf), n) == "tffnames 1\n2=Pad\nm=12\n";
+      m = m && open::decodeSlotNames(buf, n, out) && out.morph == 12 && std::strcmp(out.name[2], "Pad") == 0;
+      in.morph = 0; n = open::encodeSlotNames(in, buf, sizeof(buf));
+      m = m && open::decodeSlotNames(buf, n, out) && out.morph == 0;                                // slot 0 is a valid target
+      auto dec = [&](const char* t) { const auto v = bytesOf(t); open::decodeSlotNames(v.data(), v.size(), out); return int(out.morph); };
+      m = m && dec("tffnames 1\n1=A\n") == -1 && dec("tffnames 1\nm=16\n") == -1 && dec("tffnames 1\nm=\n") == -1 && dec("tffnames 1\nm=3x\n") == -1;
+      m = m && dec("tffnames 1\nm=007\n") == -1 && dec("tffnames 1\nm=7\r\n") == 7 && dec("tffnames 1\nm=4\nm=5\n") == 5;
+      // a reader without the line (the 1.4.0 decoder skips any line that starts with neither a digit nor "b=") keeps the names
+      m = m && dec("tffnames 1\nm=9\n3=Keep\n") == 9 && std::strcmp(out.name[3], "Keep") == 0;
+      check(m, "names file m= line: written only for a target other than slot 1, read back, bad values ignored, names untouched");
+      // the Workspace store: a part with only a Morph target gets a file, back to the default corrects it
+      mw->files.clear(); open::SlotNames t; t.morph = 5;
+      bool io = open::patchNamesWrite(2, *ws, t) && mw->files.count("2.names") == 1 && open::patchNamesRead(2, *ws, out) && out.morph == 5;
+      t.morph = 1; io = io && open::patchNamesWrite(2, *ws, t) && mw->files["2.names"] == bytesOf("tffnames 1\n");
+      mw->files.clear(); io = io && open::patchNamesWrite(2, *ws, t) && mw->files.count("2.names") == 0;   // default and no file: nothing written
+      check(io, "names file: a Morph target alone writes the file, the default writes none (a project that never morphs gets no side file)");
+      mw->files.clear();
     }
     // ---- real files from the device (project "OT Test 07 - VAP Only", one VAP part, saved by 1.1.0): slot 0 and slots 1..3 load,
     // slot 4 (named, never saved) opens as a copy, the names file reads (SMOKE_FIXTURES = synth-open/tools/fixtures)
@@ -1728,6 +2029,22 @@ int main() {
     check(std::fabs(float(up) / base - 1.0595f) < 0.02f, "bend +8191 raises a held note by about one semitone");
     check(std::fabs(float(down) / base - 0.9439f) < 0.02f, "bend -8192 lowers it by about one semitone");
     check(std::abs(back - base) <= 2, "bend 0 returns to the note pitch");
+    // the Synth play page sets a live range per part: 2 st by default there, 12 st at most from its Bend column, 0 turns the wheel off, 1 is the stock value again
+    open::partBendRange(0, 2.0f);
+    bend(8191); crossings(2); const int up2 = crossings(200);
+    bend(-8192); crossings(2); const int down2 = crossings(200);
+    open::partBendRange(0, 12.0f);
+    bend(8191); crossings(2); const int up12 = crossings(200);
+    open::partBendRange(0, 0.0f);
+    bend(8191); crossings(2); const int up0 = crossings(200);
+    open::partBendRange(0, 1.0f);
+    bend(8191); crossings(2); const int up1 = crossings(200);
+    bend(0); crossings(2);
+    printf("  bend range: base=%d range2 up=%d down=%d range12 up=%d range0 up=%d range1 up=%d\n", base, up2, down2, up12, up0, up1);
+    check(std::fabs(float(up2) / base - 1.1225f) < 0.03f && std::fabs(float(down2) / base - 0.8909f) < 0.03f, "bend range 2: +-8191 is +-2 semitones");
+    check(std::fabs(float(up12) / base - 2.0f) < 0.06f, "bend range 12: the full wheel is an octave");
+    check(std::abs(up0 - base) <= 2, "bend range 0: the wheel does nothing");
+    check(std::abs(up1 - up) <= 2, "bend range 1 is the stock value again, bit for bit the same as the first bend");
     bend(8191); src5.send(MidiEvent::Type::kStop, 0, 0, 0); src5.send(MidiEvent::Type::kNoteOn, 0, 57, 100); crossings(10);
     check(std::abs(crossings(200) - base) <= 2, "transport Stop resets the bend");
   }
@@ -2251,6 +2568,25 @@ int main() {
         for (int m = 0; m < open::kModMacros; m++) never = never && pick[nWave + m] == open::kModPickMacro + m;
         const int pinned = kWavePin.count(k.name) ? kWavePin.at(k.name) : -1;
         if (pinned >= 0 && pinned != nWave) { printf("  %s: wave group %d, pinned %d\n", k.name, nWave, pinned); never = false; }
+      }
+      {
+        // wave file parameters (an integer 0..1024 named "<x> File"): listed while /Waves holds a wave, left out of the picker when it holds none
+        static const open::ParamDef kFp[] = {
+          { "A Wave", 0, 0, 10, open::Fmt::kEnum, open::CurveKind::kLinear, nullptr },
+          { "A File", 0, 0, 1024, open::Fmt::kInt, open::CurveKind::kLinear, nullptr },
+          { "A Level", 1, 0, 1, open::Fmt::kPct, open::CurveKind::kLinear, nullptr },
+          { "Count", 0, 0, 1024, open::Fmt::kInt, open::CurveKind::kLinear, nullptr },   // 0..1024 but not named File: stays
+          { "B File", 0, 0, 1024, open::Fmt::kInt, open::CurveKind::kLinear, nullptr } };
+        open::EngineDef fd{}; fd.name = "FILEPARAM"; fd.params = kFp; fd.paramCount = 5;
+        int16_t withFiles[open::kModPickMax], noFiles[open::kModPickMax];
+        const int nw = open::modPicker(&fd, withFiles), nn = open::modPicker(&fd, noFiles, true);
+        bool hasA = false, hasB = false, noA = true, noB = true, hasCount = false;
+        for (int i = 0; i < nw; i++) { hasA = hasA || withFiles[i] == 1; hasB = hasB || withFiles[i] == 4; }
+        for (int i = 0; i < nn; i++) { hasCount = hasCount || noFiles[i] == 3; noA = noA && noFiles[i] != 1; noB = noB && noFiles[i] != 4; }
+        check(nw == 4 + open::kModMacros && nn == 2 + open::kModMacros && hasCount && hasA && hasB && noA && noB && open::waveFileShape(kFp[1]) && !open::waveFileShape(kFp[3]) && !open::waveFileShape(kFp[0]),
+              "automation picker: wave file parameters are listed with files and left out without, other integers stay");
+        check(!open::waveFileShape("A Wave", true, 0, 1024) && !open::waveFileShape("File", true, 0, 1024) && !open::waveFileShape("A File", true, 0, 1023) && open::waveFileShape("Osc 2 File", true, 0, 1024),
+              "wave file parameter shape: name ends in ' File', integer, 0..1024");
       }
       check(byIndex, "automation identity: every eligible param of every engine resolves by its index");
       check(never, "automation identity: enums, on/off and unused (min == max) params are never listed, macros after the wave group (pinned counts)");

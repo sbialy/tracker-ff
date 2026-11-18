@@ -2136,7 +2136,7 @@ status_t SD_WaitCardDetectStatus(SDMMCHOST_TYPE* hostBase,
     return SDMMCHOST_WaitCardDetectStatus(hostBase, cd, waitCardStatus);
 }
 
-bool SD_IsCardPresent(sd_card_t* card)
+bool SD_IsCardPresent(sd_card_t* card __attribute__((unused)))
 {
     return SDMMCHOST_IsCardPresent();
 }

@@ -86,6 +86,9 @@ class cPerformanceMode : public ModuleBase
     bool turnOff();
     void turnOffAtEndOfPattern();
     bool canPerformanceModeContinueAfterSwitchingTo(uint8_t button);
+#ifdef FEATURE_SYNTH_OPEN
+    bool openSynthPlay(); // Perform on page 2: the Synth play page, Performance mode stays on
+#endif
 
     void toggleTrackPerformanceState(uint8_t track);
     void refreshPerformanceValuesForTrack(uint8_t track, uint8_t place);

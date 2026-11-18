@@ -10,6 +10,10 @@ MixerAndFxs<voicesCount>::MixerAndFxs()
       &preFxMixer[FxType::kReverb], 0, &polyverb, (int)MixerAndFxChannelType::kRight));
 
     connections.push_back(new AudioConnection(&preFxMixer[FxType::kDelay], &shortDelay));
+#ifdef AUDIO_NULL_IS_SILENCE
+    polyverb.setMuteFeed(&preFxMixer[FxType::kReverb]);
+    shortDelay.setMuteFeed(&preFxMixer[FxType::kDelay]);
+#endif
 
     for (int channel = 0; channel < (int)MixerAndFxChannelType::kChannelCount; channel++)
     {

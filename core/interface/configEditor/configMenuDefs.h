@@ -42,6 +42,8 @@ struct strItemTypeListValues
     uint8_t max;
     uint8_t interval; // narazie nie uzywane
     uint8_t dev;
+    void (*funct1)(void) = nullptr;     // called after a new value is applied (like the text list with action)
+    const char* zeroText = nullptr;     // shown instead of the number 0 (the Random seed row: Off)
 };
 
 struct strItemTypeListText
@@ -127,6 +129,11 @@ const char* const recOptionsTexts[4] = {
     "Microtiming + Velocity",
 };
 
+const char* const recModeTexts[2] = {
+    "Overdub",
+    "Replace",
+};
+
 const char* const recThresholdTexts[16] = {
     "0",
     "-4",
@@ -151,7 +158,7 @@ const char* const performanceSourceTexts[2] = {
     "Per Project",
 };
 
-const char* const padsLayoutTexts[12] = {
+inline const char* const padsLayoutTexts[12] = {
     "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12",
 };
 
@@ -178,6 +185,11 @@ const char* const patternArrangementTexts[3] = {
     "Vertical Revolver",
     "Vertical Original",
     "Horizontal",
+};
+
+const char* const patternVmTexts[2] = {
+    "Marks",
+    "Columns",
 };
 
 const char* const patternInfoTexts[3] = {
@@ -269,6 +281,10 @@ const char recNotesDesc[] = {
     "to record velocity. "
 };
 
+const char recModeDesc[] = {
+    "Overdub records into empty steps only and keeps what is there. Replace clears the steps of the armed tracks as the playhead passes while you record, so a take overwrites the old content (one undo step undoes the take)."
+};
+
 const char recThresholdDesc[] = {
     "Defines in microtiming units, how soon notes should be captured by live recording. This is useful when you play too early during a preroll."
 };
@@ -317,6 +333,17 @@ const char headroomDesc[] = {
     "at the source to avoid clipping and improve overall dynamic range."
 };
 
+const char randomSeedDesc[] = {
+    "Makes the random decisions of the sequencer repeat. With a seed (1 to 255) the Chance, Random note, "
+    "Random value, Random volume, Random instrument, random Roll and Arp direction and Random play mode "
+    "decisions are the same on every playback from the same position. Off: every playback differs. "
+    "The seed is saved with the project."
+};
+
+const char rerollSeedDesc[] = {
+    "Picks another random seed (1 to 255) for a new take. It counts from the next Play."
+};
+
 const char snapToZeroDesc[] = {
     "When setting Start/End markers in Sample Playback editor, sudden sample amplitude changes can "
     "cause pops and clicks. To avoid this, activate this mode to automatically snap the markers "
@@ -335,6 +362,11 @@ const char patternArraDesc[] = { "Pattern arrangement type" };
 
 const char patternInfo[] = { "Pattern info" };
 
+const char patternVmDesc[] = {
+    "Marks: the volume and micro-move of a step show as a small bar and tick in the cell and as numbers in the title bar for the cursor step, four tracks stay on screen. "
+    "Columns: V and m get their own columns in every track, three tracks fit on screen. Both are read only here, edit them in the Mic/Vol view (press Note twice)."
+};
+
 const char lineInChannelDesc[] = {
 #ifdef PLATFORM_IMX
     "Sets physical Line Input channel configuration for Global Mixer and Sample Recorder: "
@@ -352,11 +384,18 @@ const char usbAudioDesc[] = {
     "audio device. Find more details in our user manual at polyend.com"
 };
 
+#ifdef FEATURE_USB_MSC
+const char usbStorageDesc[] = {
+    "Shows the SD card on your computer as a USB drive. Needs Config > Features > USB drive, "
+    "then a restart. Eject the drive on the computer before you press Exit. Back up the card first."
+};
+#endif
+
 const char padsPrevDesc[] = { "On the Pattern editor screen, the grid pads can highlight the note "
                               "in the active line. Choose between highlighting only the "
                               "active track's notes, or the entire pattern's active line. " };
 
-const char firmUpdDesc[] = {
+inline const char firmUpdDesc[] = {
 
     "Before updating save\n"
     "your current project\n"

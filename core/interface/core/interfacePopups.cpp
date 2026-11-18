@@ -1190,7 +1190,8 @@ static void functPadsPopup(uint8_t pad, uint8_t state, int16_t)
                 int8_t noteToPlay = Sequencer::STEP_NOTE_DEFAULT;
                 if (mtInterface.isPatternScreenActive())
                 {
-                    int instrumentToSet =
+                    // not passed on: handleNoteOn below gets the raw pad (suspected, behaviour kept as is)
+                    [[maybe_unused]] int instrumentToSet =
                       patternEditor.isSelectionOrCursorInMidiTracks()
                         ? MIDI_INSTRUMENTS_START_IDX + (pad % kMidiInstrumentsCount)
                         : pad;

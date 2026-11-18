@@ -7,7 +7,9 @@
 #
 # MODULES defaults to build/modules of the repository. VIS public skips the private sets (no token, no local checkout needed).
 # WITH=GROUP switches an optional group of the lock and of engines.json on (none is defined in 1.2.0).
-PY       ?= python3
+PYENV_DIR ?= $(HOME)/prj/poly/build/pyenv
+# the pinned python (synth-open/tools/pyenv.sh makes it), an explicit PY= wins
+PY ?= $(if $(wildcard $(PYENV_DIR)/.pyenv-stamp),$(PYENV_DIR)/bin/python,$(error PY: no pinned python, run: sh synth-open/tools/pyenv.sh))
 HERE     := $(dir $(lastword $(MAKEFILE_LIST)))
 MODULES  ?= $(abspath $(HERE)..)/build/modules
 VIS      ?= all

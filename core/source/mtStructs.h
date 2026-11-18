@@ -67,7 +67,7 @@ const uint32_t SAMPLE_MEMORY_SIZE = (45 * 256 * 1024);     // 11,25 MB = 133.746
 // Tmini / Tplus
 const uint32_t EXTERAL_MEMORY_ADDRESS = 0x80000000;
 const uint32_t TOTAL_EXTERNAL_MEMORY = (64 * 1024 * 1024); // 64 MB
-const uint32_t SAMPLE_MEMORY_SIZE = ((60 * 1024 - 64) * 1024); // ~60 MB minus 64 KB for pattern buffers
+const uint32_t SAMPLE_MEMORY_SIZE = ((60 * 1024 - 96) * 1024); // ~60 MB minus 64 KB for pattern buffers and 32 KB for the 1.4.0 SDRAM growth
 #endif
 
 const uint32_t DELAY_MEMORY_SIZE = (3 * 512 * 1024);               // 1,5 MB
@@ -122,11 +122,11 @@ const uint8_t SYNTH_INSTRUMENTS_START_IDX = MIDI_INSTRUMENTS_START_IDX + kMidiIn
 const uint8_t PATTERN_INDEX_MIN = 1;
 const uint8_t PATTERN_INDEX_MAX = 255;
 
-const uint8_t FX_MAX = 49;
+const uint8_t FX_MAX = 54; // list positions, kept above the last FX of the list (features-140: Morph, Chance FX, Tape, rel140-snapfx: Snap)
 #ifdef FEATURE_SYNTH_OPEN
-const uint8_t FX_COUNT = 48; // + "Patch" (FX_TYPE_PATCH_CHANGE), SYNTH_OPEN only, + "Strum" (FX_TYPE_STRUM)
+const uint8_t FX_COUNT = 52; // + "Patch" (FX_TYPE_PATCH_CHANGE) and "Morph" (FX_TYPE_PATCH_MORPH), SYNTH_OPEN only, + "Strum" (FX_TYPE_STRUM), + "Chance FX" (FX_TYPE_COND), + "Tape" (Stop and Start), + "Snap"
 #else
-const uint8_t FX_COUNT = 47; // + "Strum" (FX_TYPE_STRUM)
+const uint8_t FX_COUNT = 50; // + "Strum" (FX_TYPE_STRUM), + "Chance FX" (FX_TYPE_COND), + "Tape" (Stop and Start), + "Snap"
 #endif
 const uint8_t FX_COUNT_HIDDEN_FXes = 1; // ile fxów na końcu listy jest ukrytych
 
@@ -371,6 +371,7 @@ static constexpr int kExternalClockCompMaxVal = 12;
 static constexpr int kExternalClockCompDefaultVal = kExternalClockCompMaxVal / 2;
 
 static constexpr int kOpenMetronomeConfig = 1;
+static constexpr int kOpenProjectSettings = 2; // the Config editor as the Project Settings page (File screen entry)
 
 //=====================================================================
 //=====================================================================
@@ -1178,6 +1179,10 @@ struct strMtConfig
 
         uint8_t usbAudioMode = 0;
 
+        uint8_t recReplace = 0; // Config > Recording mode: 0 Overdub (stock), 1 Replace (the playhead clears the armed tracks)
+
+        uint8_t patternVmColumns = 0; // Config > Pattern V/m columns: 1 = volume and micro-move columns in the pattern editor (3 tracks), 0 = marks (4 tracks)
+
     } common;
 
     // /\ dodawac nowe wartosci do podstruktur powyżej na końcach każdej ze struktur
@@ -1286,7 +1291,7 @@ struct strGrid
 
 static constexpr int kC5Note = 60;
 
-const char mtNotes[128][5] = {
+inline const char mtNotes[128][5] = {
     "C0",  "C#0", "D0",  "D#0", "E0",   "F0",  "F#0",  "G0",  "G#0", "A0",   "A#0", "B0",  "C1",
     "C#1", "D1",  "D#1", "E1",  "F1",   "F#1", "G1",   "G#1", "A1",  "A#1",  "B1",  "C2",  "C#2",
     "D2",  "D#2", "E2",  "F2",  "F#2",  "G2",  "G#2",  "A2",  "A#2", "B2",   "C3",  "C#3", "D3",

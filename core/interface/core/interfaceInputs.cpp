@@ -2,6 +2,7 @@
 #include "core/interfacePopups.h"
 
 #include "Platform.h"
+#include "skipback_ui.h"
 
 #ifdef TRACKER_MINI
 bool fnButtonShiftPressed[4] = { false, false, false, false };
@@ -25,6 +26,13 @@ void Interface::potChange(uint8_t n, int16_t value)
 //=======================================================================
 void Interface::buttonChange(uint8_t n, uint8_t value)
 {
+#ifdef FEATURE_SKIPBACK
+    // Skip-back on: Shift + Sample Rec saves the last seconds of the master output on every page
+    if (skipback::uiButton(n, value))
+    {
+        return;
+    }
+#endif
 #ifdef TRACKER_MINI
     if (isNavButton(n))
     {
@@ -44,6 +52,51 @@ void Interface::buttonChange(uint8_t n, uint8_t value)
         }
     }
 #endif
+
+#ifdef FEATURE_SYNTH_OPEN
+    // Shift + Perform opens the Synth play page from every page except the Performance page (there Shift + Perform is the stock flip of
+    // the two track pages with the mute buttons) and the pages that finish work of their own (see trySynthPlayEntry). The Perform press
+    // of each page is a plain page switch, none tests Shift. The key release after the press is swallowed, the page then sees none of it.
+    if (n == interfaceButtonPerformance)
+    {
+        static bool swallow;
+        if (value == buttonPress && getPlatform()->getButtons()->isButtonPressed(interfaceButtonShift) && trySynthPlayEntry())
+        {
+            swallow = true;
+            return;
+        }
+        if (swallow)
+        {
+            swallow = value != buttonRelease;
+            return;
+        }
+    }
+#endif
+
+#ifdef FEATURE_PARTS
+    // Shift + Song opens the Song screen in its Parts view (on the Song screen it switches the view). No page claims this combination
+    if (n == interfaceButtonSong)
+    {
+        static bool swallowSong;
+        if (value == buttonPress && getPlatform()->getButtons()->isButtonPressed(interfaceButtonShift) && tryPartsEntry())
+        {
+            swallowSong = true;
+            return;
+        }
+        if (swallowSong)
+        {
+            swallowSong = value != buttonRelease;
+            return;
+        }
+    }
+#endif
+
+    // Play stop lock: a running song stops with Shift + Play only. Starting, Shift + Play and every other key are untouched
+    if (interfaceGlobals.playStopLock && n == interfaceButtonPlay && value == buttonPress && sequencer.isPlay() &&
+        !getPlatform()->getButtons()->isButtonPressed(interfaceButtonShift))
+    {
+        return;
+    }
 
     if (value == buttonHold &&
         ((n >= 25 && n <= 27) || (n >= 30 && n <= 32) || n == interfaceButtonMiniMiddle))

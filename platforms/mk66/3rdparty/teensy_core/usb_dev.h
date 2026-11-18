@@ -57,6 +57,7 @@ void usb_tx(uint32_t endpoint, usb_packet_t *packet);
 void usb_tx_isochronous(uint32_t endpoint, void *data, uint32_t len);
 
 extern volatile uint8_t usb_configuration;
+extern volatile uint8_t usb_bus_lost;
 
 extern uint16_t usb_rx_byte_count_data[NUM_ENDPOINTS];
 static inline uint32_t usb_rx_byte_count(uint32_t endpoint) __attribute__((always_inline));
@@ -121,9 +122,24 @@ extern uint8_t usb_audio_transmit_setting;
 extern unsigned int usb_audio_transmit_callback(uint16_t *buf);
 // boot-time switch (usb_desc.c): the audio function is described and served only while ff_usb_audio_on is 1
 extern uint8_t ff_usb_audio_on;
+// channels of this session's stream: 2 (stereo) or FF_AUDIO_MULTI_CH (8+3 mono), 0 while off. Bytes per frame = 2 x channels
+extern uint8_t ff_usb_audio_channels;
+// on: 0 off, 1 stereo, 2 8+3 mono (ffUsbAudioBootFlag)
 void ff_usb_audio_select(int on);
+// 8+3 mono only: the channel name string descriptor of wValue (iChannelNames, 0x0310..), else null
+const uint8_t* ff_usb_audio_string(uint16_t wValue);
 // usb_audio_hooks.cpp: the EEPROM boot flag the Features page writes, read before the card is up
 int ffUsbAudioBootFlag(void);
+#endif
+
+#ifdef FF_USB_MSC
+// tracker-ff USB_MSC=1, boot-time switch (usb_desc.c): the mass storage interface is described and its endpoints enabled
+// only while ff_usb_msc_on is 1. Call after ff_usb_audio_select (the interface number follows the audio function).
+extern uint8_t ff_usb_msc_on;
+extern uint8_t ff_usb_msc_iface;
+void ff_usb_msc_select(int on);
+// platforms/mk66/usbmsc/msc_drive.cpp: the EEPROM boot flag the Features page writes, read before the card is up
+int ffUsbMscBootFlag(void);
 #endif
 
 

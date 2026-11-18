@@ -31,6 +31,7 @@ typedef enum
 
 } select_direction_t;
 
+
 class cSongEditor : public ModuleBase
 {
 
@@ -148,6 +149,22 @@ class cSongEditor : public ModuleBase
     bool tapTempo_still_going();
     void tapTempo_set(float value);
 
+#ifdef FEATURE_PARTS
+    // ---- Parts view (fSongParts.cpp, build/parts-ui/DESIGN.md): the Parts table, Rec off = Arrange, Rec on = Build
+    bool partsView = false;
+    uint8_t stockSongPosition = 0;   // the playlist selection while the Parts view is on
+    hControl partsTableControl = -1;
+    void partsEnterView(bool on);    // switch the view (and the Parts mode of the list)
+    void partsReadList();            // the table data from the Parts list
+    void partsShowLabels();
+    void partsUpdate();              // the playing Part on the table (every 100 ms)
+    void partsBind();                // the keys of the Parts view (setDefaultScreenFunct)
+    void partsModeChanged();         // Rec toggled
+    void partsRefresh();             // redraw the table, the labels and the pad lights
+    int16_t lastPartPos = -2;
+    uint8_t lastPartsLabels = 0xFF;
+#endif
+
     // GREEN/RED EDIT MODE
     uint8_t editMode;
     void refreshEditMode();
@@ -168,5 +185,16 @@ class cSongEditor : public ModuleBase
 extern cSongEditor songEditor;
 
 void cbkSongPlaybackModeToggle(void);
+
+#ifdef FEATURE_PARTS
+// Performance screen Insert: the per-track patterns as a new Part after the selected one (fSongParts.cpp)
+const char* partsSnapshotFromPerformance();   // the line for the title bar
+uint32_t partsSnapshotMs();                    // when the last snapshot was taken
+int partsSelected();   // the selected Part of the Parts view (tests)
+#ifdef UI_SHOT_HOST
+const char* partsUiTitle();   // the host simulator: the title bar text of the Parts view and its cursor track
+int partsUiCursor();
+#endif
+#endif
 
 #endif /* INTERFACE_SONGEDITOR_H_ */

@@ -47,6 +47,9 @@
 #include <string.h> // for memset
 
 #include "interruptsConfig.h"
+#ifdef FF_USB_MSC
+#include "usb_msc.h" // tracker-ff USB_MSC=1: the mass storage bulk endpoint driver (usb_msc_impl.h, included below)
+#endif
 
 // This code has a known bug with compiled with -O2 optimization on gcc 5.4.1
 // https://forum.pjrc.com/threads/53574-Teensyduino-1-43-Beta-2?p=186177&viewfull=1#post186177
@@ -58,11 +61,26 @@
 
 // buffer descriptor table
 
+#ifdef FF_USB_MSC
+// tracker-ff USB_MSC=1: endpoints 9 and 10 exist for the host only while the drive is on (ff_usb_msc_select). Off: the count of
+// the image without the flag (with USB_AUDIO=1 endpoint 8 counts while audio is on, as below)
 #ifdef FF_USB_AUDIO_TX
+#define FF_EP_COUNT (ff_usb_msc_on ? NUM_ENDPOINTS : ff_usb_audio_on ? AUDIO_TX_ENDPOINT : AUDIO_TX_ENDPOINT - 1)
+#else
+#define FF_EP_COUNT (ff_usb_msc_on ? NUM_ENDPOINTS : FF_STOCK_ENDPOINTS)
+#endif
+#elif defined(FF_USB_AUDIO_TX)
 // tracker-ff USB_AUDIO=1: endpoint 8 exists for the host only while the audio function is on (ff_usb_audio_select)
 #define FF_EP_COUNT (ff_usb_audio_on ? NUM_ENDPOINTS : AUDIO_TX_ENDPOINT - 1)
 #else
 #define FF_EP_COUNT NUM_ENDPOINTS
+#endif
+
+#ifdef FF_USB_MSC
+// interfaces the host can address: the drive's slot (the last) exists only while the drive is on
+#define FF_IF_COUNT (ff_usb_msc_on ? NUM_INTERFACE : NUM_INTERFACE - 1)
+#else
+#define FF_IF_COUNT NUM_INTERFACE
 #endif
 
 #ifdef FF_USB_AUDIO_TX
@@ -160,7 +178,18 @@ static uint8_t ep0_tx_data_toggle = 0;
 uint8_t usb_rx_memory_needed = 0;
 
 volatile uint8_t usb_configuration = 0;
+// set by the bus going idle (no start of frame for 3 ms: cable pulled, host asleep) or being reset, cleared by usb_take_bus_lost()
+volatile uint8_t usb_bus_lost = 0;
 volatile uint8_t usb_reboot_timer = 0;
+
+#ifdef FF_USB_MSC
+// tracker-ff USB_MSC=1, from OpenTracker (PJRC terms): the bulk endpoints 9 and 10 of the USB drive, packets by DMA straight
+// into and out of the buffers the drive queues. Every entry runs in usb_isr() and only while ff_usb_msc_on (the endpoints are
+// disabled and the hook is not set otherwise). Plain SRAM, no DMA section in this linker script (the USB controller reaches
+// all of it, there is no data cache).
+#define USB_MSC_DMA_MEM __attribute__((aligned(32)))
+#include "usb_msc_impl.h"
+#endif
 
 
 static void endpoint0_stall(void)
@@ -212,6 +241,10 @@ static void usb_setup(void)
 			// the audio BDTs point at static buffers, not usb_malloc() packets (from OpenTracker)
 			if ((i >> 2) == AUDIO_TX_ENDPOINT) continue;
 #endif
+#ifdef FF_USB_MSC
+			// the drive's BDTs point into its own buffers (usb_msc_impl.h), never at usb_malloc() packets
+			if ((i >> 2) == MSC_TX_ENDPOINT || (i >> 2) == MSC_RX_ENDPOINT) continue;
+#endif
 			if (table[i].desc & BDT_OWN) {
 				usb_free((usb_packet_t *)((uint8_t *)(table[i].addr) - 8));
 			}
@@ -255,6 +288,9 @@ static void usb_setup(void)
 #ifdef FF_USB_AUDIO_TX
 			if (i == AUDIO_TX_ENDPOINT && !ff_usb_audio_on) epconf = 0; // off: endpoint 8 stays disabled, as without the flag
 #endif
+#ifdef FF_USB_MSC
+			if ((i == MSC_TX_ENDPOINT || i == MSC_RX_ENDPOINT) && !ff_usb_msc_on) epconf = 0; // off: 9 and 10 stay disabled
+#endif
 			*reg = epconf;
 			reg += 4;
 #ifdef AUDIO_INTERFACE
@@ -263,6 +299,11 @@ static void usb_setup(void)
 				table[index(i, RX, EVEN)].desc = (AUDIO_RX_SIZE<<16) | BDT_OWN;
 				table[index(i, RX, ODD)].addr = usb_audio_receive_buffer;
 				table[index(i, RX, ODD)].desc = (AUDIO_RX_SIZE<<16) | BDT_OWN;
+			} else
+#endif
+#ifdef FF_USB_MSC
+			if (i == MSC_RX_ENDPOINT) {
+				// armed by the drive (its own buffers), never with usb_malloc() packets
 			} else
 #endif
 			if (epconf & USB_ENDPT_EPRXEN) {
@@ -293,6 +334,9 @@ static void usb_setup(void)
 			}
 #endif
 		}
+#ifdef FF_USB_MSC
+		if (ff_usb_msc_on) usb_msc_configure(); // the drive's queues are empty and both endpoints restart at DATA0
+#endif
 		break;
 	  case 0x0880: // GET_CONFIGURATION
 		reply_buffer[0] = usb_configuration;
@@ -327,6 +371,13 @@ static void usb_setup(void)
 		}
 		(*(uint8_t *)(&USB0_ENDPT0 + i * 4)) &= ~0x02;
 		// TODO: do we need to clear the data toggle here?
+#ifdef FF_USB_MSC
+		// the drive's endpoints restart at DATA0 (USB 2.0 9.4.5)
+		if (ff_usb_msc_on) {
+			if (i == MSC_TX_ENDPOINT && (setup.wIndex & 0x80)) usb_msc_clear_halt(1);
+			if (i == MSC_RX_ENDPOINT && !(setup.wIndex & 0x80)) usb_msc_clear_halt(0);
+		}
+#endif
 		break;
 	  case 0x0302: // SET_FEATURE (endpoint)
 		i = setup.wIndex & 0x7F;
@@ -343,6 +394,13 @@ static void usb_setup(void)
 		//serial_print("desc:");
 		//serial_phex16(setup.wValue);
 		//serial_print("\n");
+#ifdef FF_USB_AUDIO_TX
+		// 8+3 mono: the channel names (iChannelNames), served only in that mode, so the other modes answer exactly as before
+		if ((data = ff_usb_audio_string(setup.wValue)) != NULL && setup.wIndex == 0x0409) {
+			datalen = data[0];
+			goto send;
+		}
+#endif
 		for (list = usb_descriptor_list; 1; list++) {
 			if (list->addr == NULL) break;
 			//if (setup.wValue == list->wValue &&
@@ -357,8 +415,8 @@ static void usb_setup(void)
 				} else {
 					datalen = list->length;
 				}
-#ifdef FF_USB_AUDIO_TX
-				// the configuration's own wTotalLength (ff_usb_audio_select): off never sends the audio part
+#if defined(FF_USB_AUDIO_TX) || defined(FF_USB_MSC)
+				// the configuration's own wTotalLength (ff_usb_audio_select, ff_usb_msc_select): off never sends that part
 				if ((setup.wValue >> 8) == 2) datalen = data[2] | (data[3] << 8);
 #endif
 #if 0
@@ -424,9 +482,58 @@ static void usb_setup(void)
 	  // case 0xC940:
 #endif
 
+#ifdef FF_USB_MSC
+	  // tracker-ff USB_MSC=1, from OpenTracker (PJRC terms): the Bulk-Only Transport class requests (BOT 3.1 and 3.2). With the
+	  // drive off they stall, as in an image without the flag
+	  case 0xFF21: // Bulk-Only Mass Storage Reset
+		if (!ff_usb_msc_on || setup.wIndex != ff_usb_msc_iface || setup.wValue != 0 || setup.wLength != 0) {
+			endpoint0_stall();
+			return;
+		}
+		usb_msc_class_reset();
+		break;
+	  case 0xFEA1: // Get Max LUN
+		if (!ff_usb_msc_on || setup.wIndex != ff_usb_msc_iface || setup.wValue != 0 || setup.wLength != 1) {
+			endpoint0_stall();
+			return;
+		}
+		reply_buffer[0] = 0; // one logical unit
+		data = reply_buffer;
+		datalen = 1;
+		break;
+#ifndef FF_USB_AUDIO_TX
+	  // the drive's interface has no alternate setting: 0 is accepted, anything else stalls (the audio build below takes these
+	  // two requests for its own interface and every other one)
+	  case 0x0B01: // SET_INTERFACE (alternate setting)
+		if (!ff_usb_msc_on || setup.wIndex != ff_usb_msc_iface || setup.wValue != 0) {
+			endpoint0_stall();
+			return;
+		}
+		break;
+	  case 0x0A81: // GET_INTERFACE (alternate setting)
+		if (!ff_usb_msc_on || setup.wIndex != ff_usb_msc_iface) {
+			endpoint0_stall();
+			return;
+		}
+		reply_buffer[0] = 0;
+		data = reply_buffer;
+		datalen = 1;
+		break;
+#endif
+#endif // FF_USB_MSC
+
 #ifdef FF_USB_AUDIO_TX
 	  // tracker-ff USB_AUDIO=1: alternate settings of the audio streaming interface (from OpenTracker, Apache-2.0)
 	  case 0x0B01: // SET_INTERFACE (alternate setting)
+#ifdef FF_USB_MSC
+		if (ff_usb_msc_on && setup.wIndex == ff_usb_msc_iface) { // the drive: alternate setting 0 only
+			if (setup.wValue != 0) {
+				endpoint0_stall();
+				return;
+			}
+			break;
+		}
+#endif
 		if (!ff_usb_audio_on) { // off: stall, as without the flag (no other case takes these requests)
 			endpoint0_stall();
 			return;
@@ -437,20 +544,29 @@ static void usb_setup(void)
 				// prime both BDTs with silence, one buffer each (see the token handler)
 				for (int odd = 0; odd < 2; odd++) {
 					bdt_t *b = &table[index(AUDIO_TX_ENDPOINT, TX, odd)];
-					uint16_t *buf = usb_audio_transmit_buffer + odd * (AUDIO_TX_SIZE/2);
+					uint16_t *buf = usb_audio_transmit_buffer + odd * (FF_AUDIO_TX_STRIDE/2);
+					const unsigned n = 44u * 2u * ff_usb_audio_channels; // one nominal packet, 44 frames
 					if (!(b->desc & BDT_OWN)) {
-						memset(buf, 0, 176);
+						memset(buf, 0, n);
 						b->addr = buf;
-						b->desc = (176 << 16) | BDT_OWN;
+						b->desc = (n << 16) | BDT_OWN;
 					}
 				}
 			}
-		} else if (setup.wValue != 0 || setup.wIndex >= NUM_INTERFACE) {
+		} else if (setup.wValue != 0 || setup.wIndex >= FF_IF_COUNT) {
 			endpoint0_stall();
 			return;
 		}
 		break;
 	  case 0x0A81: // GET_INTERFACE (alternate setting)
+#ifdef FF_USB_MSC
+		if (ff_usb_msc_on && setup.wIndex == ff_usb_msc_iface) {
+			reply_buffer[0] = 0;
+			data = reply_buffer;
+			datalen = 1;
+			break;
+		}
+#endif
 		if (!ff_usb_audio_on) {
 			endpoint0_stall();
 			return;
@@ -459,7 +575,7 @@ static void usb_setup(void)
 		data = reply_buffer;
 		if (setup.wIndex == FF_AUDIO_INTERFACE+1) {
 			reply_buffer[0] = usb_audio_transmit_setting;
-		} else if (setup.wIndex < NUM_INTERFACE) {
+		} else if (setup.wIndex < FF_IF_COUNT) {
 			reply_buffer[0] = 0;
 		} else {
 			endpoint0_stall();
@@ -853,6 +969,9 @@ void usb_rx_memory(usb_packet_t *packet)
 #ifdef AUDIO_INTERFACE
 		if (i == AUDIO_RX_ENDPOINT) continue;
 #endif
+#ifdef FF_USB_MSC
+		if (i == MSC_RX_ENDPOINT) { cfg++; continue; } // its BDTs point into the drive's buffers, never usb_malloc() packets
+#endif
 		if (*cfg++ & USB_ENDPT_EPRXEN) {
 			if (table[index(i, RX, EVEN)].desc == 0) {
 				table[index(i, RX, EVEN)].addr = packet->buf;
@@ -968,12 +1087,21 @@ void usb_isr(void)
 	//status = USB0_ISTAT;
 	//serial_phex(status);
 	//serial_print("\n");
+#ifdef FF_USB_MSC
+	if (msc_kicked) { // usb_msc_kick(): the main loop finished block I/O
+		msc_kicked = 0;
+		if (usb_configuration && ff_usb_msc_on) msc_event(USB_MSC_EVENT_POLL);
+	}
+#endif
 	restart:
 	status = USB0_ISTAT;
 
 	if ((status & USB_ISTAT_SOFTOK /* 04 */ )) {
 		if (usb_configuration) {
 			DEVHOOK_USB_SOF();
+#ifdef FF_USB_MSC
+			if (ff_usb_msc_on) usb_msc_sof();
+#endif
 			t = usb_reboot_timer;
 			if (t) {
 				usb_reboot_timer = --t;
@@ -1016,6 +1144,10 @@ void usb_isr(void)
 		endpoint = stat >> 4;
 		if (endpoint == 0) {
 			usb_control(stat);
+#ifdef FF_USB_MSC
+		} else if (endpoint == MSC_TX_ENDPOINT || endpoint == MSC_RX_ENDPOINT) {
+			usb_msc_token(stat); // the drive's own packets, never the usb_malloc() path below (only enabled while ff_usb_msc_on)
+#endif
 		} else {
 			bdt_t *b = stat2bufferdescriptor(stat);
 			usb_packet_t *packet = (usb_packet_t *)((uint8_t *)(b->addr) - 8);
@@ -1035,7 +1167,7 @@ void usb_isr(void)
 			// tracker-ff USB_AUDIO=1 (from OpenTracker, Apache-2.0): one buffer per BDT and both BDTs kept armed,
 			// so the controller always has the next packet while this one is refilled in place.
 			if ((endpoint == AUDIO_TX_ENDPOINT-1) && (stat & 0x08)) {
-				uint16_t *buf = usb_audio_transmit_buffer + (((uint32_t)b & 8) ? AUDIO_TX_SIZE/2 : 0);
+				uint16_t *buf = usb_audio_transmit_buffer + (((uint32_t)b & 8) ? FF_AUDIO_TX_STRIDE/2 : 0);
 				unsigned int len = usb_audio_transmit_callback(buf);
 				b->addr = buf;
 				b->desc = (len << 16) | BDT_OWN;
@@ -1156,10 +1288,14 @@ void usb_isr(void)
 
 	if (status & USB_ISTAT_USBRST /* 01 */ ) {
 		//serial_print("reset\n");
+		usb_bus_lost = 1;
 
 		// initialize BDT toggle bits
 		USB0_CTL = USB_CTL_ODDRST;
 		ep0_tx_bdt_bank = 0;
+#ifdef FF_USB_MSC
+		if (ff_usb_msc_on) usb_msc_bus_reset();
+#endif
 
 		// set up buffers to receive Setup and OUT packets
 		table[index(0, RX, EVEN)].desc = BDT_DESC(EP0_SIZE, 0);
@@ -1210,6 +1346,7 @@ void usb_isr(void)
 
 	if ((status & USB_ISTAT_SLEEP /* 10 */ )) {
 		//serial_print("sleep\n");
+		usb_bus_lost = 1;
 		USB0_ISTAT = USB_ISTAT_SLEEP;
 	}
 
@@ -1227,6 +1364,9 @@ void usb_init(void)
 	usb_init_serialnumber();
 #ifdef FF_USB_AUDIO_TX
 	ff_usb_audio_select(ffUsbAudioBootFlag()); // before the pull-up, the descriptors never change after this
+#endif
+#ifdef FF_USB_MSC
+	ff_usb_msc_select(ffUsbMscBootFlag()); // after the audio select: the drive's interface number follows it
 #endif
 
 	for (i=0; i < (NUM_ENDPOINTS+1)*4; i++) {

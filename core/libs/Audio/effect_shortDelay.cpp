@@ -167,6 +167,18 @@ AUDIO_CORE_RAM void AudioEffectShortDelay::update(void)
 
     input = receiveReadOnly(0);
 #ifdef AUDIO_NULL_IS_SILENCE
+    const FxMuteGate::Step muteStep = muteGate.step();
+    if (muteStep >= FxMuteGate::kEnterSleep)
+    {
+        // muted, the tail has rung and faded: the lines' history is dropped (no memset of the 1.5 MB, see clearForWake), then the delay
+        // and its send mixer leave update_all
+        if (input != nullptr)
+            release(input);
+        if (muteStep == FxMuteGate::kEnterSleep)
+            clearForWake();
+        muteGate.sleep(this);
+        return;
+    }
     const bool silentInput = isZeroOrMissing(input);
     if (!noRefresh && timeInSamples >= 1 && quietSamplesCount >= timeInSamples &&
         (lastFilterInRight | lastFilterInLeft | lastFilterInMono | lastFilterOutRight | lastFilterOutLeft | lastFilterOutMono) == 0 &&
@@ -213,6 +225,13 @@ AUDIO_CORE_RAM void AudioEffectShortDelay::update(void)
 #endif
     }
 
+#ifdef AUDIO_NULL_IS_SILENCE
+    if (processed && muteStep == FxMuteGate::kFade)
+    {
+        FxMuteGate::ramp(outputLeft->data, muteGate.rampFrom(), muteGate.rampTo());
+        FxMuteGate::ramp(outputRight->data, muteGate.rampFrom(), muteGate.rampTo());
+    }
+#endif
     if (outputRight != nullptr)
     {
         if (processed)
@@ -234,6 +253,28 @@ AUDIO_CORE_RAM void AudioEffectShortDelay::update(void)
         release(input);
     }
 }
+
+#ifdef AUDIO_NULL_IS_SILENCE
+// Sleep entry of the mute: the state a wake must start from, a delay with nothing in its lines. Instead of zeroing the three lines (1.5 MB
+// of SDRAM) their history is marked invalid: the set of the current mode alone is live with depth 0 and no seed, so every read older
+// than what is written after the wake is 0 (runSwitching), and the quiet skip writes zeros at the head as for a cleared delay.
+__attribute__((noinline)) AUDIO_CORE_FLASH void AudioEffectShortDelay::clearForWake()
+{
+    lastFilterInLeft = 0;
+    lastFilterInRight = 0;
+    lastFilterInMono = 0;
+    lastFilterOutLeft = 0;
+    lastFilterOutRight = 0;
+    lastFilterOutMono = 0;
+    ppLive = isPingpong != 0;
+    monoLive = !ppLive;
+    ppWeight = ppLive ? kFadeOne : 0;
+    ppDepth = monoDepth = 0;
+    ppSeed = monoSeed = 0;
+    silentSamplesCount = MAX_DELAYLINE_LENGTH;
+    quietSamplesCount = MAX_DELAYLINE_LENGTH;
+}
+#endif
 
 AUDIO_CORE_RAM bool AudioEffectShortDelay::process(int16_t input[],
                                                int16_t outputLeft[],

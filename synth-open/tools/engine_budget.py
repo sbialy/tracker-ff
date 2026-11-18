@@ -38,6 +38,18 @@ def size_of(tool, path):
     return int(f[0]) + int(f[1])
 
 
+SDRAM_SIZE = 16 * 1024 * 1024   # the external SDRAM of the MK66 board, 16 MiB: .noinit_RAM4 is what the firmware places in it
+
+
+def sdram_used(tool, path):
+    """bytes of the .noinit_RAM4 section of the image (the SDRAM the linker hands out), 0 when the image has none"""
+    for line in subprocess.run([tool + "size", "-A", path], capture_output=True, text=True, check=True).stdout.splitlines():
+        f = line.split()
+        if len(f) >= 2 and f[0] == ".noinit_RAM4":
+            return int(f[1])
+    return 0
+
+
 def parse_list(items):
     d = {}
     for it in items:
@@ -118,6 +130,7 @@ def main():
     ap.add_argument("--engines", default="", help="engines in the built image (report)")
     ap.add_argument("--pick", default="", help="engines to judge (table)")
     ap.add_argument("--max", type=int, default=1044480)
+    ap.add_argument("--proven", type=lambda x: int(x, 0), default=0, help="end of the last image run on the unit: free against it is reported too (report)")
     ap.add_argument("--engine", action="append", default=[], help="NAME=member.o member.o ...")
     ap.add_argument("--sect", action="append", default=[], help="NAME=section-name-part ...")
     ap.add_argument("--txt", help="BUILD.txt to write (report)")
@@ -135,11 +148,20 @@ def main():
         free = a.max - img
         eng_sum = sum(cost[e] for e in built)
         print(f"image (text+data) {img} of {a.max} B, {free} B free" + ("" if free >= 0 else f" - OVER by {-free}"))
+        proven_line = ""
+        if a.proven:
+            pf = a.proven - img
+            proven_line = f"device-proven end 0x{a.proven:X}: {pf} B free" if pf >= 0 else f"device-proven end 0x{a.proven:X}: PAST it by {-pf} B (the release gate fails)"
+            print(proven_line)
+        sd_used = sdram_used(a.tool, a.axf)
+        sd_free = SDRAM_SIZE - sd_used
+        print(f"SDRAM {sd_used} of {SDRAM_SIZE} B used (.noinit_RAM4), {sd_free} B free")
         print("engines (linked bytes) " + ", ".join(f"{e} {cost[e]}" for e in built))
         if a.txt and free >= 0:
             lines = [f"firmware: {a.ptf}", f"synth-open: {a.version}", f"commit: {a.commit}",
                      f"engines: {' '.join(built)}", f"image text+data: {img}", f"flash cap: {a.max}",
-                     f"free: {free}", f"base (image without the engines): {img - eng_sum}"]
+                     f"free: {free}", f"base (image without the engines): {img - eng_sum}"] + ([proven_line] if proven_line else [])
+            lines += [f"sdram used: {sd_used}", f"sdram free: {sd_free}"]
             lines += [f"engine {e}: {cost[e]}" for e in built]
             with open(a.txt, "w") as f:
                 f.write("\n".join(lines) + "\n")

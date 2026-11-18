@@ -65,7 +65,7 @@ void cBattery::setColors(const uint32_t* colors)
     this->colors = colors;
 }
 
-void cBattery::setData(void* data)
+void cBattery::setData(void* /*data*/)
 {
 }
 

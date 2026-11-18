@@ -153,6 +153,12 @@ class Synth
     bool backupSlotZero(int part, const char* slotZeroName);
     bool restoreSlotZeroBackup(int part);
     bool applyPatchBankSlot(int part, int slot);
+    const char* getSlotName(int part, int slot);
+    // Morph step FX (audio callback): blend of the open slot and `slot` (-1: the part's Morph target), amount 0..100
+    bool applyPatchMorph(int part, int slot, int amount);
+    // The slot a Morph FX blends to (main thread). setMorphTarget writes the names file when the target changes.
+    int getMorphTarget(int part) { return polysynth::open::patchBankMorphTarget(part); }
+    void setMorphTarget(int part, int slot);
     // Names of slots 1..15 live in the side file <P>.names next to the slot files (see synth-open/open_slotnames.h). Written whenever
     // a name changes and on project save, read on project load.
     // False: the names file could not be written (or read before): the caller does not call the names saved.
@@ -170,7 +176,7 @@ class Synth
     const polysynth::open::ModSlot& getModSlot(int part, int slot) { return polysynth::open::modSlotOf(*parts[part].patch, slot); }
     void setModSlot(int part, int slot, const polysynth::open::ModSlot& value);
     const polysynth::open::EngineDef* getModEngine(int part) { return polysynth::open::modEngineOf(*parts[part].patch); }
-    int modDestinations(int part, int16_t* out) { return polysynth::open::modPicker(getModEngine(part), out); }
+    int modDestinations(int part, int16_t* out) { return polysynth::open::modPicker(getModEngine(part), out, polysynth::open::waveFilesAbsent()); }
     const char* modDestName(int part, int code) { return polysynth::open::modDestName(*parts[part].patch, code); }
 #endif
 

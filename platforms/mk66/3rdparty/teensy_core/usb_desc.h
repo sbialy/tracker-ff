@@ -426,8 +426,44 @@ let me know?  http://forum.pjrc.com/forums/4-Suggestions-amp-Bug-Reports
 #define FF_USB_AUDIO_TX			1
 #define FF_AUDIO_INTERFACE		4 // control 4, streaming 5
 #define AUDIO_TX_ENDPOINT     	8
-#define AUDIO_TX_SIZE         	180
+#define AUDIO_TX_SIZE         	180 // the stereo descriptor's wMaxPacketSize (45 frames x 4 B)
+// 8+3 mono (Features > USB audio > Mode): 11 channels, 45 frames x 22 B = 990 B, the most a full speed isochronous packet (1023 B)
+// holds at 16 bit. ff_usb_audio_select patches the descriptor at start. Each BDT buffer is FF_AUDIO_TX_STRIDE bytes, 4-byte aligned.
+#define FF_AUDIO_MULTI_CH		11
+#define FF_AUDIO_MULTI_SIZE		990
+#define FF_AUDIO_TX_STRIDE		992
 #define ENDPOINT8_CONFIG  ENDPOINT_TRANSMIT_ISOCHRONOUS
+#endif
+
+// tracker-ff USB_MSC=1 (-DFEATURE_USB_MSC): a USB mass storage interface (Bulk-Only, SCSI transparent) for the SD card
+// in Drive mode (Config > USB > Storage), described last so every other interface keeps its number: 6 with USB_AUDIO=1 and
+// the audio function on, else 4 (ff_usb_msc_select moves the block down and renumbers it). Bulk IN endpoint 9, bulk OUT
+// endpoint 10 (separate endpoints: Bulk-Only halts IN and OUT on their own, one ENDPT register has a single EPSTALL).
+// Layout from OpenTracker (third_party/teensy3, PJRC terms, see usb_msc.h). Compiled in, switched at start
+// (Config > Features > USB drive): off serves the descriptors of a build without the flag and leaves endpoints 9 and 10
+// disabled.
+#ifdef FEATURE_USB_MSC
+#ifdef FEATURE_USB_AUDIO
+#define FF_STOCK_ENDPOINTS		8 // the endpoint count of the image without the flag (endpoint 8 counts only while audio is on)
+#else
+#define FF_STOCK_ENDPOINTS		7
+#endif
+#undef NUM_ENDPOINTS
+#define NUM_ENDPOINTS         	10
+#undef NUM_INTERFACE
+#ifdef FEATURE_USB_AUDIO
+#define NUM_INTERFACE   		7
+#else
+#define NUM_INTERFACE   		5
+#endif
+#define FF_USB_MSC				1
+#define MSC_INTERFACE			(NUM_INTERFACE - 1) // the number in the descriptor array, ff_usb_msc_iface is the served one
+#define MSC_TX_ENDPOINT			9
+#define MSC_RX_ENDPOINT			10
+#define MSC_TX_SIZE				64
+#define MSC_RX_SIZE				64
+#define ENDPOINT9_CONFIG  ENDPOINT_TRANSMIT_ONLY
+#define ENDPOINT10_CONFIG ENDPOINT_RECEIVE_ONLY
 #endif
 
 

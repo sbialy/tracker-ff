@@ -5,11 +5,26 @@
 #include "plug_defer.h"
 #include "log.h"
 #include "plug_sidecar_io.h"
+#include "mtSequencer.h"
+#include "mtFollowChord.h"
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
+#include "plug_mtff.h"
+#ifdef FEATURE_SYNTH_OPEN
+#include "open_patch.h"
+#endif
+#include "fx34_io.h"
+#include "strum_depth.h"
 
 #include "FileSystemAdapter.h"
 #include "Platform.h"
 #include "mtAudioEngine.h"
+#include "mtSequencer.h"
+#include "fileManager.h"
+#include "fileManagerDefs.h"
 #include "mtStructs.h"
+#include "scales.h"
 #include "cr_section_macros.h"
 #include "interruptsControl.h"
 
@@ -44,6 +59,25 @@ constexpr uint32_t kArenaPerSlot = 32 * 1024;   // SDRAM for plugin delay lines 
 __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_arena[kSlots][kArenaPerSlot];
 __NOINIT(EXTERNAL_RAM) Sidecar s_side;                                            // the project's references and values
 __NOINIT(EXTERNAL_RAM) char s_text[kSidecarMax];                                  // sidecar file text
+// sidecar paths (plug_sidecar_io.h kPathMax): the two a hook works on and the scratch the replace builds <path>.tmp in. Off the stack,
+// which the audio interrupt shares. The hooks run in the main loop only and never nest
+__NOINIT(EXTERNAL_RAM) char s_pathA[kPathMax];
+__NOINIT(EXTERNAL_RAM) char s_pathB[kPathMax];
+__NOINIT(EXTERNAL_RAM) char s_pathScratch[kPathBuf];
+// project.mtff (plug_mtff.h): the file as read or written (unknown lines are kept from it), what it holds, what the load found
+__NOINIT(EXTERNAL_RAM) char s_mtffRaw[kMtffMax];
+__NOINIT(EXTERNAL_RAM) char s_mtffTmp[kMtffMax];   // the new text of a save, the copy buffer of open and save, the park scratch
+int s_mtffRawN;
+Mtff s_mtff;
+SidecarState s_mtffState;
+bool s_mtffOpenStale;   // the last project open could not copy the project's project.mtff to the Workspace
+MtStamp s_stamp;        // the project.mt last read or written (projectStamp)
+const char* s_buildId;   // BUILD_ID of the running image (the git sha7), kept by boot for the header of project.mtff
+bool s_mtffUserOpen;     // sidecarOpen ran: the next project load is a user's open (File screen, USB console), not a Workspace reload or autosave
+uint8_t s_mtffNotice;    // what that open found for the screen (plug_host.h takeOpenNotice): 0 none, 1 a newer writer of this format, 2 a newer format
+uint32_t s_mtffNoticeFf; // writer of the file, packed as mtffWriterVersion
+uint16_t s_mtffNoticeFormat;
+char s_mtffNote[160];   // the one status line of the last load: parked lines, a file of a newer format, a card error (host.txt)
 SidecarState s_sideState;   // what the project load found (plug_sidecar_io.h): a card error blocks every write of the file
 __NOINIT(EXTERNAL_RAM) IndexEntry s_index[kIndexMax];
 __NOINIT(EXTERNAL_RAM) char s_names[kScanMax * 40];
@@ -62,6 +96,8 @@ constexpr uint32_t kMarkerMs = 3000;        // clean running after a load before
 struct Slot
 {
     const plug_desc* desc;
+    const plug_ext_tempo* tempo;
+    const plug_ext_tail* tail;
     void* inst;
     void* heap[4];
     uint8_t nHeap;
@@ -114,9 +150,11 @@ uint32_t hostCycles()
     return *reinterpret_cast<volatile uint32_t*>(0xE0001004);   // DWT_CYCCNT
 }
 
-const void* hostQuery(uint32_t)
+// host level 2: PLUG_EXT_FILES (plug_synth.cpp), PLUG_EXT_STRUM (the project's Strum ramp depth, live), NULL for every other id
+const void* hostQuery(uint32_t id)
 {
-    return nullptr;
+    if (id == PLUG_EXT_FILES) return filesQuery();
+    return id == PLUG_EXT_STRUM ? &strumramp::g_depth : nullptr;   // strum depth: plug_abi.h
 }
 
 float hSin(float x) { return sinf(x); }
@@ -168,6 +206,7 @@ namespace
 // plug_sidecar_io.h's file operations on the SD card
 struct SdOps
 {
+    char* pathScratch() { return s_pathScratch; }
     Presence stat(const char* p) { return FileSystemAdapter::statPath(p); }
     bool remove(const char* p) { return s_fs->remove(p); }
     bool rename(const char* from, const char* to) { return s_fs->rename(from, to); }
@@ -239,6 +278,8 @@ void writeStatus()
                      s_on ? "on" : "bypassed", int(s_safe), s_reason, (unsigned long)nvmCommands());
     n += snprintf(t + n, sizeof(t) - size_t(n), "scan %s: listed %d, rejected %d\r\n", kDir, s_scan.listed, s_scan.rejected);
     n += snprintf(t + n, sizeof(t) - size_t(n), "mixer %s%s%s\r\n", saturationListTexts[mixerStage()], s_note[0] ? ", " : "", s_note);
+    n += snprintf(t + n, sizeof(t) - size_t(n), "project.mtff: strum ramp %d %%, state %d%s%s\r\n", strumramp::depthPct(), int(s_mtffState),
+                  s_mtffNote[0] ? ", " : "", s_mtffNote);
     for (int i = 0; i < s_scan.rejected && i < 3 && n < int(sizeof(t)); i++)
         n += snprintf(t + n, sizeof(t) - size_t(n), "rejected %s err %ld\r\n", s_scan.reject[i].file, long(s_scan.reject[i].err));
     for (int i = 0; i < s_count && n < int(sizeof(t)); i++)
@@ -278,6 +319,8 @@ void unload(int k)
     s_pair.freed(k);   // its part of the slot is free (detached above, the audio interrupt no longer runs it)
     s_pair.clearRefusal(k);
     s.desc = nullptr;
+    s.tempo = nullptr;
+    s.tail = nullptr;
     s.inst = nullptr;
     s.err = kOk;
 }
@@ -295,7 +338,7 @@ void connect(int k)
     }
     if (s.desc->set_param)
         for (uint32_t i = 0; i < s.desc->num_params; i++) s.desc->set_param(s.inst, i, s.val[i]);
-    plugInsert()->attach(k, s.desc, s.inst, kBudget);
+    plugInsert()->attach(k, s.desc, s.inst, kBudget, s.tempo, s.tail);
 }
 
 // Loads what s_side.slot[k] names into slot k now. Main thread.
@@ -384,6 +427,8 @@ void apply(int k)
         return;
     }
     s.desc = l.desc;
+    s.tempo = l.tempo;
+    s.tail = l.tail;
     // insert 2 holds [at, end of slot), whatever the file's own size is (load() kept it inside room)
     s_pair.loaded(k, at, insertFoot(l.hdr));
     // the project's values by name, defaults for the rest; init left the plugin at its defaults
@@ -398,7 +443,7 @@ void apply(int k)
     }
     s.state = SlotState::kRunning;
     LOGEF("plg%d %s ok", k + 1, ref.name);
-    if (s_on && plugInsert()) plugInsert()->attach(k, s.desc, s.inst, kBudget);   // bypassed: loaded, off the node
+    if (s_on && plugInsert()) plugInsert()->attach(k, s.desc, s.inst, kBudget, s.tempo, s.tail);   // bypassed: loaded, off the node
     writeStatus();
 }
 
@@ -488,9 +533,34 @@ Err checkDesc(const plug_desc* d, uintptr_t base, uint32_t size, uint32_t wantKi
     return kOk;
 }
 
+const plug_ext_tempo* tempoExt(const plug_desc* d, uintptr_t base, uint32_t size)
+{
+    if (!d || d->kind != PLUG_KIND_MASTER_INSERT || !PLUG_HAS(d, plug_desc, query) || !d->query) return nullptr;
+    if (!inImage(uintptr_t(d->query) & ~1u, base, size)) return nullptr;
+    const plug_ext_tempo* t = static_cast<const plug_ext_tempo*>(d->query(PLUG_EXT_TEMPO));
+    if (!t || !inImage(uintptr_t(t), base, size) || t->struct_size < offsetof(plug_ext_tempo, set_transport)) return nullptr;
+    if (t->set_tempo && (!(uintptr_t(t->set_tempo) & 1u) || !inImage(uintptr_t(t->set_tempo) & ~1u, base, size))) return nullptr;
+    if (PLUG_HAS(t, plug_ext_tempo, set_transport) && t->set_transport &&
+        (!(uintptr_t(t->set_transport) & 1u) || !inImage(uintptr_t(t->set_transport) & ~1u, base, size)))
+        return nullptr;
+    return t;
+}
+
+const plug_ext_tail* tailExt(const plug_desc* d, uintptr_t base, uint32_t size)
+{
+    if (!d || d->kind != PLUG_KIND_MASTER_INSERT || !PLUG_HAS(d, plug_desc, query) || !d->query) return nullptr;
+    if (!inImage(uintptr_t(d->query) & ~1u, base, size)) return nullptr;
+    const plug_ext_tail* t = static_cast<const plug_ext_tail*>(d->query(PLUG_EXT_TAIL));
+    if (!t || !inImage(uintptr_t(t), base, size) || !PLUG_HAS(t, plug_ext_tail, quiet) || !t->quiet) return nullptr;
+    if (!(uintptr_t(t->quiet) & 1u) || !inImage(uintptr_t(t->quiet) & ~1u, base, size)) return nullptr;
+    return t;
+}
+
 Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, Loaded& out)
 {
     out.desc = nullptr;
+    out.tempo = nullptr;
+    out.tail = nullptr;
     auto [isOpen, f] = fs->openFile(path, FileSystem::FileOpenMode::kRead);
     if (!isOpen) return kNoFile;
     plug_file_header& h = out.hdr;
@@ -562,7 +632,12 @@ Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, L
     if (!d) return kEntry;
     // the descriptor, the parameter table and the functions are constants and code: in the text segment
     e = checkDesc(d, pl.textRun, rwOff, wantKind);
-    if (e == kOk) out.desc = d;
+    if (e == kOk)
+    {
+        out.desc = d;
+        out.tempo = tempoExt(d, pl.textRun, rwOff);
+        out.tail = tailExt(d, pl.textRun, rwOff);
+    }
     return e;
 }
 
@@ -764,10 +839,318 @@ const char* safeReason()
     return s_reason;
 }
 
+// ------------------------------------------------------------------------------------------------ send ducking
+const DuckParams& duck()
+{
+    return s_mtff.duck;
+}
+
+void duckSet(const DuckParams& p)
+{
+    s_mtff.duck = duckClamp(p);
+#ifdef FEATURE_SEND_DUCK
+    engine.setSendDuck(s_mtff.duck);
+#endif
+    newFileManager.setProjectStructChanged();
+}
+
 // ------------------------------------------------------------------------------------------------ project sidecar
 namespace
 {
 bool s_openStale;   // the last project open could not copy the project's sidecar to the Workspace (sidecarOpen)
+}
+
+// ---- project.mtff (plug_mtff.h). The same hooks as plugins.txt, the same file layer (.tmp, read back, .bak swap), the same path rules
+namespace
+{
+// The settings of s_mtff into the sequencer, the audio engine and the Follow chord and Parts state: a load (the project's file, or
+// the defaults of a missing one)
+void mtffApply()
+{
+    strumramp::setDepth(s_mtff.depth);
+    sequencer.randomSeed = s_mtff.seed;   // seeded random takes: 0 (Off) without a "seed.take" line or a readable file
+    static_assert(kSnapTracks == kScaleSnapTracks && sizeof(scaleSnapMode) == sizeof(s_mtff.snap), "scale snap keys and table");
+    memcpy(scaleSnapMode, s_mtff.snap, sizeof(scaleSnapMode));   // no file, no snap key, a stale one: every track Off
+    sequencer.clearTrackGrooves();
+    for (int t = 0; t < kMtffTracks; t++) sequencer.setTrackGroove(uint8_t(t), s_mtff.groove[t]);
+    static_assert(followchord::kTracks == kMtffTracks, "follow chord keys");
+    for (int t = 0; t < kMtffTracks; t++)
+    {
+        followchord::setting.mode[t] = s_mtff.followMode[t];
+        followchord::setting.source[t] = s_mtff.followSource[t];
+    }
+    followchord::recalc();
+    followchord::resetLive();
+#ifdef FEATURE_SEND_DUCK
+    engine.setSendDuck(s_mtff.duck.source ? s_mtff.duck : kDuckDefaults);   // no key (or a failed read): ducking off
+#endif
+    fx34io::applyProjectSwitch(s_mtff.fxSlots == 4);   // FX3 and FX4: off without the key, a file that holds it or a failed read
+#ifdef FEATURE_SYNTH_OPEN
+    polysynth::open::setProjectMacroMode(s_mtff.macroMode);   // no key: each patch as it always was
+#endif
+}
+
+// This build as project.mtff names it in the header (plug_mtff.h): the version of mtStructs.h and the git sha of the image. Every load and
+// save sets it first (a clear keeps it)
+void mtffIdent()
+{
+    MtffId& id = s_mtff.self;
+    id.major = CORE_VER_1;
+    id.minor = CORE_VER_2;
+    id.patch = CORE_VER_3;
+    id.valid = true;
+    int b = 0;
+    for (const char* q = s_buildId; q && *q && b < kMtffBuildLen; q++)
+    {
+        const char c = *q;
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) break;
+        id.build[b++] = c;
+    }
+    id.build[b] = 0;
+}
+
+// The live state of the sequencer and the Follow chord setting into s_mtff (the Parts list is the live one, s_mtff.parts)
+void mtffCollect()
+{
+    mtffIdent();
+    s_mtff.depth = uint8_t(strumramp::depthPct());
+    s_mtff.seed = sequencer.randomSeed;
+    s_mtff.fxSlots = fx34::enabled() ? 4 : 0;
+#ifdef FEATURE_SYNTH_OPEN
+    s_mtff.macroMode = polysynth::open::projectMacroMode();
+#endif
+    memcpy(s_mtff.snap, scaleSnapMode, sizeof(s_mtff.snap));   // the Project Settings > Scale snap rows
+    for (int t = 0; t < kMtffTracks; t++)
+    {
+        s_mtff.groove[t] = sequencer.getTrackGroove(uint8_t(t));
+        s_mtff.followMode[t] = followchord::setting.mode[t];
+        s_mtff.followSource[t] = followchord::setting.source[t];
+    }
+    s_mtff.hasStamp = s_stamp.valid;
+    s_mtff.crc = s_stamp.crc;
+    s_mtff.size = s_stamp.size;
+}
+
+// Workspace load: the file, the stale check against the project.mt just read, the settings applied (a project without the file or
+// the key plays with the ramp off, a new project starts at 100)
+void mtffLoaded(const char* dir, bool newProject)
+{
+    s_mtffNote[0] = 0;
+    const bool userOpen = s_mtffUserOpen;   // one open, one notice: a Workspace reload or an autosave never has the flag
+    s_mtffUserOpen = false;
+    s_mtffNotice = 0;
+#ifdef FEATURE_PARTS
+    s_mtff.parts = &parts::list();   // the live Parts list: a load fills it in place, a save writes it
+#endif
+    mtffIdent();
+    mtffClear(s_mtff);
+    s_mtffRawN = 0;
+    if (newProject)
+    {   // an empty Workspace: no file. The default is written by the project.mtff save that follows the first project.mt save
+        s_mtffOpenStale = false;
+        s_mtffState = SidecarState::kNone;
+        s_mtff.depth = uint8_t(strumramp::kDefaultNewProject);
+        mtffApply();
+        return;
+    }
+    SdOps fs;
+    if (sidecarPath(s_pathA, kPathMax, dir, kMtffName))
+        s_mtffState = mtffLoadStep(fs, s_pathA, s_mtffRaw, kMtffMax, s_mtff, s_mtffRawN, s_mtffOpenStale, s_stamp, s_mtffTmp, kMtffMax);
+    else
+    {
+        LOGEF("project.mtff path too long: %s", dir);
+        s_mtffState = SidecarState::kUnreadable;
+        s_mtffOpenStale = false;
+    }
+#ifdef FEATURE_PARTS
+    int blanked = 0;
+    uint8_t gone = 0;   // the first pattern found gone, for the status line
+    bool more = false;  // and another one
+    if (s_mtff.stale && s_mtff.parts)
+    {   // project.mt written by another firmware: the Parts apply, a cell whose pattern it deleted is blanked (plug_mtff.h)
+        blanked = mtffBlankMissing(
+            *s_mtff.parts,
+            [](uint8_t pat) {   // s_pathB: free after the load (the main stack stays as it was)
+                snprintf(s_pathB, sizeof(s_pathB), cWorkspacePatternFileFormat, int(pat));   // what Parts read (readWorkspacePatternTo)
+                return FileSystemAdapter::statPath(s_pathB) != Presence::kAbsent;   // a card error blanks nothing
+            },
+            [&gone, &more](int part, int track, uint8_t pat) {
+                if (!gone) gone = pat;
+                more = more || pat != gone;
+                LOGEF("Part %d track %d: pattern %u is gone, cell blanked", part + 1, track + 1, unsigned(pat));
+            });
+    }
+#endif
+    mtffApply();   // every setting at its old behaviour for every state but a file that holds the key
+    // the one status line (plug_mtff.h, Versions): a file this build must not touch, then the older kinds of trouble, then a newer writer
+    const bool newerWriter = s_mtffState == SidecarState::kLoaded && mtffWriterVersion(s_mtff) > mtffSelfVersion(s_mtff);
+    if (sidecarBlocked(s_mtffState))
+    {
+        if (s_mtff.newer)
+            snprintf(s_mtffNote, sizeof(s_mtffNote), "%s is of a newer format (%u, FF %u.%u.%u): settings not applied, file kept", kMtffName,
+                     unsigned(s_mtff.format), unsigned(s_mtff.writer.major), unsigned(s_mtff.writer.minor), unsigned(s_mtff.writer.patch));
+        else
+            snprintf(s_mtffNote, sizeof(s_mtffNote), "%s not read (card error or over %d bytes): settings not applied, file kept", kMtffName,
+                     kMtffMax);
+    }
+    else if (s_mtff.parked)
+        snprintf(s_mtffNote, sizeof(s_mtffNote), "FF settings of %u line%s parked: project.mt was changed outside FF", unsigned(s_mtff.parked),
+                 s_mtff.parked == 1 ? "" : "s");
+    else if (s_mtff.stale)
+        snprintf(s_mtffNote, sizeof(s_mtffNote), "project.mt was changed outside FF, settings applied");
+    else if (newerWriter)
+        snprintf(s_mtffNote, sizeof(s_mtffNote), "%s was written by FF %u.%u.%u: settings this build does not know are kept", kMtffName,
+                 unsigned(s_mtff.writer.major), unsigned(s_mtff.writer.minor), unsigned(s_mtff.writer.patch));
+#ifdef FEATURE_PARTS
+    if (blanked)
+    {
+        const size_t at = strlen(s_mtffNote);
+        snprintf(s_mtffNote + at, sizeof(s_mtffNote) - at, "%s%d Part cell%s blanked: pattern %u%s gone", at ? ", " : "", blanked, blanked == 1 ? "" : "s",
+                 unsigned(gone), more ? " and others" : "");
+    }
+#endif
+    if (fx34io::parkedCount())
+    {   // after the other line, if there is one
+        const size_t at = strlen(s_mtffNote);
+        snprintf(s_mtffNote + at, sizeof(s_mtffNote) - at, "%sFX3/FX4 of the pattern on screen parked: the pattern file was changed outside FF",
+                 at ? ", " : "");
+    }
+    if (s_mtffState == SidecarState::kLoaded || s_mtff.newer)
+        LOGEF("mtff format %u ff %lx build %s -> this build format %d ff %lx", unsigned(s_mtff.format), (unsigned long)mtffWriterVersion(s_mtff),
+              s_mtff.writer.build, kMtffMajor, (unsigned long)mtffSelfVersion(s_mtff));
+    if (s_mtffNote[0]) LOGEF("%s", s_mtffNote);
+    if (userOpen && (newerWriter || (sidecarBlocked(s_mtffState) && s_mtff.newer)))
+    {   // for the screen (takeOpenNotice): a refused newer format first, then a newer writer. The cap and card errors stay in host.txt
+        s_mtffNotice = sidecarBlocked(s_mtffState) ? 2 : 1;
+        s_mtffNoticeFf = mtffWriterVersion(s_mtff);
+        s_mtffNoticeFormat = uint16_t(s_mtff.format);
+    }
+}
+
+// Workspace save: the file when a setting differs from the old behaviour or a line is kept, none otherwise
+bool mtffSaved(const char* dir)
+{
+    SdOps fs;
+    mtffCollect();
+    if (!sidecarPath(s_pathA, kPathMax, dir, kMtffName))
+    {
+        LOGEF("project.mtff path too long: %s", dir);
+        return mtffWrite(s_mtff, s_mtffRaw, s_mtffRawN, s_mtffTmp, kMtffMax) == 0;
+    }
+    const bool ok = mtffSave(fs, s_pathA, s_mtff, s_mtffState, s_mtffRaw, s_mtffRawN, kMtffMax, s_mtffTmp, kMtffMax);
+    if (ok && s_mtffState == SidecarState::kUnreadable && s_mtff.newer && mtffWrite(s_mtff, s_mtffRaw, s_mtffRawN, s_mtffTmp, kMtffMax) != 0)
+    {   // a file of a newer format stays as it is (Workspace, project folder, Save As copy): what this build holds for it is dropped, and
+        // never reaches the Workspace file, so a reload cannot bring it back. Said once per load (host.txt) and in the log on every save
+        LOGEF("%s is of a newer format: FF settings changed in this build are not saved, file kept", kMtffName);
+        if (!strstr(s_mtffNote, "not saved"))
+        {
+            snprintf(s_mtffNote, sizeof(s_mtffNote), "%s is of a newer format (%u): FF settings changed here are not saved, file kept", kMtffName,
+                     unsigned(s_mtff.format));
+            writeStatus();
+        }
+    }
+    return ok;
+}
+
+bool mtffOpened(const char* projectDir, const char* workspaceDir)
+{
+    SdOps fs;
+    const bool wsOk = sidecarPath(s_pathB, kPathMax, workspaceDir, kMtffName);
+    if (!sidecarPath(s_pathA, kPathMax, projectDir, kMtffName) || !wsOk)
+    {
+        LOGEF("project.mtff path too long: %s", projectDir);
+        s_mtffOpenStale = true;
+        if (wsOk) sidecarRemove(fs, s_pathB);
+        return false;
+    }
+    return sidecarOpenStep(fs, s_pathA, s_pathB, s_mtffTmp, kMtffMax, s_mtffOpenStale);
+}
+
+bool mtffToProject(const char* workspaceDir, const char* projectDir)
+{
+    SdOps fs;
+    mtffCollect();
+    const bool has = mtffWrite(s_mtff, s_mtffRaw, s_mtffRawN, s_mtffTmp, kMtffMax) != 0;
+    if (!sidecarPath(s_pathA, kPathMax, workspaceDir, kMtffName) || !sidecarPath(s_pathB, kPathMax, projectDir, kMtffName))
+    {
+        LOGEF("project.mtff path too long: %s", projectDir);
+        return !has;
+    }
+    return mtffProjectStep(fs, s_pathA, s_pathB, has, s_mtffState, s_mtffTmp, kMtffMax);
+}
+}   // namespace
+
+void newProjectSaved(const char* dir)
+{
+    if (s_fs) mtffSaved(dir);   // the new project's project.mtff (Strum ramp 100) is stamped with the project.mt that was just written
+}
+
+bool takeOpenNotice(char* line1, int cap1, char* line2, int cap2)
+{
+    if (!s_mtffNotice) return false;
+    const unsigned a = (s_mtffNoticeFf >> 16) & 0xFF, b = (s_mtffNoticeFf >> 8) & 0xFF, c = s_mtffNoticeFf & 0xFF;
+    if (s_mtffNotice == 1)
+    {   // the popup is 400 px wide: two short lines
+        snprintf(line1, size_t(cap1), "Saved by newer FF %u.%u.%u", a, b, c);
+        snprintf(line2, size_t(cap2), "Some settings ignored");
+    }
+    else
+    {
+        snprintf(line1, size_t(cap1), "Project from newer FF (format %u)", unsigned(s_mtffNoticeFormat));
+        snprintf(line2, size_t(cap2), "FF settings not loaded");
+    }
+    s_mtffNotice = 0;
+    return true;
+}
+
+uint32_t mtffWriterVersion()
+{
+    return plug::mtffWriterVersion(s_mtff);
+}
+
+int mtffFormatVersion()
+{
+    return plug::mtffFormatVersion(s_mtff);
+}
+
+void projectStamp(uint32_t crc, uint32_t size)
+{
+    s_stamp.crc = crc;
+    s_stamp.size = size;
+    s_stamp.valid = true;
+}
+
+int strumRampDepth()
+{
+    return strumramp::depthPct();
+}
+
+void setStrumRampDepth(int pct)
+{
+    strumramp::setDepth(pct);
+}
+
+int macroMode()
+{
+#ifdef FEATURE_SYNTH_OPEN
+    return polysynth::open::projectMacroMode();
+#else
+    return 0;
+#endif
+}
+
+void setMacroMode(int mode)
+{
+#ifdef FEATURE_SYNTH_OPEN
+    polysynth::open::setProjectMacroMode(uint8_t(mode));
+#else
+    (void)mode;
+#endif
+}
+
+void projectClosing()
+{
+    setMacroMode(0);   // a patch the load adds (an Init fallback) is a patch of no project yet: project.mtff sets the mode after the load
 }
 
 void projectLoaded(const char* dir, bool newProject)
@@ -775,11 +1158,18 @@ void projectLoaded(const char* dir, bool newProject)
     if (!s_fs) return;
     LOGEF("loaded %s %d", dir, int(newProject));
     if (newProject) s_openStale = false;
-    char p[64];
-    path(p, sizeof(p), dir, kSidecarName);
     SdOps fs;
     // no sidecar: no plugin, as stock. After a failed open copy nothing of the Workspace file is used (kStale)
-    s_sideState = sidecarLoadStep(fs, p, s_text, sizeof(s_text), s_side, s_openStale);
+    if (sidecarPath(s_pathA, kPathMax, dir, kSidecarName))
+        s_sideState = sidecarLoadStep(fs, s_pathA, s_text, sizeof(s_text), s_side, s_openStale);
+    else
+    {   // a path that does not fit: not read, the file (if any) is neither used nor written over
+        LOGEF("sidecar path too long: %s", dir);
+        memset(&s_side, 0, sizeof(s_side));
+        s_sideState = SidecarState::kUnreadable;
+        s_openStale = false;
+    }
+    mtffLoaded(dir, newProject);
     s_on = insertsOnAfterLoad(mtProject.values.saturationType, s_side);
     s_note[0] = 0;
     if (sidecarBlocked(s_sideState))
@@ -809,7 +1199,7 @@ void projectLoaded(const char* dir, bool newProject)
         s_slots[k].manual = false;
     }
     s_openGate.arm(now());
-    if (s_note[0]) writeStatus();
+    if (s_note[0] || s_mtffNote[0]) writeStatus();
 }
 
 bool projectSave(const char* dir)
@@ -817,30 +1207,48 @@ bool projectSave(const char* dir)
     if (!s_fs) return true;
     for (int k = 0; k < kSlots; k++) syncRef(k);
     if (s_count || s_side.slot[0].uid || s_side.slot[1].uid || sidecarBlocked(s_sideState)) writeStatus();
-    char p[64];
-    path(p, sizeof(p), dir, kSidecarName);
-    SdOps fs;
-    return sidecarSave(fs, p, s_side, s_sideState, s_text, sizeof(s_text));
+    bool ok;
+    if (!sidecarPath(s_pathA, kPathMax, dir, kSidecarName))
+    {   // no write to a cut name: true only when there is nothing to store
+        LOGEF("sidecar path too long: %s", dir);
+        ok = sidecarWrite(s_side, s_text, sizeof(s_text)) == 0;
+    }
+    else
+    {
+        SdOps fs;
+        ok = sidecarSave(fs, s_pathA, s_side, s_sideState, s_text, sizeof(s_text));
+    }
+    return mtffSaved(dir) && ok;   // both files are tried, whatever the first said
 }
 
 bool sidecarOpen(const char* projectDir, const char* workspaceDir)
 {
     if (!s_fs) return true;
-    char src[64], dst[64];
-    path(src, sizeof(src), projectDir, kSidecarName);
-    path(dst, sizeof(dst), workspaceDir, kSidecarName);
+    s_mtffUserOpen = true;   // the project load that follows is a user's open (projectLoaded reads and clears it)
     SdOps fs;
-    return sidecarOpenStep(fs, src, dst, s_text, sizeof(s_text), s_openStale);   // the open's retry calls it again: the last counts
+    const bool mtffOk = mtffOpened(projectDir, workspaceDir);   // first: it uses the path buffers too
+    const bool wsOk = sidecarPath(s_pathB, kPathMax, workspaceDir, kSidecarName);
+    if (!sidecarPath(s_pathA, kPathMax, projectDir, kSidecarName) || !wsOk)
+    {   // the project's file cannot be named: as a failed copy (the Workspace file is not the project's, the project's is kept)
+        LOGEF("sidecar path too long: %s", projectDir);
+        s_openStale = true;
+        if (wsOk) sidecarRemove(fs, s_pathB);
+        return false;
+    }
+    return sidecarOpenStep(fs, s_pathA, s_pathB, s_text, sizeof(s_text), s_openStale) && mtffOk;   // the open's retry calls it again: the last counts
 }
 
 bool sidecarToProject(const char* workspaceDir, const char* projectDir)
 {
     if (!s_fs) return true;
-    char src[64], dst[64];
-    path(src, sizeof(src), workspaceDir, kSidecarName);
-    path(dst, sizeof(dst), projectDir, kSidecarName);
+    const bool mtffOk = mtffToProject(workspaceDir, projectDir);   // first: it uses the path buffers too
+    if (!sidecarPath(s_pathA, kPathMax, workspaceDir, kSidecarName) || !sidecarPath(s_pathB, kPathMax, projectDir, kSidecarName))
+    {   // nothing is written to a cut name. True when the Workspace has no settings to carry over
+        LOGEF("sidecar path too long: %s", projectDir);
+        return sidecarWrite(s_side, s_text, sizeof(s_text)) == 0 && mtffOk;
+    }
     SdOps fs;
-    return sidecarProjectStep(fs, src, dst, s_side, s_sideState, s_text, sizeof(s_text));
+    return sidecarProjectStep(fs, s_pathA, s_pathB, s_side, s_sideState, s_text, sizeof(s_text)) && mtffOk;
 }
 
 // ------------------------------------------------------------------------------------------------ boot and tick
@@ -848,6 +1256,7 @@ void boot(Platform* platform)
 {
     FileSystem* fs = platform->getFileSystem();
     s_fs = fs;   // synthBoot set it already (before the synth started)
+    s_buildId = platform->getSystemInfo()->buildId;   // the git sha7 of the image, named in the header of project.mtff
     s_timer = platform->getTimer();
     memset(&s_side, 0, sizeof(s_side));
     memset(s_slots, 0, sizeof(s_slots));
@@ -913,6 +1322,7 @@ void tick()
         s_fs->remove(kMarker);
         s_markerSet = false;
     }
+    synthService();   // ABI 1.2: the synth engines' main thread work (card waves), rate limited inside
 }
 
 }   // namespace plug

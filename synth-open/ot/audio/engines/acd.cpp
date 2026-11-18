@@ -43,6 +43,7 @@
 
 #include "fastrun.h"
 #include "plug/plug_chord.h"
+#include "strum_depth.h"   // plug/strum_ramp.h and the project's Strum ramp depth (the host query of the plugin engines)
 
 namespace ot {
 namespace audio {
@@ -194,8 +195,19 @@ struct Voice {
     // All 0 without a strum, so an unstrummed voice renders as before.
     uint8_t onset[4];
     uint8_t strumBlk;
+    // PARA strum velocity ramp (strum_ramp.h): the time order of each note, 2 bits per note (bits 2k+1..2k, k 0 the note), and the
+    // strum size in units and the project's depth of the ramp at the note-on (strumramp::depthPct, 0..100). rampUnits 0 (no strum, depth 0
+    // or STRUM_RAMP=0) is gain 1.0 for every note: the render is bit identical.
+    uint8_t rampOrd;
+    uint8_t rampUnits;
+    uint8_t rampPct;
 };
 static_assert(sizeof(Voice) <= kSynthVoiceStateBytes, "ACD voice state too large");
+
+// PARA strum velocity ramp: the level factor of note k (0 the note, 1..3 the chord oscillators), 1.0f exactly without a strum
+inline float rampGain(const Voice& a, uint32_t k) {
+    return a.rampUnits ? strumramp::gain(int(a.rampOrd >> (2u * k) & 3u), int(a.rampUnits), int(a.rampPct)) : 1.0f;
+}
 
 // --- oscillator ------------------------------------------------------------------
 
@@ -284,9 +296,9 @@ void oscLoop(Osc& o, float* out) {
 // pass per note keeps the FPU registers of the loop free, the JU6 prototype lost 15 % of the gain with the copies in one loop).
 // The weights and the pulse width are the main oscillator's ramps.
 template <bool kPulse>
-float chordLoop(float ph, float inc, float dInc, float idt, const Osc& o, float* out) {
-    float duty = o.duty, wSaw = o.wSaw, wSq = o.wSq;
-    const float dDuty = o.dDuty, dSaw = o.dSaw, dSq = o.dSq;
+float chordLoop(float ph, float inc, float dInc, float idt, const Osc& o, float g, float* out) {
+    float duty = o.duty, wSaw = o.wSaw * g, wSq = o.wSq * g;
+    const float dDuty = o.dDuty, dSaw = o.dSaw * g, dSq = o.dSq * g;
     for (uint32_t i = 0; i < kBlock; ++i) {
         ph += inc;
         if (ph >= 1.0f) ph -= 1.0f;
@@ -517,11 +529,17 @@ public:
         // strum starts its notes on block boundaries too). A late note starts its saw at phase 0.5 (output 0, no step).
         const int st = nc ? int(clampf(p.end[kStrum], -63.0f, 63.0f) + (p.end[kStrum] < 0.0f ? -0.5f : 0.5f)) : 0;
         const uint32_t gapUs = uint32_t(st < 0 ? -st : st) * 2000u;
+        a.rampOrd = 0;
+        a.rampUnits = 0;
         for (uint32_t k = 0; k <= 3; ++k) {
             const uint32_t order = st >= 0 ? k : nc - k;
             a.onset[k] = k <= nc ? uint8_t((order * gapUs + kBlockUs / 2) / kBlockUs) : 0;
             if (k && a.onset[k]) a.cph[k - 1] = 0.5f;
+            if (k <= nc) a.rampOrd = uint8_t(a.rampOrd | order << (2u * k));
         }
+        const int depth = strumramp::depthPct();
+        a.rampPct = uint8_t(depth);
+        if (st && depth > 0 && STRUM_RAMP) a.rampUnits = uint8_t(st < 0 ? -st : st);
         if (a.onset[0]) a.phase = 0.5f;
         a.strumBlk = 0;
         s.lastPitch = n.pitch;
@@ -569,7 +587,7 @@ private:
     }
 };
 
-OT_FASTRUN_FN bool AcdEngine::render(SynthVoice& v, const SynthParams& p, float g0, float gInc, float* L, float* R) {
+OT_FASTRUN_FN bool AcdEngine::render(SynthVoice& v, const SynthParams& p, float g0, float gInc, float* L, float* /*R*/) {
     Voice& a = v.as<Voice>();
     if (a.ampSt == kIdle || p.count < kParamCount) return false;
     Slot& s = v.slotScratch->as<Slot>();
@@ -669,18 +687,36 @@ OT_FASTRUN_FN bool AcdEngine::render(SynthVoice& v, const SynthParams& p, float 
     if (subKind) subTables(subMode, o);
     // PARA strum: a note sounds from its onset block on (a down strum holds the note itself back, its phase waits)
     const uint32_t sb = a.strumBlk;
+    // PARA strum velocity ramp: the note itself plays at its own factor (the weights go back for the chord oscillators below, which
+    // scale the same weights by their own factors). No ramp is a factor of exactly 1.0f.
+    const float w0[6] = {o.wSaw, o.dSaw, o.wSq, o.dSq, o.wSub, o.dSub};
+    if (a.rampUnits) {
+        const float g0 = rampGain(a, 0);
+        o.wSaw *= g0;
+        o.dSaw *= g0;
+        o.wSq *= g0;
+        o.dSq *= g0;
+        o.wSub *= g0;
+        o.dSub *= g0;
+    }
     if (a.onset[0] <= sb) {
         kOscFns[pulse ? 1 : 0][subKind](o, buf);
     } else {
         std::memset(buf, 0, sizeof(buf));
     }
+    o.wSaw = w0[0];
+    o.dSaw = w0[1];
+    o.wSq = w0[2];
+    o.dSq = w0[3];
+    o.wSub = w0[4];
+    o.dSub = w0[5];
     if (sb < 255u) a.strumBlk = uint8_t(sb + 1u);
     // PARA: the chord's other notes, each in its own pass, into the same buffer before the one filter
     for (uint32_t k = 0; k < a.nChord; ++k) {
         if (a.onset[k + 1] > sb) continue;
         const float r = a.cratio[k];
         const float i0 = clampf(a.inc * r, 1.0e-7f, kMaxInc), i1 = clampf(inc1 * r, 1.0e-7f, kMaxInc);
-        a.cph[k] = (pulse ? chordLoop<true> : chordLoop<false>)(a.cph[k], i0, (i1 - i0) * kInv, 2.0f / (i0 + i1), o, buf);
+        a.cph[k] = (pulse ? chordLoop<true> : chordLoop<false>)(a.cph[k], i0, (i1 - i0) * kInv, 2.0f / (i0 + i1), o, rampGain(a, k + 1), buf);
     }
     a.phase = o.ph;
     a.sub = o.cnt & 3u;
@@ -723,15 +759,13 @@ OT_FASTRUN_FN bool AcdEngine::render(SynthVoice& v, const SynthParams& p, float 
             env += dEnv;
             const float y = (buf[i] + w * lcgFloat(rng)) * env;
             w += dw;
-            L[i] += y;
-            R[i] += y;
+            L[i] += y;   // mono engine (EngineDef::monoOut): the shim reads L only, R is not written
         }
     } else {
         for (uint32_t i = 0; i < kBlock; ++i) {
             env += dEnv;
             const float y = buf[i] * env;
-            L[i] += y;
-            R[i] += y;
+            L[i] += y;   // mono engine (EngineDef::monoOut): the shim reads L only, R is not written
         }
     }
     a.rng = rng;

@@ -49,6 +49,11 @@ class Interface
     void activateModule(hModule module, uint32_t options);
     void deactivateModule(hModule module);
     void switchModuleByButton(hModule module, uint8_t button, uint32_t options);
+    bool trySynthPlayEntry(); // Shift + Perform (FEATURE_SYNTH_OPEN): true when the Synth play page opened
+#ifdef FEATURE_PARTS
+    bool tryPartsEntry(); // Shift + Song (FEATURE_PARTS): the Song screen in its Parts view, true when the press was taken
+#endif
+    bool openSynthPlayFrom(hModule module); // Perform on Performance page 2 (FEATURE_SYNTH_OPEN): the page opens from this page, nothing else is asked of it
     void switchModuleToPrevious(hModule module, uint8_t options);
     int8_t getButtonIndex(uint8_t button);
     void toggleActiveModule(uint8_t state);
@@ -67,6 +72,9 @@ class Interface
     bool setFileTransferMode(bool enable);
 
     void refreshInterfaceControlsColors();
+
+    // The file manager's own progress popup is up (its end hides every popup: a page shows its own after this is false).
+    bool fileManagerPopupUp() const { return fileManagerPopupState != 0; }
 
     friend void interfaceEnvents(uint8_t event, void* param1, void* param2, void* param3);
 
@@ -145,12 +153,16 @@ class Interface
 
     hModule onScreenModule = nullptr;
     uint32_t lastOptions = 0;
+    bool synthPlayEntry = false; // trySynthPlayEntry is running: the next module switch opens the Synth play page
 
     uint8_t toggledState =
       0; // blokuje toggl(1) kiedy nie bylo toggle(0) a modul tez nie jest aktywny
 
     hModule previousModule = nullptr;
     uint32_t previousModuleOptions = 0;
+
+    hModule moduleBeforeToggle = nullptr;
+    uint32_t moduleBeforeToggleOptions = 0;
 
     SpecialScreensMode specialScreenMode = specialScreenModeDisabled;
 

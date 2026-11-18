@@ -1,4 +1,4 @@
-// Patch codec check for the macro depth mode (field 100), built once against the 1.3.0 tree (-DTREE13) and once against the 1.2.x tree
+// Patch codec check for the macro depth mode (field 100), built once against the new tree (-DTREE13) and once against the old tree (-DTREE13 only when it has field 100)
 // (macro_mode_compat_check.sh). Both codecs are the real open_patchio.cpp of their release.
 //   enc CASE OUT    write a patch of CASE: old (Add, macro amount 0.5, as 1.2.x writes it), old0 (Add, no amount), new0 (Scale, no macro amount, a new patch),
 //                   newN (Scale, macro amount 0.5), new0 and newN 1.3.0 only

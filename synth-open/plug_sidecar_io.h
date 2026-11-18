@@ -19,6 +19,8 @@ namespace plug
 //   bool writeNew(const char* path, const char* buf, int n)   creates or truncates path with the n bytes, true only when the
 //                                          card holds them (plug_host.cpp reads them back)
 //   bool remove(const char* path), bool rename(const char* from, const char* to)   rename fails when `to` exists (FatFs)
+//   char* pathScratch()                    kPathBuf bytes the replace and remove build "<path>.tmp" / "<path>.bak" in (static in
+//                                          plug_host.cpp: the main stack is shared with the audio interrupt, and 260 B of SRAM is not spared)
 // plug_host.cpp runs them on the SD card, tools/plug_sidecar_test.cpp on an in-memory one that fails or loses power at any step.
 //
 // A replace goes through <path>.tmp and open_fileops.h's replaceFileOps (the old file steps aside as <path>.bak until the new
@@ -27,6 +29,21 @@ namespace plug
 // "no file": the settings it may hold are not overwritten or removed until the project is loaded again.
 
 using Presence = polysynth::open::Presence;
+
+// Paths. The longest path the FileManager builds is PATCH_SIZE (255 with the terminator, open_fileops.h kBakPathMax with ".bak").
+// A sidecar path is "<dir>/<name>": kPathMax bytes with the terminator hold the longest that, plus ".tmp" or ".bak" fits kPathBuf.
+// A longer one is refused (sidecarPath false) and every caller then fails safe: no read of a cut name, no write, a logged error.
+constexpr int kPathBuf = int(polysynth::open::kBakPathMax);
+constexpr int kPathMax = kPathBuf - 4;
+
+// out = dir + "/" + name. False when it does not fit cap (out is then empty, never a cut path).
+inline bool sidecarPath(char* out, int cap, const char* dir, const char* name)
+{
+    const int n = snprintf(out, size_t(cap), "%s/%s", dir, name);
+    if (n >= 0 && n < cap) return true;
+    if (cap > 0) out[0] = 0;
+    return false;
+}
 
 // What the project load found, and so what a later save may do with the file
 enum class SidecarState : uint8_t
@@ -50,6 +67,7 @@ inline bool sidecarBlocked(SidecarState st)
 template <class Fs> Presence sidecarFetch(Fs& fs, const char* path, char* buf, int cap, int& n)
 {
     n = 0;
+    if (strlen(path) >= size_t(kPathMax)) return Presence::kUnknown;   // never a cut name: the card is not asked
     const Presence p = polysynth::open::recoverBackupOps(fs, path);
     if (p != Presence::kPresent) return p;
     const int got = fs.readFile(path, buf, cap);
@@ -62,8 +80,8 @@ template <class Fs> Presence sidecarFetch(Fs& fs, const char* path, char* buf, i
 // <path>.bak (the next fetch moves it back).
 template <class Fs> bool sidecarReplace(Fs& fs, const char* path, const char* buf, int n)
 {
-    char tmp[80];
-    if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= int(sizeof(tmp))) return false;
+    char* const tmp = fs.pathScratch();
+    if (snprintf(tmp, size_t(kPathBuf), "%s.tmp", path) >= kPathBuf) return false;
     if (fs.writeNew(tmp, buf, n) && polysynth::open::replaceFileOps(fs, tmp, path)) return true;
     if (fs.stat(tmp) == Presence::kPresent) fs.remove(tmp);   // best effort, a .tmp is never read
     return false;
@@ -73,8 +91,8 @@ template <class Fs> bool sidecarReplace(Fs& fs, const char* path, const char* bu
 // older file). False: the card failed, something may be left.
 template <class Fs> bool sidecarRemove(Fs& fs, const char* path)
 {
-    char bak[80];
-    if (snprintf(bak, sizeof(bak), "%s.bak", path) >= int(sizeof(bak))) return false;
+    char* const bak = fs.pathScratch();
+    if (snprintf(bak, size_t(kPathBuf), "%s.bak", path) >= kPathBuf) return false;
     const char* const order[2] = {bak, path};
     for (const char* q : order)
     {

@@ -693,6 +693,7 @@ void cInstrumentEditor::showSynthAutomationScreen()
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);
     display.setControlHide(imgGridControl);
+    hideSynthView();
     display.setControlHide(barControl[0]);
     display.setControlHide(barControl[1]);
     display.setControlHide(barControl[2]);

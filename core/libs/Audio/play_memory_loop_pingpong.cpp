@@ -240,6 +240,9 @@ AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateLoopPingPongNormal()
 
         return block;
     }
+    // `playing` is only ever 0 or 1 (every assignment), so the else if above is the last case.
+    // GCC already compiled it that way, this says it so (-Wreturn-type).
+    __builtin_unreachable();
 }
 AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateLoopPingPongReverse()
 {

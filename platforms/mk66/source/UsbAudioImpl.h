@@ -7,7 +7,7 @@ class UsbAudioImpl : public UsbAudio
 {
   public:
     virtual void beginFillData() override {}
-    virtual void fillChannelData(void* samples, int count, int channel) override {}
+    virtual void fillChannelData(void* /*samples*/, int /*count*/, int /*channel*/) override {}
     virtual void finishFillData() override {}
 };
 

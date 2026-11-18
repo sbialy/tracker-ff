@@ -1,0 +1,3 @@
+
+# curated wave files are binary: no end of line filter
+releases/waves/Waves/*.wav binary -filter

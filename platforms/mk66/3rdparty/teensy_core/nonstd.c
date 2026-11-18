@@ -171,7 +171,7 @@ char * dtostrf(float val, int width, unsigned int precision, char *buf)
 			s = fcvtf(val, newPrecision, &newDecimalPoint, &sign);
 
 			// if rounded up to new digit (e.g. 0.09 to 0.1), move decimal point
-			if (newDecimalPoint - decpt == precision + 1) decpt++;
+			if ((unsigned)(newDecimalPoint - decpt) == precision + 1) decpt++;
 		}
 	}
 

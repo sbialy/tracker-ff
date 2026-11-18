@@ -8,6 +8,7 @@
 
 #include "mtAudioEngine.h"
 #include "mtPadBoard.h"
+#include "mtSequencer.h"
 
 #include "Platform.h"
 #include "configEditor/configMenuActions.h"
@@ -15,6 +16,12 @@
 
 #include "Tracker.h"
 #include "core/interface.h"
+#include "core/interfacePopups.h"
+
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#include "fx34_io.h"
+#endif
 
 // device startup actions after Config read
 void initConfigValuesAfterReadConfig()
@@ -107,6 +114,11 @@ void setPadBoardValues()
     newFileManager.setProjectStructChanged();
 }
 
+void setScaleSnap()
+{
+    newFileManager.setProjectStructChanged(); // the Workspace save writes the project sidecar (plug::projectSave)
+}
+
 void setAntialiasingEnable()
 {
     engine.setInterpolationEnable(mtProject.values.antialiasingEnable);
@@ -137,6 +149,77 @@ void setSnapToZeroMode()
     engine.setSnapToZeroEnable((bool)mtProject.values.isSnapToZeroEnabled);
     newFileManager.setProjectStructChanged();
 }
+
+void setRandomSeedValue()
+{
+    // the seed is read at the next Play (Sequencer::resetChanceState) and written to the project's sidecar by the Workspace save
+    newFileManager.setProjectStructChanged();
+}
+
+void rerollRandomSeedAction()
+{
+    sequencer.rerollRandomSeed();
+    setRandomSeedValue();
+    configEditor.refreshConfigMenu(); // the Random seed row shows the new seed
+}
+
+#ifdef FEATURE_PLUG_HOST
+// The Project Settings page (the File screen entry opens it): the three rows that are not a plain variable keep a copy here, read back
+// from the project every time the page opens and after every change (a refused change shows what the project holds)
+uint8_t projFxSlots;      // 0 Off, 1 On
+uint8_t projMacroMode;    // 0 per patch, 1 Add, 2 Scale
+uint8_t projStrumVolume;  // tens of percent, 0..10
+
+void projectPageSync()
+{
+    projFxSlots = fx34::enabled() ? 1 : 0;
+    projMacroMode = uint8_t(plug::macroMode());
+    projStrumVolume = uint8_t((plug::strumRampDepth() + 5) / 10);
+}
+
+// 4 FX Slots (project.mtff fx.slots, fx34.h): not while the sequencer plays (the sets are rebuilt). Off keeps the FX3 and FX4 files on the
+// card and says so, On brings them back
+void setProjFxSlots()
+{
+    if ((projFxSlots != 0) != fx34::enabled())
+    {
+        if (sequencer.isPlay())
+        {
+            mtPopups.showInfoPopup("4 FX", "stop the playback first");
+        }
+        else
+        {
+            if (projFxSlots)
+            {
+                fx34io::turnOn();
+                mtPopups.showInfoPopup("4 FX on", "FX3 and FX4, not CE compatible");
+            }
+            else if (fx34io::turnOff())
+            {
+                mtPopups.showInfoPopup("4 FX off", "FX3 and FX4 kept on the card, not played");
+            }
+            else
+            {
+                mtPopups.showInfoPopup("4 FX off", "2 FX slots again");
+            }
+            newFileManager.setProjectStructChanged();
+        }
+    }
+    projectPageSync();
+}
+
+void setProjMacroMode()
+{
+    plug::setMacroMode(projMacroMode);
+    newFileManager.setProjectStructChanged();
+}
+
+void setProjStrumVolume()
+{
+    plug::setStrumRampDepth(projStrumVolume * 10);
+    newFileManager.setProjectStructChanged();
+}
+#endif
 
 void setMetronomValues()
 {

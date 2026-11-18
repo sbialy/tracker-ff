@@ -5,7 +5,7 @@
 
 #define DEBUG_COMMUNICATION 0
 
-bool MAX17262::begin(uint16_t designCap, uint16_t vEmpty)
+bool MAX17262::begin(uint16_t /*designCap*/, uint16_t /*vEmpty*/)
 {
 #ifdef TRACKER_MINI
 
@@ -33,11 +33,6 @@ bool MAX17262::begin(uint16_t designCap, uint16_t vEmpty)
 bool MAX17262::verify(bool extend)
 {
     uint16_t status = getStatus();
-
-    if (status < 0)
-    {
-        return false;
-    }
 
     bool firstRun = status & 2;
 

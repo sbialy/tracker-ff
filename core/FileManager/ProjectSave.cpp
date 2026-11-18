@@ -1,4 +1,9 @@
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
 #include "ProjectSave.h"
+#include "fx34_io.h"
+#include "mtFollowChord.h"
 #ifdef FEATURE_PLUG_HOST
 #include "plug_host.h"
 #endif
@@ -122,7 +127,11 @@ float ProjectSave::getProgress()
 //=================================================================================================
 void ProjectSave::saveProjectInit()
 {
-    newFileManager.createCurrentProjectFolderTree();
+    if (!newFileManager.createCurrentProjectFolderTree())
+    {
+        operationError();
+        return;
+    }
 
     char projectSavePath[PATCH_SIZE];
     volatile int pathSize = sizeof(projectSavePath);
@@ -217,6 +226,11 @@ bool ProjectSave::copyPaterns(int& idx)
         {
             idx++;
         }
+    }
+
+    if (loadStatus == fileTransferEnd)
+    {
+        fx34io::copyFile(srcPatternFilePath, destPatternFilePath); // FX3 and FX4 of the pattern travel with it (the 4 FX switch)
     }
 
     if (loadStatus == fileTransferEnd)
@@ -605,6 +619,10 @@ bool ProjectSave::saveProject(char* projectPathToSave, char* projectNameToSave)
         {
             return false;
         }
+        if (!projectFolderFits(projectPathToSave, projectNameToSave))
+        {
+            return false; // nothing written, the open project keeps its name and folder (the Save As page says why)
+        }
 
         isIncrementalSave =
           hadSavedBackingProject &&
@@ -620,6 +638,10 @@ bool ProjectSave::saveProject(char* projectPathToSave, char* projectNameToSave)
     }
     else if (projectNameToSave == nullptr && projectPathToSave == nullptr)
     {
+        if (!projectFolderFits(newFileManager.getCurrentProjectPath(), newFileManager.getCurrentProjectName()))
+        {
+            return false; // a project opened from a folder too deep for its files (made on a card reader): not written under cut names
+        }
         isIncrementalSave = hadSavedBackingProject;
     }
     else

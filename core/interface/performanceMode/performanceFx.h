@@ -27,7 +27,7 @@ class cPerformFx
                void (*fxSetFunct)(uint8_t trackIdx, int16_t value),
                void (*fxClearFunct)(uint8_t trackIdx),
                const fxSetup* fxSetup);
-    ~cPerformFx() {}
+    ~cPerformFx() = default;
 
     uint8_t id;
     const char* name;

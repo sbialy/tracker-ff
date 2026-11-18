@@ -3,7 +3,9 @@
 # Compiles the real teensy_core/usb_desc.c three ways and compares what a computer is served:
 #   ref  usb_desc.c/.h of REF_COMMIT (default: the parent of the commit that added the switch), no USB_AUDIO flag = today's image
 #   off  this tree with -DFEATURE_USB_AUDIO, boot flag 0      must equal ref byte for byte (descriptors, lengths, endpoints)
-#   on   this tree with -DFEATURE_USB_AUDIO, boot flag 1      6 interfaces, total length = the descriptor, endpoint 8 isochronous IN
+#   on   this tree with -DFEATURE_USB_AUDIO, boot flag 1      6 interfaces, total length = the descriptor, endpoint 8 isochronous IN,
+#                                                             byte for byte golden/stereo_on.txt (stereo before the 8+3 mode)
+#   mc   this tree, boot flag 2 (8+3 mono)                    golden/multi_on.txt, 11 channels, 990 B, 6 bytes and the names differ
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../../../.." && pwd); tc=$root/platforms/mk66/3rdparty/teensy_core
 out=${TMPDIR:-/tmp}/usb_desc_test; rm -rf "$out"; mkdir -p "$out/ref"
@@ -13,7 +15,7 @@ D=(-DUSB_MIDI -D__MK66FX1M0__ -DF_CPU=180000000 -DTEENSYDUINO=142 -DLAYOUT_US_EN
 # the ref tree's own usb_desc.{c,h} first, the rest of the Teensy headers from this tree
 cp "$here/usb_desc_dump.c" "$out/ref/usb_desc_dump.c"; cc "${D[@]}" -I"$out/ref" -I"$tc" "$out/ref/usb_desc_dump.c" -o "$out/dump_ref" || exit 1
 cc "${D[@]}" -DFEATURE_USB_AUDIO -I"$tc" "$here/usb_desc_dump.c" -o "$out/dump_feat" || exit 1
-"$out/dump_ref" > "$out/ref.txt"; "$out/dump_feat" 0 > "$out/off.txt"; "$out/dump_feat" 1 > "$out/on.txt"
+"$out/dump_ref" > "$out/ref.txt"; "$out/dump_feat" 0 > "$out/off.txt"; "$out/dump_feat" 1 > "$out/on.txt"; "$out/dump_feat" 2 > "$out/mc.txt"
 rc=0
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1"; rc=1; }
@@ -42,5 +44,16 @@ ok = i == len(b) and ifs == {0,1,2,3,4,5} and (0x88, 5, 180) in eps
 print(("ok    " if ok else "FAIL  ") + "on: descriptors chain to %d B, interfaces %s, audio endpoint %s" % (i, sorted(ifs), [e for e in eps if e[0] == 0x88]))
 sys.exit(0 if ok else 1)
 PY
+# ---- golden files (UPDATE_GOLDEN=1 rewrites them)
+g=$here/golden
+if [ "${UPDATE_GOLDEN:-0}" = 1 ]; then cp "$out/on.txt" "$g/stereo_on.txt"; cp "$out/mc.txt" "$g/multi_on.txt"; cp "$out/off.txt" "$g/off.txt"; fi
+cmp -s "$g/stereo_on.txt" "$out/on.txt" && ok "stereo: byte for byte the golden of the image before the 8+3 mode (golden/stereo_on.txt)" \
+  || { bad "stereo differs from golden/stereo_on.txt"; diff "$g/stereo_on.txt" "$out/on.txt" | head -10; }
+cmp -s "$g/off.txt" "$out/off.txt" && ok "off: byte for byte golden/off.txt" || bad "off differs from golden/off.txt"
+cmp -s "$g/multi_on.txt" "$out/mc.txt" && ok "8+3: byte for byte golden/multi_on.txt" \
+  || { bad "8+3 differs from golden/multi_on.txt"; diff "$g/multi_on.txt" "$out/mc.txt" | head -10; }
+grep -q "chname" "$out/on.txt" "$out/off.txt" && bad "stereo/off serve channel names" || ok "stereo and off serve no channel name strings"
+cfg_mc=$(grep "^desc 0200" "$out/mc.txt")
+python3 -I "$here/usb_desc_mc_check.py" "${cfg_on#*:}" "${cfg_mc#*:}" "$(grep '^chname' "$out/mc.txt")" || rc=1
 echo "RESULT: $([ $rc = 0 ] && echo GREEN || echo RED)"
 exit $rc

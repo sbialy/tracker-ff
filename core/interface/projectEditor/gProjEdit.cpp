@@ -6,6 +6,10 @@
 
 #include "display.h"
 #include "fileManager.h"
+#ifdef FEATURE_PLUG_HOST
+#include "plug_host.h"
+#include "fx34.h"
+#endif
 
 constexpr uint32_t coverRamAddres = 670000;
 
@@ -166,6 +170,12 @@ void cProjectEditor::showDefaultScreen()
     }
 
     display.setControlValue(label[0], 1);
+#ifdef FEATURE_PLUG_HOST
+    display.setControlValue(label[6], 1); // a label draws its second line only with a value > 0, as "New / Project"
+    display.setControlText(label[6], "Project");   // F7 opens the Project Settings page (Config editor, kOpenProjectSettings)
+    display.setControlText2(label[6], "Settings");
+    display.refreshControl(label[6]);
+#endif
 
     display.setControlHide(browserLabelControl);
     display.setControlHide(recentLabelControl);
@@ -188,6 +198,7 @@ void cProjectEditor::showDefaultScreen()
 
     display.synchronizeRefresh();
 }
+
 
 //==============================================================================================================
 void cProjectEditor::showProjectBrowser(bool reloadList)
@@ -567,7 +578,7 @@ void cProjectEditor::showDeleteProjectLastWindow(bool deletingProject)
     display.setControlValue(bgLabel, 255); // 0b11000000
     display.refreshControl(bgLabel);
 
-    sprintf(currentInfo, "\"%s\"?", fileBrowser.getSelectedFolderName());
+    snprintf(currentInfo, sizeof(currentInfo), "\"%s\"?", fileBrowser.getSelectedFolderName());
 
     if (deletingProject)
     {
@@ -605,7 +616,7 @@ void cProjectEditor::showDeleteModLastWindow()
     display.setControlValue(bgLabel, 255); // 0b11000000
     display.refreshControl(bgLabel);
 
-    sprintf(currentInfo, "\"%s\"?", fileBrowser.getSelectedItemName());
+    snprintf(currentInfo, sizeof(currentInfo), "\"%s\"?", fileBrowser.getSelectedItemName());
     mtPopups.showInfoPopup("Do you want to delete file:", currentInfo);
 
     display.synchronizeRefresh();

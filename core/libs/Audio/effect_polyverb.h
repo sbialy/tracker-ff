@@ -3,6 +3,9 @@
 #include "AudioStream.h"
 
 #include "reverb.h"
+#ifdef AUDIO_NULL_IS_SILENCE
+#include "fx_mute_gate.h"
+#endif
 
 class AudioEffectPolyverb : public AudioStream
 {
@@ -38,9 +41,21 @@ class AudioEffectPolyverb : public AudioStream
 
     void unblockUpdate() { isBlockedUpdate = false; }
 
+#ifdef AUDIO_NULL_IS_SILENCE
+    // Mixer Mute (fx_mute_gate.h): feed is the send mixer, muted the project's reverbMute
+    void setMuteFeed(AudioStream* feed) { muteGate.setFeed(feed); }
+    void setMuted(bool muted) { muteGate.setMuted(muted, this); }
+    bool isMuted() const { return muteGate.muted(); }
+    void cutMuteRing() { muteGate.cutRing(); }
+    bool isMuteAsleep() const { return muteGate.asleep(); }
+#endif
+
   private:
     audio_block_t* inputQueueArray[2];
     Reverb reverb;
     uint16_t* buffer;
     bool isBlockedUpdate;
+#ifdef AUDIO_NULL_IS_SILENCE
+    FxMuteGate muteGate;
+#endif
 };

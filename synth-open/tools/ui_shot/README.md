@@ -22,7 +22,9 @@ directories of the private repositories, and without those the pages render with
 
 `synth-open/tools/ui_shot/synth_order_sim.sh [PNG_DIR]` is a behaviour test on the same binary: the order and visibility of the synth Model list (order file, hidden engines, wrap around, the edit mode, missing and new `.plg`, corrupt files). Each scenario stages its own card folder and ends with `RESULT: GREEN` or `RESULT: RED`. It uses the `put REL TEXT` and `cat REL` script commands and the `poke picker` action (`host_poke.cpp`).
 
-`synth-open/tools/ui_shot/model_rest_sim.sh [PNG_DIR]` checks the "Init patch loaded" message of the Synth Model list on the PLUG_HOST binary with the CHIP host twin (`ui-shot-chipplg`): every engine (built in, attached or a plugin that is not installed) is picked only after the list has rested on it for 1 s since the last step, whatever the step was (arrow, held arrow repeat, encoder), so scrolling loads nothing and the one load comes 1 s after the last step (the `poke loads` action counts the engine changes of part 0, the `repeat` script command sends the buttonHold event of a held key), and the message of the engine change before the step must not read as the message of the pick that waits for the rest. Scenarios 11 to 16 watch the screen while the list moves (`poke watch` samples the right-hand side of the Synth screen and the popup at every millisecond, `poke rhs` prints the right-hand side, `png_diff.py` compares frames): nothing right of the Model column changes and no popup shows until 1 s after the last step. It reads the popup with the `poke popup` action and the stored engine with `poke picker`, every scenario has its own card folder and the script ends with `RESULT: GREEN` or `RESULT: RED`. Variables: `CHIP_PLUGIN_SRC` (engine_chip.cpp of tracker-engines-os), `CHIP_PLG_DIR` (folder with chip.plg and chip.plgi), `PLG_DIR`.
+`synth-open/tools/ui_shot/model_rest_sim.sh [PNG_DIR]` checks the "Init patch loaded" message of the Synth Model list on the emulator bridge build (`BRIDGE=1`, `ui-shot-bridge`, the card's real chip.plg): every engine (built in, attached or a plugin that is not installed) is picked only after the list has rested on it for 1 s since the last step, whatever the step was (arrow, held arrow repeat, encoder), so scrolling loads nothing and the one load comes 1 s after the last step (the `poke loads` action counts the engine changes of part 0, the `repeat` script command sends the buttonHold event of a held key), and the message of the engine change before the step must not read as the message of the pick that waits for the rest. Scenarios 11 to 16 watch the screen while the list moves (`poke watch` samples the right-hand side of the Synth screen and the popup at every millisecond, `poke rhs` prints the right-hand side, `png_diff.py` compares frames): nothing right of the Model column changes and no popup shows until 1 s after the last step. It reads the popup with the `poke popup` action and the stored engine with `poke picker`, every scenario has its own card folder and the script ends with `RESULT: GREEN` or `RESULT: RED`. Variables: `UNICORN_DIR` and `BRIDGE_AXF` (`bridge_env.sh`), `CHIP_PLG_DIR` (folder with chip.plg and chip.plgi), `PLG_DIR`.
+
+`synth-open/tools/ui_shot/septfx_sim.sh` checks the nine Sample Editor effects the 1.4.0 release image keeps on the card (`/Effects/se_*.ptfx`, `-DFW_SE_PTFX`). It runs the same scripts on the emulator bridge build (`BRIDGE=1`, `build/ui-shot-bridge`), where the effects are the card files whose own Thumb bytes run under Unicorn behind the real loader, and on the stock build: each effect applied through the UI leaves the same sample in both (SE1), a card without the files shows `Missing: <name>` rows and Apply does nothing (SE3, SE4), one removed or damaged file affects only its row (SE6, SE7). Actions for scripts: `poke seeffects` (the effect list and the Apply flag) and `poke samplestat N` (length, peak, sum and an FNV of instrument N's sample).
 
 ## What is real and what is not
 
@@ -42,6 +44,9 @@ Not real:
   stands in and the two inserts fail to load.
 - **Synth engine plugins** are listed with their card logos, but no engine installs (the host has no FlexNVM bank, `synthEnsure` is
   cut short): a part that picks one says `Missing: <name>`. The built-in engines run as built.
+  The emulator bridge build (`BRIDGE=1`, `bridge_env.sh`) installs and attaches the card's real `.plg` bytes under Unicorn, and
+  `bridge_check.sh` proves every synth plugin there against the engines repository's `emu_render.py`, run by run, byte for byte.
+  The native twins of the engines (`TWIN_SRC`, `CHIP_PLUGIN_SRC`, `twin_render_check.sh`) were retired at emu parity T9.
 - Audio, USB, MIDI, battery, radio, touch, JPEG decode (CMD_LOADIMAGE data is dropped), the ROM fonts.
 
 ## Build and overlay
@@ -59,7 +64,7 @@ edit has its reason in that file, and an edit that no longer matches the source 
   `case SR->X` labels (fSampleRec), the `static_assert` on 32 bit struct sizes is switched off for the whole build
   (`-Dstatic_assert(...)=`: struct sizes here are the host's, not the firmware's 32 bit ones, nothing in the UI path depends on them);
 - plug_host.cpp: the K66 core registers (cache control, cycle counter, MPU) point at a variable, and the plugin descriptor comes from
-  the twin; plug_synth.cpp: no install. `plug_nvm.cpp` and `Profiler.cpp` are replaced by stubs (`host_stubs.cpp`).
+  the insert twin; plug_synth.cpp: no install. `plug_nvm.cpp` and `Profiler.cpp` are replaced by stubs (`host_stubs.cpp`).
 
 `samplePlayback.editorInstrument` is seeded by `ui_shot_main.cpp`: initDisplayControls() reads it before start() sets it, harmless on
 the Cortex-M (address 0 is flash) and a fault on the Mac. That is a latent firmware oddity, left alone.
@@ -117,3 +122,10 @@ and the host starts with an empty project and no theme or font files on the card
 from a separate repository (`DEVTOOLS_DIR`, default `../devtools` next to this checkout, see `devtools.mk` at the top of the
 tree) into `build/ui-shot-console/`. The plain build (`ui_shot.sh`, `make`) has no console, `--serve` only says so, and renders the
 same pages as before the console moved (all 23 pages of `ui_shot.sh all` byte identical).
+
+Sim hardware that only the console shows (the pad LEDs the firmware drives for `_leds` and `_frame`, and whatever comes next: button,
+display or LED observers) is not kept here. `host_platform.h` has one extension point, `hostp::extendPlatform(HwSlots&)` (`HOSTP_HW_API`):
+the default platform calls it once when it is built, with a slot per device (leds, buttons, pads, battery, encoder, display) that holds the
+default device. The plain build has a weak no-op, so it needs no other checkout and every firmware tool (`run_tests.sh`, `shot_parity.py`,
+the `*_sim.sh` scripts, the goldens) runs on the virtual clock, the folder card and the FT812 model kept here. A `CONSOLE=1` build links
+poly-devtools `host/ui_shot/host_hw.cpp`, which replaces the devices it wants to look into. A new console-only sim feature is a devtools change.

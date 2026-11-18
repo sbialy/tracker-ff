@@ -1,0 +1,4 @@
+# synth_nna_sim.sh: the same hashes for the projects of class 1 once the notes carry ids (P1), the other projects stay at the P0 hash
+same_pitch 6eb9d05e5052abe1 cbf29ce484222325 cbf29ce484222325 loud 526
+same_pitch_mono 5aeec369e1db5191 cbf29ce484222325 cbf29ce484222325 loud 526
+pad_over_seq 47d8407bdc92e0d9 cbf29ce484222325 cbf29ce484222325 loud 442

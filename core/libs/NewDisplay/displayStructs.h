@@ -202,6 +202,7 @@ typedef enum enControlId
     controlIdImgGrid,
     controlIdSimpleBox,
     controlIdNotesKeyboardLabel,
+    controlIdPartsTable,
 
     /*
      *
@@ -247,6 +248,10 @@ struct strBitmap
     uint16_t height;
     uint8_t format;
     uint16_t linestride;
+#ifdef FW_TRIM
+    uint8_t zgroup = 0;   // 1 based group of icons_z.h the bitmap is deflated in, 0 = data is the bitmap
+    uint16_t zoffset = 0; // where it starts in the inflated group
+#endif
 };
 
 struct strGetProps

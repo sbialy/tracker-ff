@@ -36,6 +36,41 @@ constexpr uint32_t kMacroModeField = 100;
 constexpr uint8_t kMacroModeAdd = 0;
 constexpr uint8_t kMacroModeScale = 1;
 
+// Wave file references (per patch, optional). An engine parameter that holds an index into the card's /Waves list (ALCO A File and B File)
+// can carry the file's path as well, so the patch plays the same file on a card whose list is another one (more files, fewer, the 1,024
+// path cap of the list). File: top-level field 101, repeated, one per reference, {1 param (varint), 2 path (bytes), 3 index (varint)}, zero
+// varints omitted, written ascending by param, and only when a reference exists (a patch without any is byte identical to what older
+// firmware wrote, which keeps a field it does not know and ignores it). `index` is the value the engine parameter had when the path was
+// stored: a reference is in force only while the parameter still has that value, so an older firmware that changes the parameter (and
+// keeps the field) switches the reference off by itself. synth-open/wave_path.h wavePathOk() says what a path may be.
+constexpr uint32_t kWaveField = 101;
+constexpr int kWaveRefs = 4;             // references per patch (ALCO uses 2), more in a file are kept raw and not used
+constexpr int kWavePath = 48;            // PLUG_FILES_PATH: bytes of a path with its NUL
+
+struct WaveRef
+{
+    int16_t param = -1;                  // engine parameter index, -1: unused entry
+    int16_t index = 0;                   // the parameter's value when the path was stored (0: the list does not reach the file)
+    char path[kWavePath] = {};
+};
+
+struct WaveRefs
+{
+    int8_t n = 0;
+    WaveRef ref[kWaveRefs];
+    int find(int param) const
+    {
+        for (int i = 0; i < n; i++)
+        {
+            if (ref[i].param == param)
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+};
+
 struct PatchExtra
 {
     uint16_t len = 0;
@@ -120,6 +155,7 @@ struct PatchData
     uint8_t macroMode = kMacroModeAdd;   // field 100, absent = Add
     PatchMacroData macros[kPatchMacros];
     ModSlot mod[kModSlots];              // all Off: field 64 is not written (a patch without automation is as before)
+    WaveRefs waves;                      // field 101, none: not written
     PatchExtra extra;
 };
 

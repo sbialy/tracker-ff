@@ -3,6 +3,9 @@
 #include "Platform.h"
 #include "mtSequencer.h"
 #include "string.h"
+#ifdef FEATURE_PARTS
+#include "partsTableControl.h"
+#endif
 
 static const uint16_t framesPlaces[3][4] = {
     { (800 / 8) * 0 + 1, 31, 500 - 3, 391 },
@@ -104,10 +107,26 @@ void cSongEditor::initDisplayControls()
       (display.getTheme().bottomScreenShadow > 0 ? controlStyleBottomShadow : 0);
 
     songPlayerControl = display.createControl<cSongPlayer>(&prop);
+#ifdef FEATURE_PARTS
+    // the Parts table: the content area left of the right column plus the song map in it (the tempo bar is hidden there)
+    strControlProperties propT;
+    propT.x = 1;
+    propT.y = 29;
+    propT.w = 797;
+    propT.h = 394;
+    propT.style = 0;
+    partsTableControl = display.createControl<cPartsTable>(&propT);
+#endif
 }
 
 void cSongEditor::refreshTempoField()
 {
+#ifdef FEATURE_PARTS
+    if (buttons->isButtonPressed(interfaceButtonShift) && !tapTempoActive)
+    {
+        return; // F8 shows the Shift + F8 view switch while Shift is held
+    }
+#endif
     if (tapTempoActive && tapTempoCount > 1)
     {
         memset(tapText, 0, sizeof(tapText));
@@ -132,6 +151,25 @@ void cSongEditor::refreshTempoField()
 
 void cSongEditor::refreshAddSlotLabel(bool isButtonPressed)
 {
+#ifdef FEATURE_PARTS
+    // Shift + F8 switches between the pattern view and the Parts view
+    if (isButtonPressed)
+    {
+        display.setControlText(label[7], "View");
+        display.setControlText2(label[7], partsView ? "Patterns" : "Parts");
+        display.refreshControl(label[7]);
+    }
+    else
+    {
+        refreshTempoField();
+    }
+    if (partsView)
+    {
+        lastPartsLabels = 0xFF;
+        partsShowLabels();
+        return;
+    }
+#endif
     if (isButtonPressed)
     {
         display.setControlText(label[3], "Add");
@@ -214,8 +252,35 @@ void cSongEditor::showDefaultScreen()
     display.setControlShow(bgLabel);
     display.refreshControl(bgLabel);
 
+#ifdef FEATURE_PARTS
+    if (partsView)
+    {   // the Parts table replaces the grid and the tempo bar, label 5 has no arrows there
+        display.setControlHide(songPlayerControl);
+        display.setControlHide(barControl);
+        display.setRemoveControlStyle(label[5], controlStyleShowBitmap);
+        display.setControlData(label[5], &labelDataRed);
+        display.setControlPosition(label[5], (800 / 8) * 5 + (800 / 16), 424);   // one key wide, not the stock F6 + F7 field
+        for (int i = 2; i <= 5; i++) display.setRemoveControlStyle(label[i], controlStyleSpecialFx);
+        display.setControlValue(label[2], 1);   // two lines on every key
+        display.setControlValue(label[5], 1);
+        display.setControlShow(partsTableControl);
+        lastPartsLabels = 0xFF;
+        partsRefresh();
+    }
+    else
+    {
+        display.setControlHide(partsTableControl);
+        display.refreshControl(partsTableControl);
+        display.setControlPosition(label[5], (800 / 8) * 5 + (800 / 8), 424);
+        if (display.getTheme().patternEditorBottomButtonsLines)
+            for (int i = 2; i <= 5; i++) display.setAddControlStyle(label[i], controlStyleSpecialFx);
+        display.setControlShow(songPlayerControl);
+        display.refreshControl(songPlayerControl);
+    }
+#else
     display.setControlShow(songPlayerControl);
     display.refreshControl(songPlayerControl);
+#endif
 
     display.synchronizeRefresh();
 }
@@ -403,6 +468,9 @@ void cSongEditor::showTempoValue()
     display.setControlText2(label[7], globalTempoVal);
     display.refreshControl(label[7]);
 
+#ifdef FEATURE_PARTS
+    if (partsView) return;   // the song map holds the right column
+#endif
     display.setControlShow(barControl);
     display.setControlValue(barControl,
                             (mtProject.values.globalTempo * 100) / Sequencer::MAX_TEMPO);
@@ -413,7 +481,7 @@ void cSongEditor::showIcon(icon_t iconType, uint8_t position)
 {
     patternsList.icon.useSpecialIcons = 1;
     patternsList.icon.iconPositionInList = position;
-    patternsList.icon.iconNum = displayPlayIcon + iconType;
+    patternsList.icon.iconNum = displayPlayIcon + int(iconType);
 
     // display.setControlValue(songPlayerControl, selectedPattern);
     display.refreshControl(songPlayerControl);

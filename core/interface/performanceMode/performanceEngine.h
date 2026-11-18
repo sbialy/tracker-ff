@@ -52,7 +52,7 @@ class cPerformEngine
 
     void loadSelectedValuesToTempValues();
 
-    const uint8_t getFxCount() { return fxCount; }
+    uint8_t getFxCount() { return fxCount; }
     const char* getSlotFxName(uint8_t slot);
     int8_t getSelectedRow(uint8_t slot);
     uint8_t getTrackState(uint8_t track);

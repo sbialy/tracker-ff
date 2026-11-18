@@ -88,10 +88,11 @@ struct MacroDef
     } targets[2];
 };
 
-// Voice records per synth instrument (the Voices parameter tops out here, 4 as Tracker+ stock feel).
-// A slot's engine caps it lower with EngineDef::maxVoices (PERC and TTYPE: 1). The shared pool (open_load.h)
-// still limits what sounds at once.
-constexpr int kMaxVoicesPerInstrument = 4;
+// Voice records per synth instrument. 4 until 1.4.0 (Tracker+ stock feel), 8 since the Synth play page: there one part may take 8 of the
+// pool. Outside the page the Voices row and playback stop at 4 (pageVoiceCap, open_load.h), a stored 5 to 8 plays as 4 there and on 1.3.x.
+// A slot's engine caps it lower with EngineDef::maxVoices (PERC and TTYPE: 1). The shared pool (open_load.h) still limits
+// what sounds at once.
+constexpr int kMaxVoicesPerInstrument = 8;
 
 struct EngineDef
 {
@@ -108,6 +109,10 @@ struct EngineDef
     ot::audio::ISynthEngine* (*engine)();
     bool slotFx;            // the engine has a slot effect (ISynthEngine::slotPost): the shim renders its voices
                             // into a private bus, runs the effect on it and adds the result to the mix
+    bool monoOut = false;   // the engine adds every voice into L only and never writes R (VAP, WTFM, ACD): the shim then clears only L and
+                            // skips the L / R fold (0.5 * (l + l) == l). Default false: a plugin engine is stereo (the plugin ABI has no flag for it,
+                            // an old module must keep working), and so is any engine that writes R (PERC pan, FAT pairs, JU6 chorus). Placed after slotFx: it takes a byte of the padding there, so sizeof(EngineDef) does not grow
+                            // (the plugin definitions are an array of them in the SDRAM)
     ot::audio::ISynthEngine* inst = nullptr;   // a plugin engine (plug_synth.cpp: the PLUG_EXT_SYNTH adapter), else engine()
 };
 

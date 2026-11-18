@@ -35,6 +35,15 @@ class PlatformImpl final : public Platform
     virtual bool usbAudioBuilt() override { return true; }
     virtual bool usbAudioRunning() override;
     virtual void setUsbAudioBoot(bool on) override;
+    virtual uint8_t usbAudioRunningMode() override;
+    virtual uint8_t usbAudioStreaming() override;
+    virtual void setUsbAudioBootMode(uint8_t mode) override;
+    virtual UsbMultiSink usbAudioMultiSink() override;
+#endif
+#ifdef FEATURE_USB_MSC
+    // independent of USB_AUDIO (a build with only the drive must link)
+    virtual bool usbDriveRunning() override;
+    virtual void setUsbDriveBoot(bool on) override;
 #endif
     virtual void runBootloader(char* fileName) override;
     virtual void setPowerButtonCallback(PowerButtonCallback) override;

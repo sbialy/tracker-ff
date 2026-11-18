@@ -1,4 +1,7 @@
 #include "PlatformImpl.h"
+#ifdef FEATURE_USB_MSC
+#include "msc_drive.h"
+#endif
 #include "PowerOffGuard.h"
 #include "EEPROM.h"
 #include "PowerControl.h"
@@ -27,6 +30,9 @@ static volatile bool restartOnPowerOff;
 
 void PlatformImpl::init()
 {
+#ifdef FEATURE_USB_MSC
+    ff::mscdrive::init(); // the USB drive answers the computer from the start ("medium not present"), when it was enumerated
+#endif
 }
 
 void PlatformImpl::update()
@@ -39,6 +45,9 @@ void PlatformImpl::update()
     //    {
     fileSystem.update();
     //    }
+#ifdef FEATURE_USB_MSC
+    ff::mscdrive::update(); // Drive mode: the block I/O of the USB drive
+#endif
 }
 
 void PlatformImpl::setPowerMode(bool mode)
@@ -258,6 +267,27 @@ bool PlatformImpl::usbAudioRunning()
 void PlatformImpl::setUsbAudioBoot(bool on)
 {
     ffUsbAudioSetBootFlag(on ? 1 : 0);
+}
+
+uint8_t PlatformImpl::usbAudioStreaming()
+{
+    return uint8_t(ffUsbAudioStreaming());
+}
+
+uint8_t PlatformImpl::usbAudioRunningMode()
+{
+    return ffUsbAudioActive() && ffUsbAudioMode() ? 1 : 0;
+}
+
+void PlatformImpl::setUsbAudioBootMode(uint8_t mode)
+{
+    ffUsbAudioSetBootMode(mode == 1 ? 1 : 0);
+}
+
+Platform::UsbMultiSink PlatformImpl::usbAudioMultiSink()
+{
+    static_assert(FF_USB_AUDIO_MULTI_INPUTS == 14, "UsbMultiTap inputs");
+    return usbAudioRunningMode() ? ffUsbAudioMultiBlock : nullptr;
 }
 #endif
 

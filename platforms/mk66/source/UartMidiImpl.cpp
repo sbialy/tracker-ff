@@ -21,6 +21,7 @@ void UartMidiImpl::setReceiveActions(MidiReceiveActions* receiveActions)
     midiDriver.setHandleSongPosition(receiveActions->songPosition);
     midiDriver.setHandleContinue(receiveActions->continueMessage);
     midiDriver.setHandleControlChange(receiveActions->controlChange);
+    midiDriver.setHandlePitchBend(receiveActions->pitchBend);
 }
 
 bool UartMidiImpl::isReadAvailable()
@@ -55,7 +56,7 @@ void UartMidiImpl::sendAfterTouch(uint8_t velocity, uint8_t channel)
 
 void UartMidiImpl::sendPolyPressure(uint8_t note, uint8_t value, uint8_t channel)
 {
-    midiDriver.sendPolyPressure(note, value, channel);
+    midiDriver.sendAfterTouch(note, value, channel);
 }
 
 void UartMidiImpl::sendPitchBend(int value, uint8_t channel)

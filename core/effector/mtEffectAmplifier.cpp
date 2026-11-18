@@ -2,7 +2,7 @@
 
 mtEffectAmplifier sampleEditorAmplifier;
 
-void mtEffectAmplifier::setParameter(float& value, int idx)
+void mtEffectAmplifier::setParameter(float& value, int /*idx*/)
 {
     assert(idx == 0);
     amp = value;

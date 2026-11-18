@@ -129,6 +129,10 @@ class SdFile
     operator bool() { return isOpen(); }
 
     bool isOpen() { return file != nullptr; }
+#ifdef FEATURE_USB_MSC
+    // USB drive (FileSystemImpl::lendToHost): what an open file still holds goes to the card before the computer gets it
+    bool sync() { return file == nullptr || f_sync(file) == FR_OK; }
+#endif
 
     uint32_t available() { return isOpen() ? f_size(file) - f_tell(file) : 0; }
 

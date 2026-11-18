@@ -1,0 +1,14 @@
+# fs_host_test SAN build: the one known stock over-read, not instrumented so the rest of FatFs stays checked.
+# platforms/mk66/3rdparty/SD/fatfs/source/ff.c create_name (LFN): the loop leaves p one past the path's NUL (tchar2uni stepped over
+# it) and "while (*p == '/' || *p == '\\') p++;" reads that byte. Every path, 1 byte, harmless on the MK66 (no MPU), fixed upstream in
+# FatFs R0.14 (the skip moved into the not-end branch). Reported in ref/usb-mass-storage-feasibility.md, not fixed here.
+fun:create_name
+fun:follow_path
+# SD.cpp SdDir::open calls close() first, with no directory open that is f_closedir(nullptr): ff.c takes &dp->obj of the null
+# pointer (UBSan null) and validate() answers FR_INVALID_OBJECT. Every SdDir::open, harmless on the MK66. Stock, reported, not fixed.
+fun:f_closedir
+# usb_e2e (S5) SAN build: teensy_core/usb_dev.c usb_setup ends every request with "data += size;" and data is NULL, size 0 for a request
+# without a data stage (SET_CONFIGURATION, CLEAR_FEATURE, the class requests): null + 0, UB in C, a no-op on every compiler and on the
+# MK66. Stock PJRC code. Only this check, only this function: the rest of usb_setup (our MSC cases) stays checked.
+[pointer-overflow]
+fun:usb_setup

@@ -5,6 +5,8 @@
 #include "PolySynth/sdk/SynthVoiceSDK.h"
 #endif
 #include "SynthVoice.h"
+#include "UsbMultiTap.h"
+#include "fx_auto_mute.h"
 #ifdef FEATURE_SYNTH_OPEN
 #include "Synth.h"
 #endif
@@ -18,6 +20,8 @@
 #include "tempoSyncRateValues.h"
 #include "util.h"
 #include <Recorder.h>
+#include <new>
+#include <stdlib.h>
 
 static constexpr int kSdStreamBufferSize = (256 + 64) * 1024;
 extern uint8_t externalRamScratchBuff[];
@@ -26,6 +30,21 @@ static_assert(kSdStreamBufferSize <= SHARED_SCRATCH_MEMORY_SIZE,
 
 playerEngine instrumentPlayer[audioEngine::kVoices];
 audioEngine engine;
+
+#ifdef AUDIO_NULL_IS_SILENCE
+FxAutoMute fxAutoMute; // USB 8+3 auto mute (fx_auto_mute.h): the override on top of the project's Mute flags
+#endif
+
+// The Mixer's Mute of the delay and the reverb as the sound sees it: the project's flag (the user's, saved with the project) or the
+// USB 8+3 auto mute override. Every gain and the FX gate read these, the flags themselves are never written by the override.
+static inline bool fxDelayMuted()
+{
+    return mtProject.values.delayMute || fxAutoMuteActive();
+}
+static inline bool fxReverbMuted()
+{
+    return mtProject.values.reverbMute || fxAutoMuteActive();
+}
 
 uint8_t isBlockedInstrument[48];
 uint8_t isBlockedNoteOn[48];
@@ -47,7 +66,9 @@ const audioEngine::SynthParamBoundaries
   };
 std::map<uint8_t, audioEngine::SynthValuesSource> audioEngine::fxNumberToSynthValuesSource = {
     { 0, SynthValuesSource::kFx1 },
-    { 1, SynthValuesSource::kFx2 }
+    { 1, SynthValuesSource::kFx2 },
+    { 2, SynthValuesSource::kFx3 },
+    { 3, SynthValuesSource::kFx4 }
 };
 
 std::map<uint8_t, audioEngine::SynthParam> audioEngine::fxIdToSynthParam = {
@@ -67,7 +88,7 @@ std::map<uint8_t, audioEngine::SynthParam> audioEngine::fxIdToSynthParam = {
 
 using namespace mtAudioEngineConstans;
 
-void audioEngine::startTestSignal(float amp, float freq)
+AUDIO_COLD_OS void audioEngine::startTestSignal(float amp, float freq)
 {
     testWaveform.amplitude(amp);
     testWaveform.frequency(freq);
@@ -131,7 +152,7 @@ AudioPlaySdWav* audioEngine::getSdPlayer()
     return &playerWavFromSD;
 }
 
-audioEngine::audioEngine()
+AUDIO_COLD_OS audioEngine::audioEngine()
 {
     for (int voiceIdx = 0; voiceIdx < kVoices; voiceIdx++)
     {
@@ -171,9 +192,12 @@ audioEngine::audioEngine()
     prePolyverbMixer = mixerAndFxs.getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb);
     preDelayMixer = mixerAndFxs.getPreFxMixer(MixerAndFxs<kVoices>::FxType::kDelay);
 
+#ifdef FEATURE_SEND_DUCK
+    connectSendDuck();
+#endif
 }
 
-void audioEngine::beginDelay()
+AUDIO_COLD_OS void audioEngine::beginDelay()
 {
     // the same values a project load sets (setDelayFeedback takes percent)
     delay->begin(mtProject.values.delayFeedback / 100.0,
@@ -194,8 +218,9 @@ void audioEngine::beginReverb()
     polyverb->unblockUpdate();
 }
 
-void audioEngine::init(Platform* platform, [[maybe_unused]] Synth* synth)
+AUDIO_COLD_OS void audioEngine::init(Platform* platform, [[maybe_unused]] Synth* synth)
 {
+    usbStreamPlatform = platform;
     codec = platform->getCodecAudio();
     radio = platform->getRadio();
     usb = platform->getUsb();
@@ -247,6 +272,7 @@ void audioEngine::init(Platform* platform, [[maybe_unused]] Synth* synth)
     //	filterReverbOut.setCutoff(1.0);
     //	filterReverbOut.connect();
     beginDelay();
+    connectUsbMultiTap(platform);
 
     AudioPlayMemory::enableHeadroom((bool)mtProject.values.isHeadroomEnabled);
     AudioPlayMemory::enableSnapToZero((bool)mtProject.values.isSnapToZeroEnabled);
@@ -262,6 +288,9 @@ void audioEngine::init(Platform* platform, [[maybe_unused]] Synth* synth)
     limiter[AudioOutput::OutputChannels::kRight]->begin();
 
     setLimiterSidechain(mtProject.values.limiterSidechain);
+#ifdef FEATURE_SEND_DUCK
+    sendDuck.set(DuckParams{ 0, 0, 0, 0 }); // off until a project load says otherwise (takes the stream out of the update list)
+#endif
 
     testWaveform.begin(0.0, 1000, WAVEFORM_SQUARE);
 
@@ -289,6 +318,17 @@ void audioEngine::init(Platform* platform, [[maybe_unused]] Synth* synth)
 
 AUDIO_CORE_RAM void audioEngine::update()
 {
+#ifdef AUDIO_NULL_IS_SILENCE
+    // the Mixer's Mute of delay and reverb, whatever path set the flags (keys, Solo, project load, new project)
+    // USB 8+3 auto mute (fx_auto_mute.h): the debounce, once per block. A change re-reads every send gain (the refresh bits are served
+    // below, in this same call), the FX gate then follows the effective mute.
+    if (usbStreamPlatform != nullptr &&
+        fxAutoMute.tick(usbStreamPlatform->usbAudioStreaming(), AudioStream::renderMode))
+    {
+        refreshSendsInIrq();
+    }
+    mixerAndFxs.syncFxMute(fxDelayMuted(), fxReverbMuted(), fxAutoMuteActive());
+#endif
     recorder.update();
 
     if (!recorder.isRecordingActive())
@@ -350,7 +390,7 @@ AUDIO_CORE_RAM void audioEngine::updateInputAudioBuffers(void* i2sData,
 }
 
 #ifndef PLATFORM_IMX
-void audioEngine::connectVoiceToMixer(AudioVoice* voice, MixerAndFxs<kVoices>* mixerAndFxs, int idx)
+AUDIO_COLD_OS void audioEngine::connectVoiceToMixer(AudioVoice* voice, MixerAndFxs<kVoices>* mixerAndFxs, int idx)
 {
     connections.push_back(new AudioConnection(
       voice->getMonoToStereo(), 0, mixerAndFxs->getTracksMixer(MixerAndFxChannelType::kLeft), idx));
@@ -371,7 +411,7 @@ void audioEngine::connectVoiceToMixer(AudioVoice* voice, MixerAndFxs<kVoices>* m
                           idx));
 }
 #else
-void audioEngine::connectVoiceToMixer(AudioVoice* voice, MixerAndFxs<kVoices>* mixerAndFxs, int idx)
+AUDIO_COLD_OS void audioEngine::connectVoiceToMixer(AudioVoice* voice, MixerAndFxs<kVoices>* mixerAndFxs, int idx)
 {
     constexpr int kInputsChannels = 2;
     connections.push_back(
@@ -409,7 +449,7 @@ void audioEngine::connectVoiceToMixer(AudioVoice* voice, MixerAndFxs<kVoices>* m
 }
 #endif
 
-void audioEngine::connectInputToMixer(AudioInput* input, MixerAndFxs<kVoices>* mixerAndFxs)
+AUDIO_COLD_OS void audioEngine::connectInputToMixer(AudioInput* input, MixerAndFxs<kVoices>* mixerAndFxs)
 {
     constexpr int kLeftInputMixerChannel = 8;
     constexpr int kRightInputMixerChannel = 9;
@@ -468,13 +508,13 @@ void audioEngine::connectInputToMixer(AudioInput* input, MixerAndFxs<kVoices>* m
 }
 
 #ifndef PLATFORM_IMX
-void audioEngine::connectVoiceToOutput(AudioVoice* voice, AudioOutput* output, int idx)
+AUDIO_COLD_OS void audioEngine::connectVoiceToOutput(AudioVoice* voice, AudioOutput* output, int idx)
 {
     connections.push_back(
       new AudioConnection(voice->getAmplifier(), 0, output->getLimiterSidechainMux(), idx));
 }
 #else
-void audioEngine::connectVoiceToOutput(AudioVoice* voice, AudioOutput* output, int idx)
+AUDIO_COLD_OS void audioEngine::connectVoiceToOutput(AudioVoice* voice, AudioOutput* output, int idx)
 {
     connections.push_back(
       new AudioConnection(voice->getAmplifier(AudioVoice::VoiceChannels::kLeft),
@@ -504,7 +544,7 @@ void audioEngine::connectVoiceToOutput(AudioVoice* voice, AudioOutput* output, i
 #endif
 
 #ifndef PLATFORM_IMX
-void audioEngine::connectInputToOutput(AudioInput* input, AudioOutput* output)
+AUDIO_COLD_OS void audioEngine::connectInputToOutput(AudioInput* input, AudioOutput* output)
 {
     constexpr int kLeftInputMixerChannel = 8;
     constexpr int kRightInputMixerChannel = 9;
@@ -521,7 +561,7 @@ void audioEngine::connectInputToOutput(AudioInput* input, AudioOutput* output)
 }
 #else
 
-void audioEngine::connectInputToOutput(AudioInput* input, AudioOutput* output)
+AUDIO_COLD_OS void audioEngine::connectInputToOutput(AudioInput* input, AudioOutput* output)
 {
     constexpr int kLeftInputMixerChannel = 8;
     constexpr int kRightInputMixerChannel = 9;
@@ -566,7 +606,7 @@ void audioEngine::connectInputToOutput(AudioInput* input, AudioOutput* output)
 }
 #endif
 
-void audioEngine::connectMixerToOutput(MixerAndFxs<kVoices>* mixerAndFxs, AudioOutput* output)
+AUDIO_COLD_OS void audioEngine::connectMixerToOutput(MixerAndFxs<kVoices>* mixerAndFxs, AudioOutput* output)
 {
 #if defined(FEATURE_FF_DIRT) || defined(FEATURE_PLUG_HOST)
     // through the master inserts (Dirt, then the plugin node: off, the blocks pass untouched), AudioOutput connects them
@@ -621,7 +661,7 @@ void audioEngine::connectMixerToOutput(MixerAndFxs<kVoices>* mixerAndFxs, AudioO
 #endif
 }
 #ifdef FEATURE_SYNTH
-void audioEngine::connectSynthToMixer(MixerAndFxs<kVoices>* mixerAndFxs, SynthVoice* synth)
+AUDIO_COLD_OS void audioEngine::connectSynthToMixer(MixerAndFxs<kVoices>* mixerAndFxs, SynthVoice* synth)
 {
     constexpr int kFirstSynthMixerChannel = MixerAndFxs<kVoices>::kFirstSynthSendInput;
     static_assert(kFirstSynthMixerChannel + kSynthParts <= MixerAndFxs<kVoices>::kSendsInputsCount,
@@ -685,7 +725,7 @@ void audioEngine::connectSynthToMixer(MixerAndFxs<kVoices>* mixerAndFxs, SynthVo
     }
 }
 
-void audioEngine::connectSynthToExportQueue(SynthVoice* synth, ExportQueues* exportQueues)
+AUDIO_COLD_OS void audioEngine::connectSynthToExportQueue(SynthVoice* synth, ExportQueues* exportQueues)
 {
     for (int synthIdx = 0; synthIdx < kSynthParts; synthIdx++)
     {
@@ -750,7 +790,7 @@ void audioEngine::connectSynthToOutput([[maybe_unused]] SynthVoice* synth,
 }
 
 #endif
-void audioEngine::connectSpecialInputsToOutput(AudioOutput* output)
+AUDIO_COLD_OS void audioEngine::connectSpecialInputsToOutput(AudioOutput* output)
 {
     for (int channel = 0; channel < AudioOutput::OutputChannels::kChannelsCount; channel++)
     {
@@ -772,8 +812,39 @@ void audioEngine::connectSpecialInputsToOutput(AudioOutput* output)
     }
 }
 
+// USB audio 8+3 mono (UsbMultiTap.h): only when this session streams it. The tap is created after every source, so it is the last
+// stream of update_all and sees this block's output of each. The audio interrupt may already run (setup() starts it before
+// Tracker::init): the stream is linked into the update list with the interrupts off, each connection masks them itself.
+AUDIO_COLD_OS void audioEngine::connectUsbMultiTap([[maybe_unused]] Platform* platform)
+{
 #ifndef PLATFORM_IMX
-void audioEngine::connectVoiceToExportQueue(AudioVoice* voice, ExportQueues* exportQueues, int idx)
+    const Platform::UsbMultiSink sink = platform->usbAudioMultiSink();
+    if (sink == nullptr) return;
+    static_assert(UsbMultiTap::kTracks == kVoices, "one USB channel per track");
+    void* mem = malloc(sizeof(UsbMultiTap));
+    if (mem == nullptr) return;   // no heap: the stream stays silent (the ring is never written), the rest runs as usual
+    DISABLE_GLOBAL_INTERRUPTS();
+    UsbMultiTap* tap = new (mem) UsbMultiTap(sink);
+    ENABLE_GLOBAL_INTERRUPTS();
+    for (int i = 0; i < kVoices; i++)
+    {
+        connections.push_back(new AudioConnection(instrumentPlayer[i].getAudioVoice()->getAmplifier(), 0, tap, uint8_t(i)));
+    }
+#ifdef FEATURE_SYNTH
+    static_assert(UsbMultiTap::kSynthParts == kSynthParts, "one USB channel per synth part");
+    for (int p = 0; p < kSynthParts; p++)
+    {
+        connections.push_back(new AudioConnection(synthVoice.getPolySynth(), uint8_t(SynthVoice::kPostFaderLeftChannelOffset + p), tap,
+                                                  uint8_t(UsbMultiTap::kSynthLeft + p)));
+        connections.push_back(new AudioConnection(synthVoice.getPolySynth(), uint8_t(SynthVoice::kPostFaderRightChannelOffset + p), tap,
+                                                  uint8_t(UsbMultiTap::kSynthRight + p)));
+    }
+#endif
+#endif
+}
+
+#ifndef PLATFORM_IMX
+AUDIO_COLD_OS void audioEngine::connectVoiceToExportQueue(AudioVoice* voice, ExportQueues* exportQueues, int idx)
 {
     connections.push_back(new AudioConnection(
       voice->getMonoToStereo(),
@@ -790,7 +861,7 @@ void audioEngine::connectVoiceToExportQueue(AudioVoice* voice, ExportQueues* exp
       0));
 }
 #else
-void audioEngine::connectVoiceToExportQueue(AudioVoice* voice, ExportQueues* exportQueues, int idx)
+AUDIO_COLD_OS void audioEngine::connectVoiceToExportQueue(AudioVoice* voice, ExportQueues* exportQueues, int idx)
 {
     connections.push_back(new AudioConnection(
       voice->getPanningAmplifier(AudioVoice::VoiceChannels::kLeft),
@@ -808,7 +879,7 @@ void audioEngine::connectVoiceToExportQueue(AudioVoice* voice, ExportQueues* exp
 }
 #endif
 
-void audioEngine::connectMixerToExportQueue(MixerAndFxs<kVoices>* mixerAndFxs,
+AUDIO_COLD_OS void audioEngine::connectMixerToExportQueue(MixerAndFxs<kVoices>* mixerAndFxs,
                                             ExportQueues* exportQueues)
 {
 
@@ -841,7 +912,7 @@ void audioEngine::connectMixerToExportQueue(MixerAndFxs<kVoices>* mixerAndFxs,
                           0));
 }
 
-void audioEngine::connectOutputToExportQueue(AudioOutput* output, ExportQueues* exportQueues)
+AUDIO_COLD_OS void audioEngine::connectOutputToExportQueue(AudioOutput* output, ExportQueues* exportQueues)
 {
     connections.push_back(
       new AudioConnection(output->getFinalMixer(AudioOutput::OutputChannels::kLeft),
@@ -851,13 +922,7 @@ void audioEngine::connectOutputToExportQueue(AudioOutput* output, ExportQueues* 
       new AudioConnection(output->getFinalMixer(AudioOutput::OutputChannels::kRight),
                           exportQueues->getQueue(ExportQueues::ExportChannels::kRight,
                                                  mtAudioExport::enStem::stem_master)));
-    connections.push_back(
-      new AudioConnection(output->getFinalMixer(AudioOutput::OutputChannels::kLeft),
-                          exportQueues->getChannelRms(ExportQueues::ExportChannels::kLeft)));
-
-    connections.push_back(
-      new AudioConnection(output->getFinalMixer(AudioOutput::OutputChannels::kRight),
-                          exportQueues->getChannelRms(ExportQueues::ExportChannels::kRight)));
+    // (the master level analysers of the export queues had no reader: no connection)
 }
 
 AUDIO_CORE_RAM void audioEngine::endAllFx(bool synthOnly)
@@ -866,8 +931,8 @@ AUDIO_CORE_RAM void audioEngine::endAllFx(bool synthOnly)
     {
         for (uint8_t i = 0; i < 8; i++)
         {
-            instrumentPlayer[i].endFx(instrumentPlayer[i].lastSeqFx[0], 0);
-            instrumentPlayer[i].endFx(instrumentPlayer[i].lastSeqFx[1], 1);
+            for (uint8_t n = 0; n < kSeqFxSlots; n++)
+                instrumentPlayer[i].endFx(instrumentPlayer[i].lastSeqFx[n], n);
         }
     }
 #ifdef FEATURE_SYNTH
@@ -875,8 +940,8 @@ AUDIO_CORE_RAM void audioEngine::endAllFx(bool synthOnly)
     {
         for (auto& fxIdAndSynthParam : fxIdToSynthParam)
         {
-            endSynthFx(fxIdAndSynthParam.first, 0, synthIdx);
-            endSynthFx(fxIdAndSynthParam.first, 1, synthIdx);
+            for (uint8_t n = 0; n < kSeqFxSlots; n++)
+                endSynthFx(fxIdAndSynthParam.first, n, synthIdx);
         }
     }
 #endif
@@ -959,7 +1024,26 @@ void audioEngine::refreshDelayVolume()
 #endif
 }
 
-void audioEngine::refreshAllSends()
+// refreshAllSends for the audio interrupt: plain flag stores, no NVIC masking (the refresh bits and the dirty flags are served by
+// instrumentPlayer[].update() and updateSynthParams() later in the same audioEngine::update)
+AUDIO_CORE_RAM void audioEngine::refreshSendsInIrq()
+{
+    for (uint8_t track = 0; track < 8; track++)
+    {
+        instrumentPlayer[track].setRefreshBit(REVERB_SEND_MASK | DELAY_SEND_MASK);
+    }
+#ifdef FEATURE_SYNTH
+    for (int synthIdx = 0; synthIdx < kSynthParts; synthIdx++)
+    {
+        isSynthParamDirty[synthIdx][(int)SynthParam::kReverbSend] = true;
+        isSynthParamDirty[synthIdx][(int)SynthParam::kDelaySend] = true;
+    }
+#endif
+    refreshLineInStreamDelaySend();
+    refreshLineInStreamReverbSend();
+}
+
+AUDIO_COLD_OS void audioEngine::refreshAllSends()
 {
     refreshReverbVolume();
     refreshDelayVolume();
@@ -993,7 +1077,7 @@ void audioEngine::refreshLineInStreamDelaySend()
 {
     float gain = AMP_MUTED;
 
-    if (!mtProject.values.lineInDelaySendMute && !mtProject.values.delayMute)
+    if (!mtProject.values.lineInDelaySendMute && !fxDelayMuted())
     {
         if (mtProject.values.sendsMode == sendsModePreFader)
         {
@@ -1022,7 +1106,7 @@ void audioEngine::refreshLineInStreamReverbSend()
 {
     float gain = AMP_MUTED;
 
-    if (!mtProject.values.lineInReverbSendMute && !mtProject.values.reverbMute)
+    if (!mtProject.values.lineInReverbSendMute && !fxReverbMuted())
     {
         if (mtProject.values.sendsMode == sendsModePreFader)
         {
@@ -1167,6 +1251,59 @@ void audioEngine::setLimiterSidechain(uint8_t sidechain)
 }
 #ifdef FEATURE_SYNTH
 
+#ifdef FEATURE_SEND_DUCK
+// The detector's inputs are the limiter sidechain mux's (index = list position - 1): the amplifier of each track (the same tap the
+// mux has), line in L and R, the post fader left channel of each synth part (the one the meters show). The returns it pulls down
+// are inputs 1 (delay) and 2 (reverb) of the tracks and sends mixers.
+void audioEngine::connectSendDuck()
+{
+    static_assert(MixerAndFxs<kVoices>::TrackAndFxsChannels::kDelayChannel == 1 &&
+                    MixerAndFxs<kVoices>::TrackAndFxsChannels::kReverbChannel == 2,
+                  "the return inputs of the tracks and sends mixer");
+    static_assert(MUX_SIZE == 10 + kSynthParts, "sendDuck takes the inputs of the limiter sidechain mux");
+#ifdef PLATFORM_IMX
+#error "send ducking is wired for the original Tracker (MK66) only"
+#endif
+    for (int voiceIdx = 0; voiceIdx < kVoices; voiceIdx++)
+    {
+        connections.push_back(
+          new AudioConnection(instrumentPlayer[voiceIdx].getAudioVoice()->getAmplifier(), 0, &sendDuck, voiceIdx));
+    }
+    constexpr int kLeftInputChannel = 8;
+    constexpr int kRightInputChannel = 9;
+    connections.push_back(new AudioConnection(
+      input.getStereoToMono(), AudioInput::InputChannels::kLeft, &sendDuck, kLeftInputChannel));
+    connections.push_back(new AudioConnection(
+      input.getStereoToMono(), AudioInput::InputChannels::kRight, &sendDuck, kRightInputChannel));
+    for (int part = 0; part < kSynthParts; part++)
+    {
+        connections.push_back(new AudioConnection(synthVoice.getPolySynth(),
+                                                  SynthVoice::kPostFaderLeftChannelOffset + part,
+                                                  &sendDuck,
+                                                  10 + part));
+    }
+    sendDuck.setTargets(tracksAndFxsMixer[(int)MixerAndFxChannelType::kLeft],
+                        tracksAndFxsMixer[(int)MixerAndFxChannelType::kRight],
+                        MixerAndFxs<kVoices>::TrackAndFxsChannels::kDelayChannel,
+                        MixerAndFxs<kVoices>::TrackAndFxsChannels::kReverbChannel);
+}
+
+void audioEngine::setSendDuck(const DuckParams& params)
+{
+    sendDuck.set(params);
+}
+
+const DuckParams& audioEngine::getSendDuck() const
+{
+    return sendDuck.params();
+}
+
+float audioEngine::getSendDuckGain() const
+{
+    return sendDuck.lastGain();
+}
+#endif
+
 AUDIO_CORE_RAM bool audioEngine::isSynthFx(uint8_t fx_id)
 {
     switch (fx_id)
@@ -1228,6 +1365,15 @@ AUDIO_CORE_RAM void audioEngine::seqPatchChange(uint8_t slot, uint8_t synthIdx)
     if (patchBankSynth != nullptr)
     {
         patchBankSynth->applyPatchBankSlot(synthIdx, slot);
+    }
+}
+
+// Audio callback: Morph FX, blend of the open slot and `slot` (-1: the part's Morph target) by amount 0..100
+AUDIO_CORE_RAM void audioEngine::seqPatchMorph(int8_t slot, uint8_t amount, uint8_t synthIdx)
+{
+    if (patchBankSynth != nullptr)
+    {
+        patchBankSynth->applyPatchMorph(synthIdx, slot, amount);
     }
 }
 #endif
@@ -1312,7 +1458,7 @@ AUDIO_CORE_RAM void audioEngine::setSynthDelaySend(int synthIdx, float value)
 
     if (mtProject.values.sendsMode == sendsModePreFader)
     {
-        gain = mtProject.values.delayMute
+        gain = fxDelayMuted()
                  ? AMP_MUTED
                  : sendsAmpLogValues[(int)value] * mixAmpLogValues[mtProject.values.delayVolume];
     }
@@ -1323,7 +1469,7 @@ AUDIO_CORE_RAM void audioEngine::setSynthDelaySend(int synthIdx, float value)
         float gainFromVolume =
           polysynth::sdk::dbToAmplitude(calculateParamValue(synthIdx, SynthParam::kVolume));
 
-        gain = mtProject.values.delayMute ? AMP_MUTED : gainFromDelay * gainFromVolume;
+        gain = fxDelayMuted() ? AMP_MUTED : gainFromDelay * gainFromVolume;
     }
 
     int mixerInputIdx = MixerAndFxs<kVoices>::kFirstSynthSendInput + synthIdx;
@@ -1336,7 +1482,7 @@ AUDIO_CORE_RAM void audioEngine::setSynthReverbSend(int synthIdx, float value)
 
     if (mtProject.values.sendsMode == sendsModePreFader)
     {
-        gain = mtProject.values.reverbMute
+        gain = fxReverbMuted()
                  ? AMP_MUTED
                  : sendsAmpLogValues[(int)value] * mixAmpLogValues[mtProject.values.reverbVolume];
     }
@@ -1347,7 +1493,7 @@ AUDIO_CORE_RAM void audioEngine::setSynthReverbSend(int synthIdx, float value)
         float gainFromVolume =
           polysynth::sdk::dbToAmplitude(calculateParamValue(synthIdx, SynthParam::kVolume));
 
-        gain = mtProject.values.reverbMute ? AMP_MUTED : gainFromReverb * gainFromVolume;
+        gain = fxReverbMuted() ? AMP_MUTED : gainFromReverb * gainFromVolume;
     }
 
     int mixerInputIdx = MixerAndFxs<kVoices>::kFirstSynthSendInput + synthIdx;
@@ -1444,6 +1590,17 @@ float audioEngine::calculateParamValue(int synthIdx, SynthParam param)
     }
 
     float result = synthParamSource[SynthValuesSource::kInstrument].value();
+
+    // the least significant rank first, the last one that has a value wins (FX2 > FX1 > FX4 > FX3)
+    if (synthParamSource[SynthValuesSource::kFx4].has_value())
+    {
+        result = synthParamSource[SynthValuesSource::kFx4].value();
+    }
+
+    if (synthParamSource[SynthValuesSource::kFx3].has_value())
+    {
+        result = synthParamSource[SynthValuesSource::kFx3].value();
+    }
 
     if (synthParamSource[SynthValuesSource::kFx2].has_value())
     {
@@ -1758,7 +1915,7 @@ void audioEngine::restoreMixerValues()
     mtProject.values.delayVolume = mixerValuesStore.delayVolume;
 }
 
-playerEngine::playerEngine()
+AUDIO_COLD_OS playerEngine::playerEngine()
 {
     // bazuje na zadeklarowanych wyzej obiektach silnika i na tym ze obiekty playerEngine beda
     // umieszczone w tablicy(instrumentPlayer) na tej podstawie jest wyznaczany index(nChannel)
@@ -1961,7 +2118,7 @@ AUDIO_CORE_RAM void playerEngine ::modDelaySend(uint8_t value)
     if (mtProject.values.sendsMode == sendsModePreFader)
     {
 
-        float gain = mtProject.values.delayMute
+        float gain = fxDelayMuted()
                        ? AMP_MUTED
                        : sendsAmpLogValues[value] * mixAmpLogValues[mtProject.values.delayVolume];
 #ifndef PLATFORM_IMX
@@ -1973,7 +2130,7 @@ AUDIO_CORE_RAM void playerEngine ::modDelaySend(uint8_t value)
     }
     else if (mtProject.values.sendsMode == sendsModePostFader)
     {
-        bool isMute = (mtProject.values.delayMute || mtProject.values.trackMute[nChannel]);
+        bool isMute = (fxDelayMuted() || mtProject.values.trackMute[nChannel]);
         float gainFromDelay =
           sendsAmpLogValues[value] * mixAmpLogValues[mtProject.values.delayVolume];
         float gainFromVolume = getMostSignificantAmount() *
@@ -1991,10 +2148,12 @@ AUDIO_CORE_RAM void playerEngine ::modDelaySend(uint8_t value)
 }
 AUDIO_CORE_RAM void playerEngine ::modReverbSend(uint8_t value)
 {
+#ifdef PLATFORM_IMX
     static constexpr int kInputsChannels = 2;
+#endif
     if (mtProject.values.sendsMode == sendsModePreFader)
     {
-        float gain = mtProject.values.reverbMute
+        float gain = fxReverbMuted()
                        ? AMP_MUTED
                        : sendsAmpLogValues[value] * mixAmpLogValues[mtProject.values.reverbVolume];
 #ifndef PLATFORM_IMX
@@ -2006,7 +2165,7 @@ AUDIO_CORE_RAM void playerEngine ::modReverbSend(uint8_t value)
     }
     else if (mtProject.values.sendsMode == sendsModePostFader)
     {
-        bool isMute = (mtProject.values.reverbMute || mtProject.values.trackMute[nChannel]);
+        bool isMute = (fxReverbMuted() || mtProject.values.trackMute[nChannel]);
         float gainFromReverb =
           sendsAmpLogValues[value] * mixAmpLogValues[mtProject.values.reverbVolume];
         float gainFromVolume = getMostSignificantAmount() *
@@ -2075,17 +2234,13 @@ void playerEngine::modSeqPoints(uint32_t sp, uint32_t ep, uint8_t fx_n)
                     loopPoint1 = startPoint + 1;
                     loopPoint2 = loopPoint1 + loopSize;
                 }
-                trackControlParameter[(int)controlType::sequencerMode + fx_n]
-                                     [(int)parameterList::loopPoint1] = 1;
-                trackControlParameter[(int)controlType::sequencerMode + fx_n]
-                                     [(int)parameterList::loopPoint2] = 1;
+                seqSetHold(fx_n, (int)parameterList::loopPoint1, 1);
+                seqSetHold(fx_n, (int)parameterList::loopPoint2, 1);
             }
             else // endPoint > od loopPoint2 , startPoint < od loopPoint1  - nic nie trzeba ruszac
             {
-                trackControlParameter[(int)controlType::sequencerMode + fx_n]
-                                     [(int)parameterList::loopPoint1] = 0;
-                trackControlParameter[(int)controlType::sequencerMode + fx_n]
-                                     [(int)parameterList::loopPoint2] = 0;
+                seqSetHold(fx_n, (int)parameterList::loopPoint1, 0);
+                seqSetHold(fx_n, (int)parameterList::loopPoint2, 0);
             }
         }
         else
@@ -2095,10 +2250,8 @@ void playerEngine::modSeqPoints(uint32_t sp, uint32_t ep, uint8_t fx_n)
                 startPoint = loopPoint1 > 0 ? loopPoint1 - 1 : 0;
                 endPoint =
                   loopPoint2 < SAMPLE_POINT_POS_MAX ? loopPoint2 + 1 : SAMPLE_POINT_POS_MAX;
-                trackControlParameter[(int)controlType::sequencerMode + fx_n]
-                                     [(int)parameterList::loopPoint1] = 0;
-                trackControlParameter[(int)controlType::sequencerMode + fx_n]
-                                     [(int)parameterList::loopPoint2] = 0;
+                seqSetHold(fx_n, (int)parameterList::loopPoint1, 0);
+                seqSetHold(fx_n, (int)parameterList::loopPoint2, 0);
             }
             else
             {
@@ -2114,10 +2267,8 @@ void playerEngine::modSeqPoints(uint32_t sp, uint32_t ep, uint8_t fx_n)
                     loopPoint2 = endPoint - 1;
                     loopPoint1 = loopPoint2 - loopSize;
                 }
-                trackControlParameter[(int)controlType::sequencerMode + fx_n]
-                                     [(int)parameterList::loopPoint1] = 1;
-                trackControlParameter[(int)controlType::sequencerMode + fx_n]
-                                     [(int)parameterList::loopPoint2] = 1;
+                seqSetHold(fx_n, (int)parameterList::loopPoint1, 1);
+                seqSetHold(fx_n, (int)parameterList::loopPoint2, 1);
             }
         }
     }
@@ -2510,7 +2661,7 @@ bool playerEngine::isZeroInPointZone(uint16_t position,
     return AudioPlayMemory::isZeroInPointZone(position, sampleLength, sampleAddress);
 }
 
-void playerEngine::init(
+AUDIO_COLD_OS void playerEngine::init(
   Timer* timer,
   AudioMixer<MixerAndFxs<audioEngine::kVoices>::kSendsInputsCount>* preDelayMixer,
   AudioMixer<MixerAndFxs<audioEngine::kVoices>::kSendsInputsCount>* prePolyverbMixer)

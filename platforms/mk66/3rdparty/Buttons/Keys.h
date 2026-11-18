@@ -6,6 +6,7 @@
 
 //-------- CONFIG --------------------------
 constexpr uint8_t BUTTON_MAX = 48;
+static_assert(BUTTON_MAX <= 64, "the held masks of Keys are 64 bit"); // the 33 keys and the 48 pads each fit
 
 typedef uint8_t tca8418_reg_t;
 
@@ -57,6 +58,14 @@ class Keys
     void setOnHold(void (*funct)(uint8_t));
 
     uint8_t isButtonPressed(uint8_t n);
+
+    // A second source of presses next to the matrix, the MIDI remote. Both feed the same held state (isButtonPressed, the hold
+    // repeat). Each returns true when the combined state changed, so a press that overlaps one already held, from either source,
+    // makes no second event, and a release makes none while the other still holds. The matrix path runs the callbacks itself,
+    // the remote's caller sends the event (it has the velocity). Safe from an interrupt.
+    bool setRemote(uint8_t button, bool down);
+    // The matrix press and release of the key scan, also the injected key queue (devhooks)
+    void physical(uint8_t button, bool down);
     inline uint8_t isButtonHold(uint8_t n) { return buttonPush[n] && holdFactor[n] > 0; }
 
     uint8_t keyInt = 0;
@@ -82,6 +91,8 @@ class Keys
     uint8_t buttonPush[BUTTON_MAX] = { 0 };
     uint32_t holdTimeMs[BUTTON_MAX];
     uint8_t holdFactor[BUTTON_MAX] = { 0 };
+    uint64_t physHeld = 0;   // bit n: the matrix holds button n
+    uint64_t remoteHeld = 0; // bit n: the MIDI remote holds button n
 
     DEVHOOK_KEYS_PRIVATE
 

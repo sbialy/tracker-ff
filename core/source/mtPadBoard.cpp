@@ -87,8 +87,6 @@ void cMtPadBoard::cutInstrument(uint8_t pad)
 
 void cMtPadBoard::clearVoice(uint8_t voice)
 {
-    if (voice < 0)
-        return;
     voices[voice] = -1;
 }
 

@@ -8,6 +8,23 @@ const uint8_t MAX_SCALE = 38;
 
 uint8_t isInScale(uint8_t note, uint8_t root, uint8_t scale);
 
+#ifdef FEATURE_PLUG_HOST
+// Scale snap at playback (per track, the project scale and root note of Config > Project Settings). The pattern data is not touched:
+// the sequencer moves the note it sends (mtSequencer.cpp snapStepNote). Mode 0 plays the note as written.
+enum ScaleSnapMode : uint8_t
+{
+    kSnapOff,
+    kSnapNearest, // the closest scale note, a tie goes down
+    kSnapDown,    // the scale note at or below (above only when none is left below)
+    kSnapUp,      // the scale note at or above (below only when none is left above)
+    kSnapModeCount
+};
+constexpr uint8_t kScaleSnapTracks = 16; // kAllTracks of the original, plug_sidecar.h kSnapTracks
+extern uint8_t scaleSnapMode[kScaleSnapTracks]; // per track, saved in the project sidecar when any is not Off
+
+uint8_t snapToScale(uint8_t note, uint8_t root, uint8_t scale, uint8_t mode);
+#endif
+
 const uint16_t scaleDef[] = {
     0b111111111111, // 0
     0b010110101101, // 1 minor
@@ -50,7 +67,7 @@ const uint16_t scaleDef[] = {
     0b110101010011, // 38
 };
 
-const char* const scaleNames[MAX_SCALE + 1] = {
+inline const char* const scaleNames[MAX_SCALE + 1] = {
     "Chromatic", "Minor",     "Major",     "Dorian",    "Lyd Maj",   "Lyd Min",   "Locrian",
     "Phrygian ", "PhrygDom",  "Mixlydian", "Melo Min",  "Harm Min",  "BeBopMaj",  "BeBopDor",
     "BeBopMix",  "Blues Min", "Blues Maj", "Penta Min", "Penta Maj", "Hung Min",  "Ukrainian",

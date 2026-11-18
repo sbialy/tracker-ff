@@ -1,0 +1,70 @@
+# The plugin ABI contract of the release under test (read by fw_engine_mismatch_sim.sh, scenario 0, so by release_gate.sh).
+# This is ABI 1.4 (PLUG_ABI_MINOR 4, PLUG_HOST_LEVEL 2): what synth-open/plug/plug_abi.h of this tree has to say, line for line. One line per fact:
+#   define NAME VALUE       every PLUG_ #define of the header
+#   struct NAME SHA1        sha1 (first 12 hex digits) of the struct body with comments and white space normalised: field order, types and names, so
+#                           a moved, retyped, renamed or inserted field (a changed offset) turns the gate RED
+#   enum NAME VALUE         every enum member (extension ids, kinds, cpus, error codes, flags)
+# Why it is here: ABI 1.4 (the plugin files extension) raised PLUG_HOST_LEVEL 1 -> 2 (host->query answers PLUG_EXT_FILES), appended the optional
+# service and view to plug_ext_synth (tail fields, read only when struct_size covers them) and added PLUG_EXT_FILES / PLUG_EXT_STRUM and the
+# plug_ext_files / plug_ext_strum / plug_ext_tempo structs. All of it is additive, so the "old against new" checks of the simulator accept it
+# (host level and minor may only go up, a struct may only grow at its tail, an enum member may only be added, a min_host up to the host level
+# is accepted and one above it is refused) and THIS file is what pins the new contract: an ABI change that nobody meant (a different host level,
+# a wrong field offset, a changed enum value) is a RED check "the ABI is the pinned contract".
+# An intended ABI change: edit plug_abi.h, regenerate this file with the command below, read the diff, say in the commit why.
+#   python3 -I <(sed -n '/^cat >"$WORK\/fwm.py"/,/^PY$/p' fw_engine_mismatch_sim.sh | sed '1d;$d') contract synth-open/plug/plug_abi.h
+# plug_ext_files grew by an optional tail (wave_ref, read_path, next_path: waves by name, merge synth-ab-140-wavename), read only when struct_size covers it, still ABI 1.4: only this struct hash changed.
+define PLUG_ABI_MAJOR 1
+define PLUG_ABI_MINOR 4
+define PLUG_CHORD_NO_STRUM 0xFFFFFFFFu
+define PLUG_DESCRIPTOR __attribute__((section(".rodata.plug_desc"),
+define PLUG_ENTRY __attribute__((used,
+define PLUG_FILES_FRAMES 2048u
+define PLUG_FILES_MAX 1024u
+define PLUG_FILES_PATH 48u
+define PLUG_HOST_LEVEL 2
+define PLUG_MAGIC 0x31474C50u
+define PLUG_SYNTH_MANIFEST 0x314E5953u
+define PLUG_TEMPO_BEAT_WRAP 1024.0f
+define PLUG_VIEW_MAX 256u
+struct plug_desc e4da71fb97e6
+struct plug_ext_chord 8c60c44606c8
+struct plug_ext_files 53a6a4877096
+struct plug_ext_strum 0c6def9ac376
+struct plug_ext_synth b42c52b23346
+struct plug_ext_tail 9bffd2ea12a5
+struct plug_ext_tempo 926cf6e93c0c
+struct plug_file_header 787039864167
+struct plug_manifest 5a8ae8a94ab8
+struct plug_param 41f195a3c9c4
+struct plug_synth_macro 7eefb7391137
+struct plug_synth_param 7f4dc37a7abc
+struct plug_synth_section cf00251d4fc4
+enum PLUG_CPU_CM4F 1
+enum PLUG_CPU_CM7 2
+enum PLUG_CURVE_LINEAR 0
+enum PLUG_EXT_CHORD 6
+enum PLUG_EXT_FILES 5
+enum PLUG_EXT_STATE 1
+enum PLUG_EXT_STRUM 7
+enum PLUG_EXT_SYNTH 3
+enum PLUG_EXT_TAIL 2
+enum PLUG_EXT_TEMPO 4
+enum PLUG_FILES_E_CARD -4
+enum PLUG_FILES_E_CONTEXT -5
+enum PLUG_FILES_E_FORMAT -2
+enum PLUG_FILES_E_LONG -3
+enum PLUG_FILES_E_NONE -1
+enum PLUG_FMT_PCT 0
+enum PLUG_F_S16 1u << 0
+enum PLUG_KIND_EXT 6
+enum PLUG_KIND_MASTER_INSERT 1
+enum PLUG_KIND_OFFLINE 5
+enum PLUG_KIND_SEND_FX 2
+enum PLUG_KIND_SYNTH 4
+enum PLUG_KIND_TRACK_FX 3
+enum PLUG_PARAM_NAME_MAX 1u << 1
+enum PLUG_PARAM_NAME_MIN 1u << 0
+enum PLUG_ROLE_DELAY 2
+enum PLUG_ROLE_INSERT 0
+enum PLUG_ROLE_REVERB 1
+enum PLUG_SYNTH_SLOT_FX 1u << 0

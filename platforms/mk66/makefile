@@ -50,6 +50,10 @@ C_SRCS 	 	+= $(shell find ./3rdparty/ -name *.c)
 ifeq ($(USB_AUDIO),1)
 CPP_SRCS	+= $(wildcard ./usbaudio/*.cpp)
 endif
+# USB_MSC=1 (see DEFINES below): the platform side of the USB drive
+ifeq ($(USB_MSC),1)
+CPP_SRCS	+= $(wildcard ./usbmsc/*.cpp)
+endif
 ASM_SRCS 	+= $(shell find ./3rdparty/ -name *.S)
 # TRIM=1 only: word-wise memcpy / memset, newlib-nano's are byte loops (about 8 cycles per byte) and the audio interrupt uses them
 # every block. TRIM_FASTMEM=0 leaves them out (A/B builds that isolate the nano link)
@@ -91,6 +95,16 @@ DEFINES+=-DFEATURE_USB_AUDIO
 INCLUDES+=-I./usbaudio
 endif
 
+# USB_MSC=1: the SD card can be a USB drive for the computer (mass storage, Bulk-Only, SCSI transparent) in Drive mode.
+# Compiled in, switched at start like USB_AUDIO: the descriptor set is picked in usb_init from the EEPROM boot flag of
+# Config > Features > USB drive (off by default). Off enumerates exactly like a build without it (usbmsc/test/usb_desc_test.sh).
+# Pass the same flag to the core (the top Makefile does, it reaches both). Dev images only until the device rows pass.
+USB_MSC	?= 0
+ifeq ($(USB_MSC),1)
+DEFINES+=-DFEATURE_USB_MSC
+INCLUDES+=-I./usbmsc
+endif
+
 COMPILER_OPTIONS=-fno-common -g -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -fstack-usage -specs=nano.specs -Wall -Wextra -c -ffunction-sections -fdata-sections -ffreestanding -fno-builtin 
 # Crash-class warnings, warn only, see core/makefile (CRASH_WARN= switches them off)
 CRASH_WARN ?= -Wstack-usage=512 -Wvla
@@ -103,10 +117,11 @@ endif
 
 ifeq ($(TRIM),1)
 # The compile flags above already say -specs=nano.specs, the stock link line does not (full newlib and libstdc++).
-# -u _printf_float keeps %f (about 50 UI call sites), scanf float is not used
-COMPILER_OPTIONS+=-Os
+# %f (about 50 UI call sites) comes from our own _printf_float hook (source/printf_float.cpp, ff::fm::formatFloat), which replaces
+# newlib's weak one, so the link needs no -u _printf_float and carries no dtoa / mprec. scanf float is not used
+COMPILER_OPTIONS+=-Os $(if $(filter 1,$(FW_LTO)),-flto)
 DEFINES+=-DFW_TRIM
-TRIM_LINK	:= -specs=nano.specs -Xlinker -u -Xlinker _printf_float
+TRIM_LINK	:= -specs=nano.specs
 endif
 
 # SDRAM_FILE_POOLS=1 (top Makefile, SYNTH_OPEN=1 builds): the FatFs FIL pool and the SdFile pool stay in the SDRAM

@@ -454,31 +454,31 @@ void cFileManager::importItFile_LoadSamples()
         uint32_t length = readUint(&sampleHeader[0x30], 4);
         uint32_t loopBegin = readUint(&sampleHeader[0x34], 4);
         uint32_t loopEnd = readUint(&sampleHeader[0x38], 4);
-        uint32_t susLoopBegin = readUint(&sampleHeader[0x40], 4);
-        uint32_t susLoopEnd = readUint(&sampleHeader[0x44], 4);
+        [[maybe_unused]] uint32_t susLoopBegin = readUint(&sampleHeader[0x40], 4);
+        [[maybe_unused]] uint32_t susLoopEnd = readUint(&sampleHeader[0x44], 4);
         uint32_t C5Speed = readUint(&sampleHeader[0x3c], 4);
         uint32_t SmpPoint = readUint(&sampleHeader[0x48], 4); //'Long' Offset of sample in file.
         uint32_t Cvt = readUint(&sampleHeader[0x2e], 1);
 
-        uint32_t GvL = readUint(&sampleHeader[0x11], 1);
+        [[maybe_unused]] uint32_t GvL = readUint(&sampleHeader[0x11], 1);
         uint32_t Vol = readUint(&sampleHeader[0x13], 1);
 
         instr->volume = mapClamped<int>(Vol, 0, 64, 0, instr->volume);
 
-        bool isHeader = (Flg & 0b00000001);
+        [[maybe_unused]] bool isHeader = (Flg & 0b00000001);
         bool is16or8bit = (Flg & 0b00000010);
-        bool isStereo = (Flg & 0b00000100);
-        bool isCompression = (Flg & 0b00001000);
+        [[maybe_unused]] bool isStereo = (Flg & 0b00000100);
+        [[maybe_unused]] bool isCompression = (Flg & 0b00001000);
         bool isLoop = (Flg & 0b00010000);
         bool isPingPong = (Flg & 0b01000000);
-        bool isPingPongSustain = (Flg & 0b10000000);
-        bool isSigned = Cvt & 0b00000001;
-        bool isPCM = Cvt & 0b00000100;
-        bool isHiLo = Cvt & 0b00000010;
-        bool isPTMLoad = Cvt & 0b00001000;
-        bool isTX12Bit = Cvt & 0b00010000;
+        [[maybe_unused]] bool isPingPongSustain = (Flg & 0b10000000);
+        [[maybe_unused]] bool isSigned = Cvt & 0b00000001;
+        [[maybe_unused]] bool isPCM = Cvt & 0b00000100;
+        [[maybe_unused]] bool isHiLo = Cvt & 0b00000010;
+        [[maybe_unused]] bool isPTMLoad = Cvt & 0b00001000;
+        [[maybe_unused]] bool isTX12Bit = Cvt & 0b00010000;
 
-        char sampleName[30]{ 0 };
+        [[maybe_unused]] char sampleName[30]{ 0 };
 
 #if DEBUGMOD
 
@@ -834,7 +834,7 @@ void cFileManager::importItFile_initPatternBuffer(uint32_t pattLength, uint32_t 
 }
 void cFileManager::importItFile_ProcessPattern(uint32_t patternOffset,
                                                uint16_t length,
-                                               uint16_t rows)
+                                               uint16_t /*rows*/)
 {
     //	if (length > 512) return;
 
@@ -965,8 +965,8 @@ void cFileManager::importItFile_setStep(uint8_t step,
                                         uint8_t note,
                                         int16_t volume,
                                         uint8_t instrument,
-                                        uint8_t fx,
-                                        uint8_t fxVal)
+                                        uint8_t /*fx*/,
+                                        uint8_t /*fxVal*/)
 {
 
     if (step > Sequencer::MAXSTEP)

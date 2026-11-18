@@ -29,16 +29,54 @@ end() {  # case: exit 0 and a clean sanitizer log
 }
 cfg() { cat "$O/$1/sd/Features/$2.cfg" 2>/dev/null | tr '\n' ' '; }
 
-# 1 list and pages, card without /.develop: Restart mode and USB audio, no Developer mode (D8), nothing written by looking
+# 1 list, card without /.develop (a): none of Restart mode, Developer mode, Demo start and Capture is listed while Off (D8), USB audio is the first row,
+#   nothing written by looking
 fresh list
-run list "" "wait 300;tap Config;wait 800;shot S/f1-config.png;tap Down 4;wait 300;tap F8;wait 500;shot S/f2-features.png;tap F8;wait 500;shot S/f3-restart-off.png;features"
-r=0; end list || r=1; for s in f1-config f2-features f3-restart-off; do golden list $s || r=1; done
+run list "" "wait 300;tap Config;wait 800;shot S/f1-config.png;tap Down 4;wait 300;tap F8;wait 500;shot S/f2-features.png;features"
+r=0; end list || r=1; for s in f1-config f2-features; do golden list $s || r=1; done
+has list "feature restart on 0 listed 0" || { echo "    Restart mode listed without /.develop while Off"; r=1; }
 has list "feature develop on 0 listed 0" || { echo "    Developer mode listed without /.develop"; r=1; }
+has list "feature demo on 0 listed 0" || { echo "    Demo start listed without /.develop while Off"; r=1; }
+has list "feature capture on 0 listed 0" || { echo "    Capture listed without /.develop while Off"; r=1; }
+has list "feature usbaudio on 0 listed 1" || { echo "    USB audio not listed"; r=1; }
 [ -e "$O/list/sd/Features" ] && { echo "    /Features written by a start that changed nothing"; r=1; }
-verdict list $r "Config base list, Features list, Restart mode page off, Developer mode hidden, no /Features written"
+verdict list $r "no /.develop, Restart mode Off: Restart mode, Developer mode, Demo start and Capture not listed, USB audio first, no /Features written"
+
+# 1b (b) with /.develop both rows are listed, Restart mode first, its page opens (Off)
+fresh listdev; : > "$O/listdev/sd/.develop"
+run listdev "" "$NAV;shot S/f2d-features-develop.png;tap F8;wait 500;shot S/f3-restart-off.png;features"
+r=0; end listdev || r=1; for s in f2d-features-develop f3-restart-off; do golden listdev $s || r=1; done
+has listdev "feature restart on 0 listed 1 value Off" || { echo "    Restart mode not listed with /.develop"; r=1; }
+has listdev "feature develop on 0 listed 1" || { echo "    Developer mode not listed with /.develop"; r=1; }
+has listdev "feature demo on 0 listed 1" || { echo "    Demo start not listed with /.develop"; r=1; }
+has listdev "feature capture on 0 listed 1" || { echo "    Capture not listed with /.develop"; r=1; }
+[ -e "$O/listdev/sd/Features" ] && { echo "    /Features written by a start that changed nothing"; r=1; }
+verdict listdev $r "/.develop: Restart mode, Developer mode, Demo start and Capture listed, Restart mode page off, no /Features written"
+
+# 1c (c) no /.develop but Restart mode On in its file: still listed (so it can be switched off), Developer mode still hidden. The page opens from the
+#    first row and State Off through it is written and keeps the row for the rest of the session
+fresh liston; mkdir -p "$O/liston/sd/Features"; printf 'feature 1\non 1\n' > "$O/liston/sd/Features/restart.cfg"
+run liston "" "features;$NAV;shot S/f2o-features-restart-on.png;tap F8;wait 500;tap F8;wait 300;tap Up;wait 200;tap F8;wait 600;features;wait 1500;restartmode"
+r=0; end liston || r=1; golden liston f2o-features-restart-on || r=1
+has liston "feature restart on 1 listed 1 value On" || { echo "    Restart mode On is not listed without /.develop"; r=1; }
+has liston "feature develop on 0 listed 0" || { echo "    Developer mode listed without /.develop"; r=1; }
+has liston "feature restart on 0 listed 1 value Off" || { echo "    State Off through the page did not switch it off, or the row left the list"; r=1; }
+has liston "restart mode 0 leaving 0 platform 0" || { echo "    switching it off did not reach the platform"; r=1; }
+run liston "" "features"   # the next start on the same card: Off now, the row is gone
+has liston "feature restart on 0 listed 0" || { echo "    Restart mode Off listed again after a start without /.develop"; r=1; }
+verdict liston $r "no /.develop, Restart mode On: still listed, switched Off through its page, gone from the list at the next start"
+
+# 1d no /.develop but Demo start and Capture On in their files: both still listed (so they can be switched off), Restart mode and Developer mode hidden
+fresh liston2; mkdir -p "$O/liston2/sd/Features"; printf 'feature 1\non 1\n' > "$O/liston2/sd/Features/demo.cfg"; printf 'feature 1\non 1\n' > "$O/liston2/sd/Features/capture.cfg"
+run liston2 "" "features"
+r=0; end liston2 || r=1
+has liston2 "feature demo on 1 listed 1" || { echo "    Demo start On is not listed without /.develop"; r=1; }
+has liston2 "feature capture on 1 listed 1" || { echo "    Capture On is not listed without /.develop"; r=1; }
+has liston2 "feature restart on 0 listed 0" || { echo "    Restart mode listed without /.develop"; r=1; }
+verdict liston2 $r "no /.develop, Demo start and Capture On: still listed"
 
 # 2 Restart mode on through the page: the params appear, the file is written after the debounce, values persist across a start
-fresh restart
+fresh restart; : > "$O/restart/sd/.develop"   # Restart mode is listed only with /.develop (or while On): the first row of the list
 run restart "" "$NAV;tap F8;wait 500;tap F8;wait 300;tap Down;wait 200;tap F8;wait 600;shot S/f4-restart-on.png;tap Down 2;wait 300;tap F8;wait 300;tap Down;wait 200;tap F8;wait 600;shot S/f5-param.png;wait 1500;restartmode;resets"
 r=0; end restart || r=1; golden restart f4-restart-on || r=1; golden restart f5-param || r=1
 c=$(cfg restart restart); [ "$c" = "feature 1 id restart version 1 on 1 button 1 return 1 reckey 1 " ] || { echo "    restart.cfg: $c"; r=1; }
@@ -49,12 +87,32 @@ verdict restart $r "State On shows the params, Power return Start, file $(cfg re
 
 # 3 USB audio on: Restart, the Restart now row, the restart picks the new flag (the model's usb_init)
 fresh usb
-run usb "" "$NAV;tap Down 1;wait 300;tap F8;wait 500;tap F8;wait 300;tap Down;wait 200;tap F8;wait 600;shot S/f6-usb-restart.png;features;usbaudio;tap Down 2;wait 300;tap F8;wait 3000;resets;usbaudio"
+run usb "" "$NAV;tap F8;wait 500;tap F8;wait 300;tap Down;wait 200;tap F8;wait 600;shot S/f6-usb-restart.png;features;usbaudio;tap Down 2;wait 300;tap F8;wait 3000;resets;usbaudio;usbmode"
 r=0; end usb || r=1; golden usb f6-usb-restart || r=1
 has usb "feature usbaudio on 1 listed 1 value Restart" && has usb "usb audio running 0 flag 1" || r=1
 has usb "mcu reset \(restart\): start RUN" && has usb "usb audio running 1 flag 1" || { echo "    Restart now did not restart into USB audio"; r=1; }
 [ "$(cfg usb usbaudio)" = "feature 1 id usbaudio version 1 on 1 " ] || { echo "    usbaudio.cfg: $(cfg usb usbaudio)"; r=1; }
-verdict usb $r "USB audio On reads Restart, Restart now saves and restarts, the next start enumerates with audio"
+has usb "usb audio mode running 0 eeprom 0" || { echo "    Stereo (the default Mode) did not start in stereo"; r=1; }
+verdict usb $r "USB audio On reads Restart, Restart now saves and restarts, the next start enumerates with audio, Mode Stereo writes no mode line"
+
+# 4b Mode 8+3 mono (Config > USB > Audio mode, the USB entry shows once USB audio is on): the file gets "mode 1" (Stereo never writes the
+# line), the EEPROM mode byte follows, the restart starts 8+3, back to Stereo drops the line again. An older image reading "mode 1" is
+# features_test.cpp (omit). USBNAV: Features page -> Left -> Left (the base list) -> Up 2 (USB, above Metronome) -> Right (its rows)
+USBNAV='tap Left;wait 300;tap Left;wait 300;tap Up 2;wait 300;tap Right;wait 400'
+fresh usbmc
+run usbmc "UISHOT_USB_FLAG=1" "$NAV;tap F8;wait 500;tap F8;wait 300;tap Down;wait 200;tap F8;wait 400;shot S/f6a-usb-entry.png;$USBNAV;tap F8;wait 300;tap Down;wait 200;tap F8;wait 600;shot S/f6b-usb-mode.png;features;usbmode;tap Down 2;wait 300;tap F8;wait 3000;resets;usbaudio;usbmode;features"
+r=0; end usbmc || r=1; golden usbmc f6a-usb-entry || r=1; golden usbmc f6b-usb-mode || r=1
+c=$(cfg usbmc usbaudio); [ "$c" = "feature 1 id usbaudio version 1 on 1 mode 1 " ] || { echo "    usbaudio.cfg: $c"; r=1; }
+has usbmc "feature usbaudio on 1 listed 1 value Restart" && has usbmc "usb audio mode running 0 eeprom 1" || { echo "    8+3 before the restart"; r=1; }
+has usbmc "mcu reset \(restart\): start RUN" && has usbmc "usb audio mode running 1 eeprom 1" || { echo "    the restart did not start in 8+3 mono"; r=1; }
+# the next power on of the same card and EEPROM (flag on, mode byte 8+3): the row reads the mode, then back to Stereo
+rm -rf "$O/usbmc2"; mkdir -p "$O/usbmc2"; cp -R "$O/usbmc/sd" "$O/usbmc2/sd"
+run usbmc2 "UISHOT_USB_FLAG=1 UISHOT_USB_MODE=1" "features;usbmode;tap Config;wait 800;tap Down 3;wait 300;tap F8;wait 500;tap F8;wait 300;tap Up;wait 200;tap F8;wait 2000;usbmode;features"
+end usbmc2 || r=1
+has usbmc2 "feature usbaudio on 1 listed 1 value 8\+3 mono" && has usbmc2 "usb audio mode running 1 eeprom 1" || { echo "    8+3 start: row or mode"; r=1; }
+c=$(cfg usbmc2 usbaudio); [ "$c" = "feature 1 id usbaudio version 1 on 1 " ] || { echo "    back to Stereo: usbaudio.cfg: $c"; r=1; }
+has usbmc2 "usb audio mode running 1 eeprom 0" && has usbmc2 "feature usbaudio on 1 listed 1 value Restart" || { echo "    back to Stereo: mirror or row"; r=1; }
+verdict usbmc $r "Mode 8+3 mono: mode 1 in the file, EEPROM mode byte set, Restart starts 8+3, back to Stereo drops the line and asks for a restart"
 
 # 4 the boot flag follows the file: a card without usbaudio.cfg on a unit whose flag is on (Reset config elsewhere, file deleted)
 fresh usbsync
@@ -102,8 +160,8 @@ verdict safe $r "Shift at power on: the module is not read (Safe), built-ins sta
 fresh reset; mkdir -p "$O/reset/sd/Features"
 printf 'feature 1\non 1\nbutton 1\nreturn 1\nreckey 1\n' > "$O/reset/sd/Features/restart.cfg"
 printf 'feature 1\non 1\n' > "$O/reset/sd/Features/usbaudio.cfg"; : > "$O/reset/sd/Features/restart.cfg.bak"
-run reset "" "features;tap Config;wait 800;tap Down 5;wait 300;tap F8;wait 500;tap Down 3;wait 300;tap F8;wait 500;tap F8;wait 2000;features;restartmode;resets"
-r=0; end reset || r=1
+run reset "" "features;tap Config;wait 800;tap Down 6;wait 300;tap F8;wait 500;tap Down 3;wait 300;tap F8;wait 500;tap F8;wait 2000;shot S/f13-reset-usb.png;features;restartmode;resets"
+r=0; end reset || r=1; golden reset f13-reset-usb || r=1   # USB audio was on (the USB entry listed), Reset config takes it out of the list
 has reset "feature restart on 0 listed 1 value Off" && has reset "feature usbaudio on 0 listed 1 value Off" || r=1
 ls "$O/reset/sd/Features"/*.cfg* > /dev/null 2>&1 && { echo "    left: $(ls "$O/reset/sd/Features")"; r=1; }
 has reset "restart mode 0 leaving 0 platform 0" && has reset "start state 0" || r=1
@@ -118,7 +176,7 @@ verdict nulldesc $r "Metronome > State value picker opens (no description), no c
 # 10 Chord names (on by default): the MIDI Chord grid cell shows the short name, off through the page shows the interval digits,
 #    the file keeps it across a start
 fresh chordnm
-run chordnm "" "setstep 0 0 48 64 14 24 0 0;grid 0 0;features;$NAV;tap Down 2;wait 300;tap F8;wait 500;shot S/f11-chordnames.png;tap F8;wait 300;tap Up;wait 200;tap F8;wait 600;shot S/f12-chordnames-off.png;wait 1500;features"
+run chordnm "" "setstep 0 0 48 64 14 24 0 0;grid 0 0;features;$NAV;tap Down 1;wait 300;tap F8;wait 500;shot S/f11-chordnames.png;tap F8;wait 300;tap Up;wait 200;tap F8;wait 600;shot S/f12-chordnames-off.png;wait 1500;features"
 r=0; end chordnm || r=1; golden chordnm f11-chordnames || r=1; golden chordnm f12-chordnames-off || r=1
 has chordnm "feature chordnm on 1 listed 1 value On" && has chordnm "grid 0 0 fx0 \[0\^7 \]" || { echo "    default: not on, or the grid is not ^7"; r=1; }
 has chordnm "feature chordnm on 0 listed 1 value Off" || { echo "    the page did not switch it off"; r=1; }
@@ -126,6 +184,19 @@ has chordnm "feature chordnm on 0 listed 1 value Off" || { echo "    the page di
 run chordnm "" "setstep 0 0 48 64 14 24 0 0;grid 0 0;features"   # the next start on the same card
 has chordnm "feature chordnm on 0 listed 1 value Off" && has chordnm "grid 0 0 fx0 \[047B\]" || { echo "    off not kept: $(grep -E '^grid|chordnm' "$O/chordnm/log.txt" | tail -2 | tr '\n' ' ')"; r=1; }
 verdict chordnm $r "Chord names: on by default (^7), Off through the page (digits 47B), chordnm.cfg on 0 kept across a start"
+
+# Capture (off by default, no file until the row is touched): the page switches it on and sets the Idle time (20 -> 28), the pattern editor button 3 then captures a
+# played note into the copy buffer (capture_sim.sh has the rules), capture.cfg says on 1 idle 28, and the next start on the same card has both without the page
+fresh capture; : > "$O/capture/sd/.develop"   # Capture is listed only with /.develop (or while On): Restart mode and Developer mode are two rows before the others
+run capture "" "features;$NAV;tap Down 8;wait 300;tap F8;wait 500;tap F8;wait 300;tap Down;wait 200;tap F8;wait 600;tap Down;wait 300;tap F8;wait 300;enc 5;wait 300;tap F8;wait 600;features;tap Pattern;wait 300;instr 64;audio 1;tap Play;wait 300;midion 60 100 100;midioff 60 0 200;tap F4;wait 100;capbuf 0 3;wait 1500;capind;features"
+r=0; end capture || r=1
+has capture "feature capture on 0 listed 1 value Off" && has capture "feature capture on 1 listed 1 value On" || { echo "    default not off, or the page did not switch it on"; r=1; }
+has capture "capbuf 0 3 note 36 instr 64" || { echo "    button 3 did not capture: $(grep -E '^capbuf' "$O/capture/log.txt" | tail -1)"; r=1; }
+[ "$(cfg capture capture)" = "feature 1 id capture version 1 on 1 idle 28 " ] || { echo "    capture.cfg: $(cfg capture capture)"; r=1; }   # the Idle time picker (enc 5 from 20 = 28) is applied and written
+has capture "capind state [0-9] draws [0-9]+ idle 28 " || { echo "    the Idle time picker did not reach the feature: $(grep -E '^capind' "$O/capture/log.txt" | tail -1)"; r=1; }
+run capture "" "features;tap Pattern;wait 300;instr 64;audio 1;tap Play;wait 300;midion 60 100 100;midioff 60 0 200;tap F4;wait 100;capbuf 0 3;capind"   # the next start on the same card
+has capture "feature capture on 1 listed 1 value On" && has capture "capbuf 0 3 note 36 instr 64" && has capture "capind state [0-9] draws [0-9]+ idle 28 " || { echo "    on not kept across a start: $(grep -E '^capbuf|capture' "$O/capture/log.txt" | tail -2 | tr '\n' ' ')"; r=1; }
+verdict capture $r "Capture: off by default, On through the page captures with button 3, capture.cfg on 1 kept across a start"
 
 echo "RESULT: $([ $rc = 0 ] && echo GREEN || echo RED)$([ "$UPD" = --update ] && echo ' (goldens written)')"
 exit $rc

@@ -1,0 +1,41 @@
+# Every float conversion the MK66 firmware formats (the call sites of the grep in run_printf_diff.py --check-sites).
+# group<TAB>format<TAB>where. Group "ui" is shipped code, "log" is LOGF (compiled in with DEBUG only), "extra" are shapes the firmware
+# does not use but a module or a later change could (flags, widths, no precision, %e / %g print as %f on the device and are not diffed).
+ui	%.2f	gSamplePlay.cpp:434 gSampleRec.cpp:596 fSampleEdit.cpp:760,1038 open_cold.cpp:116
+ui	%.3f s	gSamplePlay.cpp:694
+ui	%0.3f s	gSamplePlay.cpp:729
+ui	%0.1f ms	gSamplePlay.cpp:764
+ui	%.3f	gSamplePlay.cpp:814 gSampleRec.cpp:1058
+ui	Start rendering using internal clock source (%.0f BPM)?	gProjEdit.cpp:812
+ui	%0.2f dB	interfacePopups.cpp:1480 gMasterParams.cpp:1292,1849,1872,1897,1923,1949,2003,2041 gSampleImport.cpp:274
+ui	%.2f dB	gMasterParams.cpp:825,1029
+ui	%0.02f dB	gMasterParams.cpp:1977 gInstrEdit.cpp:1607,1734,1747 SynthEditor.cpp:1640,1669,1683
+ui	%.1f BPM	gSongEdit.cpp:420
+ui	%.0f BPM	gSongEdit.cpp:432
+ui	%3.f	SynthPatchEditor.cpp:1668,1859,1941
+ui	%0.2f	SynthPatchEditor.cpp:1781,2096
+ui	%.0f	gInstrEdit.cpp:1404,1463,1527
+ui	%0.0f 	SynthEditor.cpp:1654
+ui	%.2f MHz	mtTest.cpp:1399
+ui	%.2f kHz	open_cold.cpp:68
+ui	%.2f s	open_cold.cpp:82
+ui	%.2f Hz	open_cold.cpp:85
+ui	%.2f ms	open_cold.cpp:99
+ui	%.1f dB	open_cold.cpp:100
+ui	%.0f%s	plug_ui.cpp:279 (plugin parameter display, whole steps)
+ui	%.2f%s	plug_ui.cpp:279 (plugin parameter display, fractional steps)
+log	%.1f	fileManagerExportToMod.cpp:348,567,788
+log	%f	fileManagerExportToMod.cpp:348,567,788
+log	%.3f	fileManagerSamples.cpp:353
+log	%.2f	fileManagerSamples.cpp:353
+extra	%f	default precision
+extra	%8.3f	width
+extra	%-8.3f|	left
+extra	%08.3f	zero pad
+extra	%+.2f	plus
+extra	% .2f	space
+extra	%#.0f	alt
+extra	%.9f	max exact precision
+extra	%10.1f	width, one decimal
+extra	%F	upper case
+extra	%.0f.	no decimals

@@ -95,8 +95,8 @@ expect "names off: maj7 inv2 is 459" "grid 0 3 fx0 [0459] fx1 [----]" "$(sed -n 
 # 10. Strum on a MIDI instrument (USB MIDI out, the audio callback runs): +10 starts the maj7 notes 20.3 ms apart (7 blocks of
 #     2.9 ms for 20 ms), bottom up; 74 (-10) top down; the slots the other way round work the same
 out=$(run strum "instr 48; setstep 0 0 48 48 14 24 47 10; setstep 0 4 48 48 47 74 14 24; audio 1; midilog 1; tap Play; wait 900; tap Play; wait 200; midilog 0")
-expect "strum up: notes at 0 / 20.3 / 40.6 / 60.9 ms, low to high" "midi on 72 127 ch 1 t 0.0|midi on 76 127 ch 1 t 20.3|midi on 79 127 ch 1 t 40.6|midi on 83 127 ch 1 t 60.9" "$(grep '^midi on' <<<"$out" | sed -n 1,4p | paste -sd'|' -)"
-expect "strum down (Strum in FX1, chord in FX2): high to low" "midi on 83 127 ch 1 t 461.3|midi on 79 127 ch 1 t 481.6|midi on 76 127 ch 1 t 501.9|midi on 72 127 ch 1 t 522.2" "$(grep '^midi on' <<<"$out" | sed -n 5,8p | paste -sd'|' -)"
+expect "strum up: notes at 0 / 20.3 / 40.6 / 60.9 ms, low to high, velocity ramp 127 / 121 / 116 / 110 (7 % a note x 10 / 16)" "midi on 72 127 ch 1 t 0.0|midi on 76 121 ch 1 t 20.3|midi on 79 116 ch 1 t 40.6|midi on 83 110 ch 1 t 60.9" "$(grep '^midi on' <<<"$out" | sed -n 1,4p | paste -sd'|' -)"
+expect "strum down (Strum in FX1, chord in FX2): high to low, whole chord x 0.88 and the ramp (111 / 106 / 102 / 96)" "midi on 83 111 ch 1 t 461.3|midi on 79 106 ch 1 t 481.6|midi on 76 102 ch 1 t 501.9|midi on 72 96 ch 1 t 522.2" "$(grep '^midi on' <<<"$out" | sed -n 5,8p | paste -sd'|' -)"
 expect "strum: Stop sends the offs, nothing starts after them" "midi off 72 ch 1 t 977.7" "$(grep '^midi' <<<"$out" | tail -4 | head -1)"
 
 # 11. Strum edges: +63 (126 ms a gap) cut by the next step at 116 ms (the pending notes never start), 64 is off (all at once), a Strum
@@ -136,14 +136,18 @@ for g in 10 40 70 90 120; do
   out=$(run "rjgap$g" "recopt 0; instr 64; arm 2; audio 1; tap Play; wait 200; hold Rec; tap Play; unhold Rec; wait 300; midion 60 100 $g; midion 64 100 $g; midion 67; wait 400; midioff 60; midioff 64; midioff 67; wait 300; tap Play; wait 300; step 2 0; step 2 1; step 2 2; step 2 3; step 2 4; step 2 5; step 2 6; step 2 7; step 2 8; step 2 9; step 2 10; step 2 11; step 2 12; step 2 13; step 2 14; step 2 15; step 2 16; step 2 17; step 2 18; step 2 19; step 2 20; step 2 21; step 2 22; step 2 23; step 2 24; step 2 25; step 2 26; step 2 27; step 2 28; step 2 29; step 2 30; step 2 31;")
   got=$(grep -v 'note -1 instr 0 fx0 0:0' <<<"$out" | grep -v 'note -4' | paste -sd'|' -)
   case $g in
-    10|40|70|90) want="step 2 6 note 36 instr 64 fx0 14:5 fx1 0:0" ;;
+    10) want="step 2 6 note 36 instr 64 fx0 14:5 fx1 0:0" ;;   # under the 15 ms dead zone of the roll: no Strum
+    40) want="step 2 6 note 36 instr 64 fx0 14:5 fx1 47:20" ;;   # the roll is a Strum FX: the mean gap in 2 ms units (strum_recog_sim.sh)
+    70) want="step 2 6 note 36 instr 64 fx0 14:5 fx1 47:35" ;;
+    90) want="step 2 6 note 36 instr 64 fx0 14:5 fx1 47:45" ;;
     120) want="step 2 6 note 36 instr 64 fx0 0:0 fx1 0:0|step 2 7 note 40 instr 64 fx0 0:0 fx1 0:0|step 2 8 note 43 instr 64 fx0 0:0 fx1 0:0" ;;
   esac
   expect "record join, arrival gaps $g ms" "$want" "$got"
 done
-# 16. A pair that is no chord yet does not block the group: C then G (no entry) then E completes C E G (the refused G stays in the group)
+# 16. A pair that is no chord yet does not block the group: C then G (no entry) then E completes C E G (the refused G stays in the group), the 20 ms gaps
+#     are a roll of +9 (the mean of the block times, strum_recog_sim.sh)
 out=$(run rjorder "recopt 0; instr 64; arm 2; audio 1; tap Play; wait 200; hold Rec; tap Play; unhold Rec; wait 300; midion 60 100 20; midion 67 100 20; midion 64; wait 400; midioff 60; midioff 67; midioff 64; wait 300; tap Play; wait 300; step 2 6; step 2 7")
-expect "record join: C G E (the pair C G is no chord) ends as maj" "step 2 6 note 36 instr 64 fx0 14:5 fx1 0:0|step 2 7 note -1 instr 0 fx0 0:0 fx1 0:0" "$(paste -sd'|' - <<<"$out")"
+expect "record join: C G E (the pair C G is no chord) ends as maj" "step 2 6 note 36 instr 64 fx0 14:5 fx1 47:9|step 2 7 note -1 instr 0 fx0 0:0 fx1 0:0" "$(paste -sd'|' - <<<"$out")"
 
 new=$(cat "$WORK"/*.err 2>/dev/null | grep "SUMMARY" | grep -v "mtWavetableEnvelopes.cpp:206" | sort | uniq -c)
 if [ -n "$new" ]; then fails=$((fails+1)); echo "FAIL  sanitizer report in a run:"; echo "$new"; fi

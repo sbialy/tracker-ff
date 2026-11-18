@@ -11,7 +11,7 @@
 
 static constexpr int kMaxParametersInEffect = 12;
 
-char* const effectNamesLabels[editorEffectMax] = {
+inline char* const effectNamesLabels[editorEffectMax] = {
     (char*)"Normalizer",       (char*)"Crop",
     (char*)"Reverse",          (char*)"Amplifier",
     (char*)"Overdrive",        (char*)"Delay",
@@ -45,6 +45,15 @@ struct strEffectDefaultParams
     float parameter[kMaxParametersInEffect];
 };
 
+// FW_SE_PTFX: the nine effects whose code is a card file (tracker-effects-os src/ptfx) have no built in parameter table, the labels
+// and ranges come from the .ptfx header (the modular effect UI)
+#ifdef FW_SE_PTFX
+#define SE_MOVED_PARAMS(ns, n) {}
+#else
+#define SE_MOVED_PARAMS(ns, n) \
+    { n, ns::labelText, ns::upConstrain, ns::downConstrain, ns::changeStep, ns::displayMult, ns::afterValueText, ns::displayType }
+#endif
+
 const strEffectDisplayConstantParams effectDisplayConstantParams[editorEffectMax] = {
     { 1,
       normalizerParams::labelText,
@@ -56,78 +65,15 @@ const strEffectDisplayConstantParams effectDisplayConstantParams[editorEffectMax
       normalizerParams::displayType },
     {}, // cut - brak drugiego ekranu
     {}, // reverse - brak drugiego ekranu
-    { 1,
-      amplifierParams::labelText,
-      amplifierParams::upConstrain,
-      amplifierParams::downConstrain,
-      amplifierParams::changeStep,
-      amplifierParams::displayMult,
-      amplifierParams::afterValueText,
-      amplifierParams::displayType },
-    { 2,
-      overdriveParams::labelText,
-      overdriveParams::upConstrain,
-      overdriveParams::downConstrain,
-      overdriveParams::changeStep,
-      overdriveParams::displayMult,
-      overdriveParams::afterValueText,
-      overdriveParams::displayType },
-    { 2,
-      delayParams::labelText,
-      delayParams::upConstrain,
-      delayParams::downConstrain,
-      delayParams::changeStep,
-      delayParams::displayMult,
-      delayParams::afterValueText,
-      delayParams::displayType },
-    { 2,
-      bitcrusherParams::labelText,
-      bitcrusherParams::upConstrain,
-      bitcrusherParams::downConstrain,
-      bitcrusherParams::changeStep,
-      bitcrusherParams::displayMult,
-      bitcrusherParams::afterValueText,
-      bitcrusherParams::displayType },
-    { 2,
-      chorusParams::labelText,
-      chorusParams::upConstrain,
-      chorusParams::downConstrain,
-      chorusParams::changeStep,
-      chorusParams::displayMult,
-      chorusParams::afterValueText,
-      chorusParams::displayType },
-    { 4,
-      flangerParams::labelText,
-      flangerParams::upConstrain,
-      flangerParams::downConstrain,
-      flangerParams::changeStep,
-      flangerParams::displayMult,
-      flangerParams::afterValueText,
-      flangerParams::displayType },
-    { 9,
-      eqParams::labelText,
-      eqParams::upConstrain,
-      eqParams::downConstrain,
-      eqParams::changeStep,
-      eqParams::displayMult,
-      eqParams::afterValueText,
-      eqParams::displayType },
-    { 3,
-      limiterParams::labelText,
-      limiterParams::upConstrain,
-      limiterParams::downConstrain,
-      limiterParams::changeStep,
-      limiterParams::displayMult,
-      limiterParams::afterValueText,
-      limiterParams::displayType },
-    { 4,
-      compressorParams::labelText,
-      compressorParams::upConstrain,
-      compressorParams::downConstrain,
-      compressorParams::changeStep,
-      compressorParams::displayMult,
-      compressorParams::afterValueText,
-      compressorParams::displayType },
+    SE_MOVED_PARAMS(amplifierParams, 1),
+    SE_MOVED_PARAMS(overdriveParams, 2),
+    SE_MOVED_PARAMS(delayParams, 2),
+    SE_MOVED_PARAMS(bitcrusherParams, 2),
+    SE_MOVED_PARAMS(chorusParams, 2),
+    SE_MOVED_PARAMS(flangerParams, 4),
+    SE_MOVED_PARAMS(eqParams, 9),
+    SE_MOVED_PARAMS(limiterParams, 3),
+    SE_MOVED_PARAMS(compressorParams, 4),
     { 2,
       wavetableSmootherParams::labelText,
       wavetableSmootherParams::upConstrain,
@@ -486,6 +432,7 @@ class cSampleEditor : public ModuleBase
     char s_modularDisplayType[kMaxParametersInEffect + 1] = {};
 
     void loadModularEffectUI(const PtfxHeader& header);
+    void selectListedEffect();
     const strEffectDisplayConstantParams& getCurrentEffectDisplayParams() const;
     bool isParameterList(uint8_t paramIdx) const;
     uint8_t getParameterListCount(uint8_t paramIdx) const;

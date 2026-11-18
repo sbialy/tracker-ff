@@ -58,7 +58,6 @@ void cMultiLabel::setStyle(uint32_t style)
                 (style & controlStyleRightX ? OPT_RIGHTX : 0);
 
     uint32_t fontIndex = FONT_INDEX_FROM_STYLE;
-    fontIndex = (fontIndex >= 0) ? fontIndex : 0;
     font = &fonts[fontIndex];
 }
 

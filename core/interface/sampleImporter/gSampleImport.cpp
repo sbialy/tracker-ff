@@ -479,7 +479,7 @@ void cSampleImporter::showRename()
 
 void cSampleImporter::showAddOrEnter(bool isShiftPressed)
 {
-    if (explorerNames != nullptr && *explorerNames[selectedFile] == '/')
+    if (isFolderRow(selectedFile))
     {
         display.setControlText(label[0], "Enter");
         display.setControlValue(label[0], 0);
@@ -509,7 +509,10 @@ void cSampleImporter::showAddOrEnter(bool isShiftPressed)
             display.setControlValue(label[0], 0);
         }
 
-        display.setControlColors(label[0], display.getTheme().activeButtonLabelsColors);
+        display.setControlColors(label[0],
+                                 isFileRow(selectedFile)
+                                   ? display.getTheme().activeButtonLabelsColors
+                                   : display.getTheme().inactiveButtonLabelsColors);
     }
 
     display.refreshControl(label[0]);
@@ -517,7 +520,7 @@ void cSampleImporter::showAddOrEnter(bool isShiftPressed)
 
 void cSampleImporter::addNextColorControl()
 {
-    if (explorerNames != nullptr && *explorerNames[selectedFile] != '/')
+    if (isFileRow(selectedFile))
     {
         display.setControlColors(label[1], display.getTheme().activeButtonLabelsColors);
     }
@@ -535,7 +538,7 @@ void cSampleImporter::previewColorControl()
 
     if (selectedPlace == 0)
     {
-        if (explorerNames != nullptr && *explorerNames[selectedFile] == '/')
+        if (!isFileRow(selectedFile))
         {
             colors = display.getTheme().inactiveButtonLabelsColors;
         }
@@ -611,7 +614,7 @@ void cSampleImporter::importColorControl()
 {
     const uint32_t* colors = display.getTheme().activeButtonLabelsColors;
 
-    if (explorerNames != nullptr && *explorerNames[selectedFile] == '/')
+    if (!isFileRow(selectedFile))
     {
         colors = display.getTheme().inactiveButtonLabelsColors;
     }
@@ -619,13 +622,9 @@ void cSampleImporter::importColorControl()
     {
         colors = display.getTheme().inactiveButtonLabelsColors;
     }
-    else
+    else if (hasFileExtension(explorerRowName(selectedFile), "pti"))
     {
-        char* fileName = explorerNames[selectedFile];
-        if (hasFileExtension(fileName, "pti"))
-        {
-            colors = display.getTheme().inactiveButtonLabelsColors;
-        }
+        colors = display.getTheme().inactiveButtonLabelsColors;
     }
 
     display.setControlColors(label[4], colors);

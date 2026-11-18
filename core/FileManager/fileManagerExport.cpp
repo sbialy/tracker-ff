@@ -302,7 +302,10 @@ bool cFileManager::exportProjectSamples()
     if (currentOperation != fmNoOperation && currentOperation != fmSaveWorkspaceProject)
         return false;
 
-    createCurrentProjectFolderTree();
+    if (!createCurrentProjectFolderTree())
+    {
+        return false;
+    }
 
     char currentExportPath[PATCH_SIZE];
     volatile int pathSize = sizeof(currentExportPath);

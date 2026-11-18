@@ -26,6 +26,12 @@ class TitleBar
     void showRightLabel(bool show);
     void showBattery(bool show);
 
+    // The Capture indicator (Config > Features > Capture), a small square after the title that every screen shows: the state is a
+    // CaptureIndicator (mtCapture.h), 0 hides it. Redrawn only when the state changes.
+    void setCaptureState(uint8_t state);
+    uint8_t captureStateDrawn() const { return captureState; }
+    uint16_t captureDraws() const { return captureDrawCount; } // how often the indicator was redrawn, for the host test
+
     void refresh();
 
     friend Interface;
@@ -44,6 +50,7 @@ class TitleBar
     hControl bar = -1;
     hControl battery = -1;
     hControl performBox = -1;
+    hControl captureBox = -1;
 
     strLabelData barLabelData;
 
@@ -54,6 +61,11 @@ class TitleBar
 
     bool lastBatteryCharging = false;
     int lastBatteryLevel = -1;
+
+    uint8_t captureState = 0;
+    uint16_t captureDrawCount = 0;
+    uint32_t captureColors[4] = {};
+    void applyCaptureState();
 
     uint32_t boxLastColor = 0;
     uint8_t boxShowLoopCount = 0;

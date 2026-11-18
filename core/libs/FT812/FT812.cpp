@@ -428,7 +428,7 @@ void API_CMD_GAUGE(int16_t x,
 }
 
 // ft_void_t Ft_Gpu_CoCmd_RegRead(Ft_Gpu_Hal_Context_t *phost,ft_uint32_t ptr, ft_uint32_t result);
-void API_CMD_REGREAD(uint32_t ptr, uint32_t result)
+void API_CMD_REGREAD(uint32_t ptr, uint32_t /*result*/)
 {
     display.getDisplayDriver()->WriteData32(CMD_REGREAD);
     display.getDisplayDriver()->WriteData32(ptr);

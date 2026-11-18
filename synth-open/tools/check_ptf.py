@@ -12,8 +12,12 @@ Modelled on tools/check_image.py of OpenTracker. Checks an Intel HEX .ptf for:
   * Valid record checksums and lengths.
   * Last 4 KB sector: fewer than 0x800 B in it is a warning. With --min-tail N (the release gate passes 0x800) fewer than N B
     is an error. A tail of 0 (the image ends on a sector line) is a full last sector and passes.
-Usage: check_ptf.py [--max 0xFF000] [--min-tail 0x800] <image.ptf>
+  * With --proven ADDR (the release gate passes the device-proven end, 0xFC2AC): an image that ends past ADDR is an error, the unit has not
+    booted code up there. ALLOW_UNPROVEN_END=1 in the environment turns it into a loud warning: set it only together with the device row
+    that proved the new end. --warn-proven ADDR (make original) is the same check as a warning only.
+Usage: check_ptf.py [--max 0xFF000] [--min-tail 0x800] [--proven 0xFC2AC | --warn-proven 0xFC2AC] <image.ptf>
 """
+import os
 import sys
 
 FLASH_IMG_MAX = 0xFF000
@@ -52,12 +56,15 @@ def load_ihex(path):
 def main(argv):
     limit = FLASH_IMG_MAX
     min_tail = 0
+    proven = None   # (address, fatal)
     args = argv[1:]
-    while len(args) >= 2 and args[0] in ("--max", "--min-tail"):
+    while len(args) >= 2 and args[0] in ("--max", "--min-tail", "--proven", "--warn-proven"):
         if args[0] == "--max":
             limit = int(args[1], 0)
-        else:
+        elif args[0] == "--min-tail":
             min_tail = int(args[1], 0)
+        else:
+            proven = (int(args[1], 0), args[0] == "--proven")
         args = args[2:]
     if len(args) != 1:
         sys.exit(__doc__)
@@ -69,8 +76,17 @@ def main(argv):
     def byte(a): return mem.get(a, 0xFF)
     def word(a): return sum(byte(a + i) << (8 * i) for i in range(4))
 
-    errors = []
+    errors, notes = [], []
     top = max(mem) + 1
+    if proven and top > proven[0]:
+        msg = (f"the image ends at 0x{top:X}, {top - proven[0]} B past 0x{proven[0]:X}, the end of the last image that was run on the unit "
+               f"(device-proven). Nothing has booted code up there: prove the new end on the device first")
+        if not proven[1]:
+            notes.append("WARNING " + msg + " (the release gate fails on it)")
+        elif os.environ.get("ALLOW_UNPROVEN_END") == "1":
+            notes.append("WARNING " + msg + ". ALLOW_UNPROVEN_END=1 is set: allowed, cite the device row that proved this end")
+        else:
+            errors.append(msg + ". Set ALLOW_UNPROVEN_END=1 together with that device row to override")
     if top > limit:
         errors.append(f"highest address 0x{top:X} beyond limit 0x{limit:X} ({top - limit} B over)")
     if types - ALLOWED_RECORDS:
@@ -89,19 +105,22 @@ def main(argv):
     if min_tail and 0 < last < min_tail:
         errors.append(f"the image ends {last} B (0x{last:X}) into its last 4 KB sector at 0x{top - last:X}, the release needs at least 0x{min_tail:X} B "
                       f"there: the unit's bootloader is suspected of leaving a short tail erased. "
-                      f"Grow the image by {min_tail - last} B or more (FF_TAIL_PAD in synth-open/ext_module.cpp)")
+                      f"Grow the image by {min_tail - last} B or more (FF_TAIL_PAD, make original sizes it with synth-open/tools/tail_pad.py)")
     name = path.rsplit("/", 1)[-1]
     if errors:
         print(f"PTF CHECK FAILED: {name}\n  " + "\n  ".join(errors))
         print(f"  (highest address 0x{top:X}, record types {sorted(types)})")
         return 1
-    print(f"ptf ok: {name}: highest address 0x{top:X} ({limit - top} B under 0x{limit:X}), "
+    print(f"ptf ok: {name}: highest address 0x{top:X} ({limit - top} B under 0x{limit:X}"
+          + (f", {proven[0] - top} B under the device-proven 0x{proven[0]:X}" if proven and top <= proven[0] else "") + "), "
           f"record types {sorted(types)}, SP=0x{sp:08X}, reset=0x{reset:08X}, flash config = stock")
+    for n in notes:
+        print("  " + n)
     if 0 < last < SHORT_TAIL:
         # not an error for a stock style image (they ended anywhere), but an image bound to a module must not (pack_ext.py refuses)
         print(f"  WARNING short last sector: the image ends {last} B into the 4 KB sector at 0x{top - last:X}. The unit's bootloader is "
               f"suspected of leaving such a tail erased: the data there reads 0xFF, a module "
-              f"bound to this image is refused. Grow the image by {SHORT_TAIL - last} B or more (FF_TAIL_PAD in synth-open/ext_module.cpp).")
+              f"bound to this image is refused. Grow the image by {SHORT_TAIL - last} B or more (FF_TAIL_PAD, make original sizes it with synth-open/tools/tail_pad.py).")
     return 0
 
 

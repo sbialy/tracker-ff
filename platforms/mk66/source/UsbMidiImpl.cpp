@@ -1,4 +1,5 @@
 #include "UsbMidiImpl.h"
+#include "usb_dev.h"
 #include "usb_midi.h"
 
 bool UsbMidiImpl::isReadAvailable()
@@ -59,4 +60,11 @@ void UsbMidiImpl::setReceiveActions(MidiReceiveActions* receiveActions)
     usbMIDI.setHandleNoteOff(receiveActions->noteOff);
     usbMIDI.setHandleSongPosition(receiveActions->songPosition);
     usbMIDI.setHandleControlChange(receiveActions->controlChange);
+    usbMIDI.setHandlePitchChange(receiveActions->pitchBend);
+}
+
+bool UsbMidiImpl::takeBusLost()
+{
+    // the interrupt sets the flag, the audio callback takes it: the exchange keeps an event that lands in between
+    return __atomic_exchange_n(&usb_bus_lost, uint8_t(0), __ATOMIC_ACQ_REL) != 0;
 }

@@ -31,7 +31,7 @@ OUT="$(cd "$1" && pwd)"
 FLAVOUR="${2:-autof}"
 VIS="${3:-all}"
 with=(); for g in ${groups[@]+"${groups[@]}"}; do with+=(--with "$g"); done
-PY="${PY:-python3}"
+PY="${PY:-$(sh "$ROOT/synth-open/tools/pyenv.sh" python)}" || exit 2
 : "${TOOLCHAIN:?set TOOLCHAIN to the arm-none-eabi- prefix}"
 export TOOLCHAIN
 case $FLAVOUR in autof|fused) ;; *) echo "flavour must be autof or fused"; exit 2;; esac

@@ -82,6 +82,9 @@ void receiveJackClock();
 void handleUsbSongPosition(uint16_t beats);
 void handleJackSongPosition(unsigned int);
 
+void handleJackPitchBend(uint8_t channel, int bend);
+void handleUsbPitchBend(uint8_t channel, int bend);
+
 void handleJackControlChange(byte channel, byte number, byte value);
 void handleUSBControlChange(byte channel, byte number, byte value);
 

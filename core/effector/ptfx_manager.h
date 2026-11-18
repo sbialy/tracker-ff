@@ -27,6 +27,18 @@ class PtfxManager
     // Loads the selected plugin into executable RAM and configures mtEffectModular
     static bool loadPlugin(uint16_t index, mtEffectModular& modularEffect);
 
+    // Sample editor effects that live on the card (FW_SE_PTFX): the list slot keeps the built in position and name, the code is
+    // /Effects/se_<name>.ptfx. A slot whose file is not on the card is listed as "Missing: <name>" and cannot be applied.
+#ifdef FW_SE_PTFX
+    static bool isMovedSlot(uint16_t listIdx);
+    static bool isMovedAvailable(uint16_t listIdx);
+    // true: the card file is loaded and mtEffectModular is configured. false: modularEffect holds no plugin and the active header is cleared
+    static bool loadMoved(uint16_t listIdx, mtEffectModular& modularEffect);
+    static const char* getMovedFileName(uint16_t listIdx);
+#else
+    static constexpr bool isMovedSlot(uint16_t) { return false; }
+#endif
+
     // Active loaded plugin header (single in-RAM instance)
     static const PtfxHeader& getActiveHeader();
 

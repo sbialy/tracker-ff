@@ -1,0 +1,28 @@
+# Dynamic stack frames (VLA, alloca) of the image and the most bytes each one can add on top of the static frame of the .su file.
+# stack_depth.py --payload adds the bytes to the frame of the function, so every call chain through it counts them. The static
+# frame does not hold them: the .su size is the static part only and the prologue scan has no dynamic part either.
+#
+#   BYTES REGEX   # source line, the size expression and why it cannot be larger
+#
+# REGEX matches the demangled function name (no spaces). Bytes are the size expression at its largest value, rounded up to the 8 byte
+# stack alignment. A bound that GCC already folded into the static frame is still added (the walker over counts, never under counts).
+# stack_margin.py FAILS when a function of the image has a dynamic frame and no line here (a new VLA needs its bound and its reason
+# in the same commit) and when a line matches no dynamic function (stale). stack_ratchet.py already fails the new dynamic function itself.
+# All bounds are E (read from the source, not run), constants checked on 2026-11-14 at 728a788.
+# MOD and IT import and export (cFileManager::importModFile_*, exportItFile_InitHeader, getFileVariable) left the image with modit.plg (7cae44b0),
+# their five lines are gone. The plugin has its own frames and is outside this table.
+
+# libs/NewDisplay/tracker.cpp:343 uint16_t rowNumbers[rowCount], rowCount is 8 or 15 (:333, :337) = 30 B, 32 aligned
+32    ^cTracker::tracksNumbers\(\)$
+# tracker.cpp:940 int textLetersCount[columnsCount], columnsCount is 2 to 8 (:318-326) = 32 B. GCC may have folded it into the static frame of
+# update() (the 6 truly dynamic frames of the study do not list it), the walker counts it anyway
+32    ^cTracker::update\(\)$
+# mtSequencer_patternEdit.cpp:1280 uint8_t uiChangeInstrumentOrder[instrumentCount], at most kTotalInstrumentsCount = 3 + 16 + 48 = 67 (mtStructs.h:104-111), 72 aligned.
+# Same remark as tracker.cpp:940: possibly folded, counted anyway
+72    ^Sequencer::changeInstrumentInSpecificOrder\(
+
+# libstdc++ throw helpers that the GCC 10.3 image links (the 12.3 image drops them, hence optional: no stale error when absent). Both build a message
+# with alloca(strlen(format) + a few numbers) and then throw. The firmware builds with -fno-exceptions, so nothing can catch it and the path ends in
+# abort. The sources of the prebuilt libstdc++ are not in this tree: 256 B is an estimate for the longest format string the headers pass (U)
+256   ^__gnu_cxx::__throw_insufficient_space\(   optional
+256   ^std::__throw_out_of_range_fmt\(           optional

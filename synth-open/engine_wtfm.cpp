@@ -127,6 +127,7 @@ const EngineDef kWtfmDef = {
     kMaxVoicesPerInstrument,
     &ot::audio::wtfm::engine,
     false,
+    true, // monoOut: the engine writes L only
 };
 
 } // namespace polysynth::open

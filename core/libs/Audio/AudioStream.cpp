@@ -29,6 +29,9 @@
  */
 
 #include "AudioStream.h"
+#ifdef AUDIO_NULL_IS_SILENCE
+#include "fx_mute_gate.h"
+#endif
 #include "config.h"
 #include "mtAudioEngine.h"
 #include <mtAudioExport.h>
@@ -173,6 +176,31 @@ AUDIO_CORE_RAM void AudioStream::transmit(audio_block_t* block, unsigned char in
         }
     }
 }
+
+#ifdef AUDIO_NULL_IS_SILENCE
+__attribute__((noinline)) AUDIO_CORE_FLASH void FxMuteGate::ramp(int16_t* data, int32_t from, int32_t to)
+{
+    const int32_t delta = to - from;
+    for (int i = 0; i < AUDIO_BLOCK_SAMPLES; i++)
+    {
+        const int32_t g = from + (delta * (i + 1)) / AUDIO_BLOCK_SAMPLES;
+        data[i] = (int16_t)((data[i] * g) >> 15);
+    }
+}
+
+AUDIO_CORE_FLASH void AudioStream::sleepStream()
+{
+    active = false;
+    for (int i = 0; i < num_inputs; i++)
+    {
+        if (inputQueue[i] != NULL)
+        {
+            release(inputQueue[i]);
+            inputQueue[i] = NULL;
+        }
+    }
+}
+#endif
 
 // Receive block from an input.  The block's data
 // may be shared with other streams, so it must not be written

@@ -1,6 +1,7 @@
 #include "titleBar.h"
 #include "core/interfaceDefs.h"
 #include "display.h"
+#include "mtCapture.h"
 
 #if GUI_HANDLE_SYNTH
 #include "Profiler.h"
@@ -66,6 +67,18 @@ void TitleBar::initControls()
     prop.value = 0;
     performBox = display.createControl<SimpleBox>(&prop);
 
+    // the Capture indicator: a 10 x 10 square in the free gap between the title (clipped at x = 279) and the CPU line (x = 297..467), created
+    // before the bar so it is drawn on top of it. Fill and outline colours per state in captureColors
+    prop.style = (controlStyleBackground | controlStyleBorder);
+    prop.colors = captureColors;
+    prop.x = 283;
+    prop.y = 8;
+    prop.w = 10;
+    prop.h = 10;
+    prop.value = 0;
+    prop.data = nullptr;
+    captureBox = display.createControl<cLabel>(&prop);
+
     barLabelData.line.color = display.getTheme().topBarLabelColors[2];
     barLabelData.line.x1 = 0;
     barLabelData.line.x2 = 800;
@@ -91,6 +104,7 @@ void TitleBar::refreshColors()
     display.setControlColors(battery, display.getTheme().batteryIconColors);
 #endif
     display.setControlColors(performBox, &display.getTheme().red);
+    applyCaptureState();
     barLabelData.line.color = display.getTheme().topBarLabelColors[2];
     display.setControlColors(bar, display.getTheme().topBarLabelColors);
 }
@@ -119,6 +133,49 @@ void TitleBar::show(bool showRightLabel)
     display.refreshControl(bar);
 
     visible = true;
+    applyCaptureState();
+}
+
+// The state is kept while the bar is hidden (a module that switches the bar off) and drawn again by show().
+void TitleBar::setCaptureState(uint8_t state)
+{
+    if (state == captureState)
+    {
+        return;
+    }
+    captureState = state;
+    captureDrawCount++;
+    applyCaptureState();
+}
+
+void TitleBar::applyCaptureState()
+{
+    if (!visible || captureState == kCapIndHidden)
+    {
+        display.setControlHide(captureBox);
+        display.refreshControl(captureBox);
+        return;
+    }
+    const Theme& theme = display.getTheme();
+    const uint32_t dim = theme.inactiveLabelsColors[3];
+    uint32_t fill = dim;   // stale: filled, dim
+    uint32_t line = dim;
+    if (captureState == kCapIndEmpty)
+    {
+        fill = theme.topBarLabelColors[1]; // hollow: the bar colour inside the dim outline
+    }
+    else if (captureState == kCapIndReady)
+    {
+        fill = theme.green;
+        line = theme.green;
+    }
+    captureColors[0] = line;
+    captureColors[1] = fill;
+    captureColors[2] = line;
+    captureColors[3] = line;
+    display.setControlColors(captureBox, captureColors);
+    display.setControlShow(captureBox);
+    display.refreshControl(captureBox);
 }
 
 void TitleBar::setTitle(const char* text)
@@ -240,6 +297,7 @@ void TitleBar::hide()
     // display.refreshControl(battery);
 #endif
 
+    display.setControlHide(captureBox);
     display.setControlHide(bar);
     display.refreshControl(bar);
 

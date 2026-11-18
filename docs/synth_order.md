@@ -11,7 +11,7 @@ Synth order lets you hide engines in the Model list of the Synth screen and put 
 
 ## 1. What it is
 
-The Model column of the Synth screen lists the synth engines: the five built in ones and every plugin engine in `/Plugins/Synth/` on the card. With thirteen plugin engines that is a long list. Synth order gives you two things:
+The Model column of the Synth screen lists the synth engines: the five built in ones and every plugin engine in `/Plugins/Synth/` on the card. With fourteen plugin engines that is a long list. Synth order gives you two things:
 
 - **Order.** Put the engines you use first.
 - **Hide.** Take the engines you never use out of the list.

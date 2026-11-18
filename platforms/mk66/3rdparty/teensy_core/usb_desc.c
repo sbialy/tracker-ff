@@ -36,6 +36,9 @@
 #include "usb_names.h"
 #include "kinetis.h"
 #include "avr_functions.h"
+#ifdef FF_USB_MSC
+#include <string.h> // memmove (ff_usb_msc_select)
+#endif
 
 // USB Descriptors are binary data which the USB host reads to
 // automatically detect a USB device's capabilities.  The format
@@ -576,9 +579,22 @@ static uint8_t flightsim_report_desc[] = {
 // tracker-ff USB_AUDIO=1: the audio input after the last interface (see usb_desc.h).
 #define FF_AUDIO_DESC_POS		MULTITOUCH_INTERFACE_DESC_POS+MULTITOUCH_INTERFACE_DESC_SIZE
 #define FF_AUDIO_DESC_SIZE		8 + 9+9+12+9 + 9+9+7+11+9+7
+#ifdef FF_USB_MSC
+#define FF_MSC_DESC_POS			FF_AUDIO_DESC_POS+FF_AUDIO_DESC_SIZE
+#else
 #define CONFIG_DESC_SIZE		FF_AUDIO_DESC_POS+FF_AUDIO_DESC_SIZE
+#endif
+#else
+#ifdef FF_USB_MSC
+#define FF_MSC_DESC_POS			MULTITOUCH_INTERFACE_DESC_POS+MULTITOUCH_INTERFACE_DESC_SIZE
 #else
 #define CONFIG_DESC_SIZE		MULTITOUCH_INTERFACE_DESC_POS+MULTITOUCH_INTERFACE_DESC_SIZE
+#endif
+#endif
+#ifdef FF_USB_MSC
+// tracker-ff USB_MSC=1: the mass storage interface after everything else (see usb_desc.h): interface 9, 2 endpoints 7 + 7
+#define FF_MSC_DESC_SIZE		9 + 7 + 7
+#define CONFIG_DESC_SIZE		FF_MSC_DESC_POS+FF_MSC_DESC_SIZE
 #endif
 
 
@@ -1514,6 +1530,36 @@ static uint8_t config_descriptor[CONFIG_DESC_SIZE] = {
         0,                                      // bLockDelayUnits
         0x00, 0x00,                             // wLockDelay
 #endif // FF_USB_AUDIO_TX
+
+#ifdef FF_USB_MSC
+        // tracker-ff USB_MSC=1: the SD card as a USB drive in Drive mode. From OpenTracker (third_party/teensy3/usb_desc.c,
+        // https://github.com/sandlbn/polyend-tracker-re commit 927b1516385e, PJRC terms). bInterfaceNumber is set by
+        // ff_usb_msc_select. No IAD: a function of one interface.
+        // interface descriptor, USB spec 9.6.5, page 267-269, Table 9-12
+        9,                                      // bLength
+        4,                                      // bDescriptorType
+        MSC_INTERFACE,                          // bInterfaceNumber
+        0,                                      // bAlternateSetting
+        2,                                      // bNumEndpoints
+        0x08,                                   // bInterfaceClass (0x08 = Mass Storage)
+        0x06,                                   // bInterfaceSubClass (0x06 = SCSI transparent command set)
+        0x50,                                   // bInterfaceProtocol (0x50 = Bulk-Only Transport)
+        0,                                      // iInterface
+        // endpoint descriptor, USB spec 9.6.6, page 269-271, Table 9-13
+        7,                                      // bLength
+        5,                                      // bDescriptorType
+        MSC_TX_ENDPOINT | 0x80,                 // bEndpointAddress
+        0x02,                                   // bmAttributes (0x02=bulk)
+        MSC_TX_SIZE, 0,                         // wMaxPacketSize
+        0,                                      // bInterval
+        // endpoint descriptor, USB spec 9.6.6, page 269-271, Table 9-13
+        7,                                      // bLength
+        5,                                      // bDescriptorType
+        MSC_RX_ENDPOINT,                        // bEndpointAddress
+        0x02,                                   // bmAttributes (0x02=bulk)
+        MSC_RX_SIZE, 0,                         // wMaxPacketSize
+        0,                                      // bInterval
+#endif // FF_USB_MSC
 };
 
 
@@ -1609,14 +1655,86 @@ void usb_init_serialnumber(void)
 // the stock configuration (interfaces 0..3, the bytes after FF_AUDIO_DESC_POS are never sent, see GET_DESCRIPTOR in
 // usb_dev.c), so the unit enumerates exactly like an image without the flag. Called by usb_init before the pull-up.
 uint8_t ff_usb_audio_on;
+uint8_t ff_usb_audio_channels;
 
+// Byte offsets in the audio block (FF_AUDIO_DESC_POS): IAD 8, AC interface 9, AC header 9, then the input terminal (12) at 26,
+// output terminal 9, AS alternates 9 + 9, AS general 7, then the Type I format (11) at 72 and the endpoint (9) at 83.
+#define FF_IT_NRCH		(FF_AUDIO_DESC_POS + 26 + 7)	// bNrChannels, wChannelConfig (2), iChannelNames
+#define FF_FMT_NRCH		(FF_AUDIO_DESC_POS + 72 + 4)	// bNrChannels
+#define FF_EP_MAXPKT	(FF_AUDIO_DESC_POS + 83 + 4)	// wMaxPacketSize (2)
+#define FF_CHNAME_INDEX	0x10						// string descriptors 0x10..0x1A, Track 1..8, Synth 1..3
+
+// 1: stereo, the descriptor as compiled (master L/R, Left & Right Front, 180 B). 2: 8+3 mono, 11 channels without a spatial
+// position (wChannelConfig 0, named by iChannelNames), 990 B packets. Six bytes differ between the two (usb_desc_test.sh).
 void ff_usb_audio_select(int on)
 {
 	const unsigned len = on ? (CONFIG_DESC_SIZE) : (FF_AUDIO_DESC_POS);
+	const int multi = on == 2;
 	ff_usb_audio_on = on ? 1 : 0;
+	ff_usb_audio_channels = on ? (multi ? FF_AUDIO_MULTI_CH : 2) : 0;
 	config_descriptor[2] = LSB(len);
 	config_descriptor[3] = MSB(len);
 	config_descriptor[4] = on ? NUM_INTERFACE : FF_AUDIO_INTERFACE;
+	if (multi) {
+		config_descriptor[FF_IT_NRCH] = FF_AUDIO_MULTI_CH;
+		config_descriptor[FF_IT_NRCH + 1] = 0;
+		config_descriptor[FF_IT_NRCH + 2] = 0;
+		config_descriptor[FF_IT_NRCH + 3] = FF_CHNAME_INDEX;
+		config_descriptor[FF_FMT_NRCH] = FF_AUDIO_MULTI_CH;
+		config_descriptor[FF_EP_MAXPKT] = LSB(FF_AUDIO_MULTI_SIZE);
+		config_descriptor[FF_EP_MAXPKT + 1] = MSB(FF_AUDIO_MULTI_SIZE);
+	}
+}
+
+// iChannelNames of 8+3 mono: "Track 1".."Track 8", "Synth 1".."Synth 3" (7 UTF-16 characters each, the digit patched in)
+static struct {
+	uint8_t bLength;
+	uint8_t bDescriptorType;
+	uint16_t wString[7];
+} ff_chname = { 2 + 7 * 2, 3, {'T','r','a','c','k',' ','1'} };
+
+const uint8_t* ff_usb_audio_string(uint16_t wValue)
+{
+	const unsigned i = (unsigned)wValue - (0x0300 + FF_CHNAME_INDEX);
+	if (ff_usb_audio_channels != FF_AUDIO_MULTI_CH || i >= FF_AUDIO_MULTI_CH) return NULL;
+	// control requests are handled one at a time (endpoint 0), the reply is sent before the next one rewrites the buffer
+	static const char kTrack[5] = {'T','r','a','c','k'}, kSynth[5] = {'S','y','n','t','h'};
+	const char* w = i < 8 ? kTrack : kSynth;
+	for (int k = 0; k < 5; k++) ff_chname.wString[k] = (uint16_t)w[k];
+	ff_chname.wString[6] = (uint16_t)('1' + (i < 8 ? i : i - 8));
+	return (const uint8_t*)&ff_chname;
+}
+#endif
+
+#ifdef FF_USB_MSC
+// tracker-ff USB_MSC=1: the mass storage interface is compiled in and picked at start, after ff_usb_audio_select. Off: the
+// configuration of an image without the flag (wTotalLength and bNumInterfaces end before the block, GET_DESCRIPTOR sends
+// wTotalLength bytes). On: the block follows the last interface served, moved down over the audio block when audio is off,
+// and takes the next interface number (4 or 6). Called by usb_init before the pull-up, the descriptors never change after.
+uint8_t ff_usb_msc_on;
+uint8_t ff_usb_msc_iface = MSC_INTERFACE;
+
+void ff_usb_msc_select(int on)
+{
+	unsigned len = FF_MSC_DESC_POS;
+	uint8_t n = MSC_INTERFACE;
+#ifdef FF_USB_AUDIO_TX
+	if (!ff_usb_audio_on) {
+		len = FF_AUDIO_DESC_POS;
+		n = FF_AUDIO_INTERFACE;
+	}
+#endif
+	ff_usb_msc_on = on ? 1 : 0;
+	if (on) {
+		if (len != (FF_MSC_DESC_POS)) memmove(config_descriptor + len, config_descriptor + (FF_MSC_DESC_POS), FF_MSC_DESC_SIZE);
+		config_descriptor[len + 2] = n;
+		ff_usb_msc_iface = n;
+		len += FF_MSC_DESC_SIZE;
+		n++;
+	}
+	config_descriptor[2] = LSB(len);
+	config_descriptor[3] = MSB(len);
+	config_descriptor[4] = n;
 }
 #endif
 

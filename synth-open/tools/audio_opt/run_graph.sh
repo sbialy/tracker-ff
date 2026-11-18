@@ -1,6 +1,6 @@
 #!/bin/bash
 # Audio graph equivalence and cost bench, see graph_bench.cpp. Needs the pinned toolchain in agt/10.3 and a python with unicorn + capstone:
-#   python3 -m venv $VENV && $VENV/bin/pip install unicorn capstone      (PYTHON=$VENV/bin/python)
+#   sh synth-open/tools/pyenv.sh (once, the pinned ~/prj/poly/build/pyenv is the default, PYTHON= or PY= wins)
 #
 #   run_graph.sh build <src-root> <label> [extra compile flags]    -> $OUT/<label>.elf  (default OUT=/tmp/audio_opt)
 #   run_graph.sh run <label> <scenario> <blocks>                   -> $OUT/<label>.sc<scenario>.bin  (logs) and their sha256
@@ -13,7 +13,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT0=$(cd "$HERE/../../.." && pwd)
-PY=${PYTHON:-python3}
+PY=${PYTHON:-${PY:-$(sh "$HERE/../pyenv.sh" python)}} || exit 2
 TC=${TOOLCHAIN:+${TOOLCHAIN%-}}      # TOOLCHAIN=.../bin/arm-none-eabi- (as for make) picks the compiler, else agt/10.3 of the tree
 TC=${TC:-$ROOT0/agt/10.3/bin/arm-none-eabi}
 OUT=${OUT:-/tmp/audio_opt}

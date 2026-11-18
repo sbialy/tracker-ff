@@ -7,8 +7,14 @@
 #include "mtMidi.h"
 #include "mtStructs.h"
 #include "scales.h"
+#include "seqRandom.h"
 #include "util_math.h"
 #include <stdint.h>
+
+namespace fx34
+{
+struct Set;
+}
 
 static void nullCallback(void){};
 
@@ -35,6 +41,9 @@ class Sequencer
     static constexpr seqtimesec_t kMinute = 60 * kSecond;
 
     static constexpr int kStepFxSlots = 2;
+    // FX slots the player plays a step with: the 2 of the pattern file and, with the 4 FX project switch (fx34.h), 2 more of the
+    // per pattern sidecar. Rank 0 is the most significant, ranks 2 and 3 form a second pair (rank ^ 1 is the other slot of a pair)
+    static constexpr int kSeqFxSlots = 4;
 
     enum enStep
     {
@@ -114,6 +123,7 @@ class Sequencer
         midiInVoiceMode_SamplePlayback,
         midiInVoiceMode_SampleEditor,
         midiInVoiceMode_SampleRecorder,
+        midiInVoiceMode_SynthPlay, // the Synth play page: MIDI in plays one synth part, no song (synthPlayRouter.h)
         midiInVoiceMode_default = midiInVoiceMode_sequencer,
     };
 
@@ -183,8 +193,14 @@ class Sequencer
             FX_TYPE_R3,
             FX_TYPE_STRUM = FX_TYPE_R3, // tracker-ff: strum of the MIDI Chord in the other slot (1..63 up, 65..127 down, 2 ms a unit)
             FX_TYPE_R7,
+            FX_TYPE_COND = FX_TYPE_R7, // tracker-ff: Chance FX, the Chance value gates only the other slot's FX, the note always plays
             FX_TYPE_R8,
+            FX_TYPE_PATCH_MORPH = FX_TYPE_R8, // SYNTH_OPEN: blend of the open patch slot and a bank slot, 0..100 %
             FX_TYPE_R9,
+            FX_TYPE_TAPE = FX_TYPE_R9, // tracker-ff: Tape, value 1..64 = the voices of the track slow to a stop (run-down of v quarters of a step), 65..128 = spin up from standstill (run-up of v - 64 quarters), see tapeFx.h
+            FX_TYPE_R10, // RESERVED HOLE, never reuse: the former Tape Start (dev projects), migrated on load to Tape (id 50) with the value + 64 (tapeFx.h)
+            FX_TYPE_R11, // rel140-snapfx: id 52, older firmware shows it as no FX
+            FX_TYPE_SNAP = FX_TYPE_R11, // tracker-ff: latching scale snap of the track from this step (value 0 Off, 1 Nearest, 2 Down, 3 Up, 4 Track = back to the project setting)
 
         };
 
@@ -269,7 +285,12 @@ class Sequencer
             CHANCE_PLAY_SKIP_END = CHANCE_PLAY_SKIP_START + CHANCE_CYCLE_COUNT - 1,
             CHANCE_SKIP_PLAY_START = CHANCE_PLAY_SKIP_END + 1,
             CHANCE_SKIP_PLAY_END = CHANCE_SKIP_PLAY_START + CHANCE_CYCLE_COUNT - 1,
-            CHANCE_MAX = CHANCE_SKIP_PLAY_END,
+            // long pass conditions (tracker-ff), counted per track like the cycles above (passCount % 8 or % 16)
+            CHANCE_PASS8_START = CHANCE_SKIP_PLAY_END + 1, // 175..182: pass k of 8 (k = 1..8, 8 is every 8th pass)
+            CHANCE_PASS8_END = CHANCE_PASS8_START + 7,
+            CHANCE_PASS16_START = CHANCE_PASS8_END + 1,    // 183..198: pass k of 16 (16 is every 16th pass)
+            CHANCE_PASS16_END = CHANCE_PASS16_START + 15,
+            CHANCE_MAX = CHANCE_PASS16_END,
         };
 
     } fx;
@@ -354,6 +375,9 @@ class Sequencer
     {
         bool songMode = 0;
         bool performanceMode = 0;
+        // Performance put tracks of other patterns into the playing pattern (bit per track): it is not the pattern on screen
+        // any more, so it must never be saved under that pattern's number (cleared when a whole pattern is loaded)
+        uint16_t perfMixedTracks = 0;
         bool selectionMode = 0;
         bool selectionModeLooped = 0;
         strSelection loopSelection;
@@ -450,7 +474,7 @@ class Sequencer
                     uint8_t type = 0;
                     uint8_t value = 0;
 
-                } fx[kStepFxSlots];
+                } fx[kSeqFxSlots];
 
                 int8_t volume = -1; // jeśli <0 to nie wysyłamy
                 int8_t micromove = -1;
@@ -478,6 +502,7 @@ class Sequencer
             int16_t noteLength = -1; // nieskonczenie dluga jesli -1
 
             uint8_t cancelStep = 0;
+            uint8_t snapFx = 0xFF; // the Snap FX latch of the track (a scale snap mode 0..3), 0xFF = none (sits in the padding before passCount)
             uint32_t passCount = 0;
             bool lastCondFired = true;
 
@@ -618,6 +643,9 @@ class Sequencer
         ELEMENTS_FX2,
         ELEMENTS_MICROMOVE,
         ELEMENTS_VOLUME,
+        // the extra FX of the "4 FX" project switch (fx34.h). Ranks, not column names: rank 2 is FX4, rank 3 is FX3
+        ELEMENTS_FX_RANK2,
+        ELEMENTS_FX_RANK3,
     };
     enum enAltMidiChannel
     {
@@ -635,6 +663,12 @@ class Sequencer
     void tick(float intervalSeconds);
 
     bool isPlay(void);
+
+    // Seeded random takes (seqRandom.h): 0 = Off (every take differs, as before), 1..255 = the same decisions on every playback.
+    // The project keeps it in its plugin sidecar (plug_host.cpp), the Config > Project Settings rows change it. A change counts from the
+    // next Play.
+    uint8_t randomSeed = 0;           // the Config > Project Settings "Random seed" row edits it in place
+    uint8_t rerollRandomSeed(void);   // a new seed 1..255 other than the current one, returned
     bool isRec(void);
 
     uint8_t isRecArmedOnTrack(uint8_t track);
@@ -657,6 +691,8 @@ class Sequencer
 
     strPattern* getActualPattern() { return currentPattern; }
     strPattern* getBuffPattern() { return bufferPattern; }
+
+    bool isPerformanceImageMixed() const { return player.perfMixedTracks != 0; }
 
     bool isPerformanceTrackChange(uint8_t track)
     {
@@ -748,7 +784,8 @@ class Sequencer
     bool copyCurrentPatternToBuff(uint8_t* srcBuff);
 
     void switchRamPatternsNow();
-    void switchPerformanceTrackNow(uint8_t trackToSwitch);
+    // source: the pattern the buffer track came from, -1: the track's pending source (performanceSourcePattern)
+    void switchPerformanceTrackNow(uint8_t trackToSwitch, int source = -1);
     void setTrackToLoadOnSwitch(uint8_t track, uint8_t sourcePattern);
     void setTrackToLoadNow(uint8_t track, uint8_t sourcePattern);
     void setPerformanceTrackLength(uint8_t track, uint8_t length);
@@ -766,6 +803,10 @@ class Sequencer
     void playSelection(bool looped = false);
     float getPlaySelectionProgress(void);
     void playSong(void);
+#ifdef FEATURE_PARTS
+    void switchToPartImage();             // parts.cpp: the buffer pattern (a Part image) becomes the playing pattern
+    void playPartImage(bool songMode);    // play the Part image (songMode 0: loop it)
+#endif
     void playSongFromPosition(uint8_t songPos);
     void recStart(void);
     void showPreRollPopup();
@@ -817,6 +858,7 @@ class Sequencer
     void setPatternHeader(strPattern* patt);
     void clearStep(strPattern::strTrack::strStep*);
     void clearStep(strPattern::strTrack::strStep* step, uint8_t);
+    void clearStepStored(strPattern::strTrack::strStep* step, uint8_t elements); // the step struct only, not the extra FX of fx34.h
     void clearSelected(strSelection* sel, uint8_t elements);
     void clearSelected();
     void clearSelected(uint8_t);
@@ -846,6 +888,8 @@ class Sequencer
 
     void fillRandomNotes(int16_t, int16_t, int16_t, int16_t, int16_t);
     void fillLinearNotes(int16_t, int16_t, int16_t, int16_t, int16_t);
+    // Fill Type Role: a drum, bass or lead idea over the selection (mtPatternGen.h), role is patternGen::Role, density 1..MAX_FILL_DENSITY
+    void fillRoleNotes(int16_t role, int16_t scale, int16_t density);
     void fillRandomInstruments(int16_t step, int16_t from, int16_t to, int16_t density);
     void fillLinearInstruments(int16_t step, int16_t from, int16_t to, int16_t density);
     void fillLinearFx(int16_t index,
@@ -862,6 +906,17 @@ class Sequencer
                       int16_t density);
     void fillLinearMicromove(int16_t fillStep, int16_t fromVal, int16_t toVal, int16_t density);
     void fillRandomMicromove(int16_t fillStep, int16_t fromVal, int16_t toVal, int16_t density);
+    // Quantize: every selected step with a micromove moves toward the grid by strength percent (100 = on the grid, micromove cleared)
+    void quantizeMicromove(int16_t fillStep, int16_t strength, int16_t density);
+    // The per track groove, one signed value per track, -kGrooveMax..kGrooveMax, 0 = off (the default, plays as before). Positive
+    // delays the odd steps (swing) by that percent of a step, negative pulls the recorded micromove toward the grid (-kGrooveMax
+    // = on the grid). Playback only: the pattern keeps its micromoves. Not in the project struct: project.mtff (track.N.groove), written only when a
+    // track has one (WorkspaceProjectSave, plug_host.cpp grooveSave)
+    static constexpr int kGrooveMax = 50;
+    int8_t getTrackGroove(uint8_t track) const { return track < kAllTracks ? trackGroove[track] : 0; }
+    void setTrackGroove(uint8_t track, int v);
+    void clearTrackGrooves() { memset(trackGroove, 0, sizeof(trackGroove)); }
+    bool anyTrackGroove() const;
     void fillLinearVolume(int16_t fillStep, int16_t fromVal, int16_t toVal, int16_t density);
     void fillRandomVolume(int16_t fillStep, int16_t fromVal, int16_t toVal, int16_t density);
 
@@ -885,6 +940,11 @@ class Sequencer
     uint8_t generateRandomFx();
     void invertSelectedSteps(uint8_t);
     bool duplicatePattern();
+    // D6 (4 FX): move the V (volume) and m (micro-move) FX of the steps that play a note into the volume and micro-move fields of the
+    // step. Manual only. It is not bit exact: the groove (project.mtff) acts on the micro-move field only, and a step whose V or m FX
+    // is the target of a Random value or Chance FX next to it is left alone. Steps without a note keep their FX (their V is a held
+    // sequencer modulation, not a note velocity). Returns the number moved, `skipped` counts the ones left alone.
+    uint16_t moveVmFxToFields(uint16_t* skipped);
     bool expandPattern();
     bool shrinkPattern();
 
@@ -922,6 +982,16 @@ class Sequencer
     void chordCaptureMidiOn(uint8_t note, bool firstWritten);
     void chordCaptureMidiOff(uint8_t note);
 
+    // Capture (Ableton Move style, mtSequencer_capture.cpp, Config > Features > Capture, off by default): the notes played in the green
+    // mode of the pattern editor go into a ring (mtCapture.h), the under-screen button 3 puts the last pass of the pattern into the copy
+    // buffer (the stock Copy/Paste one) with the stock live record rules, the pattern is not touched. captureTap is the one funnel:
+    // handleNoteOn / handleNoteOff call it for pads and MIDI in.
+    void captureTap(uint8_t channel, uint8_t note, uint8_t velocity, bool on, int16_t source);
+    void captureCommit();   // main loop, a popup tells what was captured or why not
+    uint8_t captureIndicator(); // main loop, every 60 ms: the idle time empties the ring, returns the CaptureIndicator state for the title bar
+    void captureClear();        // long press of button 3: the ring is emptied, popup "Capture cleared"
+    bool captureWindow(int& track, uint32_t& passUs); // the start track and the length of one pass in us (false: no usable track)
+
     // Strum FX (tracker-ff, FX_TYPE_STRUM): the value as signed units, + up (lowest note first), - down, 0 off (values 0 and 64).
     // A unit is kStrumUnitUs between two successive chord notes. The notes start on audio block boundaries (2,902 us on MK66),
     // the due time of each note is exact, so the error never adds up over a chord.
@@ -937,9 +1007,52 @@ class Sequencer
     void handleTrackMidiNoteOff(uint8_t track);
     void updateTrackLengths(strPattern* pattern);
 
+    // Per-track pattern length (polymeter, tracker-ff). Stock keeps every track at the length of track 1 (track[0].length, the
+    // pattern length) and the player reads only that one. A pattern marks per-track lengths with kPolymeterMark in its reserved
+    // header byte rezerwa1 (always 0 in stock files, clearPattern), so an unmarked pattern plays exactly as before even when an old
+    // file holds stale lengths in tracks 9-16 (the stock length edit syncs only tracks 2-8). In a marked pattern
+    //   - track[0].length stays the pattern length: song advance, pattern end, and what 1.3.0 plays and edits
+    //   - track 1 keeps its own length in rezerwa2 (last step + 1, 0 = the pattern length)
+    //   - tracks 2-16 keep their own length in track[t].length
+    //   - rezerwa3 holds the pattern length at the last polymeter edit (last step + 2). A firmware without polymeter that changes
+    //     the pattern length (1.3.0 syncs tracks 2-8 only) leaves it stale, the mark then no longer counts and the pattern plays as stock
+    // Every track length is clamped to the pattern length. The mark is cleared again once every track is back at the pattern length.
+    static constexpr uint8_t kPolymeterMark = 'P';
+    static bool isPolymeter(const strPattern* p)
+    {
+        return p->rezerwa1 == kPolymeterMark && p->rezerwa3 == uint8_t(p->track[0].length + 2);
+    }
+    static void stampPolymeter(strPattern* p) { p->rezerwa3 = uint8_t(p->track[0].length + 2); }
+    // the last step index (length - 1) track t plays in pattern p
+    static uint8_t getTrackLastStep(const strPattern* p, int t)
+    {
+        const uint8_t last = p->track[0].length;
+        if (!isPolymeter(p)) return last;
+        const uint8_t own = t == 0 ? (p->rezerwa2 ? uint8_t(p->rezerwa2 - 1) : last) : p->track[t].length;
+        return own < last ? own : last;
+    }
+    // set the length of track t (last step index), marks or unmarks the pattern. Returns true if anything changed
+    bool setTrackLastStep(strPattern* p, int t, int last);
+    // set the pattern length (last step index): tracks at the old pattern length follow it, shorter tracks keep theirs (clamped)
+    void setPatternLastStep(strPattern* p, int last);
+    // clamp every track to the pattern length, unmark the pattern when no track differs any more
+    void normalizePolymeter(strPattern* p);
+    // raw write of a track's own length (no clamp, no mark), callers normalize after
+    static void setTrackOwnLastStep(strPattern* p, int t, int last);
+
     uint8_t noMoreRecOpen();
 
+    // Snap FX (FX_TYPE_SNAP): the value is a scale snap mode (scales.h ScaleSnapMode), 0 Off .. 3 Up, or 4 Track: the latch is cleared and the
+    // track plays its project setting again (mtff track.N.snap) from that step. A value past 4 reads as Track
+    static constexpr uint8_t kSnapFxTrack = 4;
+    static constexpr uint8_t kSnapFxMax = kSnapFxTrack;
+    static constexpr uint8_t kSnapFxNone = 0xFF;
     int16_t getFxMax(uint8_t fxID, bool forRandom = false);
+    // the two FX with the Chance value domain: Chance drops the whole step, Chance FX (FX_TYPE_COND) only the FX of the other slot
+    static bool isChanceFamily(uint8_t fxType)
+    {
+        return fxType == strFxConsts::FX_TYPE_CHANCE || fxType == strFxConsts::FX_TYPE_COND;
+    }
     int16_t getFxMin(uint8_t fxID, bool forRandom = false);
     int16_t getFxDefault(uint8_t fxID);
     int16_t getFxValueToView(uint8_t fxID, uint8_t track, uint8_t step);
@@ -991,6 +1104,14 @@ class Sequencer
     } chordCap = {};
     void chordCaptureSnapshot(bool restore);
     uint32_t chordParaTracks = 0; // tracks whose MIDI Chord note-on went out as one paraphonic note (sendMidiChordOn / Off)
+#ifdef FEATURE_SYNTH_OPEN
+    // Note ids (polysynth::open::noteTag): every synth note the sequencer sends gets the next number (1..65535, 0 = none). noteId[track] is the
+    // id of the track's latest note-on, the note-off that ends it carries the same id, so it releases the voice that note started and no other
+    // voice of that pitch. The live paths (pad, MIDI in, record) send no id: they clear the track's id where they take the track over
+    uint16_t noteSerial = 0;
+    uint16_t noteId[kAllTracks] = {};
+    uint16_t nextNoteId() { return noteSerial = (noteSerial == 0xFFFF) ? uint16_t(1) : uint16_t(noteSerial + 1); }
+#endif
 
     // Strum FX: the delayed note-ons of strummed chords (MIDI out and Poly synth parts). Filled and served in the audio callback
     // (sendMidiChordOn, tick), a note-off of the track drops its pending notes, Stop drops all. Full: the note starts at once.
@@ -1001,12 +1122,17 @@ class Sequencer
         uint8_t note;
         uint8_t velocity;
         uint8_t channel;   // 1..16, bit 7: synth part. 0: a free slot
+#ifdef FEATURE_SYNTH_OPEN
+        uint16_t id;       // the note id of the chord step (noteId[track] when it was queued), 0 for a MIDI out note
+#endif
     };
     static constexpr uint8_t kStrumSlots = 12;
     strStrumNote strumQ[kStrumSlots] = {};
     uint8_t strumPending = 0;   // used slots
     uint32_t seqClockUs = 0;    // audio time, advanced by every tick (strum due times, the record join window)
     int8_t stepStrum(const strPlayer::strPlayerTrack::strSendStep* step);
+    // the slot of the MIDI Chord FX that plays (not one with an Arp in the other slot of its pair), -1 for none
+    static int8_t playingChordSlot(const strPlayer::strPlayerTrack::strSendStep* step);
     void strumQueue(uint8_t track, uint8_t note, uint8_t velocity, uint8_t channel, bool synth, uint32_t delayUs);
     void strumService();
     void strumCancel(int track);   // -1: every track
@@ -1026,6 +1152,7 @@ class Sequencer
         uint8_t first;    // the group's first note (the one the stock path wrote and previews)
         uint32_t t0;      // seqClockUs of the first note
         uint32_t tLast;   // seqClockUs of the latest note that joined (or of the first)
+        bool strumOwn;    // the Strum FX in the step is this group's roll (mtRoll.h), so the group may update or clear it
     } recJoin = {};
     void recJoinStart(uint8_t track, uint8_t step, uint8_t note);
     bool recJoinTry(uint8_t track, uint8_t note, uint8_t velocity);
@@ -1037,6 +1164,7 @@ class Sequencer
     bool recGroupOff(uint8_t track, bool padInstrumentEdit);   // the end of a recorded group on a track, true: the pattern changed
     bool chordCaptureWrite();
     bool chordCaptureContext(int instrument);
+    static int8_t chordSlot(strPattern::strTrack::strStep& st, int8_t prefer);   // the FX slot a chord goes to, -1: both busy
     static constexpr int kTicksInStep = 576;
     static constexpr size_t kExternalTempoCounterSize = 24 * 2;
     static constexpr int kExternalClockPpqn = 24;
@@ -1070,6 +1198,9 @@ class Sequencer
     bool evaluateChanceFx(uint8_t row, uint8_t value);
 
     void play_microStep(int row);
+    // the FX3 / FX4 set of the playing pattern for this step of all tracks, nullptr unless the 4 FX switch is on and the set has entries
+    const fx34::Set* playExtra = nullptr;
+    void followChordUpdate(); // tracker-ff Follow chord (mtFollowChord.h): the chord of each chord track at its step start
     void inc_uStep(uint8_t row);
     void inc_uStepGlobal();
 
@@ -1096,6 +1227,13 @@ class Sequencer
     void midiSendCC(uint8_t channel, uint8_t control, uint8_t value, uint8_t midiOut);
 
     void sendNoteOn(uint8_t track, strPlayer::strPlayerTrack::strSendStep* step);
+#ifdef FEATURE_PLUG_HOST
+    // Scale snap (scales.h): moves the note of the step in place, so the note off that follows names the note that was sent
+    void snapStepNote(uint8_t track, strPlayer::strPlayerTrack::strSendStep* step, uint8_t rollMode = kSnapOff);
+    // Snap FX latch of a track: back to the project setting / the latch a forward start at step `pos` would hold (the last Snap FX above it)
+    void snapFxReset(uint8_t track) { player.track[track].snapFx = kSnapFxNone; }
+    void snapFxEnter(uint8_t track, int pos);
+#endif
     void sendNoteOff(uint8_t track,
                      strPlayer::strPlayerTrack::strSendStep* step,
                      int8_t offOption = STEP_NOTE_OFF_DEFAULT);
@@ -1131,11 +1269,14 @@ class Sequencer
     };
     void stop(StopContext context);
     void reloadPatternAfterStop();
+    void stopForMissingNextPattern();
 
     strPattern* currentPattern;
     strPattern* bufferPattern;
 
     strPlayer player;
+
+    seqrand::Rng rng;         // every random decision of the playing sequencer
 
     int externalClockPulses = 0;
     int externalClocksToPlay = 0;
@@ -1171,6 +1312,26 @@ class Sequencer
     static constexpr uint8_t kMaxLiveRecHeldNotes = 32;
     HeldNoteSource liveRecHeldNotes[kMaxLiveRecHeldNotes];
     uint8_t liveRecHeldNotesCount = 0;
+
+    int8_t trackGroove[kAllTracks] = {};   // see setTrackGroove
+
+    // Replace record (Config > Recording mode "Replace"): the playhead clears the steps of the armed tracks as it passes. A step the take
+    // itself just wrote is kept (recKeepStep = step + 1, 0 = none, two slots: the note and its note off can both land ahead): a quantized note of the second half of a step lands on the NEXT step
+    uint8_t recKeepStep[kAllTracks][2] = {};
+    bool recReplaceOn() const;
+    // the track the replace take erases: the only armed track, with several armed the track under the cursor when it is armed (the
+    // track the live record writes to). Every track is armed by default, so the armed set alone would wipe the whole pattern
+    bool recReplaceTrack(uint8_t track);
+    void recReplaceEraseStep(uint8_t track, uint8_t step);
+    bool recReplaceKept(uint8_t track, uint8_t step) const
+    {
+        return recKeepStep[track][0] == uint8_t(step + 1) || recKeepStep[track][1] == uint8_t(step + 1);
+    }
+    void recReplaceKeep(uint8_t track, uint8_t step)
+    {
+        recKeepStep[track][1] = recKeepStep[track][0];
+        recKeepStep[track][0] = uint8_t(step + 1);
+    }
 };
 
 extern Sequencer sequencer;

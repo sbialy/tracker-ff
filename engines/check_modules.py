@@ -67,6 +67,11 @@ def version_of(h):
     return "%d.%d.%d" % (h["version"] >> 16, (h["version"] >> 8) & 255, h["version"] & 255)
 
 
+# A private module's published manifest names a public alias of its repository, never the private name (poly-engines 0bb4206):
+# the .json of a private row says `ff-engines` or `ff-effects`, an older one (tag engines-v1.3.0) the repository name itself.
+REPO_ALIAS = {"poly-engines": "ff-engines", "poly-effects": "ff-effects"}
+
+
 def module_manifest(d, row, kind):
     mf = os.path.join(d, row["id"] + ".json")
     if not os.path.exists(mf):
@@ -74,7 +79,7 @@ def module_manifest(d, row, kind):
     man = json.load(open(mf))
     errs = []
     if (man.get("format") != "ffmod" or man.get("kind") != kind or man.get("visibility") != row["visibility"]
-            or man.get("source_repo") != row["repo"]):
+            or man.get("source_repo") not in (row["repo"], REPO_ALIAS.get(row["repo"]))):
         errs.append("%s.json: not a %s %s module of %s (says %s %s of %s)" % (row["id"], row["visibility"], kind, row["repo"],
                                                                           man.get("visibility"), man.get("kind"), man.get("source_repo")))
     if kind == "synth" and (man["synth"]["stored"], man["synth"]["patch_engine"], man["synth"]["type_id"]) != (row["stored"], row["patch"], row["type"]):

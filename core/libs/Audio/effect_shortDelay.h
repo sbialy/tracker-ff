@@ -1,6 +1,9 @@
 #ifndef LIBS_AUDIO_EFFECT_SHORTDELAY_H_
 #define LIBS_AUDIO_EFFECT_SHORTDELAY_H_
 #include "AudioStream.h"
+#ifdef AUDIO_NULL_IS_SILENCE
+#include "fx_mute_gate.h"
+#endif
 
 constexpr uint8_t MAX_SHORT_DELAY_VOICES = 12;
 constexpr uint16_t MAX_SHORT_DELAY_TIME = 3500;
@@ -38,6 +41,14 @@ class AudioEffectShortDelay : public AudioStream
     {
         return silentSamplesCount >= timeInSamples;
     }
+#ifdef AUDIO_NULL_IS_SILENCE
+    // Mixer Mute (fx_mute_gate.h): feed is the send mixer, muted the project's delayMute
+    void setMuteFeed(AudioStream* feed) { muteGate.setFeed(feed); }
+    void setMuted(bool muted) { muteGate.setMuted(muted, this); }
+    bool isMuted() const { return muteGate.muted(); }
+    void cutMuteRing() { muteGate.cutRing(); }
+    bool isMuteAsleep() const { return muteGate.asleep(); }
+#endif
 
   private:
     struct FilterCoeffs
@@ -102,6 +113,8 @@ class AudioEffectShortDelay : public AudioStream
     // Consecutive samples (whole blocks) in which the values written to the lines that run were zero: the last timeInSamples of them
     // fill the delay window. With the filters at rest a block of silent input can be skipped bit exactly.
     uint32_t quietSamplesCount = 0;
+    FxMuteGate muteGate;
+    void clearForWake();
 #endif
 };
 

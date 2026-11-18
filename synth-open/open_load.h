@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 
 #include "open_slotnames.h"
 
@@ -20,6 +21,10 @@ namespace polysynth::open
 // cycle count of the block (DWT CYCCNT delta, 180 MHz on MK66). Feeds the load meter and the
 // governor (ot::audio::Governor). No-op without a Synth.
 void reportBlockCycles(uint32_t cycles);
+
+// PolySynth::update, at the start of every block (live and offline): a new block starts, the tempo is asked once for all parts until the
+// next one. No-op without a Synth.
+void synthBlock();
 
 // Audio interrupt, at the start of every live block (Profiler::startMeasuringAudio, before MIDI and the sequencer): `startCycles`
 // is the cycle counter at the block start and `cycles` reads it. Turns the note-on admission on: a note-on whose estimated cost
@@ -100,6 +105,36 @@ void engineRestartedLocked(const EngineDef* def);
 // patch of the same type to play (Synth::setInstrumentType)
 bool patchStale(const Patch& patch);
 
+// Main thread (plug_synth.cpp synthService, the patch editor's cycle view): the engine of part `part` and the stored values of its live
+// patch (no macros, no automation, the Patch FX values while the FX has replaced them), count entries, valid until the main thread
+// changes the part's patch. nullptr: no such part, no patch or a missing engine.
+const EngineDef* partPatch(int part, const float** values, int* count);
+// Main thread: the wave file path the live patch of `part` stores for its engine parameter `param` (OpenPatch::waveRef), into out (cap
+// bytes). Its length, or -1: no such part or patch, no path for the parameter, or the parameter was edited since the path was stored.
+int partWaveRef(int part, int param, char* out, size_t cap);
+// Main thread (the patch editor's value text of a wave file parameter): the path of entry `index` of the host's /Waves list (plug_files.h, sorted by
+// path, relative to /Waves) into out (cap bytes). False when there is no card or no such entry. Builds the list when this session has not (a walk
+// of the card, once: the engine's first file read does the same), later calls read SDRAM only. plug_synth.cpp, false without the plugin host.
+bool waveListName(int index, char* out, size_t cap);
+// Main thread, same list: true when /Waves holds no usable wave (no card, no folder, no .wav), so the wave file parameters (waveFileParam, open_mod.h)
+// are not listed anywhere. True without the plugin host (no engine there has such a parameter, nothing is listed either way).
+bool waveFilesAbsent();
+// Main thread: true when the stored wave path resolves on the card, as the engine's lookup sees it (the file at that path or its base name directly in
+// /Waves, plug_files.h waveListHas). True when the list cannot tell (full list, no plugin host).
+bool waveListHas(const char* path);
+// A wave file parameter: an index into the card's /Waves list (plug_abi.h PLUG_EXT_FILES, PLUG_FILES_MAX entries, 0 = none), what ALCO's A File and
+// B File are. The contract is the shape (an integer 0..PLUG_FILES_MAX named "<x> File"), nothing is added to the plugin ABI or to the patch.
+inline bool waveFileShape(const char* name, bool isInt, float mn, float mx)
+{
+    const size_t n = name ? std::strlen(name) : 0;
+    return isInt && mn == 0.0f && mx == 1024.0f && n > 5 && !std::strcmp(name + n - 5, " File");
+}
+// The editor's rows (parameter list, macro targets): true for the parameter that is not listed now, a wave file parameter while waveFilesAbsent.
+inline bool waveFileRowHidden(const char* displayName, bool isEnum, float minValue, float maxValue)
+{
+    return !isEnum && waveFileShape(displayName, true, minValue, maxValue) && waveFilesAbsent();
+}
+
 // Audio interrupt, once per part and block (PolySynth::update): true when the part would render nothing this block - no
 // voice sounding and no slot effect tail (the same test as the early return of the instrument's render). The caller then
 // transmits nothing (a missing block is silence for the amplifiers, analysers and mixers downstream) instead of
@@ -124,6 +159,28 @@ ChordParams plugChordParams(const EngineDef* def);   // plug_synth.cpp: an attac
 // parameter when the engine has one. False / no-op without a Synth or for a part that does not exist.
 bool partChordPara(int part);
 void partNoteChord(int part, uint8_t note, uint8_t chord, int8_t strum = 0);
+// Pitch bend range of a part in semitones for a full deflection (+-8192) of the bend message, 0..24, default 1 (the Micro-tune FX
+// reads in cents at 1). The Synth play page sets it while it is open and sets 1 again at exit. Main thread, a plain float store,
+// the audio callback reads it with the next bend message. No-op for a part that does not exist.
+void partBendRange(int part, float semitones);
+// Synth play page, A/B morph: the gain 0..1 of a part's voices (a factor on the voice gain target, so it ramps over the block like every
+// other gain change and the part's sends follow it). The page sets it on both parts and puts 1 back at exit. A plain float store, any
+// thread. No-op for a part that does not exist.
+void partGain(int part, float gain);
+// Voices of the part that sound (on and not fading), for the page's voice line. 0 for a part that does not exist.
+int partSounding(int part);
+// Note ids. The sequencer gives every note it sends a number (1..65535) and calls noteTag(id) right before the send of the note-on and the
+// note-off of that note and noteTag(0) right after it (the same call chain, so the synth parts see the id in onMidi). A voice remembers the id of
+// the note that started it, and a note-off that carries an id releases only the voice with that id and pitch (before: every gated voice of the
+// pitch, so two live notes of one pitch from two tracks ended together). Id 0 is "no id": the pad, MIDI in and the record path send notes
+// that way, their note-offs match by pitch alone and release any voice of the pitch, as before. Same thread as the sends that follow.
+void noteTag(uint16_t id);
+
+// Audio callback (Sequencer::tick, before the synth renders): the Tape Stop (start = false) and Tape Start (start = true) step FX
+// (core/source/tapeFx.h). The part's voices run down to a standstill or spin up from one over `frames` audio frames: pitch and level
+// follow the tape speed. A note-on that comes with the FX (same step, this or the next block) is part of the run, any other note-on
+// puts the speed back to normal. Nothing sounds and no note comes: the request is dropped after three idle blocks. No allocation.
+void partTape(int part, bool start, uint32_t frames);
 
 // Patch slots and the Patch step FX. Per part, 16 slots in the project: slot 0 is <P>.patch (what stock firmware opens),
 // slot n > 0 is <P>-n.patch, both in Workspace/ and in the project folder. The part's live Patch is the slot that is open in
@@ -211,16 +268,44 @@ SlotSelect patchBankSelect(int part, int slot, Patch& patch, PatchStore& workspa
 // False when there is nothing to reload.
 bool patchBankRevert(int part, Patch& patch, PatchStore& workspace);
 
+// Whether `slot` of the part can be applied: the open slot, or a slot with a file of the part's engine in the bank (the page's Bank columns)
+bool patchBankHas(int part, int slot);
+
 // Audio callback (Sequencer::tick, before the synth renders): the Patch step FX. Copies the values of `slot` into the part's
 // live patch. The slot that is open in the editor puts the edited values back. False (nothing changed) when the slot is out of
 // range or has no file of this engine. No allocation, no file access, no shared_ptr, patchDirty untouched.
 bool patchBankApply(int part, int slot);
 
-// Global synth voice pool shared by all slots: default 4 (OpenTracker 2.2.4), max 8.
+// Morph step FX. kMorphMax is the value of the FX that plays the target alone.
+constexpr int kMorphMax = 100;
+// Audio callback (as patchBankApply): the live values of the part become a blend of the open slot (A, its edited values) and `slot`
+// (B, -1: the part's Morph target), amount 0..kMorphMax. Numeric parameters lerp, discrete ones and the macros and automation are
+// A's below the half and B's from it. 0 is the Patch FX to the open slot, kMorphMax the Patch FX to B. False (nothing changed) when
+// B is out of range or has no file of this engine.
+bool patchBankMorph(int part, int slot, int amount);
+// The part's Morph target, the slot a Morph FX blends to when the other FX slot of the step has no Patch FX. Kept in the part's
+// names file (m= line, open_slotnames.h), kMorphDefault when the file has none. Main thread sets, any thread reads.
+int patchBankMorphTarget(int part);
+void patchBankSetMorphTarget(int part, int slot);
+
+// Global synth voice pool shared by all slots: default 4 (OpenTracker 2.2.4), max 16 (the A/B Synth play page: two parts of 8).
 constexpr int kDefaultVoiceBudget = 4;
-constexpr int kMaxVoiceBudget = 8;
+constexpr int kMaxVoiceBudget = 16;
+constexpr int kPageVoicesPerPart = 8;   // what one part takes on the page (the voice records of an instrument, open_engine.h)
 void setVoiceBudget(int voices);
 int voiceBudget();
+// The voices a part may have, from the engine's own cap. A plugin engine declares at most 4 voices (plug_abi.h max_voices 1..4, chosen when
+// the sequencer could run 3 synth parts), a built-in one 8 (the voice records, for the A/B pair). While the pool is raised above the default 4,
+// which only the Synth play page does (up to two parts play, playback is off), a 4 engine takes up to 8 and a built-in keeps its 8. Outside
+// the page (the sequencer and the Instrument Parameters page, budget 4) every engine stops at 4 as in 1.3.0, the pool sounds only 4 anyway.
+// An engine that declares 1 or 2 keeps its number everywhere.
+inline int pageVoiceCap(int cap)
+{
+    return voiceBudget() > kDefaultVoiceBudget ? (cap == 4 ? kPageVoicesPerPart : cap) : (cap < kDefaultVoiceBudget ? cap : kDefaultVoiceBudget);
+}
+// The most voices any part has right now: 8 while the Synth play page has raised the pool, else 4. A stored Voices above it (set on a
+// 1.4.0 test build) stays in the project and counts as this.
+inline int partVoiceLimit() { return voiceBudget() > kDefaultVoiceBudget ? kPageVoicesPerPart : kDefaultVoiceBudget; }
 int voiceCap();       // budget lowered by the governor
 int voicesSounding(); // synth voices counted by the pool (stolen ones excluded)
 uint32_t governorCuts();

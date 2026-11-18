@@ -26,7 +26,7 @@ void SPI_init(SPI_Type* base)
     base->MCR = SPI_MCR_MSTR_MASK | SPI_MCR_PCSIS(0x1F);
 }
 
-void SPI_start(SPI_Type* base, uint32_t speed)
+void SPI_start(SPI_Type* base, uint32_t /*speed*/)
 {
     base->MCR = SPI_MCR_MDIS_MASK | SPI_MCR_HALT_MASK | SPI_MCR_PCSIS(0x1F);
     base->CTAR[0] = SPI_CTAR_FMSZ(7) | // Frame Size

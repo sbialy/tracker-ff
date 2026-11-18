@@ -35,12 +35,18 @@
 #include "images/poly_logo_172x172_L8.h"
 #endif
 #include "CompressionRLE.h"
+#include "inflate.h"
+#include "log.h"
+#include <cr_section_macros.h>
+
+#ifdef FW_TRIM
+// FW_TRIM: the icons are deflated in icons_z.h (synth-open/tools/icons_deflate.py), the arrays of the headers below are not built in
+#include "images/icons_z.h"
+#else
 #include "images/arrowIcons.h"
 #include "images/battery_28x13_L4.h"
 #include "images/battery_ch_28x19_L4.h"
 #include "images/songIcons.h"
-#include "log.h"
-#include <cr_section_macros.h>
 
 #ifdef FEATURE_SYNTH
 #include "images/acd_mini_nomark_80x29_L2.h"
@@ -83,12 +89,13 @@
 #include "images/synth_shaper_18x18_L4.h"
 #include "images/chip_med_108x40_L2.h"
 #include "images/chip_mini_nomark_80x28_L2.h"
-
+#endif
 #endif
 
 static constexpr int kMaxFontBufferSize = 22396;
 __NOINIT(EXTERNAL_RAM) uint8_t poly_logo_160x172_l8[27520];
 __NOINIT(EXTERNAL_RAM) uint8_t decompressedFontsCommonBuffer[kMaxFontBufferSize];
+__NOINIT(EXTERNAL_RAM) InflateScratch gInflateScratch;   // decoder tables (fonts, random names), 1.3 KB, the main loop only
 
 const uint8_t displayFontCount = 5;
 
@@ -97,54 +104,71 @@ const uint8_t displayFontCount = 5;
 const CompressedFontData fontsData2[displayFontCount] =
 {
     {
-      LiberationSans_Regular_14_L4_compressed,
-      sizeof(LiberationSans_Regular_14_L4_compressed) / sizeof(LiberationSans_Regular_14_L4_compressed[0])
+      LiberationSans_Regular_14_L4_deflated,
+      sizeof(LiberationSans_Regular_14_L4_deflated),
+      LiberationSans_Regular_14_L4_rawSize
     },
     {
-      LiberationSans_Regular_17_L4_compressed,
-      sizeof(LiberationSans_Regular_17_L4_compressed) / sizeof(LiberationSans_Regular_17_L4_compressed[0])
+      LiberationSans_Regular_17_L4_deflated,
+      sizeof(LiberationSans_Regular_17_L4_deflated),
+      LiberationSans_Regular_17_L4_rawSize
     },
     {
-      LiberationSans_Bold_14_L4_compressed,
-      sizeof(LiberationSans_Bold_14_L4_compressed) / sizeof(LiberationSans_Bold_14_L4_compressed[0])
+      LiberationSans_Bold_14_L4_deflated,
+      sizeof(LiberationSans_Bold_14_L4_deflated),
+      LiberationSans_Bold_14_L4_rawSize
     },
     {
-      LiberationSans_Bold_17_L4_compressed,
-      sizeof(LiberationSans_Bold_17_L4_compressed) / sizeof(LiberationSans_Bold_17_L4_compressed[0])
+      LiberationSans_Bold_17_L4_deflated,
+      sizeof(LiberationSans_Bold_17_L4_deflated),
+      LiberationSans_Bold_17_L4_rawSize
     },
     {
-      LiberationSans_Regular_12_L4_compressed,
-      sizeof(LiberationSans_Regular_12_L4_compressed) / sizeof(LiberationSans_Regular_12_L4_compressed[0])
+      LiberationSans_Regular_12_L4_deflated,
+      sizeof(LiberationSans_Regular_12_L4_deflated),
+      LiberationSans_Regular_12_L4_rawSize
     },
 };
 
 const CompressedFontData fontsData1[displayFontCount] =
 {
     {
-      Roboto_Mono_Light_14_L4_compressed,
-      sizeof(Roboto_Mono_Light_14_L4_compressed) / sizeof(Roboto_Mono_Light_14_L4_compressed[0])
+      Roboto_Mono_Light_14_L4_deflated,
+      sizeof(Roboto_Mono_Light_14_L4_deflated),
+      Roboto_Mono_Light_14_L4_rawSize
     },
     {
-      Roboto_Mono_Light_17_L4_compressed,
-      sizeof(Roboto_Mono_Light_17_L4_compressed) / sizeof(Roboto_Mono_Light_17_L4_compressed[0])
+      Roboto_Mono_Light_17_L4_deflated,
+      sizeof(Roboto_Mono_Light_17_L4_deflated),
+      Roboto_Mono_Light_17_L4_rawSize
     },
     {
-      Roboto_Mono_Regular_14_L4_compressed,
-      sizeof(Roboto_Mono_Regular_14_L4_compressed) / sizeof(Roboto_Mono_Regular_14_L4_compressed[0])
+      Roboto_Mono_Regular_14_L4_deflated,
+      sizeof(Roboto_Mono_Regular_14_L4_deflated),
+      Roboto_Mono_Regular_14_L4_rawSize
     },
     {
-      Roboto_Mono_Bold_17_L4_compressed,
-      sizeof(Roboto_Mono_Bold_17_L4_compressed) / sizeof(Roboto_Mono_Bold_17_L4_compressed[0])
+      Roboto_Mono_Bold_17_L4_deflated,
+      sizeof(Roboto_Mono_Bold_17_L4_deflated),
+      Roboto_Mono_Bold_17_L4_rawSize
     },
     {
-      Roboto_Mono_Regular_12_L4_compressed,
-      sizeof(Roboto_Mono_Regular_12_L4_compressed) / sizeof(Roboto_Mono_Regular_12_L4_compressed[0])
+      Roboto_Mono_Regular_12_L4_deflated,
+      sizeof(Roboto_Mono_Regular_12_L4_deflated),
+      Roboto_Mono_Regular_12_L4_rawSize
     },
 };
 
 // clang-format on
 __NOINIT(EXTERNAL_RAM)
 strFont fonts[displayFontCount];
+
+#ifdef FW_TRIM
+// the icon bytes live in icons_z.h (deflated groups), zgroup and zoffset say where an icon is in the inflated group, the logo is not in one
+#define ICON(name, address, size, w, h, fmt, stride) { nullptr, address, size, w, h, fmt, stride, kZg_##name, kZo_##name }
+#else
+#define ICON(name, address, size, w, h, fmt, stride) { name, address, size, w, h, fmt, stride }
+#endif
 
 const strBitmap bitmaps[displayBitmapsCount] = {
 #ifndef TRACKER_MINI
@@ -169,66 +193,66 @@ const strBitmap bitmaps[displayBitmapsCount] = {
     },
 #endif
 
-    { playIcon20x20, 110000, 200, 20, 20, L4, 10 },
-    { loopIcon20x20, 110500, 200, 20, 20, L4, 10 },
+    ICON(playIcon20x20, 110000, 200, 20, 20, L4, 10),
+    ICON(loopIcon20x20, 110500, 200, 20, 20, L4, 10),
 
-    { doubleArrowL, 111000, 135, 18, 15, L4, 9 },
-    { doubleArrowR, 111150, 135, 18, 15, L4, 9 },
-    { arrowU, 111300, 64, 16, 8, L4, 8 },
-    { arrowD, 111400, 64, 16, 8, L4, 8 },
-    { battery_28x13_L4, 111500, 182, 28, 13, L4, 14 },
-    { battery_ch_28x19_L4, 111700, 266, 28, 19, L4, 14 },
+    ICON(doubleArrowL, 111000, 135, 18, 15, L4, 9),
+    ICON(doubleArrowR, 111150, 135, 18, 15, L4, 9),
+    ICON(arrowU, 111300, 64, 16, 8, L4, 8),
+    ICON(arrowD, 111400, 64, 16, 8, L4, 8),
+    ICON(battery_28x13_L4, 111500, 182, 28, 13, L4, 14),
+    ICON(battery_ch_28x19_L4, 111700, 266, 28, 19, L4, 14),
 
 #ifdef FEATURE_SYNTH
-    { acd_mini_nomark_80x29_L2, 112000, 580, 80, 29, L2, 20 },
-    { fat_mini_nomark_80x29_L2, 112600, 580, 80, 29, L2, 20 },
-    { vap_mini_nomark_80x29_L2, 113200, 580, 80, 29, L2, 20 },
-    { wtfm_mini_nomark_80x29_L2, 113800, 580, 80, 29, L2, 20 },
+    ICON(acd_mini_nomark_80x29_L2, 112000, 580, 80, 29, L2, 20),
+    ICON(fat_mini_nomark_80x29_L2, 112600, 580, 80, 29, L2, 20),
+    ICON(vap_mini_nomark_80x29_L2, 113200, 580, 80, 29, L2, 20),
+    ICON(wtfm_mini_nomark_80x29_L2, 113800, 580, 80, 29, L2, 20),
 
-    { acd_med_108x40_L2, 114400, 1080, 108, 40, L2, 27 },
-    { fat_med_108x40_L2, 115500, 1080, 108, 40, L2, 27 },
-    { vap_med_108x40_L2, 116600, 1080, 108, 40, L2, 27 },
-    { wtfm_med_108x40_L2, 117700, 1080, 108, 40, L2, 27 },
+    ICON(acd_med_108x40_L2, 114400, 1080, 108, 40, L2, 27),
+    ICON(fat_med_108x40_L2, 115500, 1080, 108, 40, L2, 27),
+    ICON(vap_med_108x40_L2, 116600, 1080, 108, 40, L2, 27),
+    ICON(wtfm_med_108x40_L2, 117700, 1080, 108, 40, L2, 27),
 
-    { synth_env_18x14_L4, 118800, 126, 18, 14, L4, 9 },
-    { synth_filter_18x13_L4, 119000, 117, 18, 13, L4, 9 },
-    { synth_gear_18x18_L4, 119200, 162, 18, 18, L4, 9 },
-    { synth_lfo_20x13_L4, 119400, 130, 20, 13, L4, 10 },
-    { synth_macro_14x14_L4, 119600, 98, 14, 14, L4, 7 },
-    { synth_mod_22x12_L4, 119800, 132, 22, 12, L4, 11 },
-    { synth_osc_20x12_L4, 120000, 120, 20, 12, L4, 10 },
+    ICON(synth_env_18x14_L4, 118800, 126, 18, 14, L4, 9),
+    ICON(synth_filter_18x13_L4, 119000, 117, 18, 13, L4, 9),
+    ICON(synth_gear_18x18_L4, 119200, 162, 18, 18, L4, 9),
+    ICON(synth_lfo_20x13_L4, 119400, 130, 20, 13, L4, 10),
+    ICON(synth_macro_14x14_L4, 119600, 98, 14, 14, L4, 7),
+    ICON(synth_mod_22x12_L4, 119800, 132, 22, 12, L4, 11),
+    ICON(synth_osc_20x12_L4, 120000, 120, 20, 12, L4, 10),
 
 #if FW_ICON_PERC
     // FW_TRIM (SYNTH_OPEN flash trim): the two PERC icons are only built in with an engine that wears them, PERC or T-Type (SYNTH_ENGINES, -1.6 KB without)
-    { perc_mini_nomark_80x29_L2, 120200, 580, 80, 29, L2, 20 },
+    ICON(perc_mini_nomark_80x29_L2, 120200, 580, 80, 29, L2, 20),
 #endif
 #if !defined(FEATURE_SYNTH_OPEN) || defined(SYNTH_ENGINE_PHZ)
-    { phz_mini_nomark_80x29_L2, 120800, 580, 80, 29, L2, 20 },
+    ICON(phz_mini_nomark_80x29_L2, 120800, 580, 80, 29, L2, 20),
 #endif
 #if FW_ICON_PERC
-    { perc_med_108x40_L2, 121400, 1080, 108, 40, L2, 27 },
+    ICON(perc_med_108x40_L2, 121400, 1080, 108, 40, L2, 27),
 #endif
 #if !defined(FEATURE_SYNTH_OPEN) || defined(SYNTH_ENGINE_PHZ)
-    { phz_med_108x40_L2, 122500, 1080, 108, 40, L2, 27 },
+    ICON(phz_med_108x40_L2, 122500, 1080, 108, 40, L2, 27),
 #endif
 
-    { synth_FX_20x18_L4, 123600, 180, 20, 18, L4, 10 },
-    { synth_cymbal_20x16_L4, 123800, 160, 20, 16, L4, 10 },
-    { synth_hihat_20x16_L4, 124000, 160, 20, 16, L4, 10 },
-    { synth_kick_16x19_L4, 124200, 152, 16, 19, L4, 8 },
-    { synth_mixer_16x14_L4, 124400, 112, 16, 14, L4, 8 },
-    { synth_percussion_16x16_L4, 124600, 128, 16, 16, L4, 8 },
-    { synth_snare_20x16_L4, 124800, 160, 20, 16, L4, 10 },
-    { synth_tom_20x16_L4, 125000, 160, 20, 16, L4, 10 },
+    ICON(synth_FX_20x18_L4, 123600, 180, 20, 18, L4, 10),
+    ICON(synth_cymbal_20x16_L4, 123800, 160, 20, 16, L4, 10),
+    ICON(synth_hihat_20x16_L4, 124000, 160, 20, 16, L4, 10),
+    ICON(synth_kick_16x19_L4, 124200, 152, 16, 19, L4, 8),
+    ICON(synth_mixer_16x14_L4, 124400, 112, 16, 14, L4, 8),
+    ICON(synth_percussion_16x16_L4, 124600, 128, 16, 16, L4, 8),
+    ICON(synth_snare_20x16_L4, 124800, 160, 20, 16, L4, 10),
+    ICON(synth_tom_20x16_L4, 125000, 160, 20, 16, L4, 10),
 
 #ifndef FEATURE_SYNTH_OPEN
-    { dirt_mini_nomark_80x28_L2, 125200, 560, 80, 28, L2, 20 },
-    { dirt_med_108x40_L2, 125800, 1080, 108, 40, L2, 27 },
-    { synth_shaper_18x18_L4, 126900, 162, 18, 18, L4, 9 },
+    ICON(dirt_mini_nomark_80x28_L2, 125200, 560, 80, 28, L2, 20),
+    ICON(dirt_med_108x40_L2, 125800, 1080, 108, 40, L2, 27),
+    ICON(synth_shaper_18x18_L4, 126900, 162, 18, 18, L4, 9),
 #endif
 #if FW_ICON_CHIP
-    { chip_mini_nomark_80x28_L2, 127100, 560, 80, 28, L2, 20 },
-    { chip_med_108x40_L2, 127700, 1080, 108, 40, L2, 27 },
+    ICON(chip_mini_nomark_80x28_L2, 127100, 560, 80, 28, L2, 20),
+    ICON(chip_med_108x40_L2, 127700, 1080, 108, 40, L2, 27),
 #endif
 
 #endif
@@ -297,7 +321,7 @@ void cDisplay::loadFont(const CompressedFontData* fontsData, uint8_t fontCount)
     {
         first_char = 0;
 
-        while (!fonts[i].data[first_char])
+        while (first_char < 127 && !fonts[i].data[first_char])
             first_char++;
 
         API_BITMAP_HANDLE(fonts[i].handle);
@@ -325,10 +349,39 @@ void cDisplay::begin(DisplayDriver* displayDriver, Timer* timer)
                poly_logo_160x172_l8);
 #endif
 
+#ifdef FW_TRIM
+    // The icons: the logo is raw RAM, the others are deflated per group (icons_z.h). Each group is inflated into the font buffer, which
+    // the fonts below take over afterwards. A damaged group is skipped, its icons stay blank.
+    for (uint8_t i = 0; i < displayBitmapsCount; i++)
+    {
+        if (bitmaps[i].zgroup == 0)
+        {
+            displayDriver->writeDataRAMG(bitmaps[i].data, bitmaps[i].source, bitmaps[i].address);
+        }
+    }
+    for (uint8_t g = 0; g < sizeof(kIconZGroups) / sizeof(kIconZGroups[0]); g++)
+    {
+        if (kIconZGroups[g].stream == nullptr ||
+            inflateRaw(kIconZGroups[g].stream, kIconZGroups[g].streamLen, decompressedFontsCommonBuffer, kMaxFontBufferSize,
+                       &gInflateScratch) != kIconZGroups[g].rawLen)
+        {
+            continue;
+        }
+        for (uint8_t i = 0; i < displayBitmapsCount; i++)
+        {
+            if (bitmaps[i].zgroup == g + 1)
+            {
+                displayDriver->writeDataRAMG(
+                  decompressedFontsCommonBuffer + bitmaps[i].zoffset, bitmaps[i].source, bitmaps[i].address);
+            }
+        }
+    }
+#else
     for (uint8_t i = 0; i < displayBitmapsCount; i++)
     {
         displayDriver->writeDataRAMG(bitmaps[i].data, bitmaps[i].source, bitmaps[i].address);
     }
+#endif
 
     loadFont(fontsData1, displayFontCount);
 
@@ -602,13 +655,21 @@ void cDisplay::step2()
         actualUpdating->ramSize = 0;
     }
 
-    displayDriver->beginCoProListNoCheck();
-    API_CMD_MEMCPY(ramAddress + actualUpdating->ramSize, RAM_DL, dlSize);
-    displayDriver->endCoProList();
+    if (actualUpdating->ramSize + dlSize <= controlsRamAddressStep)
+    {
+        displayDriver->beginCoProListNoCheck();
+        API_CMD_MEMCPY(ramAddress + actualUpdating->ramSize, RAM_DL, dlSize);
+        displayDriver->endCoProList();
 
-    actualUpdating->ramSize += dlSize;
+        actualUpdating->ramSize += dlSize;
 
-    actualUpdatingStage++;
+        actualUpdatingStage++;
+    }
+    else
+    {   // the control's 8 KB slot of RAM_G is full: this stage and the later ones are left out (they would overwrite the next
+        // control's slot). The stages already stored are whole display list pieces and still draw
+        actualUpdatingStage = actualUpdating->stagesCount;
+    }
 
     if (actualUpdatingStage < actualUpdating->stagesCount)
     {
@@ -694,10 +755,8 @@ void cDisplay::step3()
                 uint32_t controlRamAddress = controlsRamStartAddress + (i * controlsRamAddressStep);
                 API_CMD_APPEND(controlRamAddress, controlMemoryUsed);
             }
-            else
-            {
-                break;
-            }
+            // a control that does not fit the frame's display list any more is left out, the smaller ones after it still draw
+            // (a break here blanked the title and the labels behind a large control)
         }
     }
 
@@ -860,7 +919,7 @@ void cDisplay::setControlColors(hControl handle, const uint32_t colorsTable[])
     if (handle < 0 || handle >= controlsCount || controlsTable[handle] == nullptr)
         return;
     for (uint8_t i = 0; i < controlsTable[handle]->colorsCount; i++)
-        if (colorsTable + i == nullptr || colorsTable[i] > 0xFFFFFF)
+        if (colorsTable == nullptr || colorsTable[i] > 0xFFFFFF)
             return;
 
     controlsTable[handle]->setColors(colorsTable);
@@ -897,6 +956,12 @@ void cDisplay::destroyModulesControls()
 
     for (uint8_t i = destroyPoint; i < controlsCount; i++)
     {
+        // A refresh takes several update() calls and keeps this pointer in between. Once it
+        // is cleared, validateCurrentUpdateData() gives the refresh up.
+        if (controlsTable[i] == actualUpdating)
+        {
+            actualUpdating = nullptr;
+        }
         delete controlsTable[i];
         controlsTable[i] = nullptr;
     }
@@ -907,6 +972,11 @@ void cDisplay::freeControlResources(int8_t controlsTableIndex)
     if (controlsTableIndex < 0 || controlsTableIndex > controlsCount - 1)
         return;
 
+    // see destroyModulesControls()
+    if (controlsTable[controlsTableIndex] == actualUpdating)
+    {
+        actualUpdating = nullptr;
+    }
     delete controlsTable[controlsTableIndex];
     controlsTable[controlsTableIndex] = nullptr;
 
@@ -1241,6 +1311,7 @@ void cDisplay::controlIdToString(uint8_t id, char* string)
         case controlIdTracker: strcpy(string, "tracker"); break;
         case controlIdWtProgress: strcpy(string, "progress"); break;
         case controlIdNotesKeyboardLabel: strcpy(string, "notesKeyboard"); break;
+        case controlIdPartsTable: strcpy(string, "partsTable"); break;
         default: strcpy(string, "undefined"); break;
     }
 }
@@ -1434,7 +1505,7 @@ void cDisplay::setFont(uint8_t index)
     }
 }
 
-void cDisplay::showBatteryScreen(bool empty, bool charging, int8_t level, float voltage)
+void cDisplay::showBatteryScreen(bool empty, bool charging, int8_t level, float /*voltage*/)
 {
     displayDriver->beginCoProList();
 
@@ -1499,7 +1570,14 @@ void cDisplay::showBatteryScreen(bool empty, bool charging, int8_t level, float 
 
 uint8_t* cDisplay::decompressFont(const CompressedFontData* compressedFontData)
 {
-    decompress(compressedFontData->data, compressedFontData->count, decompressedFontsCommonBuffer);
+    // The fonts are raw deflate streams of the glyph bitmap (core/libs/fonts, synth-open/tools/fonts_deflate.py). Boot and font switch only.
+    int n = inflateRaw(compressedFontData->data, compressedFontData->count, decompressedFontsCommonBuffer, kMaxFontBufferSize,
+                       &gInflateScratch);
+    if (n != compressedFontData->rawSize)
+    {
+        // not reachable with the blobs in the image (host test font_inflate_test.sh): an all zero font draws nothing, loadFont copes
+        memset(decompressedFontsCommonBuffer, 0, kMaxFontBufferSize);
+    }
 
     return decompressedFontsCommonBuffer;
 }

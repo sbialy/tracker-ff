@@ -123,6 +123,7 @@ const EngineDef kVapDef = {
     kMaxVoicesPerInstrument,
     &ot::audio::vap::engine,
     false,
+    true, // monoOut: the engine writes L only
 };
 
 } // namespace polysynth::open

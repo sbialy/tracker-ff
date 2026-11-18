@@ -212,6 +212,17 @@ void cList::update()
         API_BLEND_FUNC(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
     }
 
+    // No row array yet (the Sample Editor parameter lists start with length 1 and data null, and the display updates a hidden
+    // control it was asked to refresh): no rows. Every row below reads list->data[rowIdx]. On the MCU address 0 is the vector
+    // table, so row 0 reads the initial stack pointer 0x20030000 as a text and strlen bus faults one byte past SRAM.
+    if (list->data == nullptr)
+    {
+        listAnimationStep = 0;
+        autoRefresh = false;
+        highPrioRefresh = false;
+        return;
+    }
+
     posY += 4; // top margin
 
     if (list->start == listPosition)
@@ -289,7 +300,7 @@ void cList::update()
 
             char** row_text = (list->data + rowIdx);
 
-            if (row_text != nullptr)
+            if (*row_text != nullptr) // an array owner may free a row while the list is still drawn
             {
                 char* text = *row_text;
                 size_t textMaxWidth = list->lineWidthMax;

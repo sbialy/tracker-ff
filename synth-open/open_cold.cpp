@@ -7,6 +7,7 @@
 #include "open_patch.h"
 #include "open_load.h"
 #include "open_fileops.h"
+#include "wave_path.h"
 
 #include "PolySynth/PatchStore.h"
 #include "PolySynth/sdk/InstrumentType.h"
@@ -49,6 +50,58 @@ using open::kVelocityMacro;
 
 namespace
 {
+
+// What a wave file parameter shows, never a number: the file's base name without ".wav", a name over kWaveLabel characters (the value column of the
+// parameter list is 24 bytes with its NUL, the longest AKWF-FREE name is 20) cut in the middle as head + "~" + tail, so the distinguishing number at the
+// end stays visible. The path in force (OpenPatch::waveRef, read from the patch, no card access) wins because it is what the engine plays, else the
+// entry of the list the host holds for the engine (value - 1). The list is built once per session (the engine's first read does it at the latest),
+// after that this is a lookup in SDRAM: turning the encoder reads no card.
+//   - a stored path that is not on the card (the engine plays its sine): "? " and the stored name, so the patch still says which wave it wants
+//   - value 0 and no path: "Sine", what ALCO plays for no file
+//   - an index past the end of the list (a card with fewer files): "Missing", the engine plays its sine
+constexpr size_t kWaveLabel = 20;
+std::string cutName(const char* base, size_t n, size_t limit)
+{
+    if (n <= limit)
+    {
+        return std::string(base, n);
+    }
+    constexpr size_t kTail = 10;
+    std::string cut(base, limit - kTail - 1);
+    cut += '~';
+    cut.append(base + n - kTail, kTail);
+    return cut;
+}
+
+std::string waveLabel(const Patch& patch, int param, float v)
+{
+    char path[open::kWavePath];
+    const int u = int(std::lround(v));
+    const bool stored = static_cast<const open::OpenPatch&>(patch).waveRef(param, path, sizeof(path)) > 0;
+    if (!stored)
+    {
+        if (u <= 0)
+        {
+            return "Sine";
+        }
+        if (!open::waveListName(u - 1, path, sizeof(path)))
+        {
+            return "Missing";
+        }
+    }
+    const char* base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    size_t n = strlen(base);
+    if (n > 4 && base[n - 4] == '.' && (base[n - 3] | 0x20) == 'w' && (base[n - 2] | 0x20) == 'a' && (base[n - 1] | 0x20) == 'v')
+    {
+        n -= 4;
+    }
+    if (stored && !open::waveListHas(path))
+    {
+        return "? " + cutName(base, n, kWaveLabel - 2);
+    }
+    return cutName(base, n, kWaveLabel);
+}
 
 std::string formatValue(const ParamDef& d, float v)
 {
@@ -192,7 +245,15 @@ void fillFromDef(InstrumentType* type, const EngineDef& def)
             p.maxValue = d.max;
             p.isEnum = d.fmt == open::Fmt::kEnum;
             p.editCurve = static_cast<Meta::Param::Curve>(d.curve);
-            p.valueFormatter = [&d](const Patch&, float v) { return formatValue(d, v); };
+            if (open::waveFileShape(d))
+            {
+                // a wave file parameter shows a word or the file's name, never its number (a 16 byte capture stays in the std::function)
+                p.valueFormatter = [&d, &def](const Patch& patch, float v) { return waveLabel(patch, int(&d - def.params), v); };
+            }
+            else
+            {
+                p.valueFormatter = [&d](const Patch&, float v) { return formatValue(d, v); };
+            }
         }
         metadata.layoutFlat.sections.reserve(def.sectionCount); // exact sizes: no doubling steps that leave holes in the heap
         for (int s = 0; s < def.sectionCount; s++)
@@ -664,7 +725,49 @@ void OpenPatch::setParamValue(int id, optional_paramvalue_t value, ParamChangeSo
     const float v = value.has_value() ? *value : p.defaultValue.value_or(0.0f);
     patchBankBeforeEdit(this); // the caller holds the audio lock: the edit lands on the edited values, never on the ones of an FX slot
     values[id] = std::clamp(v, float(p.minValue), float(p.maxValue));
+    if (waves.n)
+    {
+        // The user picked another value (encoder, a reset, a random patch): the path stored for the old one is out of date and is dropped, so the
+        // file the value names plays and the next save writes no field 101 for it. The same value again keeps the path.
+        const int k = waves.find(id);
+        if (k >= 0 && std::lround(values[id]) != waves.ref[k].index)
+        {
+            for (int i = k; i + 1 < waves.n; i++)
+            {
+                waves.ref[i] = waves.ref[i + 1];
+            }
+            waves.ref[--waves.n] = WaveRef{};
+        }
+    }
     effSer++;
+}
+
+int OpenPatch::waveRef(int param, char* out, size_t cap) const
+{
+    const int k = inRange(param) ? waves.find(param) : -1;
+    if (k < 0 || std::lround(values[param]) != waves.ref[k].index || !cap)
+    {
+        return -1;
+    }
+    std::snprintf(out, cap, "%s", waves.ref[k].path);
+    return int(std::strlen(waves.ref[k].path));
+}
+
+bool OpenPatch::setWaveRef(int param, const char* path)
+{
+    int k = inRange(param) ? waves.find(param) : -1;
+    if (!inRange(param) || !plug::wavePathOk(path) || (k < 0 && waves.n >= kWaveRefs))
+    {
+        return false;
+    }
+    if (k < 0)
+    {
+        k = waves.n++;
+    }
+    waves.ref[k].param = int16_t(param);
+    waves.ref[k].index = int16_t(std::clamp(std::lround(values[param]), 0L, 32767L));
+    std::snprintf(waves.ref[k].path, sizeof(waves.ref[k].path), "%s", path);
+    return true;
 }
 
 Patch::optional_paramvalue_t OpenPatch::getMacroValue(int id) const
@@ -851,8 +954,13 @@ void OpenPatch::exportData(PatchData& d) const
         d.mod[i] = mod[i]; // the stored identity, so an unresolved destination is written back as it was read
     }
     d.macroMode = macroScaleMode ? kMacroModeScale : kMacroModeAdd;
+    d.waves = waves;
     d.extra = extra;
 }
+
+static uint8_t s_projectMacroMode;   // 0 each patch as before, 1 Add, 2 Scale (open_patch.h)
+uint8_t projectMacroMode() { return s_projectMacroMode; }
+void setProjectMacroMode(uint8_t mode) { s_projectMacroMode = mode <= 2 ? mode : 0; }
 
 // The data of a new patch of the engine, as exportData of a fresh OpenPatch gives it (the smoke test compares both for every engine) but
 // from the engine definition alone: no metadata, no allocation. `d` is fresh.
@@ -909,6 +1017,52 @@ void OpenPatch::valuesFromData(const PatchData& d, float* out) const
                                              (v >= float(p.minValue) && v <= float(p.maxValue)));
         out[i] = ok ? v : p.defaultValue.value_or(0.0f);
     }
+}
+
+namespace
+{
+enum class MorphKind : uint8_t
+{
+    kLerp,
+    kRound,
+    kSwitch,
+};
+inline MorphKind morphKind(Fmt f)
+{
+    switch (f)
+    {
+        case Fmt::kEnum:
+        case Fmt::kOnOff:
+        case Fmt::kRatio:
+#ifdef SYNTH_ENGINE_PERC
+        case Fmt::kNote:
+        case Fmt::kBodyWave:
+#endif
+            return MorphKind::kSwitch;
+        case Fmt::kInt:
+        case Fmt::kSemi: return MorphKind::kRound;
+        default: return MorphKind::kLerp;
+    }
+}
+} // namespace
+
+void OpenPatch::setValuesMorph(const float* a, const float* b, int amount)
+{
+    const float t = float(amount) * (1.0f / float(kMorphMax));
+    const bool second = amount * 2 >= kMorphMax;
+    const ParamDef* defs = def ? def->params : nullptr;
+    for (int i = 0; i < count; i++)
+    {
+        const MorphKind k = defs ? morphKind(defs[i].fmt) : MorphKind::kLerp;
+        if (k == MorphKind::kSwitch)
+        {
+            values[i] = second ? b[i] : a[i];
+            continue;
+        }
+        const float v = a[i] + (b[i] - a[i]) * t;
+        values[i] = k == MorphKind::kRound ? std::nearbyint(v) : v;
+    }
+    effSer++;
 }
 
 // A macro the file does not carry (fewer than kPatchMacros in it) has no targets and is unipolar, for the import and for a bank row alike.
@@ -982,6 +1136,7 @@ void OpenPatch::importData(const PatchData& d)
     }
     modSer++;
     macroScaleMode = d.macroMode == kMacroModeScale;
+    waves = d.waves;
     extra = d.extra;
     rebuildOwn();
     for (int m = 0; m < kPatchMacros; m++)
@@ -1202,7 +1357,12 @@ class OpenPatchStore final : public PatchStore
             typeId = firstEngineTypeId();
         }
         auto type = registry.getInstrumentType(typeId);
-        return std::make_unique<OpenPatch>(typeId, type.get());
+        auto patch = std::make_unique<OpenPatch>(typeId, type.get());
+        if (typeFolders && s_projectMacroMode)   // the library store: a patch added to the project (not live yet, no audio lock)
+        {
+            patch->setMacroScale(s_projectMacroMode == 2);
+        }
+        return patch;
     }
     std::vector<std::pair<std::string_view, int>> listPatchesFilter(
       std::function<bool(InstrumentTypeId)>) override
@@ -1254,6 +1414,10 @@ class OpenPatchStore final : public PatchStore
         if (!sc || readPatchFile(def, op.typeId(), name, sc.buf(), sc.data()) != FileRead::kOk)
         {
             return false;
+        }
+        if (typeFolders && s_projectMacroMode)   // a library file added to the project takes the project's mode, the file stays as it is
+        {
+            sc.data().macroMode = s_projectMacroMode == 2 ? kMacroModeScale : kMacroModeAdd;
         }
         if (synchronizeAudio)
         {
@@ -1489,6 +1653,9 @@ struct PartBank
 PartBank gBank[kPatchBankParts];
 OpenPatch* volatile gLive[kPatchBankParts];
 bool gNamesUnreadable[kPatchBankParts]; // the names file of the part could not be read: it is not rewritten from empty names
+// Morph target of every part (Morph step FX), XOR kMorphDefault so that the zeroed array is the default. Main thread writes a byte, the
+// audio callback reads it. Not in PartBank: a bank reload keeps it.
+uint8_t gMorphX[kPatchBankParts];
 // The rows of every bank, in the SDRAM (as the patch scratch), not on the heap: on the device a short heap gave an empty bank and the
 // Patch FX did nothing without a word. Worst case, 16 slots plus the shadow row of the engine with the most parameters (kMaxParams):
 // 3 x 17 x 84 floats = 17,136 B. A part always uses the first (kPatchBankSlots + 1) * nParams floats of its block.
@@ -1524,7 +1691,7 @@ void patchSlotName(int part, int slot, char (&out)[8])
 
 bool patchNamesRead(int part, PatchStore& workspace, SlotNames& out)
 {
-    out = SlotNames();
+    clearSlotNames(out);
     if (!partOk(part))
     {
         return false;
@@ -1558,7 +1725,7 @@ bool patchNamesWrite(int part, PatchStore& workspace, const SlotNames& in)
     const std::string file = std::string(base) + kSlotNamesExt;
     uint8_t probe[1];
     bool probeError = false;
-    if (!anySlotName(in) && st.readRaw(file, probe, 1, &probeError) == 0)
+    if (!anySlotName(in) && !morphTargetSet(in) && st.readRaw(file, probe, 1, &probeError) == 0)
     {
         return !probeError; // nothing to say and no file to correct: a project that never named a slot gets no side file
     }
@@ -2003,6 +2170,16 @@ bool patchBackupRestore(int part, Patch& live, PatchStore& workspace)
     return true;
 }
 
+bool patchBankHas(int part, int slot)
+{
+    if (!partOk(part) || slot < 0 || slot >= kPatchBankSlots)
+    {
+        return false;
+    }
+    const PartBank& b = gBank[part];
+    return bankMatches(b, gLive[part]) && (slot == b.cur || (b.valid & (1u << slot)));
+}
+
 bool patchBankApply(int part, int slot)
 {
     if (!partOk(part) || slot < 0 || slot >= kPatchBankSlots)
@@ -2038,6 +2215,161 @@ bool patchBankApply(int part, int slot)
     }
     p->setValuesRaw(b.vals + size_t(slot) * n);
     p->adoptCfg(b.cfgs + slot); // the slot's macros and automation: a pointer, the instrument keeps or restarts its modulators (modSwitch)
+    return true;
+}
+
+// ----------------------------------------------------------------- Patch Vary
+
+int patchParamCount(const Patch& p)
+{
+    return static_cast<const OpenPatch&>(p).paramCount();
+}
+
+namespace
+{
+uint32_t varyNext(uint32_t& s)
+{
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    return s;
+}
+float varyUnit(uint32_t& s)   // 0 .. 1
+{
+    return float(varyNext(s) >> 8) * (1.0f / 16777216.0f);
+}
+bool varyDiscrete(Fmt f)
+{
+    return f == Fmt::kEnum || f == Fmt::kOnOff;
+}
+bool varyWhole(Fmt f)         // moves in whole steps
+{
+    return varyDiscrete(f) || f == Fmt::kInt || f == Fmt::kSemi || f == Fmt::kRatio;
+}
+} // namespace
+
+int patchVary(Patch& p, int percent, uint32_t& rng, float* prev)
+{
+    OpenPatch& op = static_cast<OpenPatch&>(p);
+    const EngineDef* def = op.getDef();
+    const int n = op.paramCount();
+    if (!def || n <= 0 || n > kMaxParams)
+    {
+        return 0;
+    }
+    if (rng == 0)
+    {
+        rng = 0x9E3779B9u;
+    }
+    percent = std::clamp(percent, 1, 100);
+    const float amount = float(percent) * 0.01f;
+    int changed = 0;
+    for (int i = 0; i < n; i++)
+    {
+        const float before = op.getParamValue(i).value_or(def->params[i].def);
+        prev[i] = before;
+        const ParamDef& d = def->params[i];
+        if (i == def->volumeParam || !(d.max > d.min))
+        {
+            continue;
+        }
+        float v;
+        if (varyDiscrete(d.fmt))
+        {
+            if (percent < 50 || varyUnit(rng) >= amount)
+            {
+                continue;
+            }
+            v = d.min + std::floor(varyUnit(rng) * (d.max - d.min + 1.0f));
+        }
+        else
+        {
+            float k;
+            if (percent >= 100)
+            {
+                k = varyUnit(rng);
+            }
+            else
+            {
+                k = std::clamp(valueToCurve(d, before) + (varyUnit(rng) * 2.0f - 1.0f) * amount, 0.0f, 1.0f);
+            }
+            v = curveToValue(d, k);
+            if (varyWhole(d.fmt))
+            {
+                v = std::round(v);
+            }
+        }
+        v = std::clamp(v, d.min, d.max);
+        if (v != before)
+        {
+            op.setParamValue(i, v, Patch::ParamChangeSource::kKnob);
+            changed++;
+        }
+    }
+    return changed;
+}
+
+void patchSetValues(Patch& p, const float* values, int n)
+{
+    OpenPatch& op = static_cast<OpenPatch&>(p);
+    for (int i = 0; i < n && i < op.paramCount(); i++)
+    {
+        op.setParamValue(i, values[i], Patch::ParamChangeSource::kKnob);
+    }
+}
+
+int patchBankMorphTarget(int part)
+{
+    return partOk(part) ? (gMorphX[part] ^ kMorphDefault) : kMorphDefault;
+}
+
+void patchBankSetMorphTarget(int part, int slot)
+{
+    if (partOk(part))
+    {
+        gMorphX[part] = uint8_t((slot >= 0 && slot < kPatchBankSlots ? slot : kMorphDefault) ^ kMorphDefault);
+    }
+}
+
+bool patchBankMorph(int part, int slot, int amount)
+{
+    if (!partOk(part))
+    {
+        return false;
+    }
+    if (slot < 0)
+    {
+        slot = gMorphX[part] ^ kMorphDefault;
+    }
+    if (slot >= kPatchBankSlots)
+    {
+        return false;
+    }
+    if (amount <= 0)
+    {
+        slot = patchBankCurrent(part); // 0 %: the open slot, as a Patch FX to it
+    }
+    if (amount <= 0 || amount >= kMorphMax)
+    {
+        return patchBankApply(part, slot); // the ends are the plain Patch FX: exact values of A or of B
+    }
+    PartBank& b = gBank[part];
+    OpenPatch* p = gLive[part];
+    if (!bankMatches(b, p) || (slot != b.cur && !(b.valid & (1u << slot))))
+    {
+        return false;
+    }
+    const size_t n = size_t(b.nParams);
+    float* shadow = b.vals + size_t(kPatchBankSlots) * n;
+    if (!b.applied)
+    {
+        p->getValuesRaw(shadow); // A: the edited values of the open slot, kept as the Patch FX keeps them
+        b.applied = true;
+    }
+    const float* to = slot == b.cur ? shadow : b.vals + size_t(slot) * n;
+    p->setValuesMorph(shadow, to, amount);
+    // macros and automation switch with the discrete parameters, at the half
+    p->adoptCfg(amount * 2 >= kMorphMax && slot != b.cur ? b.cfgs + slot : p->ownCfg());
     return true;
 }
 

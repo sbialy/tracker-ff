@@ -204,7 +204,6 @@ void API_LIB_WriteFontRAMG(const uint8_t* ImgData, uint32_t DataSize, uint32_t D
 void API_LIB_ReadDataRAMG(uint8_t* ImgData, uint32_t DataSize, uint32_t SourceAddress)
 {
     uint16_t DataPointer = 0;
-    uint16_t BitmapDataSize = 0;
 
     DataPointer = 0;
 

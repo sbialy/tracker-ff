@@ -11,8 +11,8 @@ i2c_master_handle_t handleI2c2;
 I2cBusControllerImpl0 i2cBusControllerNXP0;
 I2cBusControllerImpl2 i2cBusControllerNXP2;
 
-static void I2c_callback(I2C_Type* base,
-                         i2c_master_handle_t* handle,
+static void I2c_callback(I2C_Type* /*base*/,
+                         i2c_master_handle_t* /*handle*/,
                          status_t status,
                          void* userData)
 {

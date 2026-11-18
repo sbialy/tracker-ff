@@ -4,7 +4,9 @@
 #include "devhooks.h"
 #ifdef FEATURE_EXT_HOOKS
 #include "features.h"
+#include "skipback_ui.h"
 #endif
+#include "synthPlayRec.h"
 #include "mtWavetableEnvelopes.h"
 #ifdef FEATURE_PLUG_HOST
 #include "plug_host.h"
@@ -224,11 +226,15 @@ void TrackerImpl::update()
 #ifdef FEATURE_PLUG_HOST
     plug::tick();
     synthModelTick(); // SynthEditor.cpp: the model list rested on a plugin engine that is not installed
+    synthViewTick();  // SynthPatchEditor.cpp: the cycle view of a plugin engine (ABI 1.2 plug_ext_synth.view)
 #endif
     engine.updateSdStream();
     sequencer.update();
 #ifdef FEATURE_EXT_HOOKS
     features::tick();
+#endif
+#ifdef FEATURE_SKIPBACK
+    skipback::uiTick(); // Skip-back: the next card chunk of a running save
 #endif
     DEVHOOK_TRACKER_UPDATE();
 }
@@ -261,6 +267,20 @@ void TrackerImpl::updateAudioBuffers(void* left, void* right, int length)
     engine.update();
 
     engine.updateAudioBuffers(left, right, length);
+#ifdef FEATURE_SKIPBACK
+    // Skip-back: the block the codec gets into the SDRAM ring (returns at the first test while the feature is off)
+    if (length == int(skipback::kBlockFrames))
+    {
+        skipback::block(static_cast<const int16_t*>(left), static_cast<const int16_t*>(right));
+    }
+#endif
+#ifdef FEATURE_SYNTH_REC
+    // Synth play page REC: the same block as a mono take into the free tail of the sample memory (returns at the first test while idle)
+    if (length == int(synthplayrec::kBlockFrames))
+    {
+        synthplayrec::block(static_cast<const int16_t*>(left), static_cast<const int16_t*>(right));
+    }
+#endif
     Profiler::getInstance()->stopMeasuringAudio();
 }
 

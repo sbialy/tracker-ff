@@ -1,0 +1,19 @@
+# Image symbols that a card module (modit.plg, the console) links against with ld --just-symbols and that nothing in the image needs by name.
+# FW_LTO=1 passes each as -Xlinker --undefined=<symbol>, so the link time optimiser keeps an out-of-line copy with this exact name.
+# One mangled name per line. A module build that reports an undefined reference to an image function adds the line here.
+_ZN9Sequencer12clearPatternEPNS_10strPatternE
+_ZN9Sequencer24copyCurrentPatternToBuffEPh
+_ZN9Sequencer12getFxDefaultEh
+_ZN12cFileManager19checkLoopParametersEP13strInstrument
+_ZN12cFileManager23loadWorkspacePatternNowEh
+_ZN12cFileManager23moveToNextOperationStepEv
+_ZN12cFileManager23moveToPrevOperationStepEv
+_ZN12cFileManager14saveInstrumentEh
+_ZN12cFileManager26setDefaultActiveInstrumentEP13strInstrument
+_ZN12cFileManager23setProjectStructChangedEv
+_ZN12cFileManager16startAudioEngineEv
+_ZN12cFileManager15stopAudioEngineEv
+_ZN12cFileManager22stopOperationWithErrorEh
+_ZN12cFileManager20updatePatternBitmaskEhPN9Sequencer10strPatternE
+_ZN13cFileTransfer16loadFileToMemoryEPKcPhmmh
+_ZN13cFileTransfer16saveMemoryToFileEPhPKcm

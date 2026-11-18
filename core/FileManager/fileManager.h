@@ -150,6 +150,7 @@ extern SdDir sdLocation;
 extern FileSystem::FileHandle wavfile;
 class CrcCalculator;
 class Synth;
+class cFileTransfer;
 
 class cFileManager
 {
@@ -164,6 +165,13 @@ class cFileManager
     uint8_t getCurrentOperation() { return currentOperation; }
     void setCurrentOperation(uint8_t operation) { currentOperation = operation; }
     void resetCurrentOperationStep() { currentOperationStep = 0; }
+
+#ifdef FEATURE_MODIT_MODULE
+    // MOD import, IT import and IT export run from modit.plg (synth-open/modit/, ext_abi.h): the image keeps the five entry points as
+    // forwarders (fileManagerModit.cpp), the module is the three sources compiled as members of this class
+    static uint32_t moditDispatch(uint32_t op);   // the module's ext_hooks.modit: one step of the state machine on newFileManager
+    static void moditKeep(cFileTransfer* transfer);   // pins what only the module calls (keeps it past --gc-sections)
+#endif
 
     uint8_t getProgress();
     FileSystem* getFileSystem() { return fileSystem; }
@@ -263,7 +271,7 @@ class cFileManager
 
     bool deleteInstruments(uint8_t instrumentSlotFrom, uint8_t instrumentSlotTo);
 
-    bool loadWorkspacePattern(uint8_t index);
+    void loadWorkspacePattern(uint8_t index);
     const Sequencer::strPattern* loadWorkspacePatternToTempBuffer(uint8_t index);
 
     bool deleteProjectOrFolder(char* projectPath);
@@ -297,8 +305,15 @@ class cFileManager
 
     bool loadWorkspacePatternNow(uint8_t index);
     bool saveWorkspacePatternNow(uint8_t index);
+#ifdef FEATURE_PARTS
+    // parts.cpp: a Workspace pattern file into any buffer (assembly, bake) and back. Main loop only
+    bool readWorkspacePatternTo(uint8_t index, Sequencer::strPattern* dest);
+    bool writeWorkspacePatternFrom(uint8_t index, Sequencer::strPattern* src);
+#endif
     bool loadPerformanceTrackToBuffer(uint8_t pattIndex, uint8_t trackIndex);
     bool isPatternLoading();
+    bool isPatternPreloaded(uint8_t index);
+    void forgetPreloadedPattern();
     bool isPatternEmpty(uint8_t index);
 
     uint8_t getNextSongPattern();
@@ -325,6 +340,9 @@ class cFileManager
     void storeSongUndoRevision(uint8_t index);
     void undoSongPattern();
     void undoPattern();
+#ifdef FEATURE_PARTS
+    void clearPatternUndo();   // parts.cpp: a live Part edit changed pattern files under the snapshots
+#endif
     void redoPattern();
 
     void storePatternSelection(uint8_t index);
@@ -400,9 +418,10 @@ class cFileManager
     void savePatternToWorkspace();
 
     void clearWorkspace();
+    void backupDiscardedWorkspace();
     bool createWorkspaceDirs();
 
-    void createCurrentProjectFolderTree();
+    bool createCurrentProjectFolderTree();
 
     bool isInstrumentStereo(int idx);
     void setInstrumentSampleAddress(int idx, uint16_t channelCount, uint32_t samplesCount);
@@ -470,6 +489,11 @@ class cFileManager
     // wewnetrzne stany maszynki itp
     uint8_t currentOperation;
     uint8_t currentOperationStep;
+    // Pattern that loadWorkspacePattern() was asked for and update() has not started yet.
+    volatile uint8_t requestedPattern = 0;
+    // Pattern that a finished loadWorkspacePattern() left in the sequencer's buffer pattern;
+    // 0 once the buffer has been used for anything else.
+    volatile uint8_t preloadedPattern = 0;
     char currentCopyDestPath[PATCH_SIZE];
     bool forceOperation;
 
@@ -506,6 +530,7 @@ class cFileManager
     void updateBrowseSamples();
     void updateBrowseFirmwares();
     void updateBrowseGames();
+    void startRequestedPatternLoad();
     void updateLoadWorkspacePattern();
     void updateExportSound();
     void updateExportProjectSamples();
@@ -554,6 +579,7 @@ class cFileManager
     void translatePatternFromFileVersion4ToFileVersion5(Sequencer::strPattern* patternToTranslate);
     void translatePatternFromFileVersion5ToFileVersion6(Sequencer::strPattern* patternToTranslate);
     void translatePatternWithDifferentTrackCount(Sequencer::strPattern* pattern);
+    void translateRetiredTapeStart(Sequencer::strPattern* pattern);
 
     uint32_t calcProjectPatternsSize();
 

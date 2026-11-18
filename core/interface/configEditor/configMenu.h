@@ -48,7 +48,7 @@ class cMenuGroup : public cMenuBase
         slotsUsed = 0;
     }
 
-    ~cMenuGroup() { delete[] childs; }
+    ~cMenuGroup() = default; // trivial: the menus are static, so no atexit registration per object (was delete[] childs, never run)
 
     cMenuGroup* getSelChild() { return (cMenuGroup*)childs[selectedItem]; }
 
@@ -81,7 +81,34 @@ class cMenuGroup : public cMenuBase
 
     void executeItem();
 
-    int getSlot() { return slot; }
+    // the position in the parent now (moveChild can change it), the construction slot when it is not found
+    int getSlot()
+    {
+        for (uint8_t i = 0; i < parentMenu->childsCapacity; i++)
+            if (parentMenu->childs[i] == this) return i;
+        return slot;
+    }
+
+    // Config > USB: the entry hides by moving to the end of the visible list. The child at `from` goes to `to`, the ones between
+    // shift by one, the selection stays on the same child
+    void moveChild(uint8_t from, uint8_t to)
+    {
+        if (from == to || from >= childsCapacity || to >= childsCapacity) return;
+        hMenuItem c = childs[from];
+        char* n = childsNames[from];
+        const int d = to > from ? 1 : -1;
+        for (int i = from; i != to; i += d)
+        {
+            childs[i] = childs[i + d];
+            childsNames[i] = childsNames[i + d];
+        }
+        childs[to] = c;
+        childsNames[to] = n;
+        int s = selectedItem;
+        if (s == from) s = to;
+        else if (d > 0 ? (s > from && s <= to) : (s >= to && s < from)) s -= d;
+        selectedItem = uint8_t(s);
+    }
 
   private:
     cMenuGroup* parentMenu;
@@ -164,7 +191,7 @@ class cMenuItem : public cMenuBase
         }
     }
 
-    ~cMenuItem() {}
+    ~cMenuItem() = default;
 
     char* getValue()
     {
@@ -181,6 +208,9 @@ class cMenuItem : public cMenuBase
             }
             case menuTypeItemListValues:
             {
+                const strItemTypeListValues* lv = (const strItemTypeListValues*)itemSetup;
+                if (lv->zeroText && *lv->value + lv->dev == 0)
+                    return (char*)lv->zeroText;
                 snprintf(ptrValueText,
                          kTempValueTextLen,
                          "%d",

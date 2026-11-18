@@ -7,6 +7,12 @@
 #include "AudioOutput.h"
 #include "AudioVoice.h"
 #include "ExportQueues.h"
+#ifdef FEATURE_SEND_DUCK
+#if !defined(FEATURE_PLUG_HOST) || !defined(FEATURE_SYNTH)
+#error "FEATURE_SEND_DUCK keeps its settings in the plugin sidecar and takes synth parts as sources (PLUG_HOST=1)"
+#endif
+#include "effect_duck.h"
+#endif
 #include "MixerAndFxs.h"
 #include "Platform.h"
 #include "SdStream.h"
@@ -24,6 +30,9 @@ constexpr uint8_t MUTE_ENABLE = 1;
 constexpr float AMP_MUTED = 0.0f;
 constexpr uint8_t MOST_SIGNIFICANT_FX = 0;
 constexpr uint8_t LEAST_SIGNIFICANT_FX = 1;
+// FX slots a step plays with: ranks 0 and 1 are the two of the pattern file, 2 and 3 come from the 4 FX project switch (fx34.h).
+// Rank 0 is the most significant. On the same parameter rank 0 beats 1 beats 2 beats 3 (FX2 > FX1 > FX4 > FX3)
+constexpr uint8_t kSeqFxSlots = 4;
 constexpr uint8_t ACTIVE_ENVELOPES = envMax;
 constexpr uint16_t RELEASE_NOTE_ON_VAL = 1;
 constexpr uint8_t OVERDRIVE_DISABLED = 0;
@@ -55,11 +64,15 @@ class audioEngine
     void connectSynthToMixer(MixerAndFxs<kVoices>* mixerAndFxs, SynthVoice* synth);
     void connectSynthToExportQueue(SynthVoice* synth, ExportQueues* exportQueues);
     void connectSynthToOutput(SynthVoice* synth, AudioOutput* output);
+#ifdef FEATURE_SEND_DUCK
+    void connectSendDuck();
+#endif
 #endif
     void connectSpecialInputsToOutput(AudioOutput* output);
     void connectVoiceToExportQueue(AudioVoice* voice, ExportQueues* exportQueues, int idx);
     void connectMixerToExportQueue(MixerAndFxs<kVoices>* mixerAndFxs, ExportQueues* exportQueues);
     void connectOutputToExportQueue(AudioOutput* output, ExportQueues* exportQueues);
+    void connectUsbMultiTap(Platform* platform);
 #ifdef PLATFORM_IMX
     void refreshOutputSourceOutsideTheRecorder();
     void forceUsbGainOutsideTheRecorder();
@@ -95,6 +108,13 @@ class audioEngine
     void setLimiterRelease(float release);
     void setLimiterThreshold(uint16_t threshold);
     void setLimiterSidechain(uint8_t sidechain);
+#ifdef FEATURE_SEND_DUCK
+    // Send ducking: a chosen track, line in channel or synth part (the limiter sidechain's numbering, source = list position, 0 off)
+    // pulls the delay and reverb returns down. The project keeps it in the plugin sidecar (plug_host.h duck/duckSet).
+    void setSendDuck(const DuckParams& params);
+    const DuckParams& getSendDuck() const;
+    float getSendDuckGain() const; // 1.0 = no ducking, for the meter of the page
+#endif
 #ifdef FEATURE_SYNTH
     enum SynthValuesSource
     {
@@ -102,6 +122,8 @@ class audioEngine
         kFx1,
         kFx2,
         kPerformance,
+        kFx3, // rank 2 (FX4 column), the 4 FX project switch
+        kFx4, // rank 3 (FX3 column)
         kSynthValuesSourceCount
     };
 
@@ -137,6 +159,7 @@ class audioEngine
     void seqSynthFx(uint8_t fx_id, uint8_t fx_val, uint8_t fx_n, uint8_t synthIdx);
 #ifdef FEATURE_SYNTH_OPEN
     void seqPatchChange(uint8_t slot, uint8_t synthIdx);
+    void seqPatchMorph(int8_t slot, uint8_t amount, uint8_t synthIdx);
 #endif
     void refreshSynthInstrumentParams(SynthPartSettings& synthSettings, int synthIdx);
     float getSynthVoiceRMS(uint8_t channel, int synthIdx);
@@ -203,6 +226,9 @@ class audioEngine
     friend class playerEngine;
 
   private:
+    // USB 8+3 auto mute (fx_auto_mute.h): the platform that reports the stream, and the send refresh the audio interrupt may call
+    Platform* usbStreamPlatform = nullptr;
+    void refreshSendsInIrq();
 #ifdef FEATURE_SYNTH
     void updateSynthParams();
     void updateSynthParam(int synthIdx, SynthParam param);
@@ -254,10 +280,13 @@ class audioEngine
     std::bitset<SynthParam::kSynthParamsCount>
       isSynthParamDirty[kSynthParts]; // this solution is not optimized (bits alignment) - please
                                       // use something like bitset2d from Play if it grows
-    std::optional<uint8_t> lastSynthFxId[kSynthParts][2];
+    std::optional<uint8_t> lastSynthFxId[kSynthParts][mtAudioEngineConstans::kSeqFxSlots];
 #endif
     ExportQueues exportQueues;
     AudioOutput output;
+#ifdef FEATURE_SEND_DUCK
+    AudioEffectDuck<AudioMixer<MixerAndFxs<kVoices>::kTrackAndSendsMixerInputs>> sendDuck;
+#endif
     AudioAnalyzeRMS* delayRms[(int)MixerAndFxChannelType::kChannelCount];
     AudioAnalyzeRMS* polyverbRms[(int)MixerAndFxChannelType::kChannelCount];
     AudioAnalyzeRMS* dryMixRms[(int)MixerAndFxChannelType::kChannelCount];
@@ -289,7 +318,11 @@ class playerEngine
                    uint8_t fx1_id,
                    uint8_t fx1_val,
                    uint8_t fx2_id,
-                   uint8_t fx2_val); // tylko ten note on do nut w sequencerze
+                   uint8_t fx2_val,
+                   uint8_t fx3_id = 0, // rank 2 and 3: the 4 FX project switch, 0 without it
+                   uint8_t fx3_val = 0,
+                   uint8_t fx4_id = 0,
+                   uint8_t fx4_val = 0); // tylko ten note on do nut w sequencerze
     void noteOff(int8_t option = -4);
     void setStepVelocity(int8_t velocity);
     void clean();
@@ -537,6 +570,31 @@ class playerEngine
 
     uint8_t trackControlParameter[(int)controlType::controlTypeLength]
                                  [(int)parameterList::parameterListLength];
+    // Which sequencer FX slot (rank 0..3) holds a parameter: bit n of the entry is rank n. trackControlParameter keeps the view the
+    // readers use: the row of sequencerMode is rank 0, the row of sequencerMode2 is any of the ranks 1 to 3. Only seqSetHold writes
+    // them, so with ranks 0 and 1 alone the rows are exactly what the two slot code wrote.
+    uint8_t seqHoldMask[(int)parameterList::parameterListLength];
+    inline bool seqHolds(uint8_t rank, uint8_t param) const { return (seqHoldMask[param] >> rank) & 1; }
+    // a slot more significant than `rank` holds the parameter
+    inline bool seqHigherHolds(uint8_t rank, uint8_t param) const { return (seqHoldMask[param] & ((1u << rank) - 1u)) != 0; }
+    // a slot other than `rank` holds the parameter
+    inline bool seqOtherHolds(uint8_t rank, uint8_t param) const { return (seqHoldMask[param] & ~(1u << rank) & 0x0F) != 0; }
+    // the most significant slot other than `rank` that holds the parameter, else the other slot of rank's pair (which does not hold it)
+    inline uint8_t seqOtherHolder(uint8_t rank, uint8_t param) const
+    {
+        const uint8_t m = seqHoldMask[param] & ~(1u << rank) & 0x0F;
+        if (m == 0)
+            return rank ^ 1;
+        return (m & 1) ? 0 : (m & 2) ? 1 : (m & 4) ? 2 : 3;
+    }
+    inline void seqSetHold(uint8_t rank, uint8_t param, uint8_t on)
+    {
+        uint8_t m = seqHoldMask[param];
+        m = on ? (m | (1u << rank)) : (m & ~(1u << rank));
+        seqHoldMask[param] = m;
+        trackControlParameter[(int)controlType::sequencerMode][param] = m & 1;
+        trackControlParameter[(int)controlType::sequencerMode2][param] = (m & 0x0E) != 0;
+    }
     //**********************************************************************************************************************************
     // PERFORMANCE MODE
     //*****************************CHANGE
@@ -608,8 +666,8 @@ class playerEngine
 
     envelopeGenerator* envelopePtr[envMax];
     uint8_t nChannel;
-    uint8_t lastSeqFx[2];
-    uint8_t lastSeqVal[2];
+    uint8_t lastSeqFx[mtAudioEngineConstans::kSeqFxSlots];
+    uint8_t lastSeqVal[mtAudioEngineConstans::kSeqFxSlots];
     int8_t currentNote;
     uint32_t refreshRegister;
     uint8_t interfaceEndReleaseFlag = 0;
@@ -727,6 +785,7 @@ class playerEngine
     //***
     void fxSlideUp(uint8_t fx_val);
     void fxSlideDown(uint8_t fx_val);
+    void fxTape(bool start, uint8_t fx_val);
     void fxTune(uint8_t fx_val, uint8_t fx_n);
     void fxVolume(uint8_t fx_val, uint8_t fx_n);
     void fxRandomVolume(uint8_t fx_val, uint8_t fx_n);

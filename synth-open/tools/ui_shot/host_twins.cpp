@@ -8,7 +8,9 @@
 // a corrupt or foreign .plg fails as it does on the device. Audio is never run here.
 #include "plug/plug_abi.h"
 
+#include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 extern "C"
@@ -21,6 +23,9 @@ const plug_desc* plug_entry_ot_lofi_plug(const plug_host*, uint32_t);
 const plug_desc* plug_entry_ff_console_plug(const plug_host*, uint32_t);   // Console, Tube and Glue: private source, see the Makefile (EXT)
 const plug_desc* plug_entry_ff_tube_plug(const plug_host*, uint32_t);
 const plug_desc* plug_entry_ff_glue_plug(const plug_host*, uint32_t);
+const plug_desc* plug_entry_ff_sweepgate_plug(const plug_host*, uint32_t);   // Sweep Gate, Dust Bed and Mono Bass: tracker-effects-os, FX_EXTRA_SRC
+const plug_desc* plug_entry_ff_dustbed_plug(const plug_host*, uint32_t);
+const plug_desc* plug_entry_ff_monobass_plug(const plug_host*, uint32_t);
 const plug_desc* plug_entry_ot_bbd_plug(const plug_host*, uint32_t);
 const plug_desc* plug_entry_ot_phaser_plug(const plug_host*, uint32_t);
 
@@ -33,6 +38,9 @@ static uint32_t fnv1a(const char* s)
     for (; *s; s++) h = (h ^ uint8_t(*s)) * 16777619u;
     return h;
 }
+
+
+const plug_desc* uishotTapWrap(uint32_t uid, const plug_desc* d);   // host_tap.cpp: the plug_tempo_sim.sh tap
 
 const plug_desc* uishot_twin(uint32_t uid, const plug_host* host)
 {
@@ -49,9 +57,16 @@ const plug_desc* uishot_twin(uint32_t uid, const plug_host* host)
         {"ff.glue", plug_entry_ff_glue_plug},
         {"org.opentracker.fx.bbd", plug_entry_ot_bbd_plug},
         {"org.opentracker.fx.phaser", plug_entry_ot_phaser_plug},
+        {"ff.sweepgate", plug_entry_ff_sweepgate_plug},
+        {"ff.dustbed", plug_entry_ff_dustbed_plug},
+        {"ff.monobass", plug_entry_ff_monobass_plug},
     };
     for (const auto& t : kTwins)
-        if (fnv1a(t.id) == uid) return t.entry(host, (PLUG_ABI_MAJOR << 16) | PLUG_ABI_MINOR);
+        if (fnv1a(t.id) == uid)
+        {
+            const plug_desc* d = t.entry(host, (PLUG_ABI_MAJOR << 16) | PLUG_ABI_MINOR);
+            return d ? uishotTapWrap(uid, d) : nullptr;
+        }
     return nullptr;   // a plugin with no twin (the synth engines: never run on the host, and Console, Tube and Glue when their private source was not available, their stub entry returns nullptr) fails to load, "Failed" on the page
 }
 }

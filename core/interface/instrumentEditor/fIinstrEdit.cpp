@@ -304,6 +304,9 @@ void cInstrumentEditor::stop()
 
     moduleRefresh = 0;
 #if GUI_HANDLE_SYNTH
+    // The "Init patch" popup blocks all inputs but its two buttons, and only those buttons
+    // unblock them. The module can be closed under the popup, e.g. when the card is removed.
+    ip->unblockAllInputs();
     exitSynthEditor();
     cleanPatchEditorResources();
     cleanMacrosResources();
@@ -2912,7 +2915,8 @@ static void functMiniMiddle(uint8_t state)
     // Hold is set to button function with Press state . We have to handle it by rejecting
     // repetitive states if we don't want hold.
 
-    if (mtProject.instrument[mtProject.values.lastUsedInstrument].playMode == playModeBeatSlice)
+    if (mtProject.values.lastUsedInstrument < kSampleInstrumentsCount &&
+        mtProject.instrument[mtProject.values.lastUsedInstrument].playMode == playModeBeatSlice)
     {
         int note = mtProject.instrument[mtProject.values.lastUsedInstrument].selectedSlice +
                    FIRST_BEAT_SLICE_NOTE;
@@ -2980,7 +2984,10 @@ static void functInstrument(uint8_t state)
 
     if (state == buttonRelease)
     {
-        IE->editorInstrument = &mtProject.instrument[mtProject.values.lastUsedInstrument];
+        if (mtProject.values.lastUsedInstrument < kSampleInstrumentsCount)
+        {
+            IE->editorInstrument = &mtProject.instrument[mtProject.values.lastUsedInstrument];
+        }
         IE->cancelPopups();
 
         IE->lightUpPadBoard();

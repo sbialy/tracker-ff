@@ -1,6 +1,7 @@
 
 #include "mtSequencer.h"
 #include "mtStructs.h"
+#include "tapeFx.h"
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
@@ -8,8 +9,13 @@
 #include "patternFileValidation.h"
 
 #include "polyassert.h"
+#include "fx34_io.h"
 
 #include "convertOldFileVersionVolume.h"
+
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
 
 #include <string.h>
 #include <tuple>
@@ -69,9 +75,14 @@ void cFileManager::loadPatternFromWorkspace(uint8_t index)
     if (loadStatus == fileTransferEnd)
     {
         size_t fileSize = fileSystem->getFileSize(patternFilename);
-        if (validatePatternFileData(patternFilename, &fileManagerPatternBuffer, fileSize) &&
-            sequencer.copyBufferToBufferPattern((uint8_t*)&fileManagerPatternBuffer))
+        const bool valid = validatePatternFileData(patternFilename, &fileManagerPatternBuffer, fileSize);
+        if (valid)
         {
+            fx34io::load(patternFilename, &fileManagerPatternBuffer); // FX3 and FX4 of the pattern (the 4 FX switch)
+        }
+        if (valid && sequencer.copyBufferToBufferPattern((uint8_t*)&fileManagerPatternBuffer))
+        {
+            preloadedPattern = static_cast<uint8_t>(loadedPattern);
             report(" no blocking pattern load - success ", loadedPattern);
             moveToNextOperationStep();
             return;
@@ -80,10 +91,13 @@ void cFileManager::loadPatternFromWorkspace(uint8_t index)
     else if (loadStatus == fileTransferFileNoExist) // brak pliku patternu
     {
         sequencer.clearPattern(&fileManagerPatternBuffer);
+        fx34io::clearSet(&fileManagerPatternBuffer);
         sequencer.copyBufferToBufferPattern((uint8_t*)&fileManagerPatternBuffer);
+        preloadedPattern = static_cast<uint8_t>(loadedPattern);
 
         report(" no blocking pattern load - file no exist ", patternFilename);
         sequencer.clearPattern(&fileManagerPatternBuffer);
+        fx34io::clearSet(&fileManagerPatternBuffer);
         moveToNextOperationStep();
         return;
     }
@@ -125,6 +139,17 @@ const Sequencer::strPattern* cFileManager::loadWorkspacePatternToTempBuffer(uint
 //------------------------------------------------------------------------------------------------------------------
 void cFileManager::savePatternToWorkspace()
 {
+    if (sequencer.isPerformanceImageMixed()) // tracks of other patterns play: never written over the pattern on screen
+    {
+        changesFlags.pattern[mtProject.values.actualPattern] = 0;
+    }
+#ifdef FEATURE_PARTS
+    if (parts::editsBlocked()) // the playing pattern is a Part image, not this pattern: never written over it (risk R1)
+    {
+        changesFlags.pattern[mtProject.values.actualPattern] = 0;
+        parts::storeEdits(); // its edits go to the source patterns instead
+    }
+#endif
     if (changesFlags.pattern[mtProject.values.actualPattern] ==
         0) // jesli flaga zmian nie ustawiona omin zapis
     {
@@ -145,11 +170,16 @@ void cFileManager::savePatternToWorkspace()
     snprintf(
       patternToSave, PATCH_SIZE, cWorkspacePatternFileFormat, mtProject.values.actualPattern);
 
+    const fx34io::Guard sidecarGuard = fx34io::before(patternToSave);
     uint8_t saveStatus = fileTransfer.saveMemoryToFile(
       (uint8_t*)&fileManagerPatternBuffer, patternToSave, sizeof(Sequencer::strPattern));
 
     if (saveStatus == fileTransferEnd)
     {
+        fx34io::after(patternToSave,
+                      fx34::setOf(&fileManagerPatternBuffer),
+                      fileManagerPatternBuffer.crc,
+                      sidecarGuard); // FX3 and FX4 of the pattern, bound to the CRC just written
         report(" no blocking pattern save - success ", mtProject.values.actualPattern);
         clearPatternChanged(mtProject.values.actualPattern);
         sequencer.saveToFileDone();
@@ -191,11 +221,13 @@ bool cFileManager::loadWorkspacePatternNow(uint8_t index)
 
     snprintf(patternToLoad, PATCH_SIZE, cWorkspacePatternFileFormat, index);
     loadedPattern = index;
+    preloadedPattern = 0;
     Sequencer::strPattern* destPattern = sequencer.getPatternToLoadFromFile();
 
     if (!fileSystem->exists(patternToLoad))
     {
         report(" load patern now - file no exist ", patternToLoad);
+        fx34io::clearSet(destPattern);
         status = false;
     }
     else
@@ -235,6 +267,17 @@ bool cFileManager::saveWorkspacePatternNow(uint8_t index)
     char patternToSave[PATCH_SIZE]{ 0 };
     bool status = false;
 
+    if (sequencer.isPerformanceImageMixed() && index == mtProject.values.actualPattern) // see savePatternToWorkspace
+    {
+        changesFlags.pattern[index] = 0;
+    }
+
+#ifdef FEATURE_PARTS
+    if (parts::editsBlocked() && index == mtProject.values.actualPattern) // a Part image plays, see savePatternToWorkspace
+    {
+        changesFlags.pattern[index] = 0;
+    }
+#endif
     if (changesFlags.pattern[index] == 1)
     {
         changesFlags.pattern[index] = 0;
@@ -269,8 +312,29 @@ bool cFileManager::saveWorkspacePatternNow(uint8_t index)
 //-----------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------
 
+#ifdef FEATURE_PARTS
+bool cFileManager::readWorkspacePatternTo(uint8_t index, Sequencer::strPattern* dest)
+{
+    char p[PATCH_SIZE];
+    snprintf(p, PATCH_SIZE, cWorkspacePatternFileFormat, index);
+    if (!fileSystem->exists(p))
+    {
+        return false;
+    }
+    return readPatternFile(p, dest);
+}
+
+bool cFileManager::writeWorkspacePatternFrom(uint8_t index, Sequencer::strPattern* src)
+{
+    char p[PATCH_SIZE];
+    snprintf(p, PATCH_SIZE, cWorkspacePatternFileFormat, index);
+    return writePatternFile(p, src);
+}
+#endif
+
 bool cFileManager::writePatternFile(const char* filePath, Sequencer::strPattern* sourcePattern)
 {
+    const fx34io::Guard sidecarGuard = fx34io::before(filePath);
     fileSystem->remove(filePath);
 
     sequencer.setPatternHeader(sourcePattern);
@@ -288,6 +352,7 @@ bool cFileManager::writePatternFile(const char* filePath, Sequencer::strPattern*
         if (written == static_cast<int32_t>(sizeof(Sequencer::strPattern)))
         {
             fileSystem->closeFile(file);
+            fx34io::after(filePath, fx34::setOf(sourcePattern), sourcePattern->crc, sidecarGuard);
             report("write pattern file - success ", filePath);
             return true;
         }
@@ -318,6 +383,7 @@ bool cFileManager::validatePatternFileData(const char* filePath,
 bool cFileManager::readPatternFile(const char* filePath, Sequencer::strPattern* destPattern)
 {
     memset(destPattern, 0, sizeof(Sequencer::strPattern));
+    fx34io::clearSet(destPattern);
 
     // na końcu struktury jest crc
     auto [loadStatus, file] = fileSystem->openFile(filePath);
@@ -351,6 +417,7 @@ bool cFileManager::readPatternFile(const char* filePath, Sequencer::strPattern* 
     }
 
     checkVersionAndTranslate(destPattern);
+    fx34io::load(filePath, destPattern);
 
     report("load pattern file - success ", filePath);
     return true;
@@ -393,6 +460,23 @@ void cFileManager::checkVersionAndTranslate(Sequencer::strPattern* pattern)
     }
 
     translatePatternWithDifferentTrackCount(pattern);
+    translateRetiredTapeStart(pattern);
+}
+
+// Dev projects only (the Tape Start id 51 never shipped): FX id 51 becomes Tape (50) with the value + 64. Runs on every load, no file
+// version bump, idempotent (a migrated slot holds id 50, an id 50 value is never touched). Id 51 stays a reserved hole.
+void cFileManager::translateRetiredTapeStart(Sequencer::strPattern* pattern)
+{
+    for (auto& track : pattern->track)
+    {
+        for (auto& step : track.step)
+        {
+            for (auto& fx : step.fx)
+            {
+                tapefx::migrateSlot(fx.type, fx.value);
+            }
+        }
+    }
 }
 
 void cFileManager::translateVolumeFxInPatternFromFileVersion1ToFileVersion2(
@@ -605,19 +689,31 @@ bool cFileManager::loadPerformanceTrackToBuffer(uint8_t pattIndex, uint8_t track
       (Sequencer::strPattern*)sequencer.getPatternToLoadFromFile();
     Sequencer::strPattern* patternTo = &fileManagerPerformancePatternBuffer;
 
-    if (fileSystem->exists(patternToLoad))
+    // The file is read through the buffer in which a preloaded next pattern waits for the
+    // end of the current one. Ask for that pattern again.
+    DISABLE_GLOBAL_INTERRUPTS();
+    if (preloadedPattern != 0 && requestedPattern == 0)
     {
-        readPatternFile(patternToLoad, sequencer.getPatternToLoadFromFile());
+        requestedPattern = preloadedPattern;
     }
-    else
+    preloadedPattern = 0;
+    ENABLE_GLOBAL_INTERRUPTS();
+
+    // A read that fails leaves zeroed or partly read steps behind, and a zeroed step is a
+    // note of the first instrument, not an empty step.
+    if (!fileSystem->exists(patternToLoad) ||
+        !readPatternFile(patternToLoad, sequencer.getPatternToLoadFromFile()))
     {
         sequencer.clearPattern(patternFrom);
+        fx34io::clearSet(patternFrom);
     }
 
     patternTo->track[trackIndex] = patternFrom->track[trackIndex];
+    fx34io::copyTrack(patternTo, trackIndex, patternFrom, trackIndex); // FX3 and FX4 of the track
 
     // lengthy tracka na potrzeby performance przepisuje do konretnego tracka
-    patternTo->track[trackIndex].length = patternFrom->track[0].length;
+    // polymeter: the source track's own length
+    patternTo->track[trackIndex].length = Sequencer::getTrackLastStep(patternFrom, trackIndex);
 
     mtProject.perfTracksPatterns[trackIndex] = pattIndex;
     if (trackIndex < kSampleTracks)

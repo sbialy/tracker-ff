@@ -4,6 +4,7 @@
 #include "core/interfacePopups.h"
 
 #include "fileManager.h"
+#include "fx34_io.h"
 
 // uint8_t patternToLoad = 0;
 
@@ -15,6 +16,11 @@ void setPatternBitmask(int patternIdx, int trackIdx, bool value);
 AUDIO_CORE_RAM uint8_t cFileManager::getNextSongPattern()
 {
     strSong* song = &mtProject.song;
+    // A song that fills the whole playlist has no empty slot after its last one.
+    if (song->playlistPos >= SONG_MAX - 1)
+    {
+        return song->playlist[0];
+    }
     return song->playlist[song->playlistPos + 1] > 0 ? song->playlist[song->playlistPos + 1]
                                                      : song->playlist[0];
 }
@@ -50,7 +56,8 @@ void cFileManager::setSongPos(uint8_t pos)
 bool cFileManager::switchNextPatternInSong()
 {
     strSong* song = &mtProject.song;
-    if (song->playlist[++(song->playlistPos)] != PLAYLIST_EMPTY_SLOT)
+    if (song->playlistPos < SONG_MAX - 1 &&
+        song->playlist[++(song->playlistPos)] != PLAYLIST_EMPTY_SLOT)
     {
         return 1;
     }
@@ -128,6 +135,7 @@ void cFileManager::copySongTracks(char* currentProjectPath,
             sequencer.copyStep(
               &srcTrack->step[stepIdx], &destTrack->step[stepIdx], !isSampleTrack(destTrackIdx));
         }
+        fx34io::copyTrack(destPattern, static_cast<uint8_t>(destTrackIdx), srcPattern, static_cast<uint8_t>(srcTrackIdx)); // FX3 and FX4 of the track (the 4 FX switch)
     }
 
     uint8_t destBitmaskIdx = destPaternIdx - 1;
@@ -146,6 +154,10 @@ void cFileManager::copySongTracks(char* currentProjectPath,
     }
 
     sequencer.updateTrackLengths(destPattern);
+    if (fx34::takeRefusal())
+    {
+        mtPopups.show(0, "FX3/FX4: 256 per pattern, some were not copied");
+    }
 
     if (updatePatternBitmask(destPaternIdx, destPattern))
     {
@@ -178,6 +190,7 @@ void cFileManager::deleteTracks(char* currentProjectPath,
         for (uint8_t track = 0; track < tracksNum; track++)
         {
             sequencer.clearSingleTrack(&srcPattern->track[track + trackStartSrc]);
+            fx34::clearTrack(fx34::setOf(srcPattern), uint8_t(track + trackStartSrc));
         }
 
         if (updatePatternBitmask(srcPatternIdx, srcPattern))

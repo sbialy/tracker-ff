@@ -141,11 +141,14 @@ void testBlocks(uint32_t cases)
         memset(oPost, 0x22, sizeof oPost);
         memset(nPost, 0x22, sizeof nPost);
         oldMonoPart(render, gainDb, reuse, skip, oSend, oPost);
-        part_clip::monoPart<kBlock>(render, reuse ? 1.0f : dbToAmplitude(gainDb), reuse, skip, skip ? nullptr : nSend, nPost);
+        part_clip::monoPart<kBlock>(render, reuse ? 1.0f : dbToAmplitude(gainDb), reuse, skip, (skip || reuse) ? nullptr : nSend, nPost);
         checks++;
         if (memcmp(oPost, nPost, sizeof oPost))
             fail("post block", c, (long)(gainDb * 100));
-        if (!skip && memcmp(oSend, nSend, sizeof oSend))
+        // a 0 dB part builds one block: the post block is what the send mixers get as well (PolySynth::update transmits it to all 4 outputs)
+        if (reuse && memcmp(oSend, nPost, sizeof oSend))
+            fail("send block of a 0 dB part (the post block)", c, (long)(gainDb * 100));
+        if (!reuse && !skip && memcmp(oSend, nSend, sizeof oSend))
             fail("send block", c, (long)(gainDb * 100));
     }
 }

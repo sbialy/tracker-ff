@@ -64,7 +64,7 @@ void cPoints::setText(const char* text)
     this->text = text;
 }
 
-void cPoints::setValue(int value)
+void cPoints::setValue(int /*value*/)
 {
 }
 

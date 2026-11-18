@@ -34,7 +34,15 @@ static_assert(offsetof(polysynth::open::ParamDef, enumNames) == offsetof(plug_sy
 static_assert(offsetof(polysynth::open::MacroDef, targets) == offsetof(plug_synth_macro, targets), "MacroDef layout");
 
 inline ISynthEngine* g_eng;
-inline plug_ext_synth g_ext;
+// The extension the host reads. An engine that defines PLUG_SYNTH_ABI12 before the include (PLUG_SYNTH_PLUGIN_EXT with service or
+// view) gets the whole ABI 1.4 struct, every other one keeps the 100 bytes of ABI 1.1, so its .plg bytes do not change with the SDK.
+#ifdef PLUG_SYNTH_ABI12
+inline plug_ext_synth g_extFull;
+inline plug_ext_synth& ext() { return g_extFull; }
+#else
+alignas(plug_ext_synth) inline uint8_t g_ext11[offsetof(plug_ext_synth, service)];
+inline plug_ext_synth& ext() { return *reinterpret_cast<plug_ext_synth*>(g_ext11); }
+#endif
 
 inline void prepare(void* sc, const void* p) { g_eng->prepare(*static_cast<SynthSlotScratch*>(sc), *static_cast<const SynthParams*>(p)); }
 inline void slotReset(void* sc) { g_eng->slotReset(*static_cast<SynthSlotScratch*>(sc)); }
@@ -56,7 +64,7 @@ inline uint32_t sendTap(int32_t slot, float* d, float* rv, float gd, float gr) {
 
 inline int32_t init(void*, const plug_host*) { return g_eng ? 0 : -1; }
 inline void process(void*, float* const*, uint32_t, uint32_t) {}   // a synth renders through PLUG_EXT_SYNTH only
-inline const void* query(uint32_t id) { return id == PLUG_EXT_SYNTH && g_eng ? &g_ext : nullptr; }
+inline const void* query(uint32_t id) { return id == PLUG_EXT_SYNTH && g_eng ? &ext() : nullptr; }
 // PLUG_EXT_CHORD (ABI 1.2), only in a plugin made with PLUG_SYNTH_PLUGIN_CHORD: the engine's Chord and Chord Mode parameters
 inline plug_ext_chord g_chord;
 inline const void* queryChord(uint32_t id) { return id == PLUG_EXT_CHORD && g_eng ? &g_chord : query(id); }
@@ -69,12 +77,19 @@ inline void fillChord(uint32_t chordParam, uint32_t modeParam, uint32_t strumPar
 }
 
 // Fills the extension from the definition. Called by plug_entry: the host asks for it right after.
+// service and view (ABI 1.4, plug_abi.h): only with PLUG_SYNTH_ABI12, an engine without it reports the ABI 1.1 struct_size.
 inline void fill(const char* name, const EngineDef& d, int32_t stored, int32_t patchEngine, uint32_t workBytes = 0,
-                 void (*setWork)(void*, uint32_t) = nullptr)
+                 void (*setWork)(void*, uint32_t) = nullptr,
+                 [[maybe_unused]] uint32_t (*service)(uint32_t, const float*, uint32_t) = nullptr,
+                 [[maybe_unused]] void (*view)(const float*, uint32_t, int8_t*, uint32_t) = nullptr)
 {
     g_eng = d.engine();
-    plug_ext_synth& x = g_ext;
+    plug_ext_synth& x = ext();
+#ifdef PLUG_SYNTH_ABI12
     x.struct_size = sizeof(plug_ext_synth);
+#else
+    x.struct_size = offsetof(plug_ext_synth, service);
+#endif
     x.layout = PLUG_SYNTH_LAYOUT(sizeof(SynthVoice), sizeof(SynthParams), sizeof(SynthNote), sizeof(SynthSlotScratch));
     x.stored = stored;
     x.patch_engine = patchEngine;
@@ -99,14 +114,20 @@ inline void fill(const char* name, const EngineDef& d, int32_t stored, int32_t p
     x.set_send_tap = sendTap;
     x.work_bytes = setWork ? workBytes : 0;
     x.set_work = setWork;
+#ifdef PLUG_SYNTH_ABI12
+    x.service = service;
+    x.view = view;
+#endif
 }
 }   // namespace plugsynth
 
 // The engines' virtual destructors put a deleting destructor in the vtable. Nothing deletes an engine (a static object): the
 // operator it names is never called, it only has to link (the plain one is defined too, -Wsized-deallocation asks for the
 // pair). WORK_BYTES and SET_WORK: the engine's working RAM from the host (PLUG_EXT_SYNTH work_bytes, set_work), 0 and
-// nullptr for none.
-#define PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, QUERY, EXTRA)                       \
+// nullptr for none. SERVICE and VIEW (ABI 1.4, plug_abi.h): the main thread functions of plug_ext_synth, nullptr for none. They
+// count only when the engine defines PLUG_SYNTH_ABI12 before the include, without it they are ignored and the extension is the
+// ABI 1.1 one (the .plg bytes of an engine that does not use them do not change with the SDK).
+#define PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, SERVICE, VIEW, QUERY, EXTRA)        \
     void operator delete(void*) noexcept {}                                                                                    \
     void operator delete(void*, unsigned int) noexcept {}                                                                      \
     namespace                                                                                                                  \
@@ -120,19 +141,28 @@ inline void fill(const char* name, const EngineDef& d, int32_t stored, int32_t p
     {                                                                                                                          \
         if ((abi >> 16) != PLUG_ABI_MAJOR || !host || !PLUG_HAS(host, plug_host, log2f)) return nullptr;                       \
         plug_rt_host = host;                                                                                                   \
-        plugsynth::fill(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK);                                                \
+        plugsynth::fill(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, SERVICE, VIEW);                                 \
         EXTRA                                                                                                                  \
         return &kDesc;                                                                                                         \
     }
+#define PLUG_SYNTH_PLUGIN_EXT(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, SERVICE, VIEW)                            \
+    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, SERVICE, VIEW, plugsynth::query, )
 #define PLUG_SYNTH_PLUGIN_WORK(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK) \
-    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, plugsynth::query, )
+    PLUG_SYNTH_PLUGIN_EXT(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, nullptr, nullptr)
 // A paraphonic engine (PLUG_EXT_CHORD, plug_abi.h): CHORD_PARAM is its Chord parameter (plug_chord.h order), MODE_PARAM its Chord Mode
 // (0 Poly, 1 Para). The host of ABI 1.2 plays a MIDI Chord step on a Para patch as one note-on with the chord in CHORD_PARAM.
 #define PLUG_SYNTH_PLUGIN_CHORD(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, CHORD_PARAM, MODE_PARAM) \
-    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, plugsynth::queryChord,      \
+    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, nullptr, nullptr, plugsynth::queryChord, \
                             plugsynth::fillChord(CHORD_PARAM, MODE_PARAM);)
 // The same with a Strum parameter (plug_ext_chord.strum_param: integer -63..63, 2 ms units, + up, - down)
 #define PLUG_SYNTH_PLUGIN_CHORD_STRUM(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, CHORD_PARAM, MODE_PARAM, STRUM_PARAM) \
-    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, plugsynth::queryChord,                   \
+    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, nullptr, nullptr, plugsynth::queryChord,     \
+                            plugsynth::fillChord(CHORD_PARAM, MODE_PARAM, STRUM_PARAM);)
+// The same two with the ABI 1.4 service and view (a paraphonic engine that reads the card, ALCO): define PLUG_SYNTH_ABI12 before the include
+#define PLUG_SYNTH_PLUGIN_EXT_CHORD(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, SERVICE, VIEW, CHORD_PARAM, MODE_PARAM) \
+    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, SERVICE, VIEW, plugsynth::queryChord,         \
+                            plugsynth::fillChord(CHORD_PARAM, MODE_PARAM);)
+#define PLUG_SYNTH_PLUGIN_EXT_CHORD_STRUM(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, SERVICE, VIEW, CHORD_PARAM, MODE_PARAM, STRUM_PARAM) \
+    PLUG_SYNTH_PLUGIN_IMPL_(NAME, DEF, STORED, PATCH_ENGINE, WORK_BYTES, SET_WORK, SERVICE, VIEW, plugsynth::queryChord,                           \
                             plugsynth::fillChord(CHORD_PARAM, MODE_PARAM, STRUM_PARAM);)
 #define PLUG_SYNTH_PLUGIN(NAME, DEF, STORED, PATCH_ENGINE) PLUG_SYNTH_PLUGIN_WORK(NAME, DEF, STORED, PATCH_ENGINE, 0, nullptr)

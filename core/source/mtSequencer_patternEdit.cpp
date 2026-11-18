@@ -2,12 +2,15 @@
 #include "fileManager.h"
 #include "mtAudioEngine.h"
 #include "mtChord.h"
+#include "mtPatternGen.h"
 #include "mtSequencer.h"
 #include "mtStructs.h"
 #include "patternEditor/patternEditor.h"
+#include "tapeFx.h"
 
 #include "ctype.h"
 #include "util_math.h"
+#include "fx34.h"
 #include <cr_section_macros.h>
 
 extern Sequencer sequencer;
@@ -105,6 +108,56 @@ void Sequencer::fillLinearNotes(int16_t fillStep,
         }
     }
 }
+// One idea per selected track by the role of the track (Auto: kick, snare, hat, bass, lead in selection order). The selection is
+// replaced: steps the idea does not hit lose their note and its volume, the hits get the note, the volume and (when the step had no
+// note) the instrument the other fills use. Note offs, FX and micro-move of the steps stay. One seed per apply, so Fill again gives
+// another idea and Undo takes it back.
+void Sequencer::fillRoleNotes(int16_t role, int16_t scale, int16_t density)
+{
+    strSelection* sel = &selection;
+    if (!isSelectionCorrect(sel))
+        return;
+    const uint16_t steps = sel->lastStep - sel->firstStep + 1;
+    const uint32_t seed = (uint32_t)utilMathRandom::random();
+    patternGen::Cell cells[MAXSTEP + 1];
+
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    {
+        const uint8_t r = patternGen::roleOfTrack((uint8_t)role, t - sel->firstTrack);
+        const uint8_t low = r == patternGen::roleBass ? (isSampleTrack(t) ? 48 : 36) : 60;
+        patternGen::generate(r,
+                             steps,
+                             (uint8_t)clamp<int>(density, 1, MAX_FILL_DENSITY),
+                             mtProject.values.padBoardRootNote,
+                             (uint8_t)clamp<int>(scale, MIN_SCALE, MAX_SCALE),
+                             low,
+                             seed + t * 0x9E3779B1u,
+                             cells);
+        for (uint16_t i = 0; i < steps; i++)
+        {
+            strPattern::strTrack::strStep* step = &currentPattern->track[t].step[sel->firstStep + i];
+            if (cells[i].hit)
+            {
+                if (step->isNoteEmpty() || step->isNoteOff())
+                {
+                    step->instrument = changeInstrumentInSpecificOrder(
+                      mtProject.values.lastUsedInstrument, 0, !isSampleTrack(t));
+                }
+                if (r == patternGen::roleBass || r == patternGen::roleLead)
+                    step->note = cells[i].note;
+                else if (step->isNoteEmpty() || step->isNoteOff())
+                    step->note = STEP_NOTE_DEFAULT;
+                step->volume = cells[i].volume;
+            }
+            else if (step->note >= STEP_NOTE_MIN)
+            {
+                step->note = STEP_NOTE_EMPTY;
+                step->volume = STEP_VELO_DEFAULT;
+            }
+        }
+    }
+}
+
 void Sequencer::fillLinearInstruments(int16_t fillStep, int16_t from, int16_t to, int16_t density)
 {
 
@@ -145,7 +198,7 @@ void Sequencer::fillLinearFx(int16_t fxIndex,
     strSelection* sel = &selection;
     if (!isSelectionCorrect(sel))
         return;
-    if (fxIndex > FX_SLOTS_MAX)
+    if (fxIndex > fx34::maxSlot())
         fxIndex = 0;
 
     int16_t fxType = interfaceGlobals.fxNameToId(fxName);
@@ -163,7 +216,8 @@ void Sequencer::fillLinearFx(int16_t fxIndex,
 
             if (isStepToFillFx(step, offset, fxIndex, fillStep, density))
             {
-                step->fx[fxIndex].type = (fxType >= 0) ? fxType : generateRandomFx();
+                fx34::FxRef fxr(currentPattern, t, s, fxIndex);
+                fxr.p->type = (fxType >= 0) ? fxType : generateRandomFx();
 
                 float tempFloat = fromVal;
                 if (sel->firstStep != sel->lastStep)
@@ -175,9 +229,7 @@ void Sequencer::fillLinearFx(int16_t fxIndex,
                                                   toVal);
                 }
 
-                step->fx[fxIndex].value = clamp<int>((uint8_t)tempFloat,
-                                                     getFxMin(step->fx[fxIndex].type),
-                                                     getFxMax(step->fx[fxIndex].type));
+                fxr.p->value = clamp<int>((uint8_t)tempFloat, getFxMin(fxr.p->type), getFxMax(fxr.p->type));
             }
         }
     }
@@ -188,9 +240,15 @@ uint8_t Sequencer::generateRandomFx()
     uint8_t retVal;
     for (uint8_t a = 0; a < 100; a++)
     {
-        retVal = utilMathRandom::random(fx.FX_TYPE_OFF + 1, FX_COUNT - FX_COUNT_HIDDEN_FXes + 1);
+        // ids, not list positions: the retired id 51 (R10) is a hole, so the ids reach one further than the list (Snap 52 stays drawable)
+        retVal = utilMathRandom::random(fx.FX_TYPE_OFF + 1, FX_COUNT - FX_COUNT_HIDDEN_FXes + 2);
         if (retVal != fx.FX_TYPE_TEMPO && retVal != fx.FX_TYPE_BREAK_PATTERN // breaka nie chcemy
             && retVal != fx.FX_TYPE_PATCH_CHANGE // a random patch switch is never wanted from the picker (no-op id in stock)
+            && retVal != fx.FX_TYPE_R10         // the retired Tape Start id, a hole in the list
+            && retVal != fx.FX_TYPE_TAPE        // a random pick would silence a track
+#ifdef FEATURE_SYNTH_OPEN
+            && retVal != fx.FX_TYPE_PATCH_MORPH  // nor a random morph
+#endif
             && retVal != fx.FX_TYPE_STRUM)      // a strum needs a MIDI Chord in the other slot
 
             break;
@@ -210,7 +268,7 @@ void Sequencer::fillRandomFx(int16_t fxIndex,
     strSelection* sel = &selection;
     if (!isSelectionCorrect(sel))
         return;
-    if (fxIndex > FX_SLOTS_MAX)
+    if (fxIndex > fx34::maxSlot())
         fxIndex = 0;
 
     int16_t fxType = interfaceGlobals.fxNameToId(fxName);
@@ -225,12 +283,11 @@ void Sequencer::fillRandomFx(int16_t fxIndex,
 
             if (isStepToFillFx(step, offset, fxIndex, fillStep, density))
             {
-                step->fx[fxIndex].value = utilMathRandom::random(fromVal, toVal + 1);
-                step->fx[fxIndex].type = (fxType >= 0) ? fxType : generateRandomFx();
+                fx34::FxRef fxr(currentPattern, t, s, fxIndex);
+                fxr.p->value = utilMathRandom::random(fromVal, toVal + 1);
+                fxr.p->type = (fxType >= 0) ? fxType : generateRandomFx();
 
-                step->fx[fxIndex].value = clamp<int>(step->fx[fxIndex].value,
-                                                     getFxMin(step->fx[fxIndex].type),
-                                                     getFxMax(step->fx[fxIndex].type));
+                fxr.p->value = clamp<int>(fxr.p->value, getFxMin(fxr.p->type), getFxMax(fxr.p->type));
             }
         }
     }
@@ -261,10 +318,10 @@ bool Sequencer::isStepToFillFx(strPattern::strTrack::strStep* step,
         return isEuclideanStep(offset, density);
     }
 
-    else if (fillStep == fillStepNoFx && step->fx[fxIndex].type == 0)
+    else if (fillStep == fillStepNoFx && fx34::getFx(step, fxIndex).type == 0)
         return true;
 
-    else if (fillStep == fillStepFx && step->fx[fxIndex].type != 0)
+    else if (fillStep == fillStepFx && fx34::getFx(step, fxIndex).type != 0)
         return true;
 
     else if (fillStep == fillStepNoNote && step->note < 0)
@@ -355,6 +412,31 @@ void Sequencer::fillRandomMicromove(int16_t fillStep,
     }
 }
 
+// Quantize (Fill type of the Micro-move column): the micromove of every picked step moves toward the grid by strength percent.
+// 100 clears it (on the grid), 50 halves it, 0 changes nothing. A step without micromove is already on the grid and stays as it is.
+void Sequencer::quantizeMicromove(int16_t fillStep, int16_t strength, int16_t density)
+{
+    strSelection* sel = &selection;
+    if (!isSelectionCorrect(sel))
+        return;
+
+    strength = clamp<int16_t>(strength, 0, 100);
+    if (strength == 0)
+        return;
+
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    {
+        for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
+        {
+            strPattern::strTrack::strStep* step = &currentPattern->track[t].step[s];
+            if (step->micromove < 0 || !isStepToFillProp(step, offset, true, fillStep, density))
+                continue;
+            const int left = (step->micromove * (100 - strength) + 50) / 100;
+            step->micromove = left > 0 ? int8_t(left) : int8_t(-1);
+        }
+    }
+}
+
 void Sequencer::fillLinearVolume(int16_t fillStep,
                                  int16_t fromVal,
                                  int16_t toVal,
@@ -425,10 +507,10 @@ bool Sequencer::isStepToFillNote(strPattern::strTrack::strStep* step,
         return isEuclideanStep(offset, density);
     }
 
-    else if (fillStep == fillStepNoFx && step->fx[0].type == 0 && step->fx[1].type == 0)
+    else if (fillStep == fillStepNoFx && step->fx[0].type == 0 && step->fx[1].type == 0 && !fx34::hasExtra(step))
         return true;
 
-    else if (fillStep == fillStepFx && (step->fx[0].type != 0 || step->fx[1].type != 0))
+    else if (fillStep == fillStepFx && (step->fx[0].type != 0 || step->fx[1].type != 0 || fx34::hasExtra(step)))
         return true;
 
     else if (fillStep == fillStepNoNote && step->note < 0)
@@ -490,6 +572,17 @@ void Sequencer::invertSelectedSteps(uint8_t elements)
             stepA = &currentPattern->track[t].step[a];
             stepB = &currentPattern->track[t].step[b];
 
+            // the extra FX swap with the step (rank 2 / 3 elements swap only that slot)
+            if (fx34::Set* xs = fx34::setOf(currentPattern))
+            {
+                if (elements == ELEMENTS_ALL_NO_PREFERENCES)
+                    fx34::swapSteps(xs, t, a, b, 3);
+                else if (elements == ELEMENTS_FX_RANK2)
+                    fx34::swapSteps(xs, t, a, b, 1);
+                else if (elements == ELEMENTS_FX_RANK3)
+                    fx34::swapSteps(xs, t, a, b, 2);
+            }
+
             switch (elements)
             {
                 case ELEMENTS_ALL_NO_PREFERENCES:
@@ -545,6 +638,46 @@ void Sequencer::invertSelectedSteps(uint8_t elements)
     }
 }
 
+uint16_t Sequencer::moveVmFxToFields(uint16_t* skipped)
+{
+    uint16_t moved = 0, left = 0;
+    const uint8_t ranks = uint8_t(fx34::maxSlot() + 1);
+    for (uint8_t t = 0; t < kAllTracks; t++)
+    {
+        for (uint8_t s = 0; s <= MAXSTEP; s++)
+        {
+            strPattern::strTrack::strStep& step = currentPattern->track[t].step[s];
+            // the play loop walks the slots 0, 1, 2, 3 and the last V (or m) wins, the same order here
+            for (uint8_t r = 0; r < ranks; r++)
+            {
+                fx34::FxRef fxr(currentPattern, t, s, r);
+                const uint8_t type = fxr.p->type;
+                if (type != fx.FX_TYPE_VOLUME && type != fx.FX_TYPE_MICROMOVE)
+                    continue;
+                const uint8_t partner = fx34::getFx(&step, r ^ 1).type;
+                if (step.note < 0 || partner == fx.FX_TYPE_RANDOM_VALUE || partner == fx.FX_TYPE_COND)
+                {
+                    left++;   // no note: a held modulation. Random value / Chance FX next to it: it would lose its target
+                    continue;
+                }
+                const int8_t value = int8_t(clamp<int>(fxr.p->value, 0, 100));
+                if (type == fx.FX_TYPE_VOLUME)
+                    step.volume = value;
+                else
+                    step.micromove = value;
+                fxr.p->type = 0;
+                fxr.p->value = 0;
+                moved++;
+            }
+        }
+    }
+    if (skipped)
+        *skipped = left;
+    if (moved)
+        newFileManager.setActualPatternStructChanged();
+    return moved;
+}
+
 // podwajanie dlugosci patternu z zdublowaniem zawartosci
 bool Sequencer::duplicatePattern()
 {
@@ -556,9 +689,28 @@ bool Sequencer::duplicatePattern()
 
     int newPatternLength = ((oldPatternMaxStep + 1) * 2) - 1;
 
+    // polymeter: a shorter track doubles its own length (its own steps repeat once), the rest as stock
+    const bool poly = isPolymeter(currentPattern);
+    uint8_t own[kAllTracks];
+    for (int trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
+        own[trackIdx] = getTrackLastStep(currentPattern, trackIdx);
+
+    // the extra FX double with the steps: refuse the whole operation when they do not fit, nothing is half done
+    if (fx34::Set* xs = fx34::setOf(currentPattern))
+    {
+        uint32_t need = 0;
+        for (int trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
+            need += fx34::countRange(xs, trackIdx, 0, uint8_t((poly ? own[trackIdx] : oldPatternMaxStep)));
+        if (need > fx34::room(xs))
+        {
+            fx34::noteRefusal();
+            return false;
+        }
+    }
+
     for (int trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
     {
-        int trackLen = oldPatternMaxStep + 1;
+        int trackLen = (poly ? own[trackIdx] : oldPatternMaxStep) + 1;
         currentPattern->track[trackIdx].length = newPatternLength;
 
         for (int stepIdx = 0; stepIdx < trackLen; stepIdx++)
@@ -566,6 +718,15 @@ bool Sequencer::duplicatePattern()
             currentPattern->track[trackIdx].step[stepIdx + trackLen] =
               currentPattern->track[trackIdx].step[stepIdx];
         }
+        fx34::duplicateTrack(fx34::setOf(currentPattern), trackIdx, uint8_t(trackLen));
+    }
+
+    if (poly)
+    {
+        stampPolymeter(currentPattern);
+        for (int trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
+            setTrackOwnLastStep(currentPattern, trackIdx, own[trackIdx] * 2 + 1);
+        normalizePolymeter(currentPattern);
     }
 
     return true;
@@ -580,10 +741,17 @@ bool Sequencer::expandPattern()
     if (patternLength > (Sequencer::MAXSTEP / 2))
         return false;
 
+    const bool poly = isPolymeter(currentPattern);
+    uint8_t own[kAllTracks];
+    for (int trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
+        own[trackIdx] = getTrackLastStep(currentPattern, trackIdx);
+
     patternLength = ((patternLength + 1) * 2) - 1;
 
     for (int trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
     {
+        // step k goes to step 2k (the extra FX of the odd steps are empty, as the cleared steps)
+        fx34::remapTrack(fx34::setOf(currentPattern), trackIdx, [patternLength](int st) { return 2 * st <= patternLength ? 2 * st : -1; });
         currentPattern->track[trackIdx].length = patternLength;
 
         for (int stepIdx = 0; stepIdx < patternLength; stepIdx += 2)
@@ -598,6 +766,14 @@ bool Sequencer::expandPattern()
         }
     }
 
+    if (poly)
+    {
+        stampPolymeter(currentPattern);
+        for (int trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
+            setTrackOwnLastStep(currentPattern, trackIdx, (own[trackIdx] + 1) * 2 - 1);
+        normalizePolymeter(currentPattern);
+    }
+
     return true;
 }
 
@@ -607,6 +783,11 @@ bool Sequencer::shrinkPattern()
     int patternMaxStep = currentPattern->track[0].length;
     if (patternMaxStep < 1)
         return false;
+
+    const bool poly = isPolymeter(currentPattern);
+    uint8_t own[kAllTracks];
+    for (int trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
+        own[trackIdx] = getTrackLastStep(currentPattern, trackIdx);
 
     int newPatternMaxStep = patternMaxStep / 2;
 
@@ -618,6 +799,8 @@ bool Sequencer::shrinkPattern()
         {
             currentPattern->track[trackIdx].step[s] = currentPattern->track[trackIdx].step[srcStep];
         }
+        // step 2k goes to step k, the odd steps and everything past the new length are dropped with the steps
+        fx34::remapTrack(fx34::setOf(currentPattern), trackIdx, [trackMaxStep](int st) { return st == 0 ? 0 : ((st % 2 == 0 && st / 2 < trackMaxStep) ? st / 2 : -1); });
 
         uint8_t oldTrackLen = patternMaxStep + 1;
 
@@ -629,7 +812,101 @@ bool Sequencer::shrinkPattern()
         currentPattern->track[trackIdx].length = newPatternMaxStep;
     }
 
+    if (poly)
+    {
+        stampPolymeter(currentPattern);
+        for (int trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
+            setTrackOwnLastStep(currentPattern, trackIdx, own[trackIdx] / 2);
+        normalizePolymeter(currentPattern);
+    }
+
     return true;
+}
+
+// ---- per-track pattern length (polymeter), see mtSequencer.h
+void Sequencer::setTrackOwnLastStep(strPattern* p, int t, int last)
+{
+    if (t == 0)
+        p->rezerwa2 = uint8_t(last + 1);
+    else
+        p->track[t].length = uint8_t(last);
+}
+
+void Sequencer::normalizePolymeter(strPattern* p)
+{
+    if (!isPolymeter(p))
+        return;
+
+    const uint8_t patternLast = p->track[0].length;
+    bool differs = false;
+
+    for (int t = 0; t < kAllTracks; t++)
+    {
+        const uint8_t last = getTrackLastStep(p, t);
+        differs |= last != patternLast;
+        if (t > 0)
+            p->track[t].length = last;
+    }
+    // track 1: 0 = the pattern length
+    const uint8_t last0 = getTrackLastStep(p, 0);
+    p->rezerwa2 = last0 < patternLast ? uint8_t(last0 + 1) : 0;
+
+    if (!differs)
+    {
+        p->rezerwa1 = 0;
+        p->rezerwa3 = 0;
+    }
+}
+
+bool Sequencer::setTrackLastStep(strPattern* p, int t, int last)
+{
+    if (t < 0 || t >= kAllTracks)
+        return false;
+
+    const uint8_t patternLast = p->track[0].length;
+    last = clamp<int>(last, 0, patternLast);
+
+    if (getTrackLastStep(p, t) == last)
+        return false;
+
+    if (!isPolymeter(p))
+    {   // stale lengths of an unmarked pattern never count: every track starts at the pattern length
+        for (strPattern::strTrack& track : p->track)
+            track.length = patternLast;
+        p->rezerwa2 = 0;
+        p->rezerwa1 = kPolymeterMark;
+        stampPolymeter(p);
+    }
+
+    setTrackOwnLastStep(p, t, last);
+    normalizePolymeter(p);
+    return true;
+}
+
+void Sequencer::setPatternLastStep(strPattern* p, int last)
+{
+    last = clamp<int>(last, 0, MAXSTEP);
+
+    if (!isPolymeter(p))
+    {   // stock: the pattern editor syncs tracks 2-8 only
+        p->track[0].length = uint8_t(last);
+        for (uint8_t i = 1; i < 8; i++)
+            p->track[i].length = p->track[0].length;
+        return;
+    }
+
+    const uint8_t oldLast = p->track[0].length;
+    uint8_t own[kAllTracks];
+    for (int t = 0; t < kAllTracks; t++)
+        own[t] = getTrackLastStep(p, t);
+
+    p->track[0].length = uint8_t(last);
+    stampPolymeter(p);
+
+    for (int t = 0; t < kAllTracks; t++)
+        setTrackOwnLastStep(p, t, own[t] == oldLast ? last : std::min<int>(own[t], last));
+
+    normalizePolymeter(p);
 }
 
 void Sequencer::changeSelectionNote(int16_t value)
@@ -716,7 +993,7 @@ void Sequencer::changeSelectionFxValue(uint8_t fxIndex, int16_t value)
     strSelection* sel = &selection;
     if (!isSelectionCorrect(sel))
         return;
-    if (fxIndex > FX_SLOTS_MAX)
+    if (fxIndex > fx34::maxSlot())
         return;
 
     bool somethingWasChanged = false;
@@ -728,10 +1005,10 @@ void Sequencer::changeSelectionFxValue(uint8_t fxIndex, int16_t value)
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
+            fx34::FxRef fxr(currentPattern, t, s, fxIndex);
+            _fx = fxr.p;
 
-            _fx = &currentPattern->track[t].step[s].fx[fxIndex];
-
-            if (_fx->type == fx.FX_TYPE_CHANCE && (value > 1 || value < -1))
+            if (isChanceFamily(_fx->type) && (value > 1 || value < -1))
             {
                 if (value > 1)
                 {
@@ -794,7 +1071,7 @@ void Sequencer::setSelectionFxValueByPad(uint8_t fxIndex, int16_t pad)
     strSelection* sel = &selection;
     if (!isSelectionCorrect(sel))
         return;
-    if (fxIndex > FX_SLOTS_MAX)
+    if (fxIndex > fx34::maxSlot())
         return;
 
     newFileManager.storePatternUndoRevision();
@@ -806,7 +1083,8 @@ void Sequencer::setSelectionFxValueByPad(uint8_t fxIndex, int16_t pad)
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
-            _fx = &currentPattern->track[t].step[s].fx[fxIndex];
+            fx34::FxRef fxr(currentPattern, t, s, fxIndex);
+            _fx = fxr.p;
 
             if (!isMultiSelection() && _fx->type == 0)
             {
@@ -974,7 +1252,7 @@ void Sequencer::changeSelectionFxType(uint8_t index, int16_t value)
     strSelection* sel = &selection;
     if (!isSelectionCorrect(sel))
         return;
-    if (index > FX_SLOTS_MAX)
+    if (index > fx34::maxSlot())
         return;
 
     bool somethingWasChanged = false;
@@ -987,7 +1265,8 @@ void Sequencer::changeSelectionFxType(uint8_t index, int16_t value)
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
-            _fx = &currentPattern->track[t].step[s].fx[index];
+            fx34::FxRef fxr(currentPattern, t, s, index);
+            _fx = fxr.p;
 
             if (_fx->type != fx.FX_TYPE_NONE)
             {
@@ -996,7 +1275,7 @@ void Sequencer::changeSelectionFxType(uint8_t index, int16_t value)
 
                 uint8_t previousType = _fx->type;
 
-                _fx->type = clamp<int>(interfaceGlobals.fxNameToId(name), 0, 47);
+                _fx->type = clamp<int>(interfaceGlobals.fxNameToId(name), 0, fx.FX_TYPE_SNAP); // the highest FX id (rel140-snapfx: R11)
 
                 if (previousType != _fx->type && !isMultiSelection())
                 {
@@ -1024,34 +1303,31 @@ void Sequencer::setSelectionFxType(uint8_t fxSlot, int16_t value)
     strSelection* sel = &selection;
     if (!isSelectionCorrect(sel))
         return;
-    if (fxSlot > FX_SLOTS_MAX)
+    if (fxSlot > fx34::maxSlot())
         return;
 
     newFileManager.storePatternUndoRevision();
-
-    strPattern::strTrack::strStep* step;
 
     for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
-            step = &currentPattern->track[t].step[s];
+            fx34::FxRef fxr(currentPattern, t, s, fxSlot);
+            strPattern::strTrack::strStep::strFx* fxp = fxr.p;
 
-            step->fx[fxSlot].type = value;
+            fxp->type = value;
 
-            if (step->fx[fxSlot].type != patternEditor.getPreviousUsedFx() && !isMultiSelection())
+            if (fxp->type != patternEditor.getPreviousUsedFx() && !isMultiSelection())
             {
-                step->fx[fxSlot].value = getFxDefault(step->fx[fxSlot].type);
+                fxp->value = getFxDefault(fxp->type);
             }
             else
             {
-                step->fx[fxSlot].value = clamp<int>(step->fx[fxSlot].value,
-                                                    getFxMin(step->fx[fxSlot].type),
-                                                    getFxMax(step->fx[fxSlot].type));
+                fxp->value = clamp<int>(fxp->value, getFxMin(fxp->type), getFxMax(fxp->type));
             }
 
-            patternEditor.setPreviousUsedFxValue(step->fx[fxSlot].value);
-            patternEditor.setPreviousUsedFx(interfaceGlobals.fxIdToName(step->fx[fxSlot].type));
+            patternEditor.setPreviousUsedFxValue(fxp->value);
+            patternEditor.setPreviousUsedFx(interfaceGlobals.fxIdToName(fxp->type));
         }
     }
 
@@ -1308,7 +1584,39 @@ void Sequencer::clearStep(strPattern::strTrack::strStep* step)
     clearStep(step, ELEMENTS_ALL_NO_PREFERENCES);
 }
 
+// The extra FX of a step that a whole step or an element clears (nothing while the switch is off)
+static void clearStepExtras(Sequencer::strPattern::strTrack::strStep* step, uint8_t elements, bool notesClear)
+{
+    if (!fx34::enabled())
+        return;
+    const fx34::Pattern* p;
+    uint8_t t, s;
+    if (!fx34::locate(step, &p, &t, &s))
+        return;
+    fx34::Set* set = fx34::setOf(p);
+    if (!set || set->n == 0)
+        return;
+    switch (elements)
+    {
+        case Sequencer::ELEMENTS_ALL_NO_PREFERENCES: fx34::clearStep(set, t, s); break;
+        case Sequencer::ELEMENTS_FX_RANK2: fx34::put(set, t, s, 2, 0, 0); break;
+        case Sequencer::ELEMENTS_FX_RANK3: fx34::put(set, t, s, 3, 0, 0); break;
+        case Sequencer::ELEMENTS_NOTES:
+            if (notesClear)
+                fx34::clearStep(set, t, s);
+            break;
+        default: break;
+    }
+}
+
 void Sequencer::clearStep(strPattern::strTrack::strStep* step, uint8_t elements)
+{
+    const bool notesClear = elements == ELEMENTS_NOTES && (isSampleInstrument(step->instrument) || step->note < STEP_NOTE_EMPTY);
+    clearStepExtras(step, elements, notesClear);
+    clearStepStored(step, elements);
+}
+
+void Sequencer::clearStepStored(strPattern::strTrack::strStep* step, uint8_t elements)
 {
     switch (elements)
     {
@@ -1398,13 +1706,16 @@ void Sequencer::clearPattern(strPattern* patt)
 
     setPatternHeader(patt);
 
+    // the extra FX of every step go in one go, the steps below clear the stored fields only
+    fx34::clearAll(fx34::setOf(patt));
+
     for (strPattern::strTrack& track : patt->track)
     {
         track.length = DEFAULT_PATTERN_LENGTH - 1;
 
         for (strPattern::strTrack::strStep& step : track.step)
         {
-            clearStep(&step);
+            clearStepStored(&step, ELEMENTS_ALL_NO_PREFERENCES);
         }
     }
 }
@@ -1428,6 +1739,7 @@ void Sequencer::insert(strSelection* selection)
         {
             currentPattern->track[t].step[s] = currentPattern->track[t].step[s - 1];
         }
+        fx34::shiftDown(fx34::setOf(currentPattern), t, selection->firstStep, MAXSTEP);
         clearStep(&currentPattern->track[t].step[selection->firstStep],
                   ELEMENTS_ALL_NO_PREFERENCES);
     }
@@ -1444,6 +1756,7 @@ void Sequencer::insertReversed(strSelection* selection)
         {
             currentPattern->track[t].step[s] = currentPattern->track[t].step[s + 1];
         }
+        fx34::shiftUp(fx34::setOf(currentPattern), t, MINSTEP, selection->firstStep);
         clearStep(&currentPattern->track[t].step[selection->firstStep],
                   ELEMENTS_ALL_NO_PREFERENCES);
     }
@@ -1469,6 +1782,7 @@ bool Sequencer::backspace()
 
             *stepTo = *stepFrom;
         }
+        fx34::shiftUp(fx34::setOf(currentPattern), t, selection.firstStep - 1, currentPattern->track[0].length);
 
         clearStep(&currentPattern->track[t].step[currentPattern->track[0].length],
                   ELEMENTS_ALL_NO_PREFERENCES);
@@ -1490,7 +1804,7 @@ void Sequencer::clearCopyPasteBuffer()
     clearPattern(&copyPastePattern);
 }
 
-void Sequencer::copySelectionToBuffer(strSelection* from, strSelection* to)
+void Sequencer::copySelectionToBuffer(strSelection* from, strSelection* /*to*/)
 {
     // zbedne w przypadku kopiowania calego patternu
     // ale tez nie powinno przeszkadzac
@@ -1498,6 +1812,7 @@ void Sequencer::copySelectionToBuffer(strSelection* from, strSelection* to)
         return;
 
     copyPastePattern = *currentPattern;
+    fx34::copySet(fx34::setOf(&copyPastePattern), fx34::setOf(currentPattern));
 }
 void Sequencer::copyStep(strPattern::strTrack::strStep* srcStep,
                          strPattern::strTrack::strStep* destStep,
@@ -1558,6 +1873,19 @@ void Sequencer::copyStep(strPattern::strTrack::strStep* srcStep,
         destStep->volume = srcStep->volume;
     }
 
+    // the extra FX follow the same element rules (the destination was cleared above)
+    if (fx34::enabled())
+    {
+        const bool pasteAll = elements == ELEMENTS_ALL_NO_PREFERENCES || elements == ELEMENTS_ALL_WITH_PREFERENCES;
+        const uint8_t mask = pasteAll ? 3 : (elements == ELEMENTS_FX_RANK2 ? 1 : (elements == ELEMENTS_FX_RANK3 ? 2 : 0));
+        const fx34::Pattern *sp, *dp;
+        uint8_t st, ss, dt, ds;
+        if (mask && fx34::locate(srcStep, &sp, &st, &ss) && fx34::locate(destStep, &dp, &dt, &ds))
+        {
+            fx34::copyStep(fx34::setOf(dp), dt, ds, fx34::setOf(sp), st, ss, mask);   // a full set raises the refusal itself
+        }
+    }
+
     if (toMidi && isSampleInstrument(destStep->instrument))
     {
         if (!destStep->isNoteOff())
@@ -1579,6 +1907,7 @@ void Sequencer::pasteSelectionFromBuffer(strSelection* from, strSelection* to, u
     if (elements == ELEMENTS_ALL_WITH_PREFERENCES)
     {
         *currentPattern = copyPastePattern;
+        fx34::copySet(fx34::setOf(currentPattern), fx34::setOf(&copyPastePattern));
         return;
     }
 
@@ -1752,7 +2081,8 @@ AUDIO_CORE_RAM int16_t Sequencer::getFxMax(uint8_t fxID, bool forRandom)
         case fx.FX_TYPE_VOLUME: return 100;
         case fx.FX_TYPE_PANNING: return 100;
         case fx.FX_TYPE_MICROTUNING: return 198;
-        case fx.FX_TYPE_CHANCE: return forRandom ? fx.CHANCE_PROB_MAX : fx.CHANCE_MAX;
+        case fx.FX_TYPE_CHANCE:
+        case fx.FX_TYPE_COND: return forRandom ? fx.CHANCE_PROB_MAX : fx.CHANCE_MAX;
 
         case fx.FX_TYPE_BREAK_PATTERN: return 1;
 
@@ -1782,8 +2112,11 @@ AUDIO_CORE_RAM int16_t Sequencer::getFxMax(uint8_t fxID, bool forRandom)
         case fx.FX_TYPE_ARP: return 33;
         case fx.FX_TYPE_MIDI_CHORD: return MAX_CHORD;
         case fx.FX_TYPE_STRUM: return FX_VALUE_MAX;
+        case fx.FX_TYPE_TAPE: return tapefx::kValueMax;
+        case fx.FX_TYPE_SNAP: return kSnapFxMax;
 #ifdef FEATURE_SYNTH_OPEN
         case fx.FX_TYPE_PATCH_CHANGE: return 15;
+        case fx.FX_TYPE_PATCH_MORPH: return 100;
 #endif
 
         case fx.FX_TYPE_BIT_DEPTH: return BIT_DEPTH_MAX;
@@ -1813,6 +2146,7 @@ AUDIO_CORE_RAM int16_t Sequencer::getFxMin(uint8_t fxID, bool forRandom)
         case fx.FX_TYPE_MIDI_CHORD: return MIN_CHORD;
 
         case fx.FX_TYPE_BIT_DEPTH: return BIT_DEPTH_MIN;
+        case fx.FX_TYPE_TAPE: return tapefx::kValueMin;
         default: return 0;
     }
 }
@@ -1829,6 +2163,12 @@ int16_t Sequencer::getFxDefault(uint8_t fxID)
         case fx.FX_TYPE_MICROTUNING: return 99;
         case fx.FX_TYPE_MIDI_CHORD: return MIN_CHORD;
         case fx.FX_TYPE_STRUM: return 8; // up, 16 ms between notes
+        case fx.FX_TYPE_COND: return 50;
+        case fx.FX_TYPE_TAPE: return tapefx::kValueDefault; // one step
+        case fx.FX_TYPE_SNAP: return 1; // Nearest
+#ifdef FEATURE_SYNTH_OPEN
+        case fx.FX_TYPE_PATCH_MORPH: return 50;
+#endif
 
         default: return 0;
     }
@@ -1898,8 +2238,8 @@ void Sequencer::makeFxValLabelForSeqStep(char* ptr,
 
     strPattern::strTrack::strStep* actualStep = &currentPattern->track[track].step[step];
 
-    makeFxValLabelWithAlgin(
-      ptr, len, actualStep->fx[fxID].type, actualStep->fx[fxID].value, fxValLabelAlign_right);
+    const fx34::Fx f = fx34::getFx(actualStep, fxID);   // ranks 2 and 3 come from the extra FX of the pattern
+    makeFxValLabelWithAlgin(ptr, len, f.type, f.value, fxValLabelAlign_right);
 }
 
 const char* skipSpaceOnStart(const char* str)
@@ -1988,6 +2328,7 @@ void Sequencer::makeFxValLabelWithAlgin(char* ptr,
             strncpy(ptr, valAfterCorrection > 0 ? "BRK" : "---", len);
             break;
         case fx.FX_TYPE_CHANCE:
+        case fx.FX_TYPE_COND:
         {
             if (valueFromFx <= fx.CHANCE_PROB_MAX)
             {
@@ -2024,6 +2365,14 @@ void Sequencer::makeFxValLabelWithAlgin(char* ptr,
                 uint8_t m = 1 + idx % fx.CHANCE_CYCLE_STEPS;
                 snprintf(ptr, len, "S%u%u", n, m);
             }
+            else if (valueFromFx >= fx.CHANCE_PASS8_START && valueFromFx <= fx.CHANCE_PASS8_END)
+            {   // pass k of 8: "3/8"
+                snprintf(ptr, len, "%u/8", unsigned(1 + valueFromFx - fx.CHANCE_PASS8_START));
+            }
+            else if (valueFromFx >= fx.CHANCE_PASS16_START && valueFromFx <= fx.CHANCE_PASS16_END)
+            {   // pass k of 16: "P03", "P16"
+                snprintf(ptr, len, "P%02u", unsigned(1 + valueFromFx - fx.CHANCE_PASS16_START));
+            }
             break;
         }
         case fx.FX_TYPE_MIDI_CHORD:
@@ -2050,6 +2399,49 @@ void Sequencer::makeFxValLabelWithAlgin(char* ptr,
             {
                 snprintf(ptr, len, align == fxValLabelAlign_right ? "%+3i" : "%+i", s);
             }
+            break;
+        }
+        case fx.FX_TYPE_TAPE:
+        {   // the run length in steps. A popup with room: "Stop 1", "Start 0.25", "Stop 1.50" (value 1..64 Stop, 65..128 Start, the grid
+            // letter says W or Z). The 3 character grid cell: 1, 1/4, 1/2, 3/4, 1.2 (1 1/4), 2.5, 3.7
+            const uint8_t v = tapefx::clampValue(uint8_t(valueFromFx));
+            const int whole = tapefx::labelWhole(v), quarter = tapefx::labelQuarter(v);
+            if (align != fxValLabelAlign_right && len > 10)
+            {
+                const char* const word = tapefx::isStart(v) ? "Start" : "Stop";
+                if (quarter == 0)
+                {
+                    snprintf(ptr, len, "%s %i", word, whole);
+                }
+                else
+                {
+                    snprintf(ptr, len, "%s %i.%02i", word, whole, quarter);
+                }
+            }
+            else if (quarter == 0)
+            {
+                snprintf(ptr, len, align == fxValLabelAlign_right ? "%3i" : "%i", whole);
+            }
+            else if (len > 4)
+            {
+                snprintf(ptr, len, "%i.%02i", whole, quarter);
+            }
+            else if (whole == 0)
+            {
+                strncpy(ptr, quarter == 25 ? "1/4" : quarter == 50 ? "1/2" : "3/4", len);
+            }
+            else
+            {
+                snprintf(ptr, len, "%i.%i", whole, quarter / 10);
+            }
+            break;
+        }
+        case fx.FX_TYPE_SNAP:
+        {   // 0 Off, 1 Nearest, 2 Down, 3 Up (the track snap modes of scales.h), 4 Track (the project setting of the track). A popup with room: the word, the grid cell: 3 characters
+            static const char* const snapFull[kSnapFxMax + 1] = { "Off", "Nearest", "Down", "Up", "Track" };
+            static const char* const snapCell[kSnapFxMax + 1] = { "off", "nea", "dwn", " up", "trk" };
+            const uint8_t v = valueFromFx > kSnapFxMax ? kSnapFxMax : uint8_t(valueFromFx);
+            strncpy(ptr, len > 4 ? snapFull[v] : snapCell[v], len);
             break;
         }
         case fx.FX_TYPE_TEMPO:

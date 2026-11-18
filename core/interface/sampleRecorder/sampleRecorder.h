@@ -9,32 +9,32 @@
 #ifdef PLATFORM_IMX
 const uint8_t sourceCount = 5;
 const char* const ptrSourcesNamesLabels[5] = {
-    (char* const)"Line in", (char* const)"Radio", (char* const)"Mic LG",
-    (char* const)"Mic HG",  (char* const)"USB",
+    (char*)"Line in", (char*)"Radio", (char*)"Mic LG",
+    (char*)"Mic HG",  (char*)"USB",
 };
 #else
 const uint8_t sourceCount = 4;
 const char* const ptrSourcesNamesLabels[5] = {
-    (char* const)"Line in",
-    (char* const)"Radio",
-    (char* const)"Mic LG",
-    (char* const)"Mic HG",
+    (char*)"Line in",
+    (char*)"Radio",
+    (char*)"Mic LG",
+    (char*)"Mic HG",
 };
 #endif
 #else
 #ifdef PLATFORM_IMX
 const uint8_t sourceCount = 3;
 const char* const ptrSourcesNamesLabels[5] = {
-    (char* const)"Line in",
-    (char* const)"Mic",
-    (char* const)"USB",
+    (char*)"Line in",
+    (char*)"Mic",
+    (char*)"USB",
 
 };
 #else
 const uint8_t sourceCount = 2;
 const char* const ptrSourcesNamesLabels[5] = {
-    (char* const)"Line in",
-    (char* const)"Mic",
+    (char*)"Line in",
+    (char*)"Mic",
 
 };
 #endif
@@ -345,7 +345,7 @@ class cSampleRecorder : public ModuleBase
     strZoomParams zoom;
     strSpectrumParams spectrumParams[SAMPLE_CHANNELS];
 
-    char zoomTextValue[6];
+    char zoomTextValue[7];
 
     static strTrackerSpectrum spectrum[SAMPLE_CHANNELS];
     strTrackerPoints points;

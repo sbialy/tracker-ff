@@ -26,7 +26,7 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Exception**: ten files of the Arduino core in `platforms/mk66/3rdparty/teensy_core/` are GNU Lesser General Public License 2.1 (David A. Mellis and the Arduino team, the license notice is in each file header): `Client.h`, `Printable.h`, `Server.h`, `Stream.cpp`, `Stream.h`, `WCharacter.h`, `WMath.cpp`, `WString.cpp`, `WString.h` and `wiring_private.h`. They are compiled with the core but none of their code is linked into the firmware image (the image has no `String` or `Stream` symbol).
 
 ## 5. Liberation Sans Fonts (UI Bitmap Font Source)
-* **Location**: `core/libs/fonts/LiberationSans-*_L4.{h,cpp}` (4-bit `L4` antialiased glyph bitmaps)
+* **Location**: `core/libs/fonts/LiberationSans-*_L4.{h,cpp}` (4-bit `L4` antialiased glyph bitmaps, stored deflated, the run length encoded originals are in `core/libs/fonts/rle/`)
 * **License**: SIL Open Font License 1.1 (OFL-1.1)
 * **Copyright**: Digitized data copyright (c) 2010 Google Corporation; Copyright (c) 2012 Red Hat, Inc.
 
@@ -42,7 +42,7 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 
 ## 8. FastCRC
 * **Location**: `platforms/mk66/3rdparty/FastCRC/` (MK66 only, the i.MX tree has no copy)
-* **License**: MIT License. Every source file carries the header "FastCRC library code is placed under the MIT license" with the full MIT text, and upstream (https://github.com/FrankBoesing/FastCRC, `LICENCE.md`) is MIT too. There is no GPL option and no GPL code in this tree (an earlier version of this file said "MIT / GPLv3 dual-licensed", which was wrong).
+* **License**: MIT License. Every source file carries the header "FastCRC library code is placed under the MIT license" with the full MIT text and upstream (https://github.com/FrankBoesing/FastCRC, `LICENCE.md`) is MIT too. There is no GPL option and no GPL code in this tree (an earlier version of this file said "MIT / GPLv3 dual-licensed", which was wrong).
 * **Copyright**: Copyright (c) 2014, 2015, 2016 Frank Bösing.
 
 ## 9. Polyend Precompiled Synth & DSP Libraries (`libPolySynth.a`, `libPolyDSP.a`)
@@ -66,7 +66,7 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Note**: D-Type's OpenTracker engine id (0x82) is the id of this project's own PHZ engine, so D-Type is keyed 0xA2 in the picker and in `.patch` files, the same as the browser editor stores it (the engine code itself is unchanged).
 
 ## 12. Polyend Chiptune (the CHIP engine, a plugin since 1.3.0)
-* **Location**: `core/synth/engines/ChiptuneSynthVoice.cpp` is Polyend's own open Chiptune voice from this repository (the repository licence applies, see LICENSE). The only change is a small block of hooks marked `FEATURE_SYNTH_OPEN` (parameter switch, bend, reset, create, construct in caller storage) that the CHIP plugin calls. The plugin `chip.plg` is built in the public module repository tracker-engines-os (`engine_chip.cpp`, which follows the voice's parameter table, and a vendored copy of this file and the PolySynth headers it needs).
+* **Location**: `core/synth/engines/ChiptuneSynthVoice.cpp` is Polyend's own open Chiptune voice from this repository (the repository licence applies, see LICENSE). The only change is a small block of hooks marked `FEATURE_SYNTH_OPEN` (parameter switch, bend, reset, create, construct in caller storage) that the CHIP plugin calls. The plugin `chip.plg` is built in the public module repository tracker-engines-os (`engine_chip.cpp`, which follows the voice's parameter table and a vendored copy of this file and the PolySynth headers it needs).
 * **Note**: a `SYNTH_OPEN=1` image does not compile this file (`CHIP` is not a built-in engine name). Nothing here uses `libPolySynth.a` or `libPolyDSP.a`.
 
 ## 13. PHZ (clean-room phase distortion engine, source in the private repository tracker-engines)
@@ -76,8 +76,13 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 
 ## 13a. PLK (clean-room Karplus-Strong plucked string engine, source in the private repository tracker-engines)
 * **Location**: the source is not in this repository. It lives in the private repository `tracker-engines` (`src/synth-open/pluck/`). This repository keeps only the public identity of the engine (stored number 18, type id 0x8A, name).
-* **Source**: written for this project from the published Karplus-Strong algorithm (Karplus and Strong, CMJ 1983) and its extensions (Jaffe and Smith, CMJ 1983). No third-party code was read or adapted. Only the `ISynthEngine` interface (item 10, Apache-2.0) is shared, and the headers of the PLK source keep that attribution. The published `pluck.plg`, `pluck.plgi` and `pluck.wasm` ship with our notice. The PLK source and binaries are proprietary freeware, the terms are in `LICENSE.md` of the private repository `tracker-engines`.
+* **Source**: written for this project from the published Karplus-Strong algorithm (Karplus and Strong, CMJ 1983) and its extensions (Jaffe and Smith, CMJ 1983). No third-party code was read or adapted. Only the `ISynthEngine` interface (item 10, Apache-2.0) is shared and the headers of the PLK source keep that attribution. The published `pluck.plg`, `pluck.plgi` and `pluck.wasm` ship with our notice. The PLK source and binaries are proprietary freeware, the terms are in `LICENSE.md` of the private repository `tracker-engines`.
 * **Note**: the engine is no longer built here. It borrows the VAP list icons.
+
+## 13a3. ALCO (two oscillator algorithm combiner synth, source in the private repository tracker-engines)
+* **Location**: the source is not in this repository. It lives in the private repository `tracker-engines` (`src/synth-open/alco/`). This repository keeps only the public identity of the engine (stored number 22, type id 0x8E, name in `engines/engines.json`) and loads the built plugin from the SD card like any other engine plugin.
+* **Source**: our own design from the public DSP literature, nothing of any other product's code, binary or patch data used. Some filter and approximation code of OpenTracker's `va_dsp.h` (item 10, Apache-2.0) is adapted: the exponential approximation, the ZDF ladder stage equations, the TPT state variable filter, the parabolic sine, the tangent and tanh approximations and the RC attack ADSR. The headers of the ALCO source say so. The published `alco.plg`, `alco.plgi` and `alco.wasm` ship with a notice that keeps this attribution and the Apache-2.0 text. The ALCO source and binaries are proprietary freeware, the terms are in `LICENSE.md` of the private repository `tracker-engines`.
+* **Note**: the engine is not built here and no ALCO source is in this repository.
 
 ## 13b. Console, Tube and Glue (original master inserts, source in the private repository tracker-effects)
 * **Location**: the source is not in this repository. It lives in the private repository `tracker-effects`. This repository keeps only the public identity of the three inserts (plugin ids `ff.console`, `ff.tube` and `ff.glue`).
@@ -92,7 +97,7 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **Copyright**: Copyright 2014 Emilie Gillet (emilie.o.gillet@gmail.com). Adapted for Polyverb by Wojciech Jakóbczyk (Polyend), as stated in the headers.
 
 ## 15. Roboto Mono (UI bitmap font source)
-* **Location**: `core/libs/fonts/RobotoMono-*_L4.{h,cpp}` (4-bit `L4` glyph bitmaps converted from `RobotoMono-*.ttf`, see the first line of each file)
+* **Location**: `core/libs/fonts/RobotoMono-*_L4.{h,cpp}` (4-bit `L4` glyph bitmaps converted from `RobotoMono-*.ttf`, see the first comment of each header, stored deflated, the run length encoded originals are in `core/libs/fonts/rle/`)
 * **License**: Apache License 2.0 (Roboto Mono by Christian Robertson, published by Google). The generated files carry no license header, the license is taken from the font's name and upstream, the text is `licenses/LICENSE-OpenTracker-Apache-2.0.txt` (same Apache-2.0 text).
 * **Copyright**: Copyright (c) Google Inc. (Apache-2.0, Roboto Mono project authors).
 
@@ -137,10 +142,16 @@ tracker-ff (a fork of Polyend Tracker Community Edition, CE) incorporates or lin
 * **License**: MIT. Contributed under the contribution terms of `CONTRIBUTING.md`. The `editor-fx-sdk/` folder is MIT under Part 1 of `LICENSE`.
 
 ## 22. OpenTracker USB audio (`USB_AUDIO=1` images, Config > Features > USB audio)
-* **Location**: `platforms/mk66/usbaudio/` (`UsbAudioOut.{h,cpp}`, `usb_audio_hooks.cpp`, `test/usb_audio_out_test.cpp`) and the blocks marked `FF_USB_AUDIO_TX` in `platforms/mk66/3rdparty/teensy_core/usb_desc.{h,c}`, `usb_dev.{c,h}`. Each file says what was changed (Apache-2.0 section 4b): Tracker to computer only (no OUT and no feedback endpoint), our namespace, the ring in SDRAM, the audio function switched on or off at start, a statistics hook for the development console.
+* **Location**: `platforms/mk66/usbaudio/` (`UsbAudioOut.{h,cpp}`, `usb_audio_hooks.cpp`, `test/usb_audio_out_test.cpp`) and the blocks marked `FF_USB_AUDIO_TX` in `platforms/mk66/3rdparty/teensy_core/usb_desc.{h,c}`, `usb_dev.{c,h}`. Each file says what was changed (Apache-2.0 section 4b): Tracker to computer only (no OUT and no feedback endpoint), our namespace, the ring in SDRAM, the audio function switched on or off at start, a statistics hook.
 * **Source**: https://github.com/syamajala/polyend-tracker-re (commit ef7a4bbce247: `src/core/usb/usb_audio_out.{h,cpp}`, `src/hal/usb_audio.cpp`, `tests/usb_audio_out_test.cpp`, the `OPENTRACKER PATCH` audio parts of `third_party/teensy3/usb_desc.{h,c}` and `usb_dev.c`).
 * **License**: Apache License 2.0, text in `licenses/LICENSE-OpenTracker-Apache-2.0.txt` (the upstream project ships no NOTICE file). The Teensy core files they patch stay under item 4.
 * **Note**: compiled only with `USB_AUDIO=1` on the make line. Images built without it contain none of this code. With it, the audio function is off until it is switched on in Config > Features and the unit restarts.
+
+## 23. OpenTracker float printf (TRIM images: `make original TRIM=1`, the release image)
+* **Location**: `platforms/mk66/source/float_format.{h,cpp}` and `platforms/mk66/source/printf_float.cpp`. Each file says what was changed (Apache-2.0 section 4b): namespace `ff::fm` instead of `ot::fm`, our comments and `printf_float.cpp` is compiled only with `-DFW_TRIM` (the newlib-nano link). The digits code in `float_format.cpp` is unchanged. The test `synth-open/tools/printf_diff/` is our own.
+* **Source**: https://github.com/syamajala/polyend-tracker-re (commit 21b691c62af8: `src/core/float_format.{h,cpp}`, `src/hal/printf_float.cpp`).
+* **License**: Apache License 2.0, text in `licenses/LICENSE-OpenTracker-Apache-2.0.txt` (the upstream project ships no NOTICE file).
+* **Note**: it replaces newlib-nano's weak `_printf_float` (dtoa and mprec, linked before with `-u _printf_float`), so `%f` prints the same characters from 4 KB less flash. Images built without `TRIM=1` link full newlib and contain none of this code.
 
 ## Release packages
 

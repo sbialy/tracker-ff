@@ -31,7 +31,7 @@
 ## Developer Checklist
 - [ ] I have read and understood the Contribution & Pull Request Guidelines (`CONTRIBUTING.md`).
 - [ ] This PR implements **one single feature or bug fix** (no unrelated refactors or formatting sweeps).
-- [ ] `make all` compiles cleanly for all three devices (`Original`, `Plus`, `Mini`).
+- [ ] `make original` compiles cleanly (Tracker+ and Tracker Mini are checked before a release, not on every branch). A PR meant for upstream `polyend/tracker-ce` still needs `make all` to compile for all three devices (`Original`, `Plus`, `Mini`).
 - [ ] Memory usage (`SRAM_DTC`, `EXTERNAL_RAM`, `FLASH`) was checked and stays within safe hardware headroom.
 - [ ] No heap allocations (`new`/`malloc`) or SD card I/O were added to real-time audio callbacks.
 - [ ] Existing `.mt` projects, `.pti` instruments, `.pts` synth patches, and `mtConfig` settings remain backward-compatible.

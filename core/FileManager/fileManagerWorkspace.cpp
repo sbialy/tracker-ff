@@ -1,4 +1,6 @@
 #include "fileManagerDefs.h"
+#include "fx34_io.h"
+#include "mtFollowChord.h"
 #ifdef FEATURE_PLUG_HOST
 #include "plug_host.h"
 #endif
@@ -9,6 +11,9 @@
 #include "fileManager.h"
 
 #include <cstring>
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
 
 bool cFileManager::createNewProjectInWorkspace()
 {
@@ -16,8 +21,16 @@ bool cFileManager::createNewProjectInWorkspace()
 
     clearWorkspace();
     createWorkspaceDirs();
+    fx34io::projectClosing(); // a new project has the 4 FX switch off
 #ifdef FEATURE_PLUG_HOST
-    plug::projectLoaded(cWorkspacePath, true); // no sidecar in a new project: both insert slots empty
+    plug::projectClosing(); // and each patch as it always was (no macro depth mode), before the new project's patches are made
+#endif
+    followchord::workspaceLoaded(true); // a new project: no track follows, no sidecar
+#ifdef FEATURE_PARTS
+    parts::projectLoaded(cWorkspacePath, true); // a new project (and a .it / .mod import, which starts one) has no Parts
+#endif
+#ifdef FEATURE_PLUG_HOST
+    plug::projectLoaded(cWorkspacePath, true); // no sidecar in a new project: both insert slots empty, every project.mtff setting at its default
 #endif
 
     report(" crating new project ");
@@ -37,6 +50,9 @@ bool cFileManager::createNewProjectInWorkspace()
 
     changesFlags.project = 1;
     saveProjectFileToWorkspace();
+#ifdef FEATURE_PLUG_HOST
+    plug::newProjectSaved(cWorkspacePath); // project.mtff of the new project (Strum ramp 100), stamped with the project.mt just written
+#endif
     currentOperationStep = 0;
 
     return true;
@@ -69,5 +85,25 @@ bool cFileManager::createWorkspaceDirs()
 
 void cFileManager::clearWorkspace()
 {
-    fileSystem->removeDirWithFiles(cWorkspacePath);
+    if (fileSystem->exists(cWorkspacePath)) // backupDiscardedWorkspace() may have renamed it away
+    {
+        fileSystem->removeDirWithFiles(cWorkspacePath);
+    }
+}
+
+// "Don't save" on the save-last-project window: the Workspace holds the work the user is about to discard. The pending autosave is
+// finished first, then the folder is renamed to Workspace.prev (one generation, the one kept before is deleted): one rename, no copy.
+// The project that opens next builds a new Workspace. Restore by hand: power off, rename Workspace.prev to Workspace on the card.
+void cFileManager::backupDiscardedWorkspace()
+{
+    flushWorkspaceSave();
+    if (!fileSystem->exists(cWorkspacePath))
+    {
+        return;
+    }
+    if (fileSystem->exists(cWorkspacePrevPath))
+    {
+        fileSystem->removeDirWithFiles(cWorkspacePrevPath);
+    }
+    fileSystem->rename(cWorkspacePath, cWorkspacePrevPath); // on failure the Workspace stays and is deleted as before
 }

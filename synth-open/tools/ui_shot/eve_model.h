@@ -76,6 +76,11 @@ class EveModel : public DisplayDriver
         uint32_t fmt[32] = {};       // bitmap formats drawn
         uint32_t romTextCalls = 0;   // CMD_TEXT / NUMBER on a font without CMD_SETFONT2 (ROM font stand-in used)
         uint32_t dlOverflow = 0;
+        // display list budget (parts-ui DL measurement): words of the last and the largest frame (CMD_SWAP), and per control slot
+        // of RAM_G (150000 + i * 8192, display.cpp step2) the bytes the last update stored and the largest ever
+        uint32_t frameWords = 0, frameWordsMax = 0;
+        uint32_t slotBytes[80] = {}, slotBytesMax[80] = {};
+        int curSlot = -1;
     } stats;
 
   private:

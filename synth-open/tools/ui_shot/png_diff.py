@@ -64,4 +64,5 @@ def main():
     print("none" if x1 < 0 else "%d %d %d %d" % (x0, y0, x1, y1))
 
 
-main()
+if __name__ == "__main__":
+    main()

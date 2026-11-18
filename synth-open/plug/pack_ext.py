@@ -119,7 +119,7 @@ def main():
     if 0 < tail < 0x800 and not a.allow_short_tail:
         sys.exit("the image ends %d B into its last 4 KB sector (0x%x). Round 6 of the paraphony device tests: the unit left such a short "
                  "tail unprogrammed, the module was refused by the image CRC. Grow the image by "
-                 "%d B (FF_TAIL_PAD in synth-open/ext_module.cpp) or pass --allow-short-tail" % (tail, img["_image_end"] - tail, 0x800 - tail))
+                 "%d B (make original sizes FF_TAIL_PAD, synth-open/tools/tail_pad.py) or pass --allow-short-tail" % (tail, img["_image_end"] - tail, 0x800 - tail))
     flash = ihex_flash(a.ptf, img["_image_end"])
     image_crc = zlib.crc32(flash) & 0xFFFFFFFF
     # the device sums [0, _etext) and [_etext, _etext + .data size): the same range when .data loads at _etext

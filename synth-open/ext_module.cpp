@@ -12,6 +12,8 @@
 
 #include "FileSystemAdapter.h"
 #include "Platform.h"
+#include "ext_hooks.h"
+#include "fileManager.h"
 
 #ifndef UI_SHOT_HOST
 #include "display.h"
@@ -118,12 +120,15 @@ const char* imageDiag(ext::Status st)
     return s_diag;
 }
 
-// The last sector of the image must not be a short one. 4,608 B of 0xA5 / 0x5A in rodata: the .data load image after it ends
-// about 0xAE4 B into its 4 KB sector for the 1.3.0 release image at 0xFC000 (pack_ext.py refuses to bind a module to a short last
-// sector and check_ptf.py warns, both print the size that would fix it). FF_TAIL_PAD is set by the build when the image grew.
+// The last sector of the image must not be a short one (the unit's bootloader once left a short last sector unprogrammed,
+// pack_ext.py refuses to bind a module to one and check_ptf.py warns). FF_TAIL_PAD is the pad in bytes of 0xA5 / 0x5A in rodata
+// that moves the end of the .data load image to a sector line or at least 0x800 B into its sector. The build sizes it from the
+// linked image (make original: synth-open/tools/tail_pad.py, relinks once when the unpadded end is short), 0 to 2,064 B. A build
+// that does not pass it gets none, check_ptf.py then tells whether the tail is short.
 #ifndef FF_TAIL_PAD
-#define FF_TAIL_PAD 4608
+#define FF_TAIL_PAD 0
 #endif
+#if FF_TAIL_PAD > 0
 struct TailPad
 {
     uint8_t b[FF_TAIL_PAD];
@@ -133,6 +138,7 @@ struct TailPad
     }
 };
 __attribute__((used, section(".rodata.tailpad"))) constexpr TailPad s_tailPad{};
+#endif
 
 // Firmware functions only the module calls (gc-sections drops them from an image without the console): referenced here so the
 // image keeps them, the module links against them (ld --just-symbols). Never called. The SD card and vector table ones are in
@@ -141,11 +147,14 @@ volatile uint32_t s_keepSink;
 __attribute__((noinline, used)) void keepForModule()
 {
     s_keepSink = display.isIdle() + ext_modulesCount;
+#if FF_TAIL_PAD > 0
     asm volatile("" ::"r"(&s_tailPad));   // linked even when nothing reads it
+#endif
     asm volatile("" ::"r"(&polysynth::open::loadStats));   // the console's cpu command reads the synth load counters
     asm volatile("" ::"r"(&polysynth::open::loadShots));
     asm volatile("" ::"r"(&polysynth::open::setAdmitPermille));
     asm volatile("" ::"r"(&polysynth::open::admitPermille));
+    asm volatile("" ::"r"(&cFileManager::moditKeep));   // modit.plg: moveToPrevOperationStep and the 5 argument loadFileToMemory
     ext_keep_platform();
 }
 
@@ -185,12 +194,20 @@ bool enter(const plug_file_header& h)
 uint32_t imageCrc() { return 0; }
 const char* imageDiag(ext::Status) { return ""; }
 bool enter(const plug_file_header&) { return false; }
+// modit.plg on the host: the three sources are in the binary (Makefile), the card file runs the loader rules and the hook is set here
+bool enterModit(const plug_file_header&)
+{
+    ext_hooks.modit = &cFileManager::moditDispatch;
+    return true;
+}
+constexpr uintptr_t kModitHostRun = 0x70D88000u;   // the run address a host test module is packed for (tools/modit/make_host_module.py)
 #endif
 }   // namespace
 
 namespace
 {
 ext::Status s_status = ext::Status::kOff;
+bool s_moditLoaded;   // modit.plg sits in the slot's load part: the recovery console answers from the slot tail
 // decision D4: the module is card code, so Shift held at power on skips it for the session. It loads
 // when the plugin host's key window closes (the same 4 s and the same key path), not in TrackerImpl::init
 constexpr uint32_t kKeyWindowMs = 4000;
@@ -198,6 +215,7 @@ bool s_pending, s_safe, s_develop;
 uint32_t s_bootMs;
 Platform* s_platform;
 ext::RecoveryLine s_line;
+ext::RecoverySender s_reply;   // the reply in the slot, sent 64 B packet by packet over the next polls
 uint32_t s_resetAtMs;   // a `reset` of the recovery console: the unit restarts when the reply has left (0: none)
 }
 
@@ -222,14 +240,55 @@ extern "C" const char* ext_status_short(void)
 extern "C" void ext_boot(void* platformPtr, int develop)
 {
     memset(&ext_hooks, 0, sizeof(ext_hooks));
-    if (!develop) return;
-    s_develop = true;
+    // the card and the platform are kept without develop mode too: modit.plg (MOD/IT) loads from it on the first use
     Platform* platform = static_cast<Platform*>(platformPtr);
     s_platform = platform;
     s_fs = platform->getFileSystem();
     s_timer = platform->getTimer();
+    if (!develop) return;
+    s_develop = true;
     s_pending = true;   // loaded by ext_update once the key window closed
     s_bootMs = now();
+}
+
+// MOD import, IT import and IT export (modit.plg, ext_loader.h moditLoad): /Plugins/Ext/modit.plg into the slot on the first use, never at
+// boot. 0 when the hook is set (loaded now, or before), else the lines of the popup of the click. The image id is computed once per
+// power cycle (the console module's boot does the same sum for its own file), a refused file is read again on the next use.
+// The slot is the console module's while it is loaded or about to load (develop mode, the key window of the boot): then busy, nothing
+// is read. In every other state nothing in it matters (a refused file's bytes, a crash report already written, the recovery reply).
+extern "C" int ext_modit_check(const char** line1, const char** line2)
+{
+    static bool s_idKnown;
+    static uint32_t s_id;
+    ext::ModitState st = ext::ModitState::kReady;
+    if (!ext_hooks.modit)
+    {
+        if (!s_fs)
+            st = ext::ModitState::kMissing;
+        else
+        {
+            CardFs card{s_fs};
+#ifndef UI_SHOT_HOST
+            const ext::Slot slot{s_ext, EXT_LOAD_BYTES, uintptr_t(s_ext)};
+#define MODIT_ENTER enter
+#else
+            const ext::Slot slot{s_ext, EXT_LOAD_BYTES, kModitHostRun};
+#define MODIT_ENTER enterModit
+#endif
+            st = ext::moditLoad(card, slot, s_status, s_pending, [&] {
+                if (!s_idKnown) { s_id = imageCrc(); s_idKnown = true; }
+                return s_id;
+            }, [](const plug_file_header& h) { return MODIT_ENTER(h) && ext_hooks.modit != nullptr; });
+#undef MODIT_ENTER
+            if (st == ext::ModitState::kReady) s_moditLoaded = true;
+        }
+    }
+    if (st != ext::ModitState::kReady)
+    {
+        if (line1) *line1 = ext::moditLine1(st);
+        if (line2) *line2 = ext::moditLine2(st);
+    }
+    return int(st);
 }
 
 static void ext_load()
@@ -258,23 +317,39 @@ static void recoveryPoll()
         s_platform->resetMCU();
         return;
     }
+    if (s_reply.busy())
+    {
+        if (!usb_configuration) s_reply.start(nullptr, 0);   // unplugged: the rest of the reply is meaningless
+        else
+        {
+            s_reply.pump([] { return usb_serial_write_buffer_free(); }, [](const char* p, int n) { usb_serial_write(p, uint32_t(n)); });
+            usb_serial_flush_output();
+        }
+        if (s_reply.busy()) return;   // the reply lives in the slot: no new line until it has left
+    }
     for (int guard = 0; guard < 64 && usb_serial_available() > 0; guard++)
     {
         const int c = usb_serial_getchar();
         if (c < 0 || !s_line.feed(c)) continue;
         const char* status = s_pending ? "pending: the module loads 4 s after start" : s_safe ? "skipped: Shift was held at start" : ext::statusText(s_status);
-        const char* detail = s_status == ext::Status::kOtherImage && !s_pending ? diagText() : "";
-        char* const out = reinterpret_cast<char*>(s_ext);   // the slot is idle while no module runs: no stack, no SRAM for the reply
-        constexpr int kOut = 320;
+        // the diagnostic text sits in the load part: gone once modit.plg was loaded over it
+        const char* detail = s_status == ext::Status::kOtherImage && !s_pending && !s_moditLoaded ? diagText() : "";
+        // the slot is idle while no console module runs: no stack, no SRAM for the reply. Its start while nothing is loaded, its reset
+        // surviving tail (never written by the loader) once modit.plg holds the load part
+        char* const out = reinterpret_cast<char*>(s_ext) + ext::recoveryReplyOffset(s_moditLoaded);
+        constexpr int kOut = ext::kRecoveryReplyBytes;
+        static_assert(EXT_LOAD_BYTES + ext::kRecoveryReplyBytes <= EXT_SLOT_BYTES, "the reply fits the slot tail");
         bool restart = false;
         const char* build = s_platform->getSystemInfo()->buildId;
         const int n = ext::recoveryReply(s_line.buf, build ? build : "?", status, detail, out, kOut, &restart);
-        if (n > 0 && usb_configuration && usb_serial_write_buffer_free() >= n)
+        if (n > 0 && usb_configuration)
         {
-            usb_serial_write(out, n);
+            s_reply.start(out, n);
+            s_reply.pump([] { return usb_serial_write_buffer_free(); }, [](const char* p, int k) { usb_serial_write(p, uint32_t(k)); });
             usb_serial_flush_output();
         }
         if (restart) s_resetAtMs = now() + 150;   // time for the reply to leave the endpoint
+        if (s_reply.busy()) break;   // the rest goes out on the next polls, the next line waits
     }
 }
 #endif

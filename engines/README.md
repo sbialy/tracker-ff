@@ -9,15 +9,15 @@ checks what they publish.
 |---|---|---|---|
 | tracker-ff (this one) | public | | host, SDK, built-in engines, `.ptfx` |
 | [tracker-engines-os](https://github.com/sbialy/tracker-engines-os) | public | `engines-os` | CHIP (Polyend's open Chiptune voice, `.plg` and `.plgi` only) and the OpenTracker 3.x module engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type (`.plg`, `.plgi`, `.wasm`, `.json`) |
-| tracker-engines | private | `engines` | our own engines PHZ and PLK, freeware binaries only |
-| [tracker-effects-os](https://github.com/sbialy/tracker-effects-os) | public | `effects-os` | the OpenTracker fx ports Dirt, Tape, Lo-Fi, BBD, Phaser (`.plg`, `.wasm`, `.json`) |
+| tracker-engines | private | `engines` | our own engines PHZ, PLK and ALCO, freeware binaries only |
+| [tracker-effects-os](https://github.com/sbialy/tracker-effects-os) | public | `effects-os` | the OpenTracker fx ports Dirt, Tape, Lo-Fi, BBD, Phaser (`.plg`, `.wasm`, `.json`) and the nine Sample Editor effects of 1.4.0 that left the image (`se_*.ptfx`, laid out in `Effects/` by `package_release.sh`) |
 | tracker-effects | private | `effects` | our own inserts Console, Tube and Glue, freeware binaries only |
 
 ## Files
 
 | File | What |
 |---|---|
-| `engines.json` | the public identity of every module 1.2.0 ships: file id, descriptor name, stored / patch / type numbers and version of each engine, plug id and version of each insert, visibility and repository. A module repository must not change these. A new engine gets its row here and its `synth-open/engine_list.h` entry first |
+| `engines.json` | the public identity of every module 1.2.0 ships: file id, descriptor name, stored / patch / type numbers and version of each engine, plug id and version of each insert, visibility and repository. A module repository must not change these. `min_firmware` on a row (JU6 1.1.0: 1.3.0) names the lowest firmware that installs the module, informational only, the firmware decides by its own checks. A new engine gets its row here and its `synth-open/engine_list.h` entry first |
 | `external.lock.json` | per module repository: tag, commit, visibility, the sha256 of every published module file (`files`) and of the notices and licence texts that travel with them (`notice_files`), the local checkout and build directories |
 | `external.py` | `fetch DEST` (release assets: public over https, private with `gh` and a token, or `--from-local`), `check DIR`, `source SET DEST FILE...` (module source at the pinned tag from a local checkout, used by ui_shot), `list`, `relock SET` |
 | `check_modules.py` | `verify-external DIR`: every module against its row in `engines.json` (header, CRC, kind, ABI, numbers, name, version, `.plgi`, manifest visibility and source repository, manifest sha256 of the `.wasm` and `.plg`) |

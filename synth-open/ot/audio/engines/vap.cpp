@@ -571,7 +571,7 @@ struct NoiseRamp {
 };
 
 template <int kMode, int kSat, bool kOut, bool kNoise = false>
-OT_FASTRUN_FN void svfKernel(float* buf, float* s, SvfRamp c, float* L, float* R, float g, float dg,
+OT_FASTRUN_FN void svfKernel(float* buf, float* s, SvfRamp c, float* L, float* /*R: mono engine, never written*/, float g, float dg,
                                          NoiseRamp* nz = nullptr) {
     float s1 = s[0], s2 = s[1];
     uint32_t rng = kNoise ? nz->rng : 0u;
@@ -596,8 +596,7 @@ OT_FASTRUN_FN void svfKernel(float* buf, float* s, SvfRamp c, float* L, float* R
         if (kSat == 2) y = softClip2(y);
         if (kOut) {
             const float o = y * g;
-            L[i] += o;
-            R[i] += o;
+            L[i] += o;   // mono engine (EngineDef::monoOut): the shim reads L only, R is not written
             g += dg;
         } else {
             buf[i] = y;

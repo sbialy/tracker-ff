@@ -400,7 +400,7 @@ void cFileManager::importModFile_Patterns()
     char byteBuffer[modFileData.patternSize];
     //	uint8_t buffOffset = 0;
 
-    uint8_t loadStatus = fileTransfer.loadFileToMemory(
+    [[maybe_unused]] uint8_t loadStatus = fileTransfer.loadFileToMemory(
       impFileData.path,
       (uint8_t*)byteBuffer,
       modFileData.patternSize, // memo

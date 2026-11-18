@@ -27,6 +27,7 @@ class mtEffectModular : public mtEffect
     void onApplyCommitted(int instrumentIdx);
 
     uint16_t getFlags() const { return m_flags; }
+    bool hasPlugin() const { return m_processBlockFunc != nullptr; }
     void setTargetLength(uint32_t len) { m_targetLength = len; }
     void setExtraSamples(uint32_t prependSamples, uint32_t appendSamples)
     {

@@ -3,7 +3,7 @@
 
 const uint8_t MANUAL_CHAPTERS_COUNT = 3;
 
-const char manualFolderNames[MANUAL_CHAPTERS_COUNT][10] = {
+inline const char manualFolderNames[MANUAL_CHAPTERS_COUNT][10] = {
     "Reference",
     "Notes",
     "Custom",

@@ -57,6 +57,23 @@ class MixerAndFxs
     AudioAnalyzeRMS* getDelayRMS(MixerAndFxChannelType channel);
     AudioAnalyzeRMS* getPolyverbRMS(MixerAndFxChannelType channel);
     AudioAnalyzeRMS* getDryMixRMS(MixerAndFxChannelType channel);
+#ifdef AUDIO_NULL_IS_SILENCE
+    // The Mixer's Mute of the FX (fx_mute_gate.h), audio interrupt before update_all: the FX follow the effective mute (the project's
+    // flag, or the USB 8+3 auto mute override). A muted FX rings out its tail (every send into it is 0 already), then it and its send mixer
+    // leave update_all. autoMuted: no ring, the fade starts at once.
+    void syncFxMute(bool delayMuted, bool reverbMuted, bool autoMuted = false)
+    {
+        if (shortDelay.isMuted() != delayMuted)
+            shortDelay.setMuted(delayMuted);
+        if (polyverb.isMuted() != reverbMuted)
+            polyverb.setMuted(reverbMuted);
+        if (autoMuted)
+        {
+            shortDelay.cutMuteRing();
+            polyverb.cutMuteRing();
+        }
+    }
+#endif
 #ifdef FEATURE_SYNTH
     AudioAnalyzeRMS* getSynthRMS(int synthIdx, MixerAndFxChannelType channel);
 #endif

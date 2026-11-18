@@ -33,8 +33,9 @@ __pycache__/
 .idea/
 .DS_Store
 
-# Pinned test builds (binaries stay out of git)
-releases/
+# Pinned test builds (binaries stay out of git), except the curated /Waves set of the release zip (releases/waves)
+releases/*
+!releases/waves/
 
 # a local copy for a FEATURE_PLUG_BENCH build (plug_dirt_inimage.cpp), the source lives in tracker-effects-os
 synth-open/plug/fx_dirt_plug.cpp

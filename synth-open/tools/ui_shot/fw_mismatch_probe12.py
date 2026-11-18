@@ -1,5 +1,5 @@
 #!/usr/bin/env python3 -I
-"""fw_engine_mismatch_sim.sh helper: adds the "poke picker" action to the ui_shot host of an older tree (release-1.2.0).
+"""fw_engine_mismatch_sim.sh helper: adds the "poke picker" action to the ui_shot host of an older tree (release-1.2.0). A tree that has both actions (1.3.0 and later) is left alone.
 
 Usage: fw_mismatch_probe12.py TREE. The 1.2.0 host_poke.cpp has no "picker" action (the 1.3.0 one prints the Model list the Synth
 screen holds and the engine every synth part stores) and no "inserts" action (the state of both master insert slots). This inserts the
@@ -10,8 +10,8 @@ import os, sys
 
 p = os.path.join(sys.argv[1], 'synth-open/tools/ui_shot/host_poke.cpp')
 t = open(p, encoding='latin-1', newline='').read()
-if 'fw_mismatch_probe' in t:
-    sys.exit(0)
+if 'fw_mismatch_probe' in t or ('strcmp(cmd, "picker")' in t and 'strcmp(cmd, "inserts")' in t):
+    sys.exit(0)     # done before, or the tree has the actions itself (1.3.0 and later): nothing to add
 nl = '\r\n' if '\r\n' in t else '\n'
 add = '''    else if (!strcmp(cmd, "inserts"))   // fw_mismatch_probe12.py: the 1.3.0 line without the parameter values
     {

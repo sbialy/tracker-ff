@@ -1,0 +1,12 @@
+# The pinned Python of every poly Mac tool that needs unicorn (emulators, bridge, benches, build_plugs, run_tests).
+# Installed by synth-open/tools/pyenv.sh into ~/prj/poly/build/pyenv with `pip install --require-hashes`: every file below is hash checked.
+# Wheels are macOS arm64 only (Apple silicon). numpy is hashed for CPython 3.13 and 3.14, the other two are ABI independent wheels.
+# To bump a pin: pip download --no-deps --only-binary=:all: --platform macosx_11_0_arm64 --python-version 3.14 --implementation cp NAME==VER -d /tmp/x
+# then shasum -a 256 the wheel here (and for 3.13) and bump the stamp by editing this file (pyenv.sh rebuilds when this file changes).
+unicorn==2.1.4 \
+    --hash=sha256:d6c93e0f60328d8f4a1792af3f834137a28050fcc2305f2ec01efe8558a9844e
+capstone==5.0.9 \
+    --hash=sha256:fc269c5082e17d7f9f265cd6980e2fdc6ab572df913951d76db0357e06b8001d
+numpy==2.4.2 \
+    --hash=sha256:bd3a7a9f5847d2fb8c2c6d1c862fa109c31a9abeca1a3c2bd5a64572955b2979 \
+    --hash=sha256:d1240d50adff70c2a88217698ca844723068533f3f5c5fa6ee2e3220e3bdb000

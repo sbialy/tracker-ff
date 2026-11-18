@@ -116,6 +116,9 @@ void cConfigEditor::start(uint32_t options)
     moduleRefresh = 1;
 
     exitOnButtonRelease = 0;
+#ifdef FEATURE_PLUG_HOST
+    projectPage = options == kOpenProjectSettings;
+#endif
 
     // ustawienie funkcji
     ip->setButtonObj(interfaceButtonParams, buttonPress, functSwitchModule);
@@ -138,7 +141,7 @@ void cConfigEditor::start(uint32_t options)
     ip->setButtonObj(interfaceButtonMiniMenu, functMenu);
 
     // powraca tylko do 1 i 2 kolumny
-    if (selectedPlace > 1)
+    if (selectedPlace > 1 || projectPage)
         selectedPlace = 1;
 
     ThemeManager::scanThemesAndFonts();
@@ -404,9 +407,12 @@ static void functActionButton(uint8_t button, uint8_t state)
                     {
                         CE->itemEditorClose();
                     }
-                    else
+                    else if (!CE->menuGoOut() && CE->projectPage)
                     {
-                        CE->menuGoOut();
+#ifdef FEATURE_PLUG_HOST
+                        CE->leaveProjectPage();
+#endif
+                        return;
                     }
                 }
                 else
@@ -547,6 +553,13 @@ static void functLeft()
         CE->selectedPlace = 1;
         return;
     }
+#ifdef FEATURE_PLUG_HOST
+    else if (CE->projectPage)
+    {
+        CE->leaveProjectPage();
+        return;
+    }
+#endif
 
     if (CE->selectedPlace > 0)
     {
@@ -950,6 +963,8 @@ void cConfigEditor::resetTrackerConfig(bool yes)
         restartConfigAllActions();
 #if defined(FEATURE_EXT_HOOKS) && !defined(PLATFORM_IMX) && !defined(TRACKER_MINI)
         features::resetAll(); // decision D5: the features go back to their defaults too, /Features/<id>.cfg removed
+        usbMenuRefresh();     // USB audio and USB drive are off again: the USB entry leaves the list
+        createMenuBaseList();
 #endif
     }
 

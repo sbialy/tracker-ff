@@ -1,3 +1,6 @@
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
 #include "mtAudioExport.h"
 #include "VoiceStreamManager.h"
 #include "fileManager.h"
@@ -288,6 +291,14 @@ void mtAudioExport::runSequence()
             songLength = 0;
             while (mtProject.song.playlist[songLength] && songLength < SONG_MAX)
                 songLength++;
+#ifdef FEATURE_PARTS
+            if (parts::enabled()) // the Song screen is in its Parts view: the export renders the Parts song
+            {
+                songLength = parts::songLength();
+                parts::start(0, false);
+                break;
+            }
+#endif
 
             sequencer.playSongFromPosition(0);
 
@@ -565,8 +576,10 @@ void mtAudioExport::rawToWavs_finish()
     [[maybe_unused]] uint32_t totalSongTime_ms = songTimeCounter;
 
     if (EXPORT_DEBUG)
+    {
         LOGF(
           "total export %ds track took %ds\n", totalSongTime_ms / 1000, totalExportTime_ms / 1000);
+    }
 
     callBackExternalSettings();
 
@@ -801,12 +814,17 @@ uint8_t mtAudioExport::getProgress()
         case exportSongStems:
         case exportSong:
         {
+#ifdef FEATURE_PARTS
+            const int songPos = parts::playing() ? parts::progressPos() : mtProject.song.playlistPos;
+#else
+            const int songPos = mtProject.song.playlistPos;
+#endif
             float renderProgress =
               mapClamped<int>(sequencer.getActualPos(),
                               0,
                               sequencer.getPatternLength() - 1,
-                              (mtProject.song.playlistPos * 100) / (songLength),
-                              ((mtProject.song.playlistPos + 1) * 100) / (songLength));
+                              (songPos * 100) / (songLength),
+                              ((songPos + 1) * 100) / (songLength));
             if (exportOnlyMaster())
             {
                 return renderProgress;

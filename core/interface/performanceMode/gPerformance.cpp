@@ -173,7 +173,7 @@ void cPerformanceMode::showEditFrame(uint8_t place)
     display.refreshControl(frameControl);
 }
 
-void cPerformanceMode::hideEditFrame(uint8_t place)
+void cPerformanceMode::hideEditFrame([[maybe_unused]] uint8_t place)
 {
 #ifdef TRACKER_MINI
     display.setControlColors(frameControl, display.getTheme().greenFrameColors);

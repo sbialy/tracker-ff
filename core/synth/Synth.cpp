@@ -309,6 +309,7 @@ void Synth::loadSlotNames(int part)
         return; // heap short: the slots show Unnamed
     }
     polysynth::open::patchNamesRead(part, *patchStoreWorkspace, *names); // missing or damaged: all empty
+    polysynth::open::patchBankSetMorphTarget(part, names->morph);         // -1 (no m= line): the default
     for (int slot = 1; slot < kPatchSlots; slot++)
     {
         parts[part].slotNames[slot] = names->name[slot];
@@ -325,6 +326,7 @@ bool Synth::persistSlotNames(int part)
     }
     const int cur = getPatchSlot(part);
     snprintf(names->name[0], sizeof(names->name[0]), "%s", parts[part].backupName.c_str());
+    names->morph = int8_t(getMorphTarget(part));
     for (int slot = 1; slot < kPatchSlots; slot++)
     {
         const std::string& name = slot == cur ? parts[part].patchName : parts[part].slotNames[slot];
@@ -379,9 +381,30 @@ bool Synth::restoreSlotZeroBackup(int part)
     return true;
 }
 
+// The name of slot 0..15 of the part (the open slot has the live name, the others the names the part keeps), for the Synth play page
+const char* Synth::getSlotName(int part, int slot)
+{
+    return slot == getPatchSlot(part) ? parts[part].patchName.c_str() : parts[part].slotNames[slot].c_str();
+}
+
 bool Synth::applyPatchBankSlot(int part, int slot)
 {
     return part >= 0 && part < kSynthParts && polysynth::open::patchBankApply(part, slot);
+}
+
+bool Synth::applyPatchMorph(int part, int slot, int amount)
+{
+    return part >= 0 && part < kSynthParts && polysynth::open::patchBankMorph(part, slot, amount);
+}
+
+void Synth::setMorphTarget(int part, int slot)
+{
+    if (part < 0 || part >= kSynthParts || slot == getMorphTarget(part))
+    {
+        return;
+    }
+    polysynth::open::patchBankSetMorphTarget(part, slot);
+    persistSlotNames(part); // a failed write is tried again by the next project save (saveDirtyWorkspacePatches)
 }
 
 int Synth::getPatchSlot(int part)
@@ -473,6 +496,27 @@ bool Synth::saveDirtyWorkspacePatches()
     return allSaved;
 }
 
+// The sum of the voices of all parts: 8, and the pool budget while the A/B Synth play page has raised it (two parts of 8)
+static int voiceSumCap()
+{
+#ifdef FEATURE_SYNTH_OPEN
+    return std::max<int>(kSynthMaxVoices, polysynth::open::voiceBudget());
+#else
+    return kSynthMaxVoices;
+#endif
+}
+
+// The voices a part counts with in the sum: a stored Voices above what a part may have now (5 to 8 outside the Synth play page) counts as
+// that limit, as it plays
+static int countedVoices(int voiceCount)
+{
+#ifdef FEATURE_SYNTH_OPEN
+    return std::min(voiceCount, polysynth::open::partVoiceLimit());
+#else
+    return voiceCount;
+#endif
+}
+
 void Synth::setVoiceCount(int part, int voiceCount)
 {
     if (parts[part].instrument->getVoiceCount() != voiceCount)
@@ -486,20 +530,25 @@ void Synth::setVoiceCount(int part, int voiceCount)
                            parts.end(),
                            0,
                            [](int acc, const Part& part)
-                           { return acc + part.instrument->getVoiceCount(); }) <= kSynthMaxVoices);
+                           { return acc + countedVoices(part.instrument->getVoiceCount()); }) <= voiceSumCap());
 }
 
 int Synth::getMaxVoiceCount(int part)
 {
     int otherPartsVoiceCount = std::accumulate(parts.begin(),
                                                parts.end(),
-                                               -parts[part].instrument->getVoiceCount(),
+                                               -countedVoices(parts[part].instrument->getVoiceCount()),
                                                [](int acc, const Part& part)
-                                               { return acc + part.instrument->getVoiceCount(); });
+                                               { return acc + countedVoices(part.instrument->getVoiceCount()); });
 
     assert(parts[part].patch);
+#ifdef FEATURE_SYNTH_OPEN
+    return std::min(voiceSumCap() - otherPartsVoiceCount,
+                    polysynth::open::pageVoiceCap(parts[part].patch->getMetadata().maxVoices));
+#else
     return std::min(kSynthMaxVoices - otherPartsVoiceCount,
                     parts[part].patch->getMetadata().maxVoices);
+#endif
 }
 
 void Synth::setInstrumentType(int partIdx, polysynth::InstrumentTypeId typeId)
@@ -626,6 +675,11 @@ std::string Synth::getSynthName(int part)
 std::string Synth::getParamFullName(int part, int paramId)
 {
     const auto& metadata = parts[part].patch->getMetadata();
+    // The id can come from a macro modifier stored in a patch file.
+    if (paramId < 0 || paramId >= std::ssize(metadata.params))
+    {
+        return "Empty";
+    }
     const auto& paramName = !metadata.params[paramId].displayName.empty()
                               ? metadata.params[paramId].displayName
                               : "Empty";

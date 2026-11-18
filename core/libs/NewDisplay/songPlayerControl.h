@@ -70,6 +70,12 @@ typedef struct
     uint8_t normalTracksNamesBuffLen;
     uint8_t midiTracksNamesBuffLen;
 
+    // Parts view of the Song screen (core/source/parts.h): rows are Parts, a cell shows the source pattern of its track (0 = off).
+    // partsSrc points at the first Part's src[], partsStride is the record size. nullptr: the stock pattern view
+    const uint8_t* partsSrc = nullptr;
+    uint8_t partsStride = 0;
+    const char* listTitle = nullptr;   // the title over the list, nullptr: "Pattern"
+
 } player_data_t;
 
 //--------------------------------------------------------------------
@@ -101,6 +107,7 @@ class cSongPlayer : public cDisplayControl
     void drawTrackNames();
     void drawIcon(int pos, int row, int x, int y, int h);
     void fillBlocks();
+    void fillPartBlocks();
     void drawProgressLine();
     void calculateSelection(uint8_t pattern,
                             uint8_t track,

@@ -3,6 +3,7 @@
 #include "ampLogarythmicValues.h"
 #include "dspinst.h"
 #include "mtAudioEngine.h"
+#include "tapeFx.h"
 #include "util_math.h"
 #include <cr_section_macros.h>
 
@@ -157,6 +158,11 @@ AUDIO_CORE_RAM void AudioPlayMemory::update(void)
         lowerVolume3dB(block);
     }
 
+    if (tape.mode != tapefx::kOff)
+    {
+        tapeProcess(block);
+    }
+
     envelopeUpdate(block);
 }
 
@@ -185,6 +191,7 @@ void AudioPlayMemory::init(Timer* timer, int channel, int voiceIdx)
 //**************************************************************************************PLAY
 AUDIO_CORE_FLASH uint8_t AudioPlayMemory::play(uint8_t instrIdx, int8_t note)
 {
+    tape.mode = tapefx::kOff; // a new note plays at normal speed, unless its step carries a Tape FX (stackedTape below)
     switch (mtProject.instrument[instrIdx].playMode)
     {
         case playModeSingleShot: playSingleShot(instrIdx, note); break;
@@ -204,7 +211,72 @@ AUDIO_CORE_FLASH uint8_t AudioPlayMemory::play(uint8_t instrIdx, int8_t note)
         stackedSlide.isSlideOnPlay = false;
     }
 
+    if (stackedTape.mode != tapefx::kOff)
+    {
+        setTape(stackedTape.mode == tapefx::kStart, stackedTape.frames);
+        stackedTape.mode = tapefx::kOff;
+    }
+
     return 1;
+}
+
+AUDIO_CORE_FLASH void AudioPlayMemory::setTapeOnPlay(bool start, uint32_t frames)
+{
+    stackedTape.mode = start ? tapefx::kStart : tapefx::kStop;
+    stackedTape.frames = frames;
+}
+
+// The pitch is the glide ramp of the slide FX, aimed at (Stop) or coming from (Start) the lowest note, so every play mode that glides
+// follows it. The level is applied to the finished block in update().
+AUDIO_CORE_FLASH void AudioPlayMemory::setTape(bool start, uint32_t frames)
+{
+    if (frames == 0)
+    {
+        frames = 1;
+    }
+    const float* table = (currentPlayMode == playModeWavetable) ? wt_notes : notes;
+    const float lowest = table[MIN_NOTE];
+
+    AudioNoInterrupts();
+    const float now = pitchControl < lowest ? lowest : pitchControl;
+    const float from = start ? lowest : now;
+    const float to = start ? now : lowest;
+    pitchControl = from;
+    constrainsInSamples.pitchSmoothing = frames;
+    pitchSmoothingControl = (to - from) / (float)frames;
+    pitchSmoothingControlCounter = 0;
+    tape.mode = start ? tapefx::kStart : tapefx::kStop;
+    tape.pos = 0;
+    tape.total = frames;
+    AudioInterrupts();
+}
+
+// After the block of a voice in a run: the level follows the tape speed (ramped across the block), then the run moves on one block.
+// The end of a run-down releases the voice (its level is 0 by then).
+AUDIO_CORE_RAM void AudioPlayMemory::tapeProcess(audio_block_t* block)
+{
+    const tapefx::Mode mode = static_cast<tapefx::Mode>(tape.mode);
+    if (block)
+    {
+        float g = tapefx::gainFor(tapefx::ratio(mode, tape.pos, tape.total));
+        const float gEnd = tapefx::gainFor(tapefx::ratio(mode, tape.pos + AUDIO_BLOCK_SAMPLES, tape.total));
+        const float gInc = (gEnd - g) * (1.0f / (float)AUDIO_BLOCK_SAMPLES);
+        for (int i = 0; i < AUDIO_BLOCK_SAMPLES; i++)
+        {
+            block->data[i] = (int16_t)((float)block->data[i] * g);
+            g += gInc;
+        }
+    }
+    tape.pos += AUDIO_BLOCK_SAMPLES;
+    if (tape.pos >= tape.total)
+    {
+        tape.mode = tapefx::kOff;
+        if (mode == tapefx::kStop)
+        {
+            envelopeRelease(5.0f);
+            envelopeNoteOff();
+        }
+    }
 }
 
 AUDIO_CORE_FLASH void AudioPlayMemory::setSlideOnPlay(bool upOrDown, uint8_t dstValue, float time)
@@ -233,7 +305,7 @@ uint8_t AudioPlayMemory::playForPrev(uint8_t instr_idx, int8_t n)
     return 1;
 }
 
-uint8_t AudioPlayMemory::playForPrev(int16_t* addr, uint32_t len, uint8_t type)
+uint8_t AudioPlayMemory::playForPrev(int16_t* addr, uint32_t len, uint8_t /*type*/)
 {
     uint32_t startPoint, endPoint;
     int8_t note = 60;
@@ -468,6 +540,7 @@ void AudioPlayMemory::stop(void)
     //	__disable_irq();
     AudioNoInterrupts();
     playing = 0;
+    tape.mode = tapefx::kOff;
     if (channel == 0 && voiceIndex >= 0)
     {
         voiceStreamManager.notifyNoteOff((uint8_t)voiceIndex);

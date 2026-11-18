@@ -8,6 +8,13 @@
 // middle of a run, restarts, two block lengths (MK66 and IMX sample rates). The "naive" column is the first idea (int64 in 1/1024 us and
 // the period as one float divide): it is counted only to show what the exact version avoids, it is not part of the verdict.
 // Default simulated length per run is 10 minutes.
+//
+// The last section is the one place where the shipped clock is NOT the stock one: the stock loop took the period once per audio block, so
+// the swing phase that toggles at a step boundary inside a block (the sequencer toggles it every 576th tick) left the rest of that block
+// counting in the old phase. A pair of steps then took more or less than 1152 nominal ticks of time: +0.098 % at 125 BPM, swing 66, an
+// export that reads 125.12. The shipped clock reads the inputs again after every tick. The section runs the toggle inside the block against
+// a reference (the stock double accumulator that re-reads the period after every tick, tick for tick equal), and measures the tempo of
+// the ticks over 4000 pairs of steps (stale per block period: wrong, fresh: exact to 1e-6).
 #include "internalTickClock.h"
 
 #include <cmath>
@@ -159,7 +166,8 @@ void run(const Scenario& sc, double minutes, Totals& t)
         c.clear();
         stock.advance(sc.intervalSeconds, tempo, factor, [&](uint32_t o) { a.add(o); });
         fixedClock.advance(
-          sc.intervalSeconds, tempo, factor, [&]() { return stockPeriodUs(tempo, factor); }, [&](uint32_t o) { b.add(o); });
+          sc.intervalSeconds, [&]() { return InternalTickClock::Inputs{ tempo, factor }; }, [&]() { return stockPeriodUs(tempo, factor); },
+          [&](uint32_t o) { b.add(o); });
         naive.advance(sc.intervalSeconds, tempo, factor, [&](uint32_t o) { c.add(o); });
 
         t.blocks++;
@@ -215,6 +223,95 @@ void run(const Scenario& sc, double minutes, Totals& t)
             t.inexactPeriodUnits++;
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// The swing toggle inside a block (the section described at the top)
+// ---------------------------------------------------------------------------------------------------------------------------------
+constexpr uint32_t kTicksInStep = 576; // 4 * 48 * 12 / 4: the nano steps of one step (kuStepsInStep 48 * kNanoStepsInUStep 12)
+
+struct SwingEnv
+{
+    float tempo;
+    int swing;
+    bool phase = false; // the step toggle, flips at every step boundary
+    uint64_t ticks = 0;
+    float factor() const { return phase ? (100.0f - (float)swing) + 50.0f : (float)swing + 50.0f; }
+    void onTick()
+    {
+        if (++ticks % kTicksInStep == 0)
+            phase = !phase;
+    }
+};
+
+// the stock accumulator that re-reads the period after every tick (the reference of the fixed clock) or only once per block (the stock loop)
+struct DoubleClock
+{
+    double acc = 0.0;
+    bool perTick;
+    explicit DoubleClock(bool pt) : perTick(pt) {}
+    template<typename FactorFn, typename F>
+    void advance(float intervalSeconds, float tempo, FactorFn&& factor, F&& onTick)
+    {
+        double period = static_cast<double>(stockPeriodUs(tempo, factor()));
+        const double blockUs = static_cast<double>(intervalSeconds) * 1000000.0;
+        acc += blockUs;
+        while (acc >= period)
+        {
+            acc -= period;
+            const double offsetUs = blockUs - acc;
+            onTick(offsetUs > 0.0 ? static_cast<uint32_t>(offsetUs + 0.5) : 0U);
+            if (perTick)
+                period = static_cast<double>(stockPeriodUs(tempo, factor()));
+        }
+    }
+};
+
+struct SwingResult
+{
+    double fixedRatio, staleRatio; // ticks * nominal period / elapsed time, 1.0 = the project tempo
+    uint64_t mismatchBlocks;
+};
+
+SwingResult swingRun(float tempo, int swing, float intervalSeconds, uint64_t pairs)
+{
+    SwingEnv envFixed{ tempo, swing }, envRef{ tempo, swing }, envStale{ tempo, swing };
+    InternalTickClock fixedClock;
+    DoubleClock ref(true), stale(false);
+    const uint64_t want = pairs * 2 * kTicksInStep;
+    const double nominalUs = static_cast<double>(stockPeriodUs(tempo, 0.0f));
+    SwingResult r{ 0, 0, 0 };
+    uint64_t blocksFixed = 0, blocksStale = 0;
+    Ev a, b;
+    while (envFixed.ticks < want || envStale.ticks < want)
+    {
+        a.clear();
+        b.clear();
+        if (envFixed.ticks < want)
+        {
+            blocksFixed++;
+            ref.advance(intervalSeconds, tempo, [&] { return envRef.factor(); }, [&](uint32_t o) { a.add(o); envRef.onTick(); });
+            fixedClock.advance(
+              intervalSeconds, [&]() { return InternalTickClock::Inputs{ tempo, envFixed.factor() }; },
+              [&]() { return stockPeriodUs(tempo, envFixed.factor()); }, [&](uint32_t o) { b.add(o); envFixed.onTick(); });
+            bool same = a.n == b.n;
+            for (uint32_t i = 0; same && i < a.n; i++)
+                same = a.off[i] == b.off[i];
+            if (!same)
+                r.mismatchBlocks++;
+        }
+        if (envStale.ticks < want)
+        {
+            blocksStale++;
+            stale.advance(intervalSeconds, tempo, [&] { return envStale.factor(); }, [&](uint32_t) { envStale.onTick(); });
+        }
+    }
+    // the render stops at the block that completed the want-th tick, the accumulator left is time that was not spent on a tick
+    const double elapsedFixed = static_cast<double>(blocksFixed) * static_cast<double>(intervalSeconds) * 1000000.0 - fixedClock.accumulatorFixed() / 67108864.0;
+    r.fixedRatio = static_cast<double>(envFixed.ticks) * nominalUs / elapsedFixed;
+    const double elapsedStale = static_cast<double>(blocksStale) * static_cast<double>(intervalSeconds) * 1000000.0 - stale.acc;
+    r.staleRatio = static_cast<double>(envStale.ticks) * nominalUs / elapsedStale;
+    return r;
+}
 }   // namespace
 
 int main(int argc, char** argv)
@@ -254,7 +351,31 @@ int main(int argc, char** argv)
            (unsigned long long)t.exactCountMismatch);
     printf("naive int64 1/1024 us + float divide vs stock (not shipped): different tick list in %llu blocks, a tick in another block in %llu, offset only %llu\n",
            (unsigned long long)t.naiveMismatchBlocks, (unsigned long long)t.naiveCountMismatch, (unsigned long long)t.naiveOffsetOnly);
-    const bool ok = t.exactMismatchBlocks == 0 && t.inexactBlockUnits == 0 && t.inexactPeriodUnits == 0;
+
+    // the swing toggle inside the block: tempo ratio of the ticks, and tick for tick equality with the per tick reference
+    uint64_t swingMismatch = 0, swingBad = 0, swingRuns = 0;
+    double worstFixed = 0.0, worstStale = 0.0;
+    double stale125 = 0.0;
+    for (float tp : { 97.3f, 120.0f, 125.0f, 126.0f, 127.0f, 133.0f, 174.0f })
+        for (int sw : { 25, 33, 50, 60, 66, 70, 75 })
+            for (float iv : { mk66, imx })
+            {
+                const SwingResult r = swingRun(tp, sw, iv, 4000);
+                swingRuns++;
+                swingMismatch += r.mismatchBlocks;
+                const double ef = std::fabs(r.fixedRatio - 1.0), es = std::fabs(r.staleRatio - 1.0);
+                if (ef > 2e-6)
+                    swingBad++;
+                worstFixed = std::fmax(worstFixed, ef);
+                worstStale = std::fmax(worstStale, es);
+                if (tp == 125.0f && sw == 66 && iv == imx)
+                    stale125 = r.staleRatio;
+            }
+    printf("swing toggle inside the block, %llu runs of 4000 step pairs: fixed clock differs from the per tick reference in %llu blocks, tempo off by at most %.2e (limit 2e-6), the stock\n"
+           "  once per block period by up to %.2e (125 BPM, swing 66, export rate: x%.6f)\n",
+           (unsigned long long)swingRuns, (unsigned long long)swingMismatch, worstFixed, worstStale, stale125);
+    const bool swingOk = swingMismatch == 0 && swingBad == 0 && std::fabs(stale125 - 1.0) > 5e-4; // the last one: this check can see the stock error
+    const bool ok = t.exactMismatchBlocks == 0 && t.inexactBlockUnits == 0 && t.inexactPeriodUnits == 0 && swingOk;
     printf("%s\n", ok ? "RESULT: PASS (no step or clock tick moved)" : "RESULT: FAIL");
     return ok ? 0 : 1;
 }

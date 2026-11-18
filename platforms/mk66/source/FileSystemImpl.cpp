@@ -5,8 +5,19 @@
 #include "fsl_sd_disk.h"
 #include "log.h"
 #include "util_string.h"
-#include "wiring.h"
 #include <algorithm>
+#ifdef FEATURE_USB_MSC
+#include "msc_drive.h"
+#endif
+
+// The card detect pin needs two Teensy core calls only. wiring.h would pull in teensy_core/kinetis.h next to the NXP
+// MK66F18.h that fsl_sd.h brings in, and the two redefine about 1,600 register macros (one "redefined" warning each).
+// Declared here with the C linkage and the INPUT_PULLUP value of teensy_core/core_pins.h instead.
+extern "C" {
+void pinMode(uint8_t pin, uint8_t mode);
+uint8_t digitalRead(uint8_t pin);
+}
+static constexpr uint8_t INPUT_PULLUP = 2;
 
 static constexpr size_t kSdFilePoolSize = FF_FS_LOCK;
 #ifdef FW_SDRAM_FILE_POOLS
@@ -45,6 +56,97 @@ static void freeSdFile(SdFile* f)
         }
     }
 }
+
+#ifdef FEATURE_USB_MSC
+// USB_MSC=1, Drive mode: while the computer owns the card (lendToHost until remount) every call that could reach the card
+// fails here, before FatFs or the SD driver: the gate of ref/usb-mass-storage-feasibility.md section 3. It catches the writers
+// the core's storage flow does not know (Features saves, the module marker, the console, restart mode, plugin installs,
+// screenshots, the recorder). FatFs is unmounted as well, so a direct f_* call (FileSystemAdapter::statPath) fails too.
+static volatile bool s_hostOwned;
+static uint32_t s_refused; // calls refused since the last lendToHost
+
+bool FileSystemImpl::refuseHost()
+{
+    if (!s_hostOwned)
+    {
+        return false;
+    }
+    s_refused++;
+    return true;
+}
+#define CARD_GATE(fail)                                                                                                    \
+    do                                                                                                                     \
+    {                                                                                                                      \
+        if (refuseHost())                                                                                                  \
+        {                                                                                                                  \
+            return fail;                                                                                                   \
+        }                                                                                                                  \
+    } while (0)
+
+bool FileSystemImpl::lendToHost()
+{
+    if (s_hostOwned)
+    {
+        return true;
+    }
+    if (!isSdCardInserted())
+    {
+        return false;
+    }
+    // The core suspended streaming and saving (Interface::handleFileTransferMode): let the last stream read land, then
+    // unmount (the card stays initialised for the block access of the drive)
+    SD_WaitAsyncRead(&g_sd);
+    // A file still open for writing keeps its cached sector, its size and the FAT window in RAM: written now, the card the
+    // computer mounts is consistent (the handle itself is invalid after the remount)
+    for (size_t i = 0; i < kSdFilePoolSize; ++i)
+    {
+        if (s_sdFilePoolUsed[i] && s_sdFilePool[i].isOpen() && !s_sdFilePool[i].sync())
+        {
+            LOGE("card lent with an open file that did not sync");
+        }
+    }
+    SD.stop();
+    s_refused = 0;
+    s_hostOwned = true;
+    LOGEF("card lent to the computer, %u blocks", unsigned(g_sd.blockCount));
+    return true;
+}
+
+bool FileSystemImpl::hostOwned() const
+{
+    return s_hostOwned;
+}
+
+uint32_t FileSystemImpl::refusedCalls() const
+{
+    return s_refused;
+}
+
+uint32_t FileSystemImpl::hostBlockCount() const
+{
+    return s_hostOwned ? g_sd.blockCount : 0;
+}
+
+bool FileSystemImpl::hostReadBlocks(uint32_t lba, uint8_t* dst, uint32_t count)
+{
+    if (!s_hostOwned || count == 0 || lba >= g_sd.blockCount || count > g_sd.blockCount - lba)
+    {
+        return false;
+    }
+    return SD_ReadBlocks(&g_sd, dst, lba, count) == kStatus_Success;
+}
+
+bool FileSystemImpl::hostWriteBlocks(uint32_t lba, const uint8_t* src, uint32_t count)
+{
+    if (!s_hostOwned || count == 0 || lba >= g_sd.blockCount || count > g_sd.blockCount - lba)
+    {
+        return false;
+    }
+    return SD_WriteBlocks(&g_sd, src, lba, count) == kStatus_Success;
+}
+#else
+#define CARD_GATE(fail) ((void)0)
+#endif
 
 void FileSystemImpl::init(int sdDetectPin, Timer* timer)
 {
@@ -118,43 +220,66 @@ void FileSystemImpl::setMountEventCallback(CardStateChangeCallback funct)
 
 bool FileSystemImpl::remount()
 {
+#ifdef FEATURE_USB_MSC
+    // Drive mode ends (Interface::handleFileTransferMode): the drive withdraws the card from the computer and finishes the
+    // command in flight, then FatFs forgets everything it knew (every open handle of the old mount is invalid) and the card
+    // is initialised and mounted again. A card pulled in the mode has nothing to mount.
+    ffUsbMscTakeBack();
+    s_hostOwned = false;
+    LOGEF("card back from the computer, %u calls refused", unsigned(s_refused));
+    if (!lastCardInsertState)
+    {
+        return false;
+    }
+    SD.stop();
+    cardInitializedSuccessfully = SD.init();
+    return cardInitializedSuccessfully;
+#else
     // Nothing else writes to the card here: this platform has no USB storage
     // mode.
     return false;
+#endif
 }
 
 bool FileSystemImpl::exists(const char* path)
 {
+    CARD_GATE(false);
     return SD.exists(path);
 }
 
 bool FileSystemImpl::rename(const char* oldPath, const char* newPath)
 {
+    CARD_GATE(false);
     return SD.rename(oldPath, newPath);
 }
 
 bool FileSystemImpl::mkdir(uint8_t hidden, const char* path, bool pFlag)
 {
+    CARD_GATE(false);
     return SD.mkdir(hidden, path, pFlag);
 }
 
 bool FileSystemImpl::remove(const char* path)
 {
+    CARD_GATE(false);
     return SD.remove(path);
 }
 
 bool FileSystemImpl::removeDirWithFiles(const char* path)
 {
+    CARD_GATE(false);
     return SD.removeDirWithFiles(path);
 }
 
 bool FileSystemImpl::removeOnlyDirFiles(const char* path)
 {
+    CARD_GATE(false);
     return SD.removeOnlyDirFiles(path);
 }
 
 size_t FileSystemImpl::getFileSize(const char* path)
 {
+    CARD_GATE(0);
     SdFile file;
 
     if (!file.open(path, FA_READ))
@@ -170,6 +295,7 @@ size_t FileSystemImpl::getFileSize(const char* path)
 
 size_t FileSystemImpl::getFileSize(FileHandle fileHandle)
 {
+    CARD_GATE(0);
     SdFile* file = (SdFile*)fileHandle;
 
     if (!file->isOpen())
@@ -183,6 +309,7 @@ size_t FileSystemImpl::getFileSize(FileHandle fileHandle)
 
 size_t FileSystemImpl::getFileAvailable(FileHandle fileHandle)
 {
+    CARD_GATE(0);
     assert(fileHandle);
     SdFile* file = (SdFile*)fileHandle;
     return file->available();
@@ -192,6 +319,7 @@ std::tuple<bool, FileSystemImpl::FileHandle> FileSystemImpl::openFile(const char
                                                                       FileOpenMode openMode,
                                                                       FileHandle* fileHandle)
 {
+    CARD_GATE(std::make_tuple(false, fileHandle != nullptr ? *fileHandle : nullptr));
 
     SdFile* file;
     if (fileHandle == nullptr) // no input fileHandle
@@ -247,6 +375,7 @@ std::tuple<bool, FileSystemImpl::FileHandle> FileSystemImpl::openFile(const char
 
 bool FileSystemImpl::seekFileCur(int offset, FileHandle fileHandle)
 {
+    CARD_GATE(false);
     assert(fileHandle != nullptr);
     SdFile* file = (SdFile*)fileHandle;
 
@@ -262,6 +391,7 @@ bool FileSystemImpl::seekFileCur(int offset, FileHandle fileHandle)
 
 bool FileSystemImpl::seekFile(uint32_t pos, FileHandle fileHandle)
 {
+    CARD_GATE(false);
     assert(fileHandle != nullptr);
     SdFile* file = (SdFile*)fileHandle;
 
@@ -278,6 +408,11 @@ void FileSystemImpl::closeFile(FileHandle fileHandle, bool deleteOnClose)
     }
     SdFile* file = (SdFile*)fileHandle;
 
+#ifdef FEATURE_USB_MSC
+    // The computer owns the card: the pool slot is given back, the card is not touched (FatFs is unmounted, a FIL of the
+    // old mount is never valid again)
+    if (!refuseHost())
+#endif
     file->close();
 
     if (deleteOnClose)
@@ -304,6 +439,7 @@ bool FileSystemImpl::enableFastSeek(FileHandle fileHandle,
                                     uint32_t* outDatabaseSector,
                                     uint32_t* outSectorsPerCluster)
 {
+    CARD_GATE(false);
     if (fileHandle == nullptr)
     {
         return false;
@@ -319,6 +455,7 @@ bool FileSystemImpl::enableFastSeek(FileHandle fileHandle,
 
 bool FileSystemImpl::readSectorsAsync(uint8_t* buffer, uint32_t startSector, uint32_t sectorCount)
 {
+    CARD_GATE(false);
     return SD_ReadBlocksAsync(&g_sd, buffer, startSector, sectorCount) == kStatus_Success;
 }
 
@@ -339,6 +476,7 @@ bool FileSystemImpl::isAsyncReadBusy()
 
 void FileSystemImpl::endFile(FileHandle fileHandle)
 {
+    CARD_GATE();
     assert(fileHandle != nullptr);
     SdFile* file = (SdFile*)fileHandle;
 
@@ -347,6 +485,7 @@ void FileSystemImpl::endFile(FileHandle fileHandle)
 
 int32_t FileSystemImpl::readFile(void* destBuf, size_t destLen, FileHandle fileHandle)
 {
+    CARD_GATE(-1);
     assert(fileHandle != nullptr);
     SdFile* file = (SdFile*)fileHandle;
 
@@ -357,6 +496,7 @@ int32_t FileSystemImpl::readFile(void* destBuf, size_t destLen, FileHandle fileH
 
 int32_t FileSystemImpl::writeFile(const void* data, size_t dataLen, FileHandle fileHandle)
 {
+    CARD_GATE(-1);
     assert(fileHandle != nullptr);
     SdFile* file = (SdFile*)fileHandle;
 
@@ -370,6 +510,7 @@ int FileSystemImpl::createInstrumentsList(const char* path,
                                           uint8_t list_length,
                                           uint32_t* sizeOut)
 {
+    CARD_GATE(kListError);
     SdDir dir;
     int instrumentsFound = 0;
     if (dir.open(path))
@@ -387,6 +528,7 @@ int FileSystemImpl::createInstrumentsList(const char* path,
 
 int FileSystemImpl::countContainedFiles(const char* path)
 {
+    CARD_GATE(0);
     SdDir dir;
     dir.open(path);
 
@@ -407,6 +549,7 @@ int FileSystemImpl::createFilesList(const char* path,
                                     uint16_t max_files_in_subdir,
                                     enListFileFilter folderSizeFilter)
 {
+    CARD_GATE(kListError);
     SdDir dir;
 
     if (!dir.open(path, O_READ))
@@ -436,6 +579,13 @@ void FileSystemImpl::listDirContents(const char* dirPath,
                                      int& count,
                                      char** fileList)
 {
+#ifdef FEATURE_USB_MSC
+    if (refuseHost())
+    {
+        count = 0;
+        return;
+    }
+#endif
     assert(count != 0);
     assert(fileList != nullptr);
 
@@ -543,6 +693,7 @@ void FileSystemImpl::listDirContents(const char* dirPath,
 
 int FileSystemImpl::readNbFiles(const char* romPath)
 {
+    CARD_GATE(0);
     static constexpr int MAX_FILENAME_SIZE = 28;
 
     int totalFiles = 0;
@@ -586,16 +737,19 @@ int FileSystemImpl::readNbFiles(const char* romPath)
 
 bool FileSystemImpl::nesDir_open(const char* path)
 {
+    CARD_GATE(false);
     nesDir.close();
     return nesDir.open(path);
 }
 
 bool FileSystemImpl::nesDir_readItem(char* path, uint8_t* isDir, uint8_t* isHid, uint32_t* size)
 {
+    CARD_GATE(false);
     return nesDir.readItem(path, isDir, isHid, size);
 }
 
 void FileSystemImpl::nesDir_close()
 {
+    CARD_GATE();
     nesDir.close();
 }

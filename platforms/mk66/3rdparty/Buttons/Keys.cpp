@@ -110,6 +110,82 @@ uint8_t Keys::getKeyEventCount()
 
 #include DEVHOOK_DEFS(keys) // development hooks (devhooks.h): Keys::inject
 
+// The remote sets its bits from an interrupt (the MIDI input is read in the audio callback), the key scan from the main loop. The
+// decision whether an event is due reads the other source's bit, so both run with interrupts off or both could see the other's bit
+// unset and neither send the event.
+#ifdef __arm__
+static inline uint32_t irqSave()
+{
+    uint32_t primask;
+    __asm volatile("mrs %0, primask\n\tcpsid i" : "=r"(primask)::"memory");
+    return primask;
+}
+static inline void irqRestore(uint32_t primask)
+{
+    __asm volatile("msr primask, %0" ::"r"(primask) : "memory");
+}
+#else
+static inline uint32_t irqSave() { return 0; }
+static inline void irqRestore(uint32_t) {}
+#endif
+
+void Keys::physical(uint8_t button, bool down)
+{
+    if (button >= BUTTON_MAX)
+        return;
+    const uint64_t bit = uint64_t(1) << button;
+    const uint32_t primask = irqSave();
+    physHeld = down ? physHeld | bit : physHeld & ~bit;
+    const bool due = !(remoteHeld & bit);
+    irqRestore(primask);
+    if (!due)
+        return; // the remote holds it already (press) or still (release)
+
+    if (down)
+    {
+        holdTimeMs[button] = millis();
+        holdFactor[button] = 0;
+        onPush(button);
+        buttonPush[button] = 1;
+    }
+    else
+    {
+        onRelease(button);
+        buttonPush[button] = (remoteHeld >> button) & 1; // the remote may have pressed it since the decision above
+    }
+}
+
+bool Keys::setRemote(uint8_t button, bool down)
+{
+    if (button >= BUTTON_MAX)
+        return false;
+    const uint64_t bit = uint64_t(1) << button;
+    bool changed = false;
+    const uint32_t primask = irqSave();
+    if (down && !(remoteHeld & bit))
+    {
+        remoteHeld |= bit;
+        if (!(physHeld & bit))
+        {
+            holdTimeMs[button] = millis(); // the hold repeat of update() starts as for a finger
+            holdFactor[button] = 0;
+            buttonPush[button] = 1;
+            changed = true;
+        }
+    }
+    else if (!down && (remoteHeld & bit))
+    {
+        remoteHeld &= ~bit;
+        if (!(physHeld & bit))
+        {
+            buttonPush[button] = 0;
+            changed = true;
+        }
+    }
+    irqRestore(primask);
+    return changed;
+}
+
 uint8_t Keys::update()
 {
     uint8_t result = 0;
@@ -132,18 +208,7 @@ uint8_t Keys::update()
 
                     uint8_t button = convertTable[keyNumber - 1];
 
-                    if (keyState)
-                    {
-                        holdTimeMs[button] = millis();
-                        holdFactor[button] = 0;
-                        onPush(button);
-                        buttonPush[button] = 1;
-                    }
-                    else
-                    {
-                        onRelease(button);
-                        buttonPush[button] = 0;
-                    }
+                    physical(button, keyState != 0);
 
                     keyInt = 0;
                     writeByte(INT_STAT, 0x0F); // clear interrupt
@@ -155,7 +220,7 @@ uint8_t Keys::update()
     for (uint8_t i = 0; i < BUTTON_MAX; i++)
     {
         if (buttonPush[i] &&
-            ((millis() - holdTimeMs[i]) > (holdTime - holdTimeStepDiff[holdFactor[i]])))
+            ((millis() - holdTimeMs[i]) > uint32_t(holdTime - holdTimeStepDiff[holdFactor[i]])))
         {
             if (holdFactor[i] < holdTimeStepsCount - 1)
                 holdFactor[i]++;
@@ -201,10 +266,10 @@ void Keys::refreshConfig()
     {
         for (int button = 0; button < BUTTON_MAX; button++)
         {
-            if (buttonPush[button])
+            const uint64_t bit = uint64_t(1) << button;
+            if ((physHeld & bit) || (buttonPush[button] && !(remoteHeld & bit)))
             {
-                onRelease(button);
-                buttonPush[button] = 0;
+                physical(button, false); // the remote's keys stay held
             }
         }
 

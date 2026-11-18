@@ -56,6 +56,16 @@ AUDIO_CORE_RAM void AudioEffectPolyverb::update(void)
     audio_block_t* block_right;
 
 #ifdef AUDIO_NULL_IS_SILENCE
+    const FxMuteGate::Step muteStep = muteGate.step();
+    if (muteStep >= FxMuteGate::kEnterSleep)
+    {
+        // muted, the tail has rung and faded: a clean reverb for the wake (the SRAM lines zeroed once), then the reverb and its send
+        // mixer leave update_all (their queued inputs released)
+        if (muteStep == FxMuteGate::kEnterSleep)
+            reverb.Reset();
+        muteGate.sleep(this);
+        return;
+    }
     // a missing input is silence: the reverb tail keeps ringing (stock took a block of zeros here, and left the other input unread)
     block_left = receiveWritable(0);
     block_right = receiveWritable(1);
@@ -107,6 +117,11 @@ AUDIO_CORE_RAM void AudioEffectPolyverb::update(void)
 #ifdef AUDIO_NULL_IS_SILENCE
     if (!silentIn)
         reverb.ClearQuiet();
+    if (muteStep == FxMuteGate::kFade)
+    {
+        FxMuteGate::ramp(block_left->data, muteGate.rampFrom(), muteGate.rampTo());
+        FxMuteGate::ramp(block_right->data, muteGate.rampFrom(), muteGate.rampTo());
+    }
 #endif
 
     transmit(block_left, 0);

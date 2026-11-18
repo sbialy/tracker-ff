@@ -46,3 +46,80 @@ extern "C" void hostPokeMasterFx(unsigned feedback, float damp, std::string* out
              (loadFb == initFb && loadLp == initLp) ? "same" : "DIFFER");
     *out = b;
 }
+
+// "audiostat tap TRACK": an extra stream on the output of the sample voice (play memory channel 0) of a track, so the Tape FX proof
+// reads the level and the pitch of the voice itself, before the track's amplifier, mixers and the master chain. Host only.
+#include "AudioStream.h"
+#include "play_memory.h"
+#include <cmath>
+namespace
+{
+struct TapBlock { float rms; int zc; };
+std::vector<TapBlock> g_tap;
+class SampleTap final : public AudioStream
+{
+  public:
+    SampleTap() : AudioStream(1, queue) {}
+    void update() override
+    {
+        audio_block_t* b = receiveReadOnly(0);
+        if (!b) { g_tap.push_back({0.0f, 0}); return; }
+        double sum = 0; int zc = 0, prev = 0;
+        for (int i = 0; i < AUDIO_BLOCK_SAMPLES; i++)
+        {
+            const int v = b->data[i];
+            sum += double(v) * v;
+            if (i > 0 && ((prev < 0 && v >= 0) || (prev >= 0 && v < 0))) zc++;
+            prev = v;
+        }
+        g_tap.push_back({float(std::sqrt(sum / AUDIO_BLOCK_SAMPLES)), zc});
+        release(b);
+    }
+  private:
+    audio_block_t* queue[1];
+};
+}
+extern "C" void hostTapAttach(int track)
+{
+    static SampleTap* tap = new SampleTap();
+    static AudioConnection* c = nullptr;
+    delete c;
+    c = new AudioConnection(instrumentPlayer[track].playMemPtr[0], 0, tap, 0);
+}
+extern "C" void hostTapClear() { g_tap.clear(); }
+extern "C" size_t hostTapCount() { return g_tap.size(); }
+extern "C" void hostTapGet(size_t i, float* rms, int* zc) { *rms = g_tap[i].rms; *zc = g_tap[i].zc; }
+
+// "fxmute": the Mixer's Mute of delay and reverb (fx_mute_gate.h): the project flags, then per FX whether its gate is muted and asleep and
+// whether the FX and its send mixer are in update_all, and how many updates the FX ran since the last fxmute (hostFxUpdates)
+extern "C" void hostPokeFxMute(std::string* out)
+{
+    audioEngine& e = engine;
+    auto* m = e.getMixerAndFx();
+    char b[320];
+    snprintf(b, sizeof b, "fxmute flags delay %d reverb %d | delay muted %d asleep %d active %d sendmix %d | reverb muted %d asleep %d active %d sendmix %d",
+             mtProject.values.delayMute, mtProject.values.reverbMute, (int)e.delay->isMuted(), (int)e.delay->isMuteAsleep(),
+             (int)e.delay->isActive(), (int)m->getPreFxMixer(MixerAndFxs<audioEngine::kVoices>::FxType::kDelay)->isActive(),
+             (int)e.polyverb->isMuted(), (int)e.polyverb->isMuteAsleep(), (int)e.polyverb->isActive(),
+             (int)m->getPreFxMixer(MixerAndFxs<audioEngine::kVoices>::FxType::kReverb)->isActive());
+    *out = b;
+}
+
+// "fxauto": the USB 8+3 auto mute (fx_auto_mute.h): the setting, the override, what the platform reports, the project flags, the gates and the
+// send gains the Mixer holds (the delay and reverb send of track 1, so a restored state shows)
+#include "fx_auto_mute.h"
+extern "C" void hostPokeFxAuto(std::string* out)
+{
+    audioEngine& e = engine;
+    auto* m = e.getMixerAndFx();
+    using Fx = MixerAndFxs<audioEngine::kVoices>::FxType;
+    char b[420];
+    snprintf(b, sizeof b,
+             "fxauto enabled %d active %d streaming %d | flags delay %d reverb %d | delay muted %d asleep %d active %d | reverb muted %d asleep %d active %d | "
+             "sendmix %d %d",
+             (int)fxAutoMute.enabled(), (int)fxAutoMute.active(), (int)e.usbStreamPlatform->usbAudioStreaming(), mtProject.values.delayMute,
+             mtProject.values.reverbMute, (int)e.delay->isMuted(), (int)e.delay->isMuteAsleep(), (int)e.delay->isActive(), (int)e.polyverb->isMuted(),
+             (int)e.polyverb->isMuteAsleep(), (int)e.polyverb->isActive(), (int)m->getPreFxMixer(Fx::kDelay)->isActive(),
+             (int)m->getPreFxMixer(Fx::kReverb)->isActive());
+    *out = b;
+}

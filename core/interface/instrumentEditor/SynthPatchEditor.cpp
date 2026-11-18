@@ -13,7 +13,11 @@
 
 #include "mtAudioEngine.h"
 #ifdef FEATURE_PLUG_HOST
+#include "core/interface.h"
+#include "cr_section_macros.h"
+#include "open_load.h"
 #include "plug_host.h"
+#include "spectrumControl.h"
 #endif
 
 #include <cmath>
@@ -46,6 +50,163 @@ static const int synthModelListImages[Synth::kSynthTypes.size()] = {
 
 static cInstrumentEditor* IE = &instrumentEditor;
 
+#ifdef FEATURE_SYNTH_OPEN
+// Patch Vary (idea 2.4): button 3 nudges every parameter of the open patch, Shift + button 3 takes the last Vary back, Shift + encoder
+// sets the amount. Editor state only, nothing of it is saved: a varied patch is an ordinary edited patch (saved by Save).
+static uint8_t s_varyPercent = 10;   // share of each parameter's range, 5..100 (100 = Randomize)
+static uint32_t s_varyRng = 0;
+static float s_varyUndo[polysynth::open::kMaxParams];
+static int s_varyUndoCount = 0;
+static const polysynth::Patch* s_varyUndoPatch = nullptr;   // the live patch the undo belongs to (Init or an engine change makes another)
+static bool s_varyUndoValid = false;
+#endif
+
+#ifdef FEATURE_PLUG_HOST
+// The cycle view of a plugin engine with plug_ext_synth.view (ABI 1.4): a 200 x 50 box at x 184, y 41, right of the model logo (noteLabel,
+// 50..158 x 45..85, same vertical centre) and above the section grid (its first row of icons starts at y 113), inside the left half that
+// the grid and the logo use. The right half keeps the parameter list and the value column untouched. An engine without view: hidden.
+// The view's -127..127 goes to the spectrum control's +-109 steps, its full height for any box height (spectrum.cpp: height / 218 per step).
+// The data (1.2 KB) is in the SDRAM like the sample editor's, the control object is created with the editor's other controls.
+namespace
+{
+constexpr int kViewPoints = 200;
+constexpr uint32_t kViewMs = 50;   // synthViewTick: a new view at most this often (encoder edits, the Patch FX, a wave the engine loaded)
+__NOINIT(EXTERNAL_RAM) strTrackerSpectrum s_viewData;
+__NOINIT(EXTERNAL_RAM) int8_t s_viewNew[kViewPoints];
+bool s_viewShown;
+} // namespace
+#endif
+
+// FEATURE_PLUG_HOST or not (Tracker+ and Mini build without it)
+namespace
+{
+// The macro target list: entry 0 is Unassigned, entry k the k-th parameter that is listed (a wave file parameter is not while /Waves holds no wave).
+// Without the open synth the entry is the parameter id + 1.
+int macroPickCount(const polysynth::Patch& patch)
+{
+    const auto& params = patch.getMetadata().params;
+    int n = 0;
+    for (const auto& p : params)
+    {
+#ifdef FEATURE_SYNTH_OPEN
+        if (polysynth::open::waveFileRowHidden(p.displayName.c_str(), p.isEnum, float(p.minValue), float(p.maxValue))) continue;
+#endif
+        n++;
+    }
+    return n;
+}
+
+// The parameter id of entry `entry` (>= 1), -1 for none
+int macroPickId(const polysynth::Patch& patch, int entry)
+{
+    const auto& params = patch.getMetadata().params;
+    int n = 0;
+    for (int i = 0; i < int(params.size()); i++)
+    {
+#ifdef FEATURE_SYNTH_OPEN
+        if (polysynth::open::waveFileRowHidden(params[i].displayName.c_str(), params[i].isEnum, float(params[i].minValue), float(params[i].maxValue))) continue;
+#endif
+        if (++n == entry) return i;
+    }
+    return -1;
+}
+
+// The entry of parameter id `id`, 0 (Unassigned) when it is not listed
+int macroPickEntry(const polysynth::Patch& patch, int id)
+{
+    const auto& params = patch.getMetadata().params;
+    int n = 0;
+    for (int i = 0; i < int(params.size()); i++)
+    {
+#ifdef FEATURE_SYNTH_OPEN
+        if (polysynth::open::waveFileRowHidden(params[i].displayName.c_str(), params[i].isEnum, float(params[i].minValue), float(params[i].maxValue)))
+        {
+            if (i == id) return 0;
+            continue;
+        }
+#endif
+        n++;
+        if (i == id) return n;
+    }
+    return 0;
+}
+} // namespace
+
+#ifdef FEATURE_PLUG_HOST
+namespace
+{
+uint32_t s_viewMs;
+extern "C" volatile uint32_t systick_millis_count;
+} // namespace
+
+void cInstrumentEditor::initSynthView()
+{
+    s_viewData.init(kViewPoints, strTrackerSpectrum::PointsLimit::k200);
+    s_viewData.spectrumType = 1;   // a line through the points with a centre line
+    strControlProperties prop;
+    prop.x = 184;
+    prop.y = 41;
+    prop.w = kViewPoints;
+    prop.h = 50;
+    prop.data = &s_viewData;
+    synthViewControl = display.createControl<cSpectrum>(&prop);
+    synthViewOn = false;
+    s_viewShown = false;
+}
+
+// The current view of the part's engine, drawn when it changed. Hidden when the engine has no view (a built-in engine, a 1.1 plugin)
+void cInstrumentEditor::showSynthView()
+{
+    if (synthViewControl < 0)
+    {
+        return;
+    }
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    const float* values = nullptr;
+    int count = 0;
+    const polysynth::open::EngineDef* d = polysynth::open::partPatch(part, &values, &count);
+    if (!plug::synthView(d, values, count, s_viewNew, kViewPoints))
+    {
+        if (s_viewShown)
+        {
+            display.setControlHide(synthViewControl);
+            display.synchronizeRefresh();
+        }
+        s_viewShown = false;
+        return;
+    }
+    bool same = s_viewShown;
+    for (int i = 0; i < kViewPoints; i++)
+    {
+        const int8_t v = int8_t(int(s_viewNew[i]) * 109 / 127);
+        const int8_t up = v > 0 ? v : 0, lo = v < 0 ? v : 0;
+        same = same && s_viewData.upperData[i] == up && s_viewData.lowerData[i] == lo;
+        s_viewData.upperData[i] = up;
+        s_viewData.lowerData[i] = lo;
+    }
+    if (same)
+    {
+        return;
+    }
+    display.setControlShow(synthViewControl);
+    display.refreshControl(synthViewControl);
+    display.synchronizeRefresh();
+    s_viewShown = true;
+}
+
+// Main loop (Tracker.cpp, next to synthModelTick): keeps the view of the open patch editor page current
+void synthViewTick()
+{
+    if (!IE->synthViewOn || IE->mode != mtInstEditModeSynthPatchEdit || !mtInterface.isInstrumentParamsScreenActive() ||
+        systick_millis_count - s_viewMs < kViewMs)
+    {
+        return;
+    }
+    s_viewMs = systick_millis_count;
+    IE->showSynthView();
+}
+#endif
+
 static void functSynthActionButtons(uint8_t button);
 static void functSynthPatchSaveAsKeyboardActionButtons(uint8_t button);
 static void functSynthMacroNameKeyboardActionButtons(uint8_t button);
@@ -70,6 +231,9 @@ static void functSynthSave();
 static void functSynthSaveAs();
 static void functSynthBack();
 static void functSynthInit();
+static void functSynthVary();
+static void synthVaryShowAmount();
+static void synthVaryForget();
 static void functSynthInitConfirm();
 static void functSynthInitCancel();
 
@@ -97,6 +261,13 @@ static bool newValueList(char*& text, char**& names, int length, int stringLen)
 
 void cInstrumentEditor::cleanPatchEditorResources()
 {
+    // The section grid and the parameter list are only hidden when the editor is left,
+    // and a hidden control is still redrawn while it waits in the refresh queue. Both
+    // skip their texts when these pointers are null.
+    imgGridData.textList = nullptr;
+    paramsListData.params = nullptr;
+    paramsListData.values = nullptr;
+
     if (sectionNamesBufor != nullptr)
     {
         delete[] sectionNamesBufor;
@@ -171,6 +342,9 @@ void cInstrumentEditor::setSynthPatchEditorScreenFunct()
     ip->setButtonObj(interfaceButton0, buttonPress, functSynthSave);
     ip->setButtonObj(interfaceButton1, buttonPress, functSynthSaveAs);
     ip->setButtonObj(interfaceButton2, buttonPress, functSynthInit);
+#ifdef FEATURE_SYNTH_OPEN
+    ip->setButtonObj(interfaceButton3, buttonPress, functSynthVary);
+#endif
     ip->setButtonObj(interfaceButton7, buttonPress, functSynthBack);
 
     ip->setPotObj(interfacePot0, functSynthPatchEditEncoder);
@@ -226,6 +400,15 @@ static void functSynthPatchEditEncoder(int16_t value)
 #endif
         return;
     }
+
+#ifdef FEATURE_SYNTH_OPEN
+    if (IE->buttons->isButtonPressed(interfaceButtonShift))
+    {   // Shift + encoder: the amount of the Vary button
+        s_varyPercent = clamp(s_varyPercent + (value > 0 ? 5 : -5) * (std::abs(value) > 4 ? 4 : 1), 5, 100);
+        synthVaryShowAmount();
+        return;
+    }
+#endif
 
     IE->changeSynthPatchEditorValue(value, IE->kEncoder);
 }
@@ -374,6 +557,8 @@ static void functSynthPatchEditInsert()
         IE->keyboardManager.confirmKey();
         return;
     }
+
+    IE->cycleSynthPatchParamRange();
 }
 
 static void functSynthPatchEditDelete()
@@ -543,8 +728,89 @@ static void functSynthInit()
     IE->setSynthPatchInitPopupFunct();
 }
 
+#ifdef FEATURE_SYNTH_OPEN
+static void synthVaryForget()
+{
+    s_varyUndoValid = false;
+    s_varyUndoPatch = nullptr;
+}
+
+// The button label of the editor: "Vary" over the amount
+static void synthVaryShowAmount()
+{
+    static char text[8];
+    snprintf(text, sizeof(text), "%d%%", int(s_varyPercent));
+    display.setControlText2(IE->label[3], text);
+    display.refreshControl(IE->label[3]);
+}
+
+uint32_t cInstrumentEditor::timerMicros()
+{
+    return platform->getTimer()->micros();
+}
+
+static void functSynthVary()
+{
+    using namespace polysynth::open;
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    auto& patch = IE->getSynth()->getPatch(part);
+
+    if (IE->buttons->isButtonPressed(interfaceButtonShift))
+    {   // Undo: the values before the last Vary
+        if (!s_varyUndoValid || s_varyUndoPatch != &patch || s_varyUndoCount != patchParamCount(patch))
+        {
+            mtPopups.show(0, "Nothing to undo");
+            return;
+        }
+        DISABLE_AUDIO_INTERRUPTS();
+        patchSetValues(patch, s_varyUndo, s_varyUndoCount);
+        ENABLE_AUDIO_INTERRUPTS();
+        s_varyUndoValid = false;
+        IE->getSynth()->setPatchDirty(part);
+        mtPopups.show(0, "Vary undone");
+    }
+    else
+    {
+        const int count = patchParamCount(patch);
+        if (count <= 0)
+        {
+            return;
+        }
+        s_varyRng = s_varyRng * 1664525u + 1013904223u + IE->timerMicros();
+        if (s_varyRng == 0)
+        {
+            s_varyRng = 1;
+        }
+        uint32_t rng = s_varyRng;
+        DISABLE_AUDIO_INTERRUPTS();
+        const int changed = patchVary(patch, s_varyPercent, rng, s_varyUndo);
+        ENABLE_AUDIO_INTERRUPTS();
+        s_varyRng ^= rng;
+        s_varyUndoCount = count;
+        s_varyUndoPatch = &patch;
+        s_varyUndoValid = changed > 0;
+        if (changed > 0)
+        {
+            IE->getSynth()->setPatchDirty(part);
+        }
+        static char text[24];
+        snprintf(text, sizeof(text), s_varyPercent >= 100 ? "Randomized" : "Vary %d%%", int(s_varyPercent));
+        mtPopups.show(0, text);
+    }
+
+    // every row of the list changed, not only the selected one
+    IE->showSynthPatchSectionParam(true);
+    IE->showSynthPatchSectionParamValue(true);
+    IE->showSynthPatchMacroParam(true);
+    IE->showSynthPatchMacroParamValue(true);
+}
+#endif
+
 static void functSynthInitConfirm()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    synthVaryForget();
+#endif
     IE->initCurrentPatch();
     functSynthInitCancel();
 }
@@ -559,6 +825,9 @@ static void functSynthInitCancel()
 
 static void functSynthBack()
 {
+#ifdef FEATURE_SYNTH_OPEN
+    synthVaryForget();
+#endif
     sequencer.stopManualNotes();
     IE->mode = mtInstEditModeSynth;
     IE->start(0);
@@ -739,6 +1008,45 @@ void cInstrumentEditor::setSynthPatchParamDefault()
     showSynthPatchMacroParamValue();
 }
 
+// Insert on a parameter value: minimum, then middle, then maximum, then minimum again, as the value knob press of a groovebox does.
+// The scale is the one of the knob (the edit mapping), a list steps over its entries. A macro row keeps its value.
+void cInstrumentEditor::cycleSynthPatchParamRange()
+{
+    if (selectedPlace[mtInstEditModeSynthPatchEdit] == 0 || isMacroSelected())
+    {
+        return;
+    }
+
+    int syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    auto& patch = getSynth()->getPatch(syntPartIdx);
+    int paramIdx = sectionParamsIds[paramListPos];
+    if (paramIdx < 0 || paramIdx >= std::ssize(patch.getMetadata().params))
+    {
+        return;
+    }
+
+    if (paramValueMode == kList)
+    {
+        int last = modelListData.length ? modelListData.length - 1 : 0;
+        int to = paramValueListPos < last / 2 ? last / 2 : paramValueListPos < last ? last : 0;
+        changeSynthPatchParamValue(to - paramValueListPos);
+        return;
+    }
+
+    float cur = patch.getParamValueEditMapped(paramIdx).value_or(0);
+    DISABLE_AUDIO_INTERRUPTS();
+    patch.setParamValueEditMapped(paramIdx,
+                                  cur < 0.25f ? 0.5f : cur < 0.75f ? 1.0f : 0.0f,
+                                  polysynth::Patch::ParamChangeSource::kKnob);
+    ENABLE_AUDIO_INTERRUPTS();
+
+    getSynth()->setPatchDirty(syntPartIdx);
+    showSynthPatchSectionParam();
+    showSynthPatchSectionParamValue();
+    showSynthPatchMacroParam();
+    showSynthPatchMacroParamValue();
+}
+
 void cInstrumentEditor::changeSynthPatchParamValue(int16_t value)
 {
     bool refreshParamList = false;
@@ -780,9 +1088,9 @@ void cInstrumentEditor::changeSynthPatchParamValue(int16_t value)
                     {
 
                         DISABLE_AUDIO_INTERRUPTS();
-                        if (paramValueListPos > 0)
+                        if (const int target = paramValueListPos > 0 ? macroPickId(patch, paramValueListPos) : -1; target >= 0)
                         {
-                            patch.setMacroModifier(macroIdx, modifierId, paramValueListPos - 1);
+                            patch.setMacroModifier(macroIdx, modifierId, target);
                         }
                         else
                         {
@@ -1041,7 +1349,11 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
     display.setControlText(label[0], "Save");
     display.setControlText(label[1], "Save As");
     display.setControlText(label[2], "Init");
+#ifdef FEATURE_SYNTH_OPEN
+    display.setControlText(label[3], "Vary");
+#else
     display.setControlText(label[3], "");
+#endif
     display.setControlText(label[4], "");
     display.setControlText(label[5], "Parameter");
     display.setControlText(label[6], "");
@@ -1055,6 +1367,10 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
     display.setControlText2(label[5], "");
     display.setControlText2(label[6], "");
     display.setControlText2(label[7], "");
+#ifdef FEATURE_SYNTH_OPEN
+    display.setControlValue(label[3], 1);
+    synthVaryShowAmount();
+#endif
     display.setControlPosition(label[4], (800 / 8) * 4 + (800 / 16), -1);
 
     showSynthPatchSection(true);
@@ -1143,6 +1459,12 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
     display.setControlPosition(blankSpaceCover[1], (800 / 8) * 7 + 1, -1);
     display.setControlSize(blankSpaceCover[1], (800 / 8) * 1 - 3, 394);
 
+#ifdef FEATURE_PLUG_HOST
+    synthViewOn = true;
+    s_viewShown = false;   // drawn again whatever the data holds
+    showSynthView();
+#endif
+
     display.synchronizeRefresh();
 }
 
@@ -1168,6 +1490,7 @@ void cInstrumentEditor::showSaveAsKeyboard()
     display.setControlHide(modelListControl);
     display.setControlHide(blankSpaceCover[1]);
     display.setControlHide(imgGridControl);
+    hideSynthView();
 
     for (uint8_t i = 0; i < 8; i++)
     {
@@ -1227,9 +1550,10 @@ void cInstrumentEditor::showSynthPatchSection(bool refreshList)
 
         int idx = 0;
 
-        sectionNamesBufor = new char[kMaxSynthSectionStringsCount * kMaxSynthListStringLen];
+        // A section without a name leaves its entries of these two unwritten.
+        sectionNamesBufor = new char[kMaxSynthSectionStringsCount * kMaxSynthListStringLen]{};
         sectionNamesGridBuff = new char[kMaxSynthSectionStringsCount * kMaxSynthListStringLen];
-        sectionNamesList = new char*[kMaxSynthSectionStringsCount];
+        sectionNamesList = new char*[kMaxSynthSectionStringsCount]{};
         sectionIds = new int[kMaxSynthSectionStringsCount];
 
         const char* shortName = nullptr;
@@ -1471,6 +1795,8 @@ void cInstrumentEditor::showSynthPatchSectionParam(bool refreshList)
         paramListNames = new char*[kMaxSynthParamStringsCount];
         paramListValues = new char*[kMaxSynthParamStringsCount];
         sectionParamsIds = new int[kMaxSynthParamStringsCount];
+        // A section without parameters must not show or edit one.
+        std::fill_n(sectionParamsIds, kMaxSynthParamStringsCount, -1);
 
         int syntPartIdx = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
         auto& patch = getSynth()->getPatch(syntPartIdx);
@@ -1486,6 +1812,13 @@ void cInstrumentEditor::showSynthPatchSectionParam(bool refreshList)
                 const auto paramIdx = element.id;
                 const auto& param = metadata.params[paramIdx];
 
+#ifdef FEATURE_SYNTH_OPEN
+                // a wave file parameter while /Waves holds no wave: no row, the cursor never lands on it
+                if (polysynth::open::waveFileRowHidden(param.displayName.c_str(), param.isEnum, float(param.minValue), float(param.maxValue)))
+                {
+                    continue;
+                }
+#endif
                 sectionParamsIds[idx] = paramIdx;
 
                 paramListNames[idx] = &paramListTextBuff[(2 * kMaxSynthListStringLen) * idx];
@@ -1837,10 +2170,10 @@ void cInstrumentEditor::showSynthPatchMacroParamValue(bool refreshList)
             else if (paramListPos % 2 == 0 &&
                      newValueList(paramValueListTextBuff,
                                   paramValueListNames,
-                                  patch.getMetadata().params.size() + 1,
+                                  macroPickCount(patch) + 1,
                                   kMaxSynthListStringLen)) // param, no list on a full heap
             {
-                int length = patch.getMetadata().params.size() + 1;
+                int length = macroPickCount(patch) + 1;
 
                 for (int idx = 0; idx < length; idx++)
                 {
@@ -1850,7 +2183,7 @@ void cInstrumentEditor::showSynthPatchMacroParamValue(bool refreshList)
                     if (idx - 1 >= 0)
                     {
                         polystrncpy(paramValueListNames[idx],
-                                    getSynth()->getParamFullName(syntPartIdx, idx - 1).c_str(),
+                                    getSynth()->getParamFullName(syntPartIdx, macroPickId(patch, idx)).c_str(),
                                     kMaxSynthListStringLen);
                     }
                     else
@@ -1866,7 +2199,7 @@ void cInstrumentEditor::showSynthPatchMacroParamValue(bool refreshList)
                     : nullptr;
 
                 paramValueListPos =
-                  modifier != nullptr && modifier->paramId ? *modifier->paramId + 1 : 0;
+                  modifier != nullptr && modifier->paramId ? macroPickEntry(patch, *modifier->paramId) : 0;
 
                 paramValueListPos = clamp<int>(paramValueListPos, 0, length ? length - 1 : 0);
                 modelListData.rowHeight = 0;
@@ -1902,7 +2235,7 @@ void cInstrumentEditor::showSynthPatchMacroParamValue(bool refreshList)
             {
                 polystrncpy(
                   paramListValues[paramListPos],
-                  getSynth()->getParamFullName(syntPartIdx, paramValueListPos - 1).c_str(),
+                  getSynth()->getParamFullName(syntPartIdx, macroPickId(patch, paramValueListPos)).c_str(),
                   kMaxSynthListStringLen);
             }
             else

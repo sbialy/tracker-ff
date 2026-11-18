@@ -1,0 +1,25 @@
+# Deepest stack of each synth plugin entry in bytes (name depth [optional]), the numbers the audio chain rows of stack_margin.py add to the image.
+# SOURCE: measured on 2026-11-16 with plug_depth.sh (12.3.rel1) from the kept ELFs of the 1.4.0 module set, rebuilt byte identical to the shipped
+# .plg files (sha256 prefix checked): poly-engines engines-v1.4.3 (PHZ PLK FORM FLUX ALCO 1.1.1) and poly-engines-os v1.4.0 (the other eleven).
+# The ELFs are not in this repository (build_set.py of the module repositories runs build_plug.py with --keep). The 1.3.0 estimates of
+# T-Type, B-Type, 8-Type, PHZ, PLK, FORM and FLUX were confirmed to the byte.
+# The walker has no model of a host call out of a plugin: in ALCO the libm stubs sinf and cosf take the `. => &VT` rule of stack_resolve_plug.txt and
+# reaches AlcoEngine::render again behind synth(), so ALCO 2,640 B is a conservative bound.
+# Regenerate with the plugin ELFs: plug_depth.sh DIR_WITH_PLUGIN_ELFS > this file (a module repository can also run stack_margin.py with
+# its own depths file against this firmware's image). "optional" = not in the release set (reported, not gated).
+T-Type 2528
+B-Type 2144
+8-Type 2112
+ALCO 2640
+PHZ 1600
+D-Type 1000
+CS-Type 1064
+A-Type 904
+Hand-Type 864
+JU6 464
+Arc-Type 392
+FM4 360
+CHIP 1688
+PLK 252
+FORM 1504 optional
+FLUX 3688 optional

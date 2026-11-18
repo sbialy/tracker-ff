@@ -29,7 +29,7 @@ const char creditsText[] = {
     "\n(No Wholesale Commercial Clones; see LICENSE)."
 #ifdef FEATURE_SYNTH_OPEN
     "\n"
-    "\ntracker-ff 1.3.1: unofficial community firmware,"
+    "\ntracker-ff 1.4.0: unofficial community firmware,"
     "\nnot affiliated with Polyend."
     "\nSynth engines: OpenTracker (Apache-2.0),"
     "\ngithub.com/sandlbn/polyend-tracker-re"
@@ -253,6 +253,8 @@ void cConfigEditor::initDisplayControls()
     prop2.colors = display.getTheme().activeButtonLabelsColors;
     prop2.style = controlStyleFont3;
     audioPerformanceLabelControl = display.createControl<cLabel>(&prop2);
+    prop2.y = 180;
+    usbStreamLabelControl = display.createControl<cLabel>(&prop2);
 #endif
 #ifdef MEMORY_USAGE_INFO_ENABLED
     prop2.x = 615;
@@ -304,7 +306,7 @@ void cConfigEditor::showDefaultConfigScreen()
     reloadConfigLabels();
 
     titleBar->show();
-    titleBar->setTitle("Config");
+    titleBar->setTitle(projectPage ? "Project Settings" : "Config");
 
     display.setControlText(label[7], "Enter");
 
@@ -404,8 +406,9 @@ void cConfigEditor::showConfigList4(uint8_t list_width,
 void cConfigEditor::showConfigList4Val(uint8_t* value,
                                        uint8_t min,
                                        uint8_t max,
-                                       uint8_t interval,
-                                       uint8_t dev)
+                                       uint8_t /*interval*/,
+                                       uint8_t dev,
+                                       const char* zeroText)
 {
     configListShown = 1;
     selectedConfigListPosition = *value;
@@ -435,7 +438,10 @@ void cConfigEditor::showConfigList4Val(uint8_t* value,
     {
         ptrTempValuesList[i] = new char[5];
 
-        sprintf(ptrTempValuesList[i], "%d", min + i + dev);
+        if (zeroText && min + i + dev == 0)
+            snprintf(ptrTempValuesList[i], 5, "%s", zeroText);
+        else
+            sprintf(ptrTempValuesList[i], "%d", min + i + dev);
     }
 
     configList.data = ptrTempValuesList;
@@ -945,6 +951,18 @@ void cConfigEditor::showDiagnosticInfo()
 
     display.setControlShow(audioPerformanceLabelControl);
     display.refreshControl(audioPerformanceLabelControl);
+
+    // USB audio (USB_AUDIO=1 images, Features > USB audio on): the mode of this session, and "streaming" only while the computer
+    // records (IN packets in the last 4 blocks), the mode alone says nothing about that
+    if (platform->usbAudioRunning())
+    {
+        snprintf(usbStreamText, sizeof(usbStreamText), "USB %s", platform->usbAudioRunningMode() == 1 ? "8+3" : "stereo");
+        snprintf(usbStreamText2, sizeof(usbStreamText2), "%s", platform->usbAudioStreaming() != 0 ? "streaming" : "no host");
+        display.setControlText(usbStreamLabelControl, usbStreamText);
+        display.setControlText2(usbStreamLabelControl, usbStreamText2);
+        display.setControlShow(usbStreamLabelControl);
+        display.refreshControl(usbStreamLabelControl);
+    }
 #endif
 
 #ifdef MEMORY_USAGE_INFO_ENABLED

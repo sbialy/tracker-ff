@@ -20,6 +20,7 @@
 #include "plug_host.h"
 #include "log.h"
 #include "plug_bank.h"
+#include "plug_files.h"
 #include "plug_logo.h"
 #include "plug_work.h"
 #include "plug/plug_chord.h"
@@ -59,6 +60,9 @@ static_assert(int(polysynth::open::Fmt::kPan) == PLUG_FMT_PAN && int(polysynth::
 // Sections of a plugin engine. Nothing is sized by it (the editor keeps them in a vector), it only bounds what the host walks.
 // PHZ has 10, the most of any engine
 constexpr uint32_t kSynthSectionMax = 10;
+// sizeof(plug_ext_synth) of ABI 1.1: every field up to set_send_tap. 1.2 added service and view behind it
+constexpr uint32_t kSynthExt11 = offsetof(plug_ext_synth, service);
+static_assert(sizeof(void*) != 4 || kSynthExt11 == 25 * 4, "the ABI 1.1 plug_ext_synth is 100 bytes on the device");
 constexpr uint32_t kLayout = PLUG_SYNTH_LAYOUT(sizeof(SynthVoice), sizeof(SynthParams), sizeof(SynthNote), sizeof(SynthSlotScratch));
 
 constexpr const char* kSynthDir = "/Plugins/Synth";
@@ -74,14 +78,18 @@ constexpr const char* kNamesPath = "/Plugins/names.txt";
 // the 3 plus the one being picked 6,184 B, so a pool of 6,656 B would still do but then hold CHIP, JU6 and a few others only, and
 // picking a 5th engine could rewrite the flash (plug_bank_test prints both). 7,680 B costs 4,608 B of SRAM heap over 3,072 B.
 constexpr uint32_t kPoolBytes = 7680;
-constexpr uint32_t kStageBytes = 32768;  // one engine's image + bss while it is rebased for the flash
+// one engine's image + bss while it is rebased for the flash (SDRAM, not flash: an engine of 8 sectors still fits the bank). 33,792 B, 1 KB over
+// the 8 sectors: ALCO 1.1.1 of the 1.4.0 set is image 31,940 + bss 1,276 = 33,216 B on 12.3, 576 B of room
+constexpr uint32_t kStageBytes = 33792;
 
 __attribute__((aligned(8))) uint8_t s_pool[kPoolBytes];
 __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_bstage[kStageBytes];
 // The engines' work memory (PLUG_EXT_SYNTH work_bytes: PLK's 8,772 B delay line pool), SDRAM, so no engine takes internal
 // heap. plug_work.h: a block per library entry, taken at its first attach (zeroed at every attach), parked across an eviction,
 // given back only when another engine needs the room and no part plays this one (earlier hosts kept it until the next boot).
-constexpr uint32_t kWorkBytes = 16384;
+// 20 KB since ALCO 1.1.0 (wave mode and 16 extension blocks, 6,216 B): PLK (8,772), ALCO (6,216) and 8-Type (1,544) in the
+// three parts at once need 16,536 B with the 8 B rounding, four engines at most 17,640 B (crosscheck.sh). It was 18 KB for ABI 1.4
+constexpr uint32_t kWorkBytes = 20480;
 __NOINIT(EXTERNAL_RAM) __attribute__((aligned(8))) uint8_t s_work[kWorkBytes];
 __NOINIT(EXTERNAL_RAM) WorkArena<kLibMax> s_arena;   // the table (reset at boot, synthBoot)
 uint32_t s_workPacks, s_workRestarts, s_workReleases;
@@ -284,7 +292,8 @@ inline bool fn(const void* f, uintptr_t lo, uint32_t n, bool need)
 // extension struct itself), counts and indices in range, the shim's formats only
 bool checkSynth(const plug_ext_synth* x, uintptr_t t, uint32_t tn, uintptr_t rw, uint32_t rwn)
 {
-    if (!x || !(in(x, t, tn) || in(x, rw, rwn)) || x->struct_size < sizeof(plug_ext_synth) || x->layout != kLayout) return false;
+    // an ABI 1.1 engine ends at set_send_tap: service and view are read only when struct_size covers them (plug_abi.h)
+    if (!x || !(in(x, t, tn) || in(x, rw, rwn)) || x->struct_size < kSynthExt11 || x->layout != kLayout) return false;
     const uint32_t np = x->param_count;
     if (!in(x->name, t, tn) || !x->name[0] || strnlen(x->name, 9) > 8 || strchr(x->name, '/') || np > kSynthParamMax ||
         x->section_count > kSynthSectionMax || x->macro_count > 6 || x->max_voices - 1u > 3u || x->volume_param >= int32_t(np) ||
@@ -296,6 +305,9 @@ bool checkSynth(const plug_ext_synth* x, uintptr_t t, uint32_t tn, uintptr_t rw,
                                reinterpret_cast<const void*>(x->set_send_tap), reinterpret_cast<const void*>(x->set_work)};
     for (const void* f : opt)
         if (!fn(f, t, tn, false)) return false;
+    if ((PLUG_HAS(x, plug_ext_synth, service) && !fn(reinterpret_cast<const void*>(x->service), t, tn, false)) ||
+        (PLUG_HAS(x, plug_ext_synth, view) && !fn(reinterpret_cast<const void*>(x->view), t, tn, false)))
+        return false;
     if (np && (!in(x->params, t, tn) || !in(x->params + np - 1, t, tn))) return false;
     for (uint32_t i = 0; i < np; i++)
     {
@@ -370,6 +382,7 @@ void placeholder(int k)
     d.volumeParam = -1;
     d.maxVoices = polysynth::open::kMaxVoicesPerInstrument;
     d.slotFx = false;
+    d.monoOut = false;
     d.inst = nullptr;
 }
 
@@ -530,6 +543,7 @@ int attach(int k, const Need& n)
     dd.volumeParam = x->volume_param;
     dd.maxVoices = int(x->max_voices);
     dd.slotFx = (x->flags & PLUG_SYNTH_SLOT_FX) && x->slot_post;
+    dd.monoOut = false; // the plugin ABI has no mono flag: every module engine is stereo (writes L and R), old modules must keep working
     DISABLE_AUDIO_INTERRUPTS();
     eng(k).x = x;
     dd.inst = &eng(k);
@@ -751,10 +765,149 @@ void namesLearn()
 }
 }   // namespace
 
+// ------------------------------------------------------------------------------------------------ PLUG_EXT_FILES and service (ABI 1.2)
+namespace
+{
+// The /Waves list (plug_files.h): 49 KB of paths plus the folder table, SDRAM, filled at the first files call of a session
+static_assert(std::is_trivially_default_constructible_v<WaveList>, "SDRAM: no static constructor");
+__NOINIT(EXTERNAL_RAM) WaveList s_waves;
+bool s_inService;          // a plug_ext_synth.service call is running: the only time the files functions work
+uint32_t s_serviceMs;      // last service round (systick)
+constexpr uint32_t kServiceMs = 50;
+
+// plug_files.h's card access on the platform's FileSystem: the single directory walker and one file at a time
+struct WaveFs
+{
+    FileSystem::FileHandle f{};
+    bool dirOpen(const char* p) { return s_sfs->nesDir_open(p); }
+    bool dirNext(char* name, bool& isDir, bool& hidden)
+    {
+        uint8_t d = 0, h = 0;
+        uint32_t size = 0;
+        if (!s_sfs->nesDir_readItem(name, &d, &h, &size)) return false;
+        isDir = d != 0;
+        hidden = h != 0;
+        return true;
+    }
+    void dirClose() { s_sfs->nesDir_close(); }
+    bool open(const char* p)
+    {
+        auto [ok, h] = s_sfs->openFile(p, FileSystem::FileOpenMode::kRead);
+        f = h;
+        return ok;
+    }
+    int read(void* dst, int n) { return int(s_sfs->readFile(dst, size_t(n), f)); }
+    bool seek(uint32_t pos) { return s_sfs->seekFile(pos, f); }
+    void close() { s_sfs->closeFile(f); }
+};
+
+const WaveList* waves()
+{
+    if (!s_waves.built)
+    {
+        WaveFs fs;
+        waveBuild(fs, s_waves);
+    }
+    return &s_waves;
+}
+
+int32_t filesCount()
+{
+    if (!s_inService || !s_sfs) return PLUG_FILES_E_CONTEXT;
+    return waves()->n;
+}
+
+int32_t filesName(uint32_t index, char* name, uint32_t cap)
+{
+    if (!s_inService || !s_sfs) return PLUG_FILES_E_CONTEXT;
+    const WaveList* w = waves();
+    if (index >= uint32_t(w->n)) return PLUG_FILES_E_NONE;
+    if (name && cap) snprintf(name, cap, "%s", w->at(int(index)));
+    return int32_t(strlen(w->at(int(index))));
+}
+
+int32_t filesRead(uint32_t index, uint32_t first, int16_t* dst, uint32_t max)
+{
+    if (!s_inService || !s_sfs) return PLUG_FILES_E_CONTEXT;
+    WaveFs fs;
+    return waveRead(fs, *waves(), index, first, dst, max);
+}
+
+// By path (the tail of plug_ext_files). Nothing here builds or reads the list: a path is opened as it is, the walker of waveNext uses the
+// list's name scratch (the list is never built or read between two steps of one call: service is one thread)
+int32_t filesWaveRef(uint32_t part, uint32_t param, char* path, uint32_t cap)
+{
+    if (!s_inService || !s_sfs) return PLUG_FILES_E_CONTEXT;
+    if (!path || !cap || part >= uint32_t(polysynth::open::kPatchBankParts) || param > 0xFFFFu) return PLUG_FILES_E_NONE;
+    const int n = polysynth::open::partWaveRef(int(part), int(param), path, cap);
+    return n < 0 ? PLUG_FILES_E_NONE : n;
+}
+
+int32_t filesReadPath(const char* path, uint32_t first, int16_t* dst, uint32_t max)
+{
+    if (!s_inService || !s_sfs) return PLUG_FILES_E_CONTEXT;
+    WaveFs fs;
+    return waveReadPath(fs, path, first, dst, max);
+}
+
+int32_t filesNextPath(const char* path, char* out, uint32_t cap)
+{
+    if (!s_inService || !s_sfs) return PLUG_FILES_E_CONTEXT;
+    WaveFs fs;
+    return waveNext(fs, s_waves.name, path, out, cap);
+}
+
+const plug_ext_files kFiles = {sizeof(plug_ext_files), filesCount, filesName, filesRead, filesWaveRef, filesReadPath, filesNextPath};
+
+// The attached library engine whose definition is d, with its extension, -1 for a built-in or a detached one
+int attachedOf(const EngineDef* d, const plug_ext_synth** x)
+{
+    for (int k = 0; k < s_sn; k++)
+        if (&def(k) == d)
+        {
+            *x = s_lib[k].attached ? static_cast<const plug_ext_synth*>(eng(k).x) : nullptr;
+            return *x ? k : -1;
+        }
+    return -1;
+}
+}   // namespace
+
+const void* filesQuery()
+{
+    return &kFiles;
+}
+
+void synthService()
+{
+    if (!s_sfs || s_safe || systick_millis_count - s_serviceMs < kServiceMs) return;
+    s_serviceMs = systick_millis_count;
+    for (int part = 0; part < polysynth::open::kPatchBankParts; part++)
+    {
+        const float* values = nullptr;
+        int count = 0;
+        const plug_ext_synth* x = nullptr;
+        const EngineDef* d = polysynth::open::partPatch(part, &values, &count);
+        if (!d || attachedOf(d, &x) < 0 || !PLUG_HAS(x, plug_ext_synth, service) || !x->service) continue;
+        s_inService = true;   // the return value (the sound changed) is not needed: the patch editor polls view every 50 ms
+        x->service(uint32_t(part), values, uint32_t(count));
+        s_inService = false;
+    }
+}
+
+bool synthView(const EngineDef* d, const float* values, int count, int8_t* out, int n)
+{
+    const plug_ext_synth* x = nullptr;
+    if (!d || !values || n <= 0 || n > int(PLUG_VIEW_MAX) || attachedOf(d, &x) < 0 || !PLUG_HAS(x, plug_ext_synth, view) || !x->view)
+        return false;
+    x->view(values, uint32_t(count), out, uint32_t(n));
+    return true;
+}
+
 void synthBoot(FileSystem* fs)
 {
     s_sfs = fs;
     useFs(fs);
+    s_waves.clear();
     memset(&s_bank, 0, sizeof(s_bank));
     memset(s_lib, 0, sizeof(s_lib));
     s_editorK = -1;
@@ -937,6 +1090,25 @@ const strBitmap* bitmapAt(int id)
     b = kTpl[med ? 1 : 0];
     b.address = LogoCache::address(slot, med);
     return &b;
+}
+
+bool polysynth::open::waveListName(int index, char* out, size_t cap)
+{
+    if (!plug::s_sfs || index < 0 || !out || !cap) return false;
+    const plug::WaveList* w = plug::waves();
+    if (index >= w->n) return false;
+    snprintf(out, cap, "%s", w->at(index));
+    return true;
+}
+
+bool polysynth::open::waveFilesAbsent()
+{
+    return !plug::s_sfs || plug::waves()->n == 0;
+}
+
+bool polysynth::open::waveListHas(const char* path)
+{
+    return plug::s_sfs && path && plug::waveListHas(*plug::waves(), path);
 }
 
 polysynth::open::ChordParams polysynth::open::plugChordParams(const polysynth::open::EngineDef* d)

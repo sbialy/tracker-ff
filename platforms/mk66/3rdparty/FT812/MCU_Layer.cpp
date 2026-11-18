@@ -590,12 +590,12 @@ void MCU_set_runMode(void)
     //	EVE_MemWrite8(REG_PWM_DUTY, 127);
 }
 
-void MCU_InitSpi(uint32_t baudrate, uint32_t sourceClock)
+void MCU_InitSpi(uint32_t /*baudrate*/, uint32_t /*sourceClock*/)
 {
     SPI_init(SPI2);
 }
 
-void MCU_ChangeSpiSpeed(uint32_t baudrate, uint32_t sourceClock)
+void MCU_ChangeSpiSpeed(uint32_t baudrate, uint32_t /*sourceClock*/)
 {
     SPI_start(SPI2, baudrate);
 }

@@ -25,7 +25,7 @@ static inline __attribute__((always_inline)) int16_t clipToInt16(float x)
 }
 
 // send: the block both send mixers get (clip with gain 0 dB), post: the part output (clip with the part gain). reuseUnmodifiedMono is a part
-// at 0 dB: one block serves both. skipSendBlocks: the sends are silent, only post is built.
+// at 0 dB: post is the only block, the caller sends it to the send mixers as well (send is not touched, it may be null). skipSendBlocks: the sends are silent, only post is built.
 template<int kBlockSamples>
 static inline __attribute__((always_inline)) void monoPart(const float* src,
                                                            float postGainAmp,
@@ -38,9 +38,7 @@ static inline __attribute__((always_inline)) void monoPart(const float* src,
     {
         for (int i = 0; i < kBlockSamples; i++)
         {
-            const int16_t v = clipToInt16(src[i]);
-            send[i] = v;
-            post[i] = v;
+            post[i] = clipToInt16(src[i]);
         }
     }
     else if (skipSendBlocks)

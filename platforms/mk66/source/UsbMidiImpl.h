@@ -16,6 +16,7 @@ class UsbMidiImpl : public UsbMidi
     virtual void sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel) override;
     virtual void sendNoteOff(uint8_t note, uint8_t velocity, uint8_t channel) override;
     virtual void setReceiveActions(MidiReceiveActions* receiveActions) override;
+    virtual bool takeBusLost() override;
 };
 
 #endif /* SOURCE_USBMIDIIMPL_H_ */

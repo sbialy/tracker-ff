@@ -1189,6 +1189,8 @@ namespace open
 #ifdef __arm__
 static_assert(sizeof(ChiptuneSynthVoice) == kChipVoiceBytes && alignof(ChiptuneSynthVoice) <= 4,
               "kChipVoiceBytes (ChiptuneSynthVoice.h) is the voice object's size");
+#else
+static_assert(sizeof(ChiptuneSynthVoice) <= kChipVoiceBytes, "the host storage of ChiptuneSynthVoice.h must hold the voice object");
 #endif
 InstrumentVoice* chipVoiceConstruct(void* storage)
 {

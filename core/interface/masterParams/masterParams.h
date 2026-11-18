@@ -70,6 +70,20 @@ class cMasterParams : public ModuleBase
     void showLimiterThreshold();
     void showLimiterGainReduce();
     void showLimiterSidechain();
+#ifdef FEATURE_SEND_DUCK
+    // Send ducking: a second page of the limiter screen with the same five places (depth, release, threshold, meter, source)
+    void showDuckDepth();
+    void showDuckRelease();
+    void showDuckThreshold();
+    void showDuckMeter();
+    void showDuckSource();
+    void duckMeterHandler();
+    bool duckPage = false;
+    uint8_t duckMeterValue = 0;
+    char duckDepthVal[8];
+    char duckReleaseVal[10];
+    char duckThresholdVal[10];
+#endif
     // EQ
     void showEqualizerScreen();
     void showEqualizerBand(uint8_t n);
@@ -187,6 +201,7 @@ class cMasterParams : public ModuleBase
     uint8_t isSolo = 0;
     int8_t soloTrack = -1;
     char mixerLabel[8][7];
+    bool shownFxAutoMute = false; // the USB 8+3 auto mute state the Mixer page was drawn with (fx_auto_mute.h)
     char mixerVolumeLabel[8][12];
     char delayVolumeLabel[12];
     char reverbVolumeLabel[12];

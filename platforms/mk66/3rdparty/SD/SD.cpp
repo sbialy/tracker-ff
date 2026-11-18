@@ -48,6 +48,9 @@ static const sdmmchost_detect_card_t s_sdCardDetect = {
     .cdType = BOARD_SD_DETECT_TYPE,
 #endif
     .cdTimeOut_ms = (~0U),
+    .cardInserted = nullptr,
+    .cardRemoved = nullptr,
+    .userData = nullptr,
 };
 
 const TCHAR driverNumberBuffer[3U] = { SDDISK + '0', ':', '/' };
@@ -253,7 +256,7 @@ bool SdCard::rename(const char* oldPath, const char* newPath)
     return true;
 }
 
-bool SdCard::mkdir(uint8_t hidden, const char* path, bool pFlag)
+bool SdCard::mkdir(uint8_t hidden, const char* path, bool /*pFlag*/)
 {
     FRESULT error = f_mkdir(path);
     if (error)
@@ -418,7 +421,7 @@ uint32_t SdCard::freeClusterCount()
 
 // static char print_string[100];
 
-bool SdDir::open(const char* path, uint8_t oflag)
+bool SdDir::open(const char* path, uint8_t /*oflag*/)
 {
     close();
 

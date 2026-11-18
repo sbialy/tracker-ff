@@ -70,9 +70,9 @@ class InterfaceMenuPopup
   public:
     void initPopupsDisplayControls(){};
     void refreshColors(){};
-    void showModulePopup(ModuleBase* sourceModule,
-                         void (*switchModuleCallback)(uint8_t) = nullptr){};
-    void hideModulePopup(ModuleBase* modulePtr){};
+    void showModulePopup(ModuleBase* /*sourceModule*/,
+                         void (*/*switchModuleCallback*/)(uint8_t) = nullptr){};
+    void hideModulePopup(ModuleBase* /*modulePtr*/){};
     inline bool isPopupVisible() { return false; }
 };
 

@@ -11,6 +11,8 @@
 
 #include "performanceEngine.h"
 
+#include <utility>
+
 void saveProjectPerformanceValues()
 {
     newFileManager.setProjectStructChanged();
@@ -191,8 +193,7 @@ void cPerformEngine::fillSlotFxValue(uint8_t slot, uint8_t row, char* value)
     else if (slotToActiveCC[slot])
         return;
 
-    if (row >= 0) // teraz wszystkie wiersze moga byc zmienialne; (row > 0) -> jesli 1 wiersz jest
-                  // nie zmienny
+    // teraz wszystkie wiersze moga byc zmienialne; (row > 0) -> jesli 1 wiersz jest nie zmienny
     {
         fx_value =
           (row ==
@@ -371,6 +372,13 @@ void cPerformEngine::loadSlotFxValues(uint8_t slot)
         return;
     }
 
+    // Row 4 marks a slot driven by MIDI CC. It has no stored value to load: the value in
+    // use came from the controller.
+    if (slotToRow[slot] >= 4)
+    {
+        return;
+    }
+
     slotsTempValues[slot] = *(slotRowToValue + (slot * 4) + slotToRow[slot]);
 
     int fxIdx = slotToFx[slot];
@@ -500,7 +508,9 @@ void cPerformEngine::changeSlotFxValue(uint8_t slot, int16_t value)
     else
         slotsTempValues[slot] += value;
 
-    if (editState && slotToRow[slot] > 0) // zapis jesli edit mode, tylko jesli nie pierwszy wiersz
+    // The CC row (4) has no place in the table of saved values.
+    bool rowIsSaved = slotToRow[slot] > 0 && slotToRow[slot] < 4;
+    if (editState && rowIsSaved) // zapis jesli edit mode, tylko jesli nie pierwszy wiersz
     {
         *(slotRowToValue + (slot * 4) + slotToRow[slot]) = slotsTempValues[slot];
         if (sourceDataSaveFunct != nullptr)
@@ -583,6 +593,13 @@ void cPerformEngine::swapSlotFx(uint8_t slotFrom, uint8_t slotTo)
     uint8_t temp_to_fx = slotToFx[slotTo];
     slotToFx[slotTo] = slotToFx[slotFrom];
     slotToFx[slotFrom] = temp_to_fx;
+
+    // The selected row, the value in use and the CC state belong to the FX and move with
+    // it. Left behind, they would be applied to the other FX, whose range can be different.
+    std::swap(slotToRow[slotTo], slotToRow[slotFrom]);
+    std::swap(slotsTempValues[slotTo], slotsTempValues[slotFrom]);
+    std::swap(slotToActiveCC[slotTo], slotToActiveCC[slotFrom]);
+    std::swap(slotToCCValue[slotTo], slotToCCValue[slotFrom]);
 
     if (sourceDataSaveFunct != nullptr)
         sourceDataSaveFunct();

@@ -34,7 +34,7 @@ void check(bool ok, const char* what)
     if (!ok) g_fail++;
 }
 
-constexpr uint32_t kArena = 16384;   // plug_synth.cpp kWorkBytes
+constexpr uint32_t kArena = 16384;   // the arena of the tests (plug_synth.cpp kWorkBytes was 16 KB up to ABI 1.2, 18 KB since)
 constexpr int kLib = 16;             // plug::kLibMax
 
 struct Eng

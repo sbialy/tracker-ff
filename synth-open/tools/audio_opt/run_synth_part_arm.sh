@@ -1,12 +1,12 @@
 #!/bin/bash
 # The mono part path of PolySynth::update, old passes against core/libs/Audio/synth_part_clip.h, both compiled for the Cortex-M4 with the firmware
 # flags (synth_part_arm.cpp) and run in the Unicorn emulator on random and edge blocks (the soft clip is a fused multiply-add, whether both
-# loops contract it the same way is up to the compiler). Needs the toolchain and a python with unicorn (PYTHON=python3).
+# loops contract it the same way is up to the compiler). Needs the toolchain and a python with unicorn (default: the pinned build/pyenv, sh synth-open/tools/pyenv.sh).
 #   TOOLCHAIN=.../arm-none-eabi- synth-open/tools/audio_opt/run_synth_part_arm.sh [blocks]
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT0=$(cd "$HERE/../../.." && pwd)
-PY=${PYTHON:-python3}
+PY=${PYTHON:-${PY:-$(sh "$HERE/../pyenv.sh" python)}} || exit 2
 TC=${TOOLCHAIN:+${TOOLCHAIN%-}}
 TC=${TC:-$ROOT0/agt/12.3.rel1/bin/arm-none-eabi}
 OUT=${OUT:-/tmp/audio_opt}; mkdir -p "$OUT"

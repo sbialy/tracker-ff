@@ -339,6 +339,10 @@ void cInstrumentEditor::initDisplayControls()
     prop2.colors = display.getTheme().blankSpaceCoverLabelColors;
     prop2.style = controlStyleFont1;
     noteLabel = display.createControl<cLabel>(&prop2);
+#if GUI_HANDLE_SYNTH && defined(FEATURE_PLUG_HOST)
+    // before the blank space covers: the display draws from the last created control to the first, so an earlier one ends on top
+    initSynthView();
+#endif
 
     prop2.value = 0;
     prop2.data = nullptr;
@@ -507,6 +511,7 @@ void cInstrumentEditor::showInstrumentEnv()
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);
     display.setControlHide(imgGridControl);
+    hideSynthView();
 
     //**********************************
     uint32_t shadow = (display.getTheme().bottomScreenShadow > 0 ? controlStyleBottomShadow : 0);
@@ -800,6 +805,7 @@ void cInstrumentEditor::showEffectScreen()
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);
     display.setControlHide(imgGridControl);
+    hideSynthView();
 
     display.setControlPosition(blankSpaceCover[0], (800 / 8) * 4 + 1, -1);
     display.setControlSize(blankSpaceCover[0], (800 / 8) * 4 - 3, 394);
@@ -921,6 +927,7 @@ void cInstrumentEditor::showInstrumentParams()
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);
     display.setControlHide(imgGridControl);
+    hideSynthView();
 
     for (uint8_t i = 0; i < 6; i++)
     {
@@ -1059,6 +1066,7 @@ void cInstrumentEditor::showInstrumentSynth()
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);
     display.setControlHide(imgGridControl);
+    hideSynthView();
 
     for (uint8_t i = 0; i < 6; i++)
     {
@@ -1196,6 +1204,7 @@ void cInstrumentEditor::showInstrumentMidiParams()
     display.setControlHide(noteLabel);
     display.setControlHide(blankSpaceCover[0]);
     display.setControlHide(imgGridControl);
+    hideSynthView();
 
     display.synchronizeRefresh();
 }
@@ -1400,8 +1409,10 @@ void cInstrumentEditor::showEnvDecay()
 void cInstrumentEditor::showEnvSustain()
 {
     const uint8_t envSlot = automationDestToEnvSlot(selectedEnvelope);
-    sprintf(
-      labelText[5], "%.0f", (float)(editorInstrument->envelope[envSlot].sustain * 100));
+    snprintf(labelText[5],
+             sizeof(labelText[5]),
+             "%.0f",
+             (float)(editorInstrument->envelope[envSlot].sustain * 100));
 
     if (editorInstrument->isAutomationDestEnabled(selectedEnvelope))
     {
@@ -1459,8 +1470,10 @@ void cInstrumentEditor::showEnvRelease()
 void cInstrumentEditor::showEnvAmount()
 {
     const uint8_t envSlot = automationDestToEnvSlot(selectedEnvelope);
-    sprintf(
-      labelText[7], "%.0f", (float)(editorInstrument->envelope[envSlot].amount * 100));
+    snprintf(labelText[7],
+             sizeof(labelText[7]),
+             "%.0f",
+             (float)(editorInstrument->envelope[envSlot].amount * 100));
 
     if (editorInstrument->isAutomationDestEnabled(selectedEnvelope))
     {
@@ -1524,7 +1537,10 @@ void cInstrumentEditor::showLfoAmount()
 {
     const uint8_t envSlot = automationDestToEnvSlot(selectedEnvelope);
     uint8_t col = (editorInstrument->envelope[envSlot].loop == 3) ? 7 : 5;
-    sprintf(labelText[col], "%.0f", (float)(editorInstrument->lfo[envSlot].amount * 100));
+    snprintf(labelText[col],
+             sizeof(labelText[col]),
+             "%.0f",
+             (float)(editorInstrument->lfo[envSlot].amount * 100));
     display.setControlText2(label[col], labelText[col]);
     display.refreshControl(label[col]);
 

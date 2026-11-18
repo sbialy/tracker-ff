@@ -7,11 +7,13 @@
 //     tffnames 1\n
 //     b=<name>\n               the name of the slot 0 backup of an engine change (<P>-b.patch), when there is one
 //     <slot>=<name>\n          one line per named slot, slot 1..15 in decimal, ascending
+//     m=<slot>\n               the Morph target of the part (Morph step FX), 0..15, only when it is not kMorphDefault
 //
 // Slot 0 is not in the file (the project stores its name), name[0] of SlotNames is the backup's. A name is 1..31 bytes of 0x20..0x7E or higher, never a control
 // character. The reader takes lines as they come, skips what it does not understand (unknown slot, empty or over-long name, control
 // character, duplicate keeps the last) and never reads or writes past its buffers. A file without the first line is ignored whole.
-// Stock firmware never opens the file.
+// Stock firmware never opens the file. Firmware without the Morph FX skips the m= line (no digit before '=') and drops it when
+// it writes the file again (a slot rename), the part then morphs to kMorphDefault.
 #pragma once
 
 #include <cstddef>
@@ -26,10 +28,27 @@ constexpr size_t kSlotNameMax = 31;          // bytes of a name (the project's p
 constexpr size_t kSlotNamesFileMax = 1024;   // 11 + 15 * (2 + 1 + 31 + 1) = 536 bytes at most, a longer file is cut here
 constexpr const char* kSlotNamesExt = ".names";
 
+constexpr int kMorphDefault = 1;             // Morph target of a part whose file has no m= line
+
 struct SlotNames
 {
     char name[kSlotNameSlots][kSlotNameMax + 1] = {}; // [0] is the name of the slot 0 backup, an empty string is "no name"
+    int8_t morph = -1;                                // Morph target 0..15, -1: not in the file (kMorphDefault)
 };
+
+// features-140: the same as out = SlotNames(), in place. The assignment builds a temporary of the whole struct on the stack once
+// morph has an initializer (patchNamesRead and decodeSlotNames crossed the 512 B frame rule of the stack ratchet)
+inline void clearSlotNames(SlotNames& out)
+{
+    std::memset(out.name, 0, sizeof(out.name));
+    out.morph = -1;
+}
+
+// The file has something to say about the Morph target: a target other than the default
+inline bool morphTargetSet(const SlotNames& n)
+{
+    return n.morph >= 0 && n.morph < kSlotNameSlots && n.morph != kMorphDefault;
+}
 
 namespace slotnames_detail
 {
@@ -85,6 +104,21 @@ inline size_t encodeSlotNames(const SlotNames& in, uint8_t* out, size_t cap)
         n += len;
         out[n++] = '\n';
     }
+    if (morphTargetSet(in))
+    {
+        if (n + 6 > cap)
+        {
+            return 0;
+        }
+        out[n++] = 'm';
+        out[n++] = '=';
+        if (in.morph >= 10)
+        {
+            out[n++] = uint8_t('0' + in.morph / 10);
+        }
+        out[n++] = uint8_t('0' + in.morph % 10);
+        out[n++] = '\n';
+    }
     return n;
 }
 
@@ -93,7 +127,7 @@ inline size_t encodeSlotNames(const SlotNames& in, uint8_t* out, size_t cap)
 inline bool decodeSlotNames(const uint8_t* data, size_t len, SlotNames& out)
 {
     using namespace slotnames_detail;
-    out = SlotNames();
+    clearSlotNames(out);
     if (!data || len < kHeaderLen || std::memcmp(data, kHeader, kHeaderLen) != 0)
     {
         return false;
@@ -120,6 +154,22 @@ inline bool decodeSlotNames(const uint8_t* data, size_t len, SlotNames& out)
         int slot = 0;
         size_t digits = 0;
         bool backup = false;
+        if (p + 1 < lineEnd && data[p] == 'm' && data[p + 1] == '=')
+        {   // m=<0..15>: the Morph target
+            int v = 0;
+            size_t q = p + 2;
+            while (q < lineEnd && q < p + 4 && data[q] >= '0' && data[q] <= '9')
+            {
+                v = v * 10 + (data[q] - '0');
+                q++;
+            }
+            if (q == lineEnd && q > p + 2 && v < kSlotNameSlots)
+            {
+                out.morph = int8_t(v);
+            }
+            i = end + 1;
+            continue;
+        }
         if (p + 1 < lineEnd && data[p] == 'b' && data[p + 1] == '=')
         {
             backup = true;

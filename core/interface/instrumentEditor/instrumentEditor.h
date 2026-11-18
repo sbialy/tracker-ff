@@ -183,6 +183,22 @@ class cInstrumentEditor : public ModuleBase
     hControl imgGridControl;
     strImgGridData imgGridData;
 
+#ifdef FEATURE_PLUG_HOST
+    // The cycle view of a plugin engine with plug_ext_synth.view (ABI 1.2) on the synth patch editor page, right of the model logo
+    // (SynthPatchEditor.cpp showSynthView). Hidden wherever the section grid is hidden.
+    hControl synthViewControl = -1;
+    bool synthViewOn = false;   // the patch editor page is up in its normal state: synthViewTick keeps the view current
+    void initSynthView();
+    void showSynthView();
+    void hideSynthView()
+    {
+        synthViewOn = false;
+        display.setControlHide(synthViewControl);
+    }
+#else
+    void hideSynthView() {}
+#endif
+
     hControl paramsListControl;
     strNewListData paramsListData;
 
@@ -415,6 +431,7 @@ class cInstrumentEditor : public ModuleBase
     void changeSynthPatchListPos(int16_t value);
 #ifdef FEATURE_SYNTH_OPEN
     void changeSynthSlot(int16_t value);
+    void changeSynthMorphTarget(int16_t value);
 #endif
 
     void setDefaultSynthModel();
@@ -430,6 +447,7 @@ class cInstrumentEditor : public ModuleBase
     bool browsePatchList();
     int loadPatchList();
     void revertPatch();
+    uint32_t timerMicros();   // the Patch Vary seed (SynthPatchEditor.cpp)
     void initCurrentPatch(bool backupRestored = false); // backupRestored: slot 0 already holds the restored backup, no Init is written
 
     void showSynthParamsScreen();
@@ -550,6 +568,7 @@ class cInstrumentEditor : public ModuleBase
     void setSynthReverbSend(int synthPartIdx, float value, bool show = true);
     void setSynthDelaySend(int synthPartIdx, float value, bool show = true);
     void setSynthPatchParamDefault();
+    void cycleSynthPatchParamRange();
 
     void showSynthPatchSection(bool refreshList = false);
     void showSynthPatchSectionParam(bool refreshList = false);

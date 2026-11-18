@@ -1,0 +1,8 @@
+# Golden of randname_test.sh: count and sha256 of the 6,000 names made by the STOCK plain-string tables of release-1.4.0-int 8d8a489.
+# Remake only from a tree with the stock tables: randname_test.sh --golden. The first 5 names, for the eye:
+# ripe yawn
+# class-care
+# rambunctious whip
+# melted fly
+# brown view
+6000 68933f05502ebe49b1c89c6e84d05880e433d9f67dba7b9f88055072f0089193

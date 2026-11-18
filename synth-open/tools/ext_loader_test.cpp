@@ -265,6 +265,143 @@ void synthetic()
     }
 }
 
+// MOD/IT (modit.plg): the same file rules from a second path, one use at a time of the one slot (ext_loader.h moditLoad)
+struct ModitRun
+{
+    ext::ModitState st;
+    int entered;
+    int reads;
+    bool statusFile, markerFile;
+};
+ModitRun modit(MemFs& fs, std::vector<uint8_t>& slot, ext::Status console, bool consolePending, bool entryOk = true, uint32_t imageCrc = kImageCrc,
+               uintptr_t run = 0x70F50000u)
+{
+    int entered = 0;
+    const ext::Slot s{slot.data(), kLoadBytes, run};
+    const ext::ModitState st = ext::moditLoad(fs, s, console, consolePending, [&] { return imageCrc; },
+                                              [&](const plug_file_header&) { return ++entered, entryOk; });
+    return {st, entered, fs.reads, fs.exists(ext::kStatus), fs.exists(ext::kMarker)};
+}
+
+void moditCases()
+{
+    const uint32_t run = 0x70F50000u;
+    std::vector<uint8_t> slot(kSlotBytes, 0xEE);
+    auto tailIntact = [&] {
+        for (uint32_t i = kLoadBytes; i < kSlotBytes; i++)
+            if (slot[i] != 0xEE) return false;
+        return true;
+    };
+    {
+        MemFs fs;
+        ModitRun r = modit(fs, slot, ext::Status::kOff, false);
+        check(r.st == ext::ModitState::kMissing && r.entered == 0, "modit: no file: missing, the entry is not called");
+    }
+    {   // the console's file is not the MOD/IT file
+        MemFs fs;
+        fs.files[ext::kPath] = makeModule(kImageCrc, run);
+        ModitRun r = modit(fs, slot, ext::Status::kOff, false);
+        check(r.st == ext::ModitState::kMissing && r.reads == 0, "modit: only module.plg on the card: missing, the console file is not read");
+    }
+    {
+        MemFs fs;
+        fs.files[ext::kModitPath] = makeModule(kImageCrc, run);
+        std::fill(slot.begin(), slot.end(), 0xEE);
+        ModitRun r = modit(fs, slot, ext::Status::kOff, false);
+        const std::string& f = fs.files[ext::kModitPath];
+        bool image = memcmp(slot.data(), f.data() + 160, 288) == 0;
+        bool bss = true;
+        for (int i = 288; i < 288 + 128; i++) bss = bss && slot[i] == 0;
+        check(r.st == ext::ModitState::kReady && r.entered == 1, "modit: good file: ready, entry called once");
+        check(image && bss, "  text and data copied, bss cleared");
+        check(tailIntact(), "  the slot tail (the recovery console's reply area) is not touched");
+        check(!r.statusFile && !r.markerFile, "  no status file, no crash marker (loaded on use, never at boot)");
+        check(!fs.isOpen, "  the card file is closed");
+    }
+    {
+        MemFs fs;
+        fs.files[ext::kModitPath] = makeModule(kImageCrc ^ 1u, run);
+        ModitRun r = modit(fs, slot, ext::Status::kOff, false);
+        check(r.st == ext::ModitState::kOtherImage && r.entered == 0, "modit: built for another image: refused, entry not called");
+    }
+    {
+        MemFs fs;
+        fs.files[ext::kModitPath] = makeModule(kImageCrc, run + 16);
+        check(modit(fs, slot, ext::Status::kOff, false).st == ext::ModitState::kDamaged, "modit: linked for another slot address: damaged");
+    }
+    {
+        MemFs fs;
+        std::string f = makeModule(kImageCrc, run);
+        f[f.size() / 2] ^= 0x10;
+        fs.files[ext::kModitPath] = f;
+        ModitRun r = modit(fs, slot, ext::Status::kOff, false);
+        check(r.st == ext::ModitState::kDamaged && r.entered == 0, "modit: one bit flipped mid file: damaged, entry not called");
+    }
+    {
+        MemFs fs;
+        std::string f = makeModule(kImageCrc, run);
+        fs.files[ext::kModitPath] = f.substr(0, f.size() - 100);
+        check(modit(fs, slot, ext::Status::kOff, false).st == ext::ModitState::kDamaged, "modit: a file cut short: damaged");
+    }
+    {
+        MemFs fs;
+        fs.files[ext::kModitPath] = std::string(300, 'x');
+        check(modit(fs, slot, ext::Status::kOff, false).st == ext::ModitState::kDamaged, "modit: not a module: damaged");
+    }
+    {   // text, data and bss must stay inside the load part: the tail is the recovery console's reply area
+        MemFs fs;
+        fs.files[ext::kModitPath] = makeModule(kImageCrc, run, 256, 32, kLoadBytes);
+        check(modit(fs, slot, ext::Status::kOff, false).st == ext::ModitState::kDamaged, "modit: bss past the load part: damaged");
+    }
+    {
+        MemFs fs;
+        fs.files[ext::kModitPath] = makeModule(kImageCrc, run);
+        ModitRun r = modit(fs, slot, ext::Status::kOff, false, false);
+        check(r.st == ext::ModitState::kDamaged && r.entered == 1, "modit: the entry refuses: damaged");
+    }
+    // the console module owns the slot: nothing is read, nothing is written
+    for (int pending = 0; pending < 2; pending++)
+    {
+        MemFs fs;
+        fs.files[ext::kModitPath] = makeModule(kImageCrc, run);
+        std::fill(slot.begin(), slot.end(), 0xEE);
+        ModitRun r = modit(fs, slot, pending ? ext::Status::kOff : ext::Status::kLoaded, pending != 0);
+        bool untouched = std::all_of(slot.begin(), slot.end(), [](uint8_t b) { return b == 0xEE; });
+        check(r.st == ext::ModitState::kBusy && r.entered == 0 && r.reads == 0 && untouched,
+              pending ? "modit: the console module is about to load (key window): busy, file not read, slot untouched"
+                      : "modit: the console module is loaded: busy, file not read, slot untouched");
+    }
+    // every other state of the console leaves the slot free: a refused or crashed module, none, Shift held (kOff, not pending)
+    for (ext::Status c : {ext::Status::kOff, ext::Status::kNone, ext::Status::kOtherImage, ext::Status::kCrashed, ext::Status::kEntry, ext::Status::kCrc,
+                          ext::Status::kHeader})
+    {
+        MemFs fs;
+        fs.files[ext::kModitPath] = makeModule(kImageCrc, run);
+        std::fill(slot.begin(), slot.end(), 0xEE);
+        ModitRun r = modit(fs, slot, c, false);
+        check(r.st == ext::ModitState::kReady && r.entered == 1, "modit: console state leaves the slot free: loads");
+    }
+    check(ext::slotBusy(ext::Status::kLoaded, false) && ext::slotBusy(ext::Status::kOff, true) && !ext::slotBusy(ext::Status::kOff, false),
+          "slotBusy: loaded or pending only");
+    // the recovery console's reply (ext_recovery.h) moves to the slot tail while modit.plg holds the load part
+    check(ext::recoveryReplyOffset(false) == 0 && ext::recoveryReplyOffset(true) == EXT_LOAD_BYTES, "recovery reply: slot start, or the tail while modit is loaded");
+    check(ext::recoveryReplyOffset(true) + ext::kRecoveryReplyBytes <= EXT_SLOT_BYTES && ext::kRecoveryReplyBytes == 320,
+          "  the reply (320 B) fits the slot tail");
+    // the popup lines: one for each refusal, different, short enough for the popup
+    {
+        const ext::ModitState all[] = {ext::ModitState::kBusy, ext::ModitState::kMissing, ext::ModitState::kOtherImage, ext::ModitState::kDamaged};
+        bool ok = true;
+        for (int i = 0; i < 4; i++)
+        {
+            ok = ok && strlen(ext::moditLine1(all[i])) > 0 && strlen(ext::moditLine1(all[i])) <= 36 && strlen(ext::moditLine2(all[i])) > 0 &&
+                 strlen(ext::moditLine2(all[i])) <= 36;
+            for (int j = i + 1; j < 4; j++) ok = ok && strcmp(ext::moditLine1(all[i]), ext::moditLine1(all[j])) != 0;
+        }
+        check(ok, "popup lines: four refusals, four different first lines, both lines 1 to 36 characters");
+        check(strlen(ext::moditLine1(ext::ModitState::kReady)) == 0, "  nothing to say when ready");
+    }
+}
+
 void realModule(const char* path, uint32_t imageCrc, uint32_t run)
 {
     FILE* f = fopen(path, "rb");
@@ -299,12 +436,28 @@ void realModule(const char* path, uint32_t imageCrc, uint32_t run)
     std::string bad = bytes;
     bad[bad.size() / 2] ^= 0x10;
     check(one(bad, imageCrc, run).first == ext::Status::kCrc, "real module: one bit flipped mid file is refused");
+    {   // the same file as /Plugins/Ext/modit.plg (when it is the MOD/IT module): loaded on use, by the image and the address it was packed for
+        auto use = [&](uint32_t crc, uint32_t base, ext::Status console, bool pending) {
+            MemFs fs;
+            fs.files[ext::kModitPath] = bytes;
+            int entered = 0;
+            const ext::Slot s{slot.data(), EXT_LOAD_BYTES, uintptr_t(base)};
+            const ext::ModitState st = ext::moditLoad(fs, s, console, pending, [&] { return crc; }, [&](const plug_file_header&) { return ++entered, true; });
+            return std::make_pair(st, entered);
+        };
+        auto good = use(imageCrc, run, ext::Status::kOff, false);
+        check(good.first == ext::ModitState::kReady && good.second == 1, "real module as modit.plg: ready on use");
+        check(use(imageCrc ^ 1u, run, ext::Status::kOff, false).first == ext::ModitState::kOtherImage, "  another image: refused with the other-firmware popup");
+        check(use(imageCrc, run + 16, ext::Status::kOff, false).first == ext::ModitState::kDamaged, "  another slot address: damaged");
+        check(use(imageCrc, run, ext::Status::kLoaded, false).first == ext::ModitState::kBusy, "  console module loaded: busy");
+    }
 }
 }   // namespace
 
 int main(int argc, char** argv)
 {
     synthetic();
+    moditCases();
     if (argc == 4) realModule(argv[1], uint32_t(strtoul(argv[2], nullptr, 0)), uint32_t(strtoul(argv[3], nullptr, 0)));
     printf("%s (%d failed)\n", g_fail ? "FAIL" : "PASS", g_fail);
     return g_fail ? 1 : 0;

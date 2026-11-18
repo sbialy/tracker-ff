@@ -26,6 +26,9 @@
 #include "cr_section_macros.h"
 #include "effect_bitDepth.h"
 #include "effect_limiter.h"
+#ifdef BENCH_DUCK
+#include "effect_duck.h"
+#endif
 #include "effect_shortDelay.h"
 #include "filter_variable.h"
 #include "mixer.h"
@@ -176,6 +179,11 @@ AudioOutputStream gOut;
 AudioMixer<7> gFin[2];
 AudioAnalyzeRMS gMasterRms[2];
 AudioRecordQueue gQMaster[2], gQRev[2], gQDelay[2], gQVoice[2][kVoices];
+#ifdef BENCH_DUCK
+// send ducking (core/libs/Audio/effect_duck.h): constructed last, as audioEngine::sendDuck is after every other member. BENCH_DUCK_SRC 0 is the
+// stream switched off (out of the update list), n the detector input n - 1 (a voice amplifier)
+AudioEffectDuck<AudioMixer<4>> gDuck;
+#endif
 
 alignas(4) int16_t gOutBuf[2][AUDIO_BLOCK_SAMPLES];
 AudioConnection* gC[400];
@@ -192,6 +200,21 @@ void con(AudioStream* s, AudioStream* d)
 AudioRecordQueue* gStem[kStemQueues];
 int gScenario;
 int gPpMode = -1;
+#ifdef BENCH_FX_MUTE
+// Mixer Mute of delay and reverb (fx_mute_gate.h), scenario 8 (run as 40 + variant): three voices with sends, dry tracks at 0 so the output is
+// the two FX returns only. Block 200: every send to 0 (what the Mute keys do) and, variant 0 and 2, the gates muted. Unmute (sends back,
+// gates unmuted): variant 0 and 1 at block 1600 (asleep since block 1266), variant 2 at block 1250 (inside the fade). Variant 1 is the
+// stock mute (sends only, the tail rings out) the other two are compared with.
+int gMuteVariant = -1;
+void benchSends(bool on)
+{
+    for (int i = 0; i < kVoices; i++)
+    {
+        gPreFx[1].gain(i, on && i < 3 ? 0.4f : 0.0f);
+        gPreFx[0].gain(i, on && i < 3 ? 0.5f : 0.0f);
+    }
+}
+#endif
 
 uint32_t mix32(uint32_t x)
 {
@@ -228,6 +251,13 @@ extern "C"
         }
         // 10: scenario 0 with mono fixed, 11: scenario 0 with ping pong fixed (no mode switch at all), 20 + k: scenario k with ping pong fixed,
         // 30 + k: scenario k (steady) that asks for ping pong at block 20 (cycles of the mode switch, measure with warm-up 40 and 80)
+#ifdef BENCH_FX_MUTE
+        if (sc >= 40)
+        {
+            gMuteVariant = sc - 40;
+            sc = 8;
+        }
+#endif
         gPpMode = sc >= 30 ? 2 : sc >= 20 ? 1 : sc >= 10 ? sc - 10 : -1;
         if (sc >= 10)
             sc = sc >= 20 ? sc % 10 : 0;
@@ -249,6 +279,9 @@ extern "C"
             con(&v.filter, 0, &gPreFx[1], i);
             con(&v.filter, 0, &gPreFx[0], i);
             con(&v.amp, 0, &gMux, i);
+#ifdef BENCH_DUCK
+            con(&v.amp, 0, &gDuck, i);
+#endif
             con(&v.m2s, 0, &gQVoice[0][i], 0);
             con(&v.m2s, 1, &gQVoice[1][i], 0);
         }
@@ -268,6 +301,10 @@ extern "C"
         con(&gPreFx[1], 0, &gRev, 0);
         con(&gPreFx[1], 0, &gRev, 1);
         con(&gPreFx[0], &gDelay);
+#ifdef BENCH_FX_MUTE
+        gRev.setMuteFeed(&gPreFx[1]); // as MixerAndFxs
+        gDelay.setMuteFeed(&gPreFx[0]);
+#endif
         for (int c = 0; c < 2; c++)
         {
             con(&gTracks[c], 0, &gTs[c], 0);
@@ -286,6 +323,10 @@ extern "C"
             con(&gFin[c], &gMasterRms[c]);
         }
 
+#ifdef BENCH_DUCK
+        gDuck.setTargets(&gTs[0], &gTs[1], 1, 2);
+        gDuck.set(DuckParams{ BENCH_DUCK_SRC, 60, 50, 50 });
+#endif
         mtProject.values.limiterMode = limiterModeSubtle;
         gLim[0].begin();
         gLim[1].begin();
@@ -351,6 +392,22 @@ extern "C"
             }
         }
 #endif
+#ifdef BENCH_FX_MUTE
+        if (sc == 8)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                gV[i].src.active = true;
+                gV[i].src.amp = 8000;
+            }
+            for (int c = 0; c < 2; c++)
+                for (int i = 0; i < kVoices; i++)
+                    gTracks[c].gain(i, 0.0f);
+            gDelay.setFeedback(0.85f); // a tail that is still ringing when the 3 s run out
+            gRev.setTime(0.85f);
+            benchSends(true);
+        }
+#endif
         if (sc == 3 || sc == 4)
         {
             for (int i = 0; i < 3; i++)
@@ -367,6 +424,28 @@ extern "C"
     static void bench_script(int b)
     {
         const int sc = gScenario;
+#ifdef BENCH_FX_MUTE
+        if (sc == 8)
+        {
+            const int unmuteAt = gMuteVariant == 2 ? 1250 : 1600;
+            if (b == 200 || b == unmuteAt)
+            {
+                const bool mute = b == 200;
+                benchSends(!mute);
+                if (gMuteVariant != 1)
+                {
+                    gRev.setMuted(mute);
+                    gDelay.setMuted(mute);
+                }
+            }
+            if (b == 5)
+            {
+                for (int i = 0; i < 6; i++)
+                    gStem[i]->begin();
+            }
+            return;
+        }
+#endif
         if (sc == 6)
         {
             // loud bursts without fx sends: the tracks mixer and with it the limiter input end at once, so the limiter sees NULL while its
@@ -592,6 +671,10 @@ extern "C"
         }
         gQBlockHash[b] = h;
         gMisc[b] = gDelay.isSilent() ? 1 : 0;
+#ifdef BENCH_FX_MUTE
+        gMisc[b] |= (gRev.isMuteAsleep() ? 2 : 0) | (gDelay.isMuteAsleep() ? 4 : 0) | (gRev.isActive() ? 8 : 0) | (gDelay.isActive() ? 16 : 0) |
+                    (gPreFx[0].isActive() ? 32 : 0) | (gPreFx[1].isActive() ? 64 : 0);
+#endif
 #ifdef BENCH_DEBUG
         gDbg[0] = gRev.reverb.quiet_samples_;
         gDbg[1] = gRev.reverb.lp_decay_0_ < 1e-30f && gRev.reverb.lp_decay_0_ > -1e-30f;

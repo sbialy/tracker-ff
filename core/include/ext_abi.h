@@ -40,7 +40,17 @@ typedef struct
     void (*coprocReset)(void);                      // after spinExpired: the FT812 co-processor reset
     void (*log)(const char* msg);                   // LOGE / LOG text (any context, the audio interrupt included)
     void (*logv)(const char* format, va_list args);
+    uint32_t (*modit)(uint32_t op);                 // MOD/IT import and IT export (modit.plg): EXT_MODIT_* below, ~0 = no such call
 } ext_hooks_t;
+
+// modit.plg (/Plugins/Ext/modit.plg) is an extension module of its own: loaded on the first MOD or IT use into the slot, it fills only
+// the modit hook (a tail field: struct_size tells a module whether this image has it). The file manager forwards four calls, see
+// core/FileManager/fileManagerModit.cpp. A progress reply is the value of the progress getter (a float's bits for the import).
+#define EXT_MODIT_UPDATE_IMPORT 0u     // one step of the MOD or IT import (cFileManager::updateImportModFile), 0 = done
+#define EXT_MODIT_UPDATE_EXPORT 1u     // one step of the IT export
+#define EXT_MODIT_PROGRESS_IMPORT 2u   // the import progress, a float's bits (0 to 100)
+#define EXT_MODIT_PROGRESS_EXPORT 3u   // the export progress, 0 to 100
+#define EXT_MODIT_NONE 0xFFFFFFFFu
 
 // The entry, at header.entry_offset (Thumb bit added by the image). abi = EXT_ABI_VERSION, develop = 1. 0 = hooks filled. The
 // module installs its own SysTick and fault vectors in the RAM vector table (VTOR = _VectorsRam), the image puts vectors 3 to 6

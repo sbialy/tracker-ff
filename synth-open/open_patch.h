@@ -56,11 +56,20 @@ class OpenPatch final : public Patch
         effSer++;
     }
     void getValuesRaw(float* out) const { std::memcpy(out, values, size_t(count) * sizeof(float)); }
+    // Morph step FX (audio callback): the values become a blend of a[] (0) and b[] (kMorphMax), `amount` 1..kMorphMax - 1. A numeric
+    // value is a straight lerp, a stepped one (Int, Semi) the lerp rounded, a discrete one (Enum, On/Off, Ratio index...) takes b's
+    // value from the half on.
+    void setValuesMorph(const float* a, const float* b, int amount);
+    const float* rawValues() const { return values; }   // open::partPatch: the main thread reads them in place
     int typeId() const { return metadata.instrumentTypeId; }
 
     // Shim internal: macro CC (0..127) written by the instrument from MIDI
     void setMacroCC(int macro, uint8_t cc)
     {
+        if (macroCC[macro] == cc)
+        {
+            return; // the same CC again (a controller that repeats its value): nothing changed, the refresh skip stays on
+        }
         macroCC[macro] = cc;
         effSer++;
     }
@@ -90,11 +99,13 @@ class OpenPatch final : public Patch
     }
     const float* values_() const { return values; }
     // Counts every change of what effective() reads from this patch: the values, the macro positions, the macros and automation slots
-    // (rebuildOwn), the live config pointer. With effStatic() (the open slot's own config and the automation off, so nothing else feeds
-    // effective(): a Patch FX bank row is rewritten by the bank in place, the automation outputs move every block) an unchanged serial means
-    // an unchanged result, and the instrument skips the refresh (OpenInstrument::refreshParams).
+    // (rebuildOwn), the live config pointer. With effStatic() (the live config has the automation off, so nothing else feeds effective(): the
+    // automation outputs move every block) an unchanged serial means an unchanged result, and the instrument skips the refresh
+    // (OpenInstrument::refreshParams). The live config may be the open slot's own or a row of the Patch FX bank: a row is rewritten in place
+    // only while it is not live (the bank puts the own config back first: patchBankRebuild, importData and the slot select), a swap of the
+    // pointer counts in the serial (adoptCfg). With the automation on, the instrument skips when the automation outputs did not change either.
     uint32_t effSerial() const { return effSer; }
-    bool effStatic() const { return cfg == &own && own.modOn == 0; }
+    bool effStatic() const { return cfg->modOn == 0; }
 
     // Synth automation (open_mod.h). The slots belong to the patch (its .patch field 64) and the editor shows and edits the open slot's
     // (modSlot, metadata macros). What the render path reads is liveCfg(): the open slot's own compact copy (ownCfg) or, while the Patch FX
@@ -116,6 +127,15 @@ class OpenPatch final : public Patch
     void useOwnCfg() { adoptCfg(&own); }
     // The config a .patch file gives this patch, exactly what importData would make of it (cold, no allocation). `out` is overwritten.
     void cfgFromData(const PatchData& d, SlotCfg& out) const;
+
+    // Wave file references (open_patchdata.h WaveRef, .patch field 101): the path of the file an engine parameter's index stands for, kept
+    // from the file and written back with it. waveRef is the answer the files service gives an engine: the length of the path, or -1 when the
+    // patch has none for `param` or the parameter no longer has the value the path was stored with (cold, main thread).
+    int waveRef(int param, char* out, size_t cap) const;
+    // Sets or replaces the reference of `param` (the stored index is the parameter's value now). False for a path that is not valid, a parameter
+    // out of range or a patch that holds kWaveRefs others. Main thread, audio interrupts disabled like the other setters.
+    bool setWaveRef(int param, const char* path);
+    const WaveRefs& waveRefs() const { return waves; }
 
     // Macro depth mode: Add for every patch loaded from a file without the flag, Scale for a new patch.
     bool macroScale() const { return macroScaleMode; }
@@ -194,6 +214,7 @@ class OpenPatch final : public Patch
     bool macroScaleMode = true;          // new patches Scale, importData sets it from the file (own.macroScale follows, buildCfg)
     SlotCfg own;                         // macros and slots of this patch in the form the render path reads (rebuildOwn)
     const SlotCfg* cfg = &own;           // the live one: own, or a row of the Patch FX bank
+    WaveRefs waves;                      // wave file references (field 101), none for a patch of an older release
     PatchExtra extra;                    // raw .patch fields kept for the round trip
     PatchTail tail;                      // values and macro targets of a newer engine release kept for the round trip (open_patchdata.h)
 };
@@ -201,6 +222,12 @@ class OpenPatch final : public Patch
 // The data of a new patch of the engine (what exportData of a fresh OpenPatch gives, cold), made from the engine definition alone: no
 // OpenPatch, no metadata, so no heap. `d` must be fresh (default constructed).
 void initPatchData(const EngineDef& def, PatchData& d);
+
+// The macro depth mode a patch ADDED to the project takes (project.mtff macro.mode): 0 each patch as it always was (a new patch Scale, a
+// library file its own field 100), 1 Add, 2 Scale. A patch already in the project is never touched. The Patch library store applies it to
+// a new patch (Init, a new engine) and to a library file on load, the Workspace store (the project's own files) never does.
+uint8_t projectMacroMode();
+void setProjectMacroMode(uint8_t mode);
 
 // The patch store (cold, open_cold.cpp)
 std::unique_ptr<PatchStore> makePatchStore(const InstrumentTypeRegistry& registry,

@@ -3,6 +3,7 @@
 
 #include "configEditor/configMenuActions.h"
 #include "ThemeManager.h"
+#include "mtSequencer.h"
 
 #include "imageViewer/imageViewerDefs.h"
 
@@ -21,22 +22,29 @@
 
 // clang-format off
 
-#ifdef TRACKER_MINI
-constexpr uint8_t baseMenuGroupCount = 8;
-constexpr uint8_t projectMenuGroupCount = 10;
-constexpr uint8_t generalMenuGroupCount = 9;
-#elif defined(PLATFORM_IMX)
-constexpr uint8_t baseMenuGroupCount = 7;
-constexpr uint8_t projectMenuGroupCount = 10;
-constexpr uint8_t generalMenuGroupCount = 12;
-#elif defined(FEATURE_EXT_HOOKS)
-constexpr uint8_t baseMenuGroupCount = 7; // + Features
-constexpr uint8_t projectMenuGroupCount = 10;
-constexpr uint8_t generalMenuGroupCount = 12;
+// FEATURE_PLUG_HOST: + the Project Settings page of the File screen (the last group of the base list, hidden in Config)
+#ifdef FEATURE_PLUG_HOST
+constexpr uint8_t snapGroupCount = 1;
 #else
-constexpr uint8_t baseMenuGroupCount = 6;
+constexpr uint8_t snapGroupCount = 0;
+#endif
+
+#ifdef TRACKER_MINI
+constexpr uint8_t baseMenuGroupCount = 8 + snapGroupCount;
 constexpr uint8_t projectMenuGroupCount = 10;
-constexpr uint8_t generalMenuGroupCount = 12;
+constexpr uint8_t generalMenuGroupCount = 11;
+#elif defined(PLATFORM_IMX)
+constexpr uint8_t baseMenuGroupCount = 7 + snapGroupCount;
+constexpr uint8_t projectMenuGroupCount = 10;
+constexpr uint8_t generalMenuGroupCount = 14;
+#elif defined(FEATURE_EXT_HOOKS)
+constexpr uint8_t baseMenuGroupCount = 8 + snapGroupCount; // + USB (hidden while USB audio and USB drive are off) + Features
+constexpr uint8_t projectMenuGroupCount = 10;
+constexpr uint8_t generalMenuGroupCount = 14;
+#else
+constexpr uint8_t baseMenuGroupCount = 6 + snapGroupCount;
+constexpr uint8_t projectMenuGroupCount = 10;
+constexpr uint8_t generalMenuGroupCount = 14;
 #endif
 
 // baza baz
@@ -55,6 +63,14 @@ cMenuGroup menuMidi(menuBase, "MIDI", 11 + kSampleTracks);
 
 #ifdef PLATFORM_IMX
 cMenuGroup menuUsb(menuBase, "USB", 2);
+#elif defined(FEATURE_EXT_HOOKS) && !defined(TRACKER_MINI)
+cMenuGroup menuUsb(menuBase, "USB", 4); // the original: Storage (USB_MSC=1), Audio mode, FX in 8+3, Restart now (usbMenuSync)
+#endif
+
+#if defined(FEATURE_EXT_HOOKS) && !defined(PLATFORM_IMX) && !defined(TRACKER_MINI)
+static uint8_t usbMenuSync(); // 1 while the USB entry is hidden from the base list (Features: USB audio and USB drive both off)
+#else
+static uint8_t usbMenuSync() { return 0; }
 #endif
 
 cMenuGroup menuMetro(menuBase, "Metronome", 5);
@@ -70,6 +86,18 @@ cMenuGroup menuFunctionButtons(menuBase, "Fn buttons binding", 8);
 #endif
 
 cMenuGroup menuCredits(menuBase, "Info", 4);
+
+#ifdef FEATURE_PLUG_HOST
+// The Project Settings page: the settings of project.mtff, opened by the File screen (kOpenProjectSettings) on this one group. The last
+// group of the base list, so Config hides it by the count (cConfigEditor::createConfigMenu). Rows: 4 FX Slots, Macro depth, Strum
+// volume, Random seed, Reroll seed, Scale snap (a group of its own: one row per track)
+#ifdef FEATURE_SYNTH_OPEN
+constexpr uint8_t projectPageRows = 6;
+#else
+constexpr uint8_t projectPageRows = 5;
+#endif
+cMenuGroup menuProjectPage(menuBase, "Project Settings", projectPageRows);
+#endif
 
 // elementy/////////
 
@@ -95,7 +123,6 @@ cMenuItem melLimiterMode(menuProject, "Limiter mode", limiterDesc, menuTypeItemL
 cMenuItem melSendsMode(menuProject, "Sends mode", sendsDesc,  menuTypeItemListTextWithAction, &setupSendsMode);
 cMenuItem melHeadroomMode(menuProject, "Extra headroom", headroomDesc,  menuTypeItemListTextWithAction, &setupHeadroomMode);
 cMenuItem melSnapToZeroMode(menuProject, "Snap to zero", snapToZeroDesc,  menuTypeItemListTextWithAction, &setupSnapToZeroMode);
-
 // general
 const strItemTypeListTextWithAction setupRadioRegion{ &mtConfig.general.radioRegion, 4, radioRegion, setRadioRegion };
 const strItemTypeListTextWithAction setupDispBrightness{ &mtConfig.general.dispBrightness, 3, brightness, setDisplayBrightness };
@@ -112,11 +139,13 @@ void refreshThemeAndFontMenuOptions()
 
 const strItemTypeListTextWithAction setupPadsBrightness{ &mtConfig.general.padsBrightness, 3, brightness, setPadsBrightness };
 const strItemTypeListText setupRecQuantization{ &mtConfig.general.recOptions, 4, recOptionsTexts };
+const strItemTypeListText setupRecMode{ &mtConfig.common.recReplace, 2, recModeTexts };
 const strItemTypeListText setupRecThreshold{ &mtConfig.general.recThreshold, recThreshold_count, recThresholdTexts };
 const strItemTypeListText setupHexMode{ &mtConfig.general.numberingMode, std::size(numberingModeTexts), numberingModeTexts };
 const strItemTypeListText setupPadPreviewInPatternEdit{ &mtConfig.general.padPreviewInPatternEdit, 3, padPreviewInPatternEditTexts };
 const strItemTypeListText setupPatternArrangement{ &mtConfig.general.patternArrangement, 3, patternArrangementTexts };
 const strItemTypeListText setupPatternInfo{ &mtConfig.general.patternInfo, 3, patternInfoTexts };
+const strItemTypeListText setupPatternVm{ &mtConfig.common.patternVmColumns, 2, patternVmTexts };
 const strItemTypeListTextWithAction setupLineInOutType{ &mtConfig.general.lineInOutType, 3,  lineInOutType, setLineInOutType };
 
 #ifndef TRACKER_MINI
@@ -159,6 +188,11 @@ cMenuItem melRecQuantization(menuGeneral,
                              recNotesDesc,
                              menuTypeItemListText,
                              &setupRecQuantization);
+cMenuItem melRecMode(menuGeneral,
+                     "Recording mode",
+                     recModeDesc,
+                     menuTypeItemListText,
+                     &setupRecMode);
 cMenuItem melRecThreshold(menuGeneral,
                           "Recording Threshold",
                           recThresholdDesc,
@@ -179,6 +213,11 @@ cMenuItem melPatternInfo(menuGeneral,
                          patternInfo,
                          menuTypeItemListText,
                          &setupPatternInfo);
+cMenuItem melPatternVm(menuGeneral,
+                       "Pattern V/m columns",
+                       patternVmDesc,
+                       menuTypeItemListText,
+                       &setupPatternVm);
 cMenuItem melLinInOutType(menuGeneral,
                           "Line in channel",
                           lineInChannelDesc,
@@ -328,7 +367,119 @@ cMenuItem melUsbAudio(menuUsb,
 						  usbAudioDesc,
 						  menuTypeItemListTextWithAction,
                           &usbAudioSetup);
+#elif defined(FEATURE_USB_MSC) && defined(FEATURE_EXT_HOOKS) && !defined(TRACKER_MINI)
+// USB_MSC=1 on the original: the card as a USB drive (Drive mode). Works when Config > Features > USB drive was on at start
+const strItemTypeActionButton usbStorageSetup{ usbStorageEnter, nullptr };
+
+cMenuItem melUsbStorage(menuUsb,
+                          "Storage",
+                          usbStorageDesc,
+                          menuTypeItemActionButton,
+                          &usbStorageSetup);
 #endif
+//==================================================================================================================================================================
+// Project Settings page (FEATURE_PLUG_HOST): the File screen's Project Settings entry opens the Config editor on menuProjectPage. The rows
+// are the settings of project.mtff and what the sequencer keeps with the project
+#ifdef FEATURE_PLUG_HOST
+static const char* const fxSlotsDesc =
+  "Gives every pattern step two more FX slots, FX3 and FX4. Off keeps their data on the card but does not play it. "
+  "Not compatible with stock CE and firmware 1.3.x, which play slots 1 and 2 only. Only while the sequencer is stopped.";
+static const char* const strumVolTexts[11] = { "0 %", "10 %", "20 %", "30 %", "40 %", "50 %", "60 %", "70 %", "80 %", "90 %", "100 %" };
+static const char* const strumVolDesc =
+  "How much the notes of a strummed chord fall in volume, in the order they sound. 0 % is an even strum, 100 % the full ramp. "
+  "The Strum FX keeps its own speed and direction.";
+const strItemTypeListTextWithAction setupFxSlots{ &projFxSlots, 2, onOffStateTexts, setProjFxSlots };
+cMenuItem melFxSlots(menuProjectPage, "4 FX Slots", fxSlotsDesc, menuTypeItemListTextWithAction, &setupFxSlots);
+#ifdef FEATURE_SYNTH_OPEN
+static const char* const macroModeTexts[3] = { "Per patch", "Add", "Scale" };
+static const char* const macroModeDesc =
+  "The macro depth mode of a synth patch that is added to the project: a new patch, an Init after a Model change and a patch loaded "
+  "from the library. Add moves a parameter by the Amount of its whole range, Scale by the room to its end. "
+  "Per patch keeps what each patch does today. Patches already in the project never change.";
+const strItemTypeListTextWithAction setupMacroMode{ &projMacroMode, 3, macroModeTexts, setProjMacroMode };
+cMenuItem melMacroMode(menuProjectPage, "Macro depth", macroModeDesc, menuTypeItemListTextWithAction, &setupMacroMode);
+#endif
+const strItemTypeListTextWithAction setupStrumVolume{ &projStrumVolume, 11, strumVolTexts, setProjStrumVolume };
+cMenuItem melStrumVolume(menuProjectPage, "Strum volume", strumVolDesc, menuTypeItemListTextWithAction, &setupStrumVolume);
+// seeded random takes (mtSequencer.h, seqRandom.h): 0 shows Off, 1 to 255 are the seeds
+const strItemTypeListValues setupRandomSeed{ &sequencer.randomSeed, 0, 255, 1, 0, setRandomSeedValue, "Off" };
+const strItemTypeActionButton setupRerollSeed{ rerollRandomSeedAction, nullptr };
+cMenuItem melRandomSeed(menuProjectPage, "Random seed", randomSeedDesc, menuTypeItemListValues, &setupRandomSeed);
+cMenuItem melRerollSeed(menuProjectPage, "Reroll seed", rerollSeedDesc, menuTypeItemActionButton, &setupRerollSeed);
+
+// Scale snap: per track, played notes move to the Notes scale and Root note of Config > Project Settings (the pattern keeps what was written)
+cMenuGroup menuScaleSnap(menuProjectPage, "Scale snap", kScaleSnapTracks);
+static const char* const scaleSnapTexts[kSnapModeCount] = { "Off", "Nearest", "Down", "Up" };
+static const char* const scaleSnapDesc =
+  "Notes of this track are moved to the Notes scale and Root note of Config > Project Settings while they play. "
+  "Nearest takes the closest scale note (a tie goes down), Down the one at or below, Up the one at or above. "
+  "The pattern keeps the notes you wrote. The Chromatic scale changes nothing.";
+const strItemTypeListTextWithAction scaleSnapSetup[kScaleSnapTracks] = {
+    { &scaleSnapMode[0], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[1], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[2], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[3], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[4], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[5], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[6], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[7], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[8], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[9], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[10], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[11], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[12], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[13], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[14], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+    { &scaleSnapMode[15], kSnapModeCount, scaleSnapTexts, setScaleSnap },
+};
+cMenuItem melScaleSnap1(menuScaleSnap, "Track 1", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[0]);
+cMenuItem melScaleSnap2(menuScaleSnap, "Track 2", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[1]);
+cMenuItem melScaleSnap3(menuScaleSnap, "Track 3", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[2]);
+cMenuItem melScaleSnap4(menuScaleSnap, "Track 4", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[3]);
+cMenuItem melScaleSnap5(menuScaleSnap, "Track 5", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[4]);
+cMenuItem melScaleSnap6(menuScaleSnap, "Track 6", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[5]);
+cMenuItem melScaleSnap7(menuScaleSnap, "Track 7", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[6]);
+cMenuItem melScaleSnap8(menuScaleSnap, "Track 8", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[7]);
+cMenuItem melScaleSnap9(menuScaleSnap, "Track 9", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[8]);
+cMenuItem melScaleSnap10(menuScaleSnap, "Track 10", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[9]);
+cMenuItem melScaleSnap11(menuScaleSnap, "Track 11", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[10]);
+cMenuItem melScaleSnap12(menuScaleSnap, "Track 12", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[11]);
+cMenuItem melScaleSnap13(menuScaleSnap, "Track 13", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[12]);
+cMenuItem melScaleSnap14(menuScaleSnap, "Track 14", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[13]);
+cMenuItem melScaleSnap15(menuScaleSnap, "Track 15", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[14]);
+cMenuItem melScaleSnap16(menuScaleSnap, "Track 16", scaleSnapDesc, menuTypeItemListTextWithAction, &scaleSnapSetup[15]);
+
+// the value column of the Scale snap row: how many tracks snap
+static const char* projectPageRowValue(uint8_t row)
+{
+    static char text[12];
+    if (row != projectPageRows - 1) return nullptr;
+    int n = 0;
+    for (uint8_t t = 0; t < kScaleSnapTracks; t++) n += scaleSnapMode[t] != 0;
+    if (!n) return "Off";
+    snprintf(text, sizeof(text), "%d tracks", n);
+    return text;
+}
+
+// Config start, before the lists are made: Config hides the page (the last group of the base list), the page shows only itself. The base
+// list and the page group keep their selection while the page is open, so Config opens where it was left
+void cConfigEditor::projectPageSetup()
+{
+    static uint8_t configGroup = 0;   // the base list selection of Config, while the page has it
+    constexpr uint8_t page = baseMenuGroupCount - 1;
+    const uint8_t shown = page - usbMenuSync();   // the groups Config lists: the USB entry is not one of them while it is hidden
+    if (menuBase.getCount() == baseMenuGroupCount) menuBase.selectedItem = configGroup < shown ? configGroup : 0;   // the page was open
+    menuBase.setCount(shown);
+    menuProjectPage.childValue = projectPageRowValue;
+    if (!projectPage) return;
+    configGroup = menuBase.selectedItem;
+    projectPageSync();
+    menuBase.setCount(baseMenuGroupCount);
+    menuBase.selectedItem = page;
+    menuProjectPage.selectedItem = 0;
+}
+#endif
+
 //==================================================================================================================================================================
 // File transfer
 // const strItemTypeActionButton startfileTransferSetup 		{ startFileTransferMode, nullptr};
@@ -475,6 +626,7 @@ void featurePageFill()
         for (uint8_t p = 0; p < d->paramCount; p++, row++)
         {
             const feat_param& q = d->params[p];
+            if (q.restart & FEAT_PR_ELSEWHERE) { row--; continue; }   // another page edits it (Config > USB)
             if (q.type == FEAT_P_ENUM)
             {
                 featEnumSetup[p] = { features::valueRef(i, p), q.enumCount, q.enumText, features::changed };
@@ -530,10 +682,72 @@ void features::menuBuild()
     menuFeatures.onEnter = featurePageEnter;
 }
 
+// Config > USB (the original). The entry is listed while USB audio or USB drive is on in Features, a change shows at once (no restart).
+// Rows: Storage (drive on), the rows of USB audio that its page leaves out (FEAT_PR_ELSEWHERE: Audio mode, FX in 8+3), Restart now
+// (a mode change takes effect at the next start). The values are the feature's own bytes, so the .cfg files and EEPROM byte 7 stay as they were
+namespace
+{
+constexpr uint8_t kUsbParamRows = 2;
+#define USB_ROW cMenuItem(menuUsb, "", nullptr, menuTypeItemLabel, &featDummySetup)
+cMenuItem usbRows[kUsbParamRows + 1] = { USB_ROW, USB_ROW, USB_ROW };   // + Restart now
+#undef USB_ROW
+strItemTypeListTextWithAction usbEnumSetup[kUsbParamRows];
+bool usbHidden;
+uint8_t usbHome = 0xFF;   // the slot of the entry in the base list
+}
+
+static uint8_t usbMenuSync()
+{
+    const int a = features::find("usbaudio");
+    const int dr = features::find("usbdisk");
+    uint8_t n = 0;
+#ifdef FEATURE_USB_MSC
+    if (features::on(dr)) menuUsb.setChild(n++, &melUsbStorage, melUsbStorage.getName());
+#endif
+    if (features::on(a))
+    {
+        const feat_desc* d = features::desc(a);
+        uint8_t r = 0;
+        for (uint8_t p = 0; p < d->paramCount && r < kUsbParamRows; p++)
+        {
+            const feat_param& q = d->params[p];
+            if (!(q.restart & FEAT_PR_ELSEWHERE) || q.type != FEAT_P_ENUM) continue;
+            usbEnumSetup[r] = { features::valueRef(a, p), q.enumCount, q.enumText, features::changed };
+            usbRows[r].rebind(q.name, q.help ? q.help : d->help, menuTypeItemListTextWithAction, &usbEnumSetup[r]);
+            menuUsb.setChild(n++, &usbRows[r], usbRows[r].getName());
+            r++;
+        }
+        if (features::restartPending(a))
+        {
+            usbRows[kUsbParamRows].rebind("Restart now", "Saves the project and restarts the unit, so the change takes effect.",
+                                          menuTypeItemActionButton, &featRestartSetup);
+            menuUsb.setChild(n++, &usbRows[kUsbParamRows], usbRows[kUsbParamRows].getName());
+        }
+    }
+    menuUsb.setCount(n);
+    if (usbHome == 0xFF) usbHome = uint8_t(menuUsb.getSlot());
+    const bool hide = !features::on(a) && !features::on(dr);
+    if (hide != usbHidden)
+    {
+        constexpr uint8_t last = baseMenuGroupCount - 1 - snapGroupCount;   // the page group of Project Settings stays the last
+        if (hide) menuBase.moveChild(usbHome, last);
+        else menuBase.moveChild(last, usbHome);
+        usbHidden = hide;
+    }
+    return hide ? 1 : 0;
+}
+
 // the State row changed the row count, the page shows the new set at the refresh that follows the confirm
 void featurePageRefresh()
 {
     if (featCurrent >= 0) featurePageFill();
+    usbMenuRefresh();
+}
+
+// the USB entry and its rows follow USB audio and USB drive (a change in Features, Reset config)
+void usbMenuRefresh()
+{
+    menuBase.setCount(baseMenuGroupCount - snapGroupCount - usbMenuSync());
 }
 #endif
 
@@ -541,6 +755,11 @@ hMenuItem activeSubmenu;
 
 void cConfigEditor::createConfigMenu()
 {
+#ifdef FEATURE_PLUG_HOST
+    projectPageSetup();
+#else
+    menuBase.setCount(baseMenuGroupCount - usbMenuSync());
+#endif
     activeSubmenu = menuBase.getSelChild();
 
     createMenuBaseList();
@@ -568,6 +787,14 @@ void cConfigEditor::createMenuBaseList()
     basemenuList.start = menuBase.getSelectedItem();
     basemenuList.length = menuBase.getCount();
     basemenuList.data = menuBase.getNames();
+#ifdef FEATURE_PLUG_HOST
+    if (projectPage)   // only the page itself
+    {
+        basemenuList.start = 0;
+        basemenuList.length = 1;
+        basemenuList.data += menuBase.getSelectedItem();
+    }
+#endif
 
     display.setControlData(configBasemenuListControl, &basemenuList);
     display.refreshControl(configBasemenuListControl);
@@ -585,7 +812,7 @@ void cConfigEditor::reloadSubmenu()
     submenuList.values = submenu->getValues();
     submenuList.valueEditActive = 0;
 
-    if (submenu->parentMenu != &menuBase)
+    if (submenu->parentMenu != &menuBase || projectPage)
         changeLabelText(6, "Back");
     else
         changeLabelText(6, "");
@@ -608,8 +835,12 @@ void cConfigEditor::loadConfigValuesList(strItemTypeListValues* itemSetup)
     changeLabelText(7, "Apply");
     changeLabelText(6, "Cancel");
 
-    showConfigList4Val(
-      itemSetup->value, itemSetup->min, itemSetup->max, itemSetup->interval, itemSetup->dev);
+    showConfigList4Val(itemSetup->value,
+                       itemSetup->min,
+                       itemSetup->max,
+                       itemSetup->interval,
+                       itemSetup->dev,
+                       itemSetup->zeroText);
 }
 
 // wyjdz do menu wyzszego poziomu
@@ -657,6 +888,9 @@ void cConfigEditor::menuGoIn()
 // source = 0 - encoder, = 1 - klawisze pod ekranem
 void cConfigEditor::changeMenuListPosition(uint8_t list, int16_t value, uint8_t)
 {
+    if (projectPage && list == 0)
+        return; // the page is the only group
+
     // sprawdzanie czy taka lista wogole dostepna
     if (list == 1 && menuBase.getSelChild()->type != menuTypeGroup)
         return;
@@ -922,6 +1156,8 @@ void cConfigEditor::configListConfirm(uint8_t list_pos)
               (strItemTypeListValues*)selected_child->getItemSetup();
             if (list_pos <= temp_str->max - temp_str->min)
                 *(temp_str->value) = temp_str->min + list_pos;
+            if (temp_str->funct1 != nullptr)
+                temp_str->funct1();
             break;
         }
         case menuTypeItemListText:
@@ -939,9 +1175,10 @@ void cConfigEditor::configListConfirm(uint8_t list_pos)
                 *(temp_str->value) = list_pos;
             temp_str->funct1();
 #if defined(FEATURE_EXT_HOOKS) && !defined(PLATFORM_IMX) && !defined(TRACKER_MINI)
-            if (activeSubmenu == &menuFeaturePage)
+            if (activeSubmenu == &menuFeaturePage || activeSubmenu == &menuUsb)
             {
-                featurePageRefresh(); // the State row shows or hides the params, the Status row follows
+                featurePageRefresh(); // the State row shows or hides the params, the Status row follows, the USB entry and its rows
+                createMenuBaseList();
             }
 #endif
             break;

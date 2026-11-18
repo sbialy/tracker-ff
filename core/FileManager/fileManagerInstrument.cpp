@@ -786,6 +786,17 @@ bool cFileManager::loadInstrumentFormFileStruct(strInstrument* instrument,
 
     memcpy(instrument, &instrumentFile->instrumentDataAndHeader.instrument, sizeof(strInstrument));
 
+    // The slice table and everything sized after it have MAX_SLICE_NUMBER entries, and the
+    // code that walks them takes these two counters as they are.
+    if (instrument->sliceNumber > MAX_SLICE_NUMBER)
+    {
+        instrument->sliceNumber = MAX_SLICE_NUMBER;
+    }
+    if (instrument->selectedSlice >= instrument->sliceNumber)
+    {
+        instrument->selectedSlice = (instrument->sliceNumber > 0) ? instrument->sliceNumber - 1 : 0;
+    }
+
     return true;
 }
 
@@ -794,6 +805,8 @@ void cFileManager::writeInstrumentToFileStruct(strInstrument* instrument,
 {
 
     memcpy(&instrumentFile->instrumentDataAndHeader.instrument, instrument, sizeof(strInstrument));
+    // the RAM address of the sample means nothing in a file (the loader sets it): 0, so a saved instrument is the same on every unit
+    instrumentFile->instrumentDataAndHeader.instrument.sample.address = nullptr;
 
     instrumentFile->instrumentDataAndHeader.instrHeader.id_file[0] = 'T';
     instrumentFile->instrumentDataAndHeader.instrHeader.id_file[1] = 'I';

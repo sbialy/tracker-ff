@@ -6,6 +6,7 @@
 
 #include "mtKeyboardManager.h"
 #include "mtSequencer.h"
+#include "fx34.h"
 
 uint8_t isMultiSelection();
 uint8_t isMultiSelectionOnOneLine();
@@ -74,10 +75,15 @@ class cPatternEditor : public ModuleBase
     void changeActualPatternLength(int16_t value);
     void changeActualPatternLengthByDefinedValues(int16_t value);
     void setActualPatternLength(int16_t value);
+    void changeActualTrackLength(int16_t value, bool definedValues);
     void changeActualPatternEditStep(int16_t value);
     void changeActualPatternEditStepByDefinedValues(int16_t value);
     void setActualPatternEditStep(int16_t value);
 
+    void changePlaceTwo(int16_t value, bool byDefinedValues = false);
+    void changeTrackGroove(int16_t value);
+    void showGrooveLabel();
+    char grooveText[8];
     void changeFillData(int16_t value, bool rollListOver = false);
     void changeRandomiseData(int16_t value);
     void setFillData(uint16_t value);
@@ -266,9 +272,11 @@ class cPatternEditor : public ModuleBase
     // parametry
     char cTempo[7];
     char cPattern[5];
-    char cLength[5];
+    char cLength[8];
     char cStep[5];
     char cTitlePattern[PATTERN_NAME_LENGTH + 1];
+    char lastStepVmText[16] = { 0 };   // the "V100 m12" the title bar shows now, to redraw it only when it changes
+    void showStepVmOnBar();
 
     bool refreshAfterReleaseFx;
 
@@ -309,8 +317,26 @@ class cPatternEditor : public ModuleBase
         int16_t to;
         int16_t param;
         int16_t density[Sequencer::fillStepEnd__];
+        int16_t role;     // Fill Type Role: patternGen::Role, 0 = Kick
+        int16_t quantize; // strength percent of the Quantize fill type (Micro-move column only), 100 after init
+        // "Constant" and "Quantize" take one value (From), the other types two. Type 3 of the Note column is Role (idea-gen),
+        // it takes no From/To value either (isFillRole is checked first where a role differs)
+        bool oneValue() const { return type == 0 || type == 3; }
     };
     static strFill fillData[6];
+    // Fill Type Role (Note column only): a generated drum, bass or lead idea instead of a value fill, see mtPatternGen.h
+    static constexpr int16_t fillTypeRole = 3;
+    bool isFillRole() const
+    {
+        return editParam == EditNote && fillData[EditNote].type == fillTypeRole;
+    }
+    // the density of the Fill: a role uses the one of the Random mode whatever the Where? list says (the list is hidden then)
+    uint8_t fillDensityStep(uint8_t fillIdx) const
+    {
+        return isFillRole() ? uint8_t(Sequencer::fillStepRandom) : uint8_t(fillData[fillIdx].fillStep);
+    }
+    // the Quantize fill type: the Micro-move column of the mic/vol view, type 3 of its list
+    bool isQuantizeFill() const { return isMicVolView && editParam == EditFx1 && fillData[getFillDataIdx()].type == 3; }
     uint8_t getFillDataIdx() const
     {
         return (isMicVolView && editParam >= EditFx1) ? (editParam + 2) : editParam;
@@ -319,6 +345,19 @@ class cPatternEditor : public ModuleBase
 
     bool isMicVolView = false;
     bool toggledMicVolOnPress = false;
+
+    // The "4 FX" project switch (fx34.h): the two FX columns show the slots 1/2 (bank 0) or 3/4 (bank 1). A second press of the
+    // FX1 or FX2 button flips the bank, the same gesture the Note button has for the Mic/Vol view. The Mic/Vol view has no bank.
+    uint8_t fxBank = 0;
+    bool fxBankTogglePending = false;   // the FX button went down on its own column: a clean tap flips the bank when it comes up
+    bool fxBankActive() const { return fxBank != 0 && fx34::enabled() && !isMicVolView; }
+    // The slot rank (fx34.h: 0 FX2, 1 FX1, 2 FX4, 3 FX3) a column shows. Ranks are what the sequencer indexes by.
+    uint8_t fxRankOf(uint8_t param) const { return uint8_t((param == EditFx1 ? 1 : 0) + (fxBankActive() ? 2 : 0)); }
+    uint8_t fxRank() const { return fxRankOf(editParam); }
+    // the 3 track layout with V and m columns (Config > Pattern V/m columns) is on screen
+    bool vmColumnsOn() const;
+    // the cursor step's volume and micro-move as the label of the title bar (empty when the step has neither)
+    void makeStepVmText(char* out, size_t outSize) const;
 
     // int16_t fillStep = 1;
 
@@ -360,6 +399,11 @@ class cPatternEditor : public ModuleBase
     void showActionButtonPage1Labels();
     void showActionButtonPage2Labels();
     void showActionButtonPage3Labels();
+    // Follow chord (tracker-ff, mtFollowChord.h): F3 mode and F4 chord track of the cursor track on the third action page
+    void showFollowChordLabels();
+    int8_t followShownTrack = -1;
+    char followModeText[10];
+    char followSourceText[10];
 
     //--------------------------------------------------------
     // title bar

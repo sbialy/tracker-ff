@@ -6,6 +6,7 @@
 #include "fileManager.h"
 #include "mtMidi.h"
 #include "mtChord.h"
+#include "mtRoll.h"
 #include "mtSequencer.h"
 #include "mtStructs.h"
 #include "patternEditor/patternEditor.h"
@@ -20,10 +21,11 @@ namespace
 // The popup keeps the pointers of its lines (InterfacePopups::show), so the text lives here
 char s_popName[24];
 char s_popNotes[40];
+} // namespace
 
 // The FX slot a chord goes to: the one that already holds MIDI Chord, else `prefer` when it is empty, else the first empty one.
 // -1: both slots hold other FX (the user decision: refuse, never overwrite).
-int8_t chordSlot(Sequencer::strPattern::strTrack::strStep& st, int8_t prefer)
+int8_t Sequencer::chordSlot(strPattern::strTrack::strStep& st, int8_t prefer)
 {
     const uint8_t chordType = Sequencer::strFxConsts::FX_TYPE_MIDI_CHORD;
     for (int8_t i = 0; i < 2; i++)
@@ -46,7 +48,6 @@ int8_t chordSlot(Sequencer::strPattern::strTrack::strStep& st, int8_t prefer)
     }
     return -1;
 }
-} // namespace
 
 // Only MIDI and synth instruments play a MIDI Chord (sendNoteOn), and only a single cursor cell in the red edit mode captures
 bool Sequencer::chordCaptureContext(int instrument)
@@ -282,6 +283,7 @@ void Sequencer::recJoinStart(uint8_t track, uint8_t step, uint8_t note)
     recJoin.step = step;
     recJoin.t0 = seqClockUs;
     recJoin.tLast = seqClockUs;
+    recJoin.strumOwn = false;
 }
 
 #ifdef RECJOIN_DEBUG
@@ -336,6 +338,12 @@ bool Sequencer::recJoinTry(uint8_t track, uint8_t note, uint8_t velocity)
     st.note = int8_t(m.bass);
     st.fx[slot].type = fx.FX_TYPE_MIDI_CHORD;
     st.fx[slot].value = m.idx;
+    // the roll of the group so far (mean gap and direction) as a Strum FX beside the chord, never over another FX (mtRoll.h)
+    j.strumOwn = handroll::strumWrite(st.fx,
+                                      slot,
+                                      handroll::strumValue(j.notes[0], note, j.count, j.tLast - j.t0, kStrumUnitUs),
+                                      j.strumOwn,
+                                      strFxConsts::FX_TYPE_STRUM);
     if (isPlay())
     {   // the joined note sounds while it is held (the stock path dropped it silently)
         sendMidiNoteOn(note,

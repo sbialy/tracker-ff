@@ -15,7 +15,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SO="$(cd "$HERE/.." && pwd)"
 mkdir -p "${1:?output dir}"
 OUT="$(cd "$1" && pwd)"
-PY="${PY:-python3}"
+PY="${PY:-$(sh "$SO/tools/pyenv.sh" python)}" || exit 2
 : "${TOOLCHAIN:?set TOOLCHAIN to the agt 10.3 prefix}"
 mkdir -p "$OUT"
 cd "$SO"

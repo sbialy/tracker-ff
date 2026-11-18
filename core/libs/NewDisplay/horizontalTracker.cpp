@@ -157,7 +157,7 @@ void cHorizontalTracker::setStyle(uint32_t style)
     font = &fonts[textFont];
 }
 
-void cHorizontalTracker::setText(const char* text)
+void cHorizontalTracker::setText(const char* /*text*/)
 {
 }
 

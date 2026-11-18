@@ -53,7 +53,7 @@ bool ExternalSDRAM::test()
     return testRamBlock(0, kExternalRamAddrBlock0);
 }
 
-bool ExternalSDRAM::testRamBlock(int blockIdx, int* const startAddress)
+bool ExternalSDRAM::testRamBlock(int /*blockIdx*/, int* const /*startAddress*/)
 {
     int testResult = kSuccessful;
 #ifdef RAM_TEST

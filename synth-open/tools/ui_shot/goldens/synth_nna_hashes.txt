@@ -1,0 +1,15 @@
+# synth_nna_sim.sh: FNV-1a 64 of every block the shim renders for parts 1 2 3 (poke renderhash), recorded on 814dc1b (P0, before the note ids)
+# name class(1 = holds two live notes of one pitch, the note id changes it on purpose) h0 h1 h2 loud(blocks of part 1 that were not silent)
+melody 0 8a87dce11b431065 cbf29ce484222325 cbf29ce484222325 loud 606
+overlap 0 97c39db03a1623a5 cbf29ce484222325 cbf29ce484222325 loud 890
+chord_strum 0 1cd68f30cd40edf1 cbf29ce484222325 cbf29ce484222325 loud 686
+mono_legato 0 ab506da64ac4a7a9 cbf29ce484222325 cbf29ce484222325 loud 606
+arp 0 53e3f8e0752feaf1 cbf29ce484222325 cbf29ce484222325 loud 606
+roll 0 b2a5f5bd9367c6f9 cbf29ce484222325 cbf29ce484222325 loud 526
+gate 0 9daf3cdc81a8ea7d cbf29ce484222325 cbf29ce484222325 loud 447
+three_parts 0 634a7faa24c99de9 0f7d0449a3bd6821 7ba6996b33c3a149 loud 580
+mute_mid 0 e6c7f43cebfe0071 cbf29ce484222325 cbf29ce484222325 loud 526
+cutoff 0 54fb1e6bf58ddc25 cbf29ce484222325 cbf29ce484222325 loud 526
+same_pitch 1 5a0230f98f161309 cbf29ce484222325 cbf29ce484222325 loud 367
+same_pitch_mono 1 bce88a37bf96e059 cbf29ce484222325 cbf29ce484222325 loud 367
+pad_over_seq 1 5431eb554d428c5d cbf29ce484222325 cbf29ce484222325 loud 367

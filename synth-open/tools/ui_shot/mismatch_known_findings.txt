@@ -2,7 +2,12 @@
 # One finding per line: <id> | <reason>. The id is the F<n> a RED check starts with ("F2 (edge): ..." is F2). A RED check with no id, or with
 # an id that is not listed here, fails the release gate. Lines starting with # and empty lines are ignored.
 # Remove a line when its finding is fixed: the gate says so when a listed finding turns GREEN. Details: the project notes
+# F2 is not listed: it is GREEN with a 1.3.0 old side (the 1.3 decoder reads field 100 and has no 765 B limit) and only exists when OLD_REF is a 1.2.x release
+# (the 1.2.0 decoder keeps unknown fields in 768 B, a patch with over 765 B of them fails there, real patches have 8 to 52 B). Run the gate with
+# OLD_REF=tracker-ff-v1.2.0 and it is a NEW RED there on purpose: a user who jumps 1.2 to 1.4 has to be told. List it again only for such a gate run.
 # F1 is not listed on purpose: it is a permanently accepted finding (user decision 2026-11-12: a 1.3 Scale patch with a macro amount plays as Add on
 # 1.2.x, documented in the CHANGELOG). The simulator reports it as a KNOWN line, never as a RED one, and the gate prints it as accepted.
-F2 | edge case, nothing to fix in 1.3.0: the 1.2.0 decoder keeps unknown fields in 768 B (kRawMax), a patch with over 765 B of unknown fields fails there. Real patches have 8 to 52 B. A 1.2.1 could raise kRawMax.
-F3 | Glue (5,104 B) plus Phaser (4,384 B) do not fit the shared 8 KB insert slot together, the second one shows NoRoom and the audio passes. Glue is new in 1.3.0 so no 1.2.x project names it. Fix is a smaller insert or a line in the manual.
+# F3 is not listed: fixed in 1.4.0 (f3-slot). The shared insert slot grew from 8,192 to 9,728 B, so Glue (5,104 B) + Phaser (4,384 B) = 9,488 B fits and every pair of two different inserts of the release set does. It was listed for 1.3.0 (user decision 2026-11-12). A RED F3 is a NEW RED again: a pair of two different inserts that does not fit the slot (plug_index.h kInsertRoom).
+# ABI 1.4 is not listed on purpose (it was 4 RED checks against tracker-ff-v1.3.1 from the plugin files extension on: host level 1 -> 2, plug_ext_synth grown, a min_host=2 plugin accepted,
+# the header variants answered differently). It is the intended 1.4 contract, so fw_engine_mismatch_sim.sh asserts it (additive only, min_host by each firmware's own level) and
+# abi_contract.txt pins it. Nothing about it is allowlisted here: a RED ABI check is a NEW RED.

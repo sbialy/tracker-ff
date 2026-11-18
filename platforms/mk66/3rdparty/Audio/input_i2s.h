@@ -42,7 +42,7 @@ class AudioInputI2S
     static void stop(void);
 
   protected:
-    AudioInputI2S(int dummy) {} // to be used only inside AudioInputI2Sslave !!
+    AudioInputI2S(int /*dummy*/) {} // to be used only inside AudioInputI2Sslave !!
     static DMAChannel dma;
     static void isr(void);
 

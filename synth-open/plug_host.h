@@ -2,7 +2,7 @@
 // insert slots, parameter queue, project sidecar, crash marker and key skip. ABI in synth-open/plug/plug_abi.h, design in
 // synth-open/plug/README.md.
 //
-// Slots (decisions 2 and 9): both inserts run from the one 8 KB SRAM_L slot, insert 1 from its bottom and insert 2 from its top
+// Slots (decisions 2 and 9): both inserts run from the one 9.5 KB SRAM_L slot, insert 1 from its bottom and insert 2 from its top
 // (image and bss in one piece each, plug_index.h insertPlace). A pair that does not fit together is refused (kNoRoom), no insert
 // ever writes the flash. Both sit after the tracks and sends mixers (after Dirt in an FF_DIRT=1 build) and before the stock
 // limiters, insert 1 first.
@@ -12,9 +12,11 @@
 #error "PLUG_HOST=1 needs SYNTH_OPEN=1: the sidecar hooks live in the open synth paths"
 #endif
 
+#include "../core/libs/Audio/duck_math.h"
 #include "plug/plug_abi.h"
 #include "plug_index.h"
 #include "plug_sidecar.h"
+#include "plug_transport.h"
 #include <stdint.h>
 
 class FileSystem;
@@ -33,9 +35,11 @@ struct Loaded
     plug_file_header hdr;
     uintptr_t base;          // run address of the image
     const plug_desc* desc;
+    const plug_ext_tempo* tempo;   // the answer to PLUG_EXT_TEMPO (master inserts), null: none or not valid
+    const plug_ext_tail* tail;     // the answer to PLUG_EXT_TAIL, same
 };
 
-constexpr uint32_t kSlotBytes = 8192;   // the SRAM_L code slot both inserts share
+constexpr uint32_t kSlotBytes = 9728;   // the SRAM_L code slot both inserts share (plug_index.h kInsertRoom has the reasoning)
 uint8_t* sramSlot();                     // kSlotBytes, SRAM_L (code bus, zero wait), .dmabuffers (NOLOAD, no flash)
 
 const plug_host* hostTable();
@@ -57,6 +61,10 @@ struct Place
     uint32_t wantCrc = 0;
 };
 Err load(FileSystem* fs, const char* path, const Place& pl, uint32_t wantKind, Loaded& out);
+// The PLUG_EXT_TEMPO struct of a master insert's descriptor (ABI 1.3), null when the plugin has none or its pointers are outside the
+// image range (base, size: as checkDesc, size 0 = no range check). Runs the plugin's query function, main thread, before init.
+const plug_ext_tempo* tempoExt(const plug_desc* d, uintptr_t base, uint32_t size);
+const plug_ext_tail* tailExt(const plug_desc* d, uintptr_t base, uint32_t size);   // PLUG_EXT_TAIL, quiet() only, same checks
 // Checks a descriptor against an image range (also used for the in-image plugins, range 0 = no range check).
 Err checkDesc(const plug_desc* d, uintptr_t base, uint32_t size, uint32_t wantKind);
 
@@ -109,6 +117,14 @@ int synthLogoBitmap(const polysynth::open::EngineDef* d, bool editor);
 // are put into RAM_G, the ones already there first, so no slot that is wanted or on screen is reused
 void synthLogoPrefetch(const polysynth::open::EngineDef* const* defs, int n);
 void useFs(FileSystem* fs);   // the card for writeText before boot() (synthBoot runs first)
+// ABI 1.2 (plug_abi.h). host->query(PLUG_EXT_FILES): the /Waves list and reader (plug_files.h), working only inside a service call.
+const void* filesQuery();
+// Main loop (tick): plug_ext_synth.service of the engine of every part that plays an attached library engine with one, about
+// every 50 ms, with the part's stored patch values
+void synthService();
+// The patch editor's cycle view: plug_ext_synth.view of the attached engine of d (n <= PLUG_VIEW_MAX samples of -127..127). False
+// when there is none (a built-in engine, a detached one, an ABI 1.1 plugin)
+bool synthView(const polysynth::open::EngineDef* d, const float* values, int count, int8_t* out, int n);
 // scanIndex of one directory and kind on the card (the names are copied into index, the list buffers are shared)
 int scanDir(const char* dir, IndexEntry* index, int cap, ScanStats& st, uint32_t kind);
 bool writeText(const char* path, const char* text, int n);   // <path>.tmp, read back, replaceFileOps: the old file is kept until then
@@ -159,10 +175,17 @@ bool insertsOn();
 uint8_t mixerStage();
 void setMixerStage(uint8_t sat);   // the UI marks the project changed
 
+// Send ducking (FEATURE_SEND_DUCK, core/libs/Audio/effect_duck.h): the project's settings live in the sidecar ("duck" line), no
+// line = off. duckSet changes the engine at once and marks the project changed, a project load applies the file's.
+const DuckParams& duck();
+void duckSet(const DuckParams& p);
+
 bool safeMode();
 const char* safeReason();            // "" or why: the crash marker named a plugin, or Shift was held at power on
 
-// ---- project sidecar (the file manager calls these, dir is "Workspace" or a project folder)
+// ---- project sidecars (the file manager calls these, dir is "Workspace" or a project folder). Two files travel with a project:
+// plugins.txt (the master inserts, plug_sidecar.h) and project.mtff (the other FF settings of the project: the Strum ramp depth,
+// plug_mtff.h). Every hook below does both. Paths longer than the file manager's 255 bytes are refused (plug_sidecar_io.h kPathMax).
 constexpr const char* kSidecarName = "plugins.txt";
 // after a project load from the Workspace: read the sidecar, queue the loads (bypassed ones too), turn a format 1 sidecar's
 // Hard Clip into kSatInserts (insertsOnAfterLoad), a built-in Dirt entry of an FF build into Inserts with Dirt (dirtMigrate,
@@ -174,6 +197,30 @@ bool projectSave(const char* dir);
 // the next projectLoaded start empty and keeps the project's file (no save writes over it, plug_sidecar_io.h kStale).
 bool sidecarOpen(const char* projectDir, const char* workspaceDir);
 bool sidecarToProject(const char* workspaceDir, const char* projectDir);
+// The project.mt just read or written: the CRC32 in its last four bytes and its size. project.mtff stores them (its stamp) and compares
+// them at load: a different one means the project.mt was written by something else (plug_mtff.h). Called by the file manager.
+void projectStamp(uint32_t crc, uint32_t size);
+// A new project's first project.mt is written: write its project.mtff (the new project's defaults) with that stamp
+void newProjectSaved(const char* dir);
+// The header of the project.mtff the last project load read (plug_mtff.h, Versions): the Tracker FF version that wrote it as
+// (major << 16) | (minor << 8) | patch, 0 = no file or a writer that did not say (a dev build), and its format version (1 for a bare
+// "tffproj 1", 0 = no file read). The one API for code that behaves differently for files of older or newer builds
+uint32_t mtffWriterVersion();
+int mtffFormatVersion();
+// The on screen notice of a project open (File screen, USB console: sidecarOpen) that found a project.mtff of a newer writer (same format:
+// settings applied, unknown lines kept) or of a newer format (refused, never rewritten). True once per such open and never after an
+// autosave or a Workspace reload: fills two lines for the popup (core/interface/core/interfaceMisc.cpp), the host.txt and log lines stay
+bool takeOpenNotice(char* line1, int cap1, char* line2, int cap2);
+// The Project Settings page: the Strum ramp depth 0..100 as the project holds it, and a new one (the project is marked changed by the
+// caller)
+int strumRampDepth();
+void setStrumRampDepth(int pct);
+// ... and the macro depth mode a patch added to the project takes: 0 each patch as it was, 1 Add, 2 Scale (project.mtff macro.mode, a build
+// without the synth always answers 0)
+int macroMode();
+void setMacroMode(int mode);
+// A project is closing (open or new, before its files load): the settings that act while files load go back to the old behaviour
+void projectClosing();
 
 // ---- boot and main loop (Tracker.cpp)
 void boot(Platform* platform);   // end of TrackerImpl::init: the bench (FEATURE_PLUG_BENCH), crash marker, index
@@ -186,6 +233,7 @@ void bench(FileSystem* fs);  // plug_bench.cpp
 bool plugUiShiftHeld();
 void plugUiSlotGone(int slot);
 void plugUiSynthLoading(const char* name);
+void synthViewTick();    // SynthPatchEditor.cpp: keeps the cycle view of the open patch editor page current (main loop)
 void synthModelTick();   // SynthEditor.cpp: installs and picks the engine the model list rests on (main loop)   // "Loading <name>" popup, drawn now (the install that follows blocks the main loop)
 
 #include "AudioStream.h"
@@ -198,7 +246,9 @@ class AudioEffectPlug : public AudioStream
     AudioEffectPlug() : AudioStream(2, inputQueueArray) {}
     virtual void update(void);
     // main thread, audio interrupt off inside. desc null detaches.
-    void attach(int slot, const plug_desc* d, void* inst, uint32_t budgetCycles);
+    // tempo: the plugin's PLUG_EXT_TEMPO answer (validated by plug::tempoExt), null for a plugin that does not follow the sequencer
+    void attach(int slot, const plug_desc* d, void* inst, uint32_t budgetCycles, const plug_ext_tempo* tempo = nullptr,
+                const plug_ext_tail* tail = nullptr);
     // main thread: the latest value per parameter reaches set_param at the next block start
     void queue(int slot, uint32_t index, float value);
     uint32_t lastCycles(int slot) const { return run_[slot].last; }
@@ -206,10 +256,14 @@ class AudioEffectPlug : public AudioStream
     bool tripped(int slot) const { return run_[slot].tripped; }
 
   private:
+    struct Run;
+    static void prepare(Run& r, plug::Transport& tr, bool& haveTr);
     struct Run
     {
         const plug_desc* desc;
         void* inst;
+        const plug_ext_tempo* tempo;
+        const plug_ext_tail* tail;
         uint32_t budget, last, max;
         uint8_t over;
         volatile bool tripped;

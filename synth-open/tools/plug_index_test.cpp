@@ -139,6 +139,18 @@ bool has(const IndexEntry* ix, int n, const char* file)
 }
 }   // namespace
 
+// Image + bss of every master insert of the 1.4.0 release set (the pinned modules of engines/external.lock.json: effects-os v1.3.0 Dirt Tape
+// Lo-Fi BBD Phaser, effects v1.3.0 Console Tube Glue) and of the planned ones (poly-effects branch ot-inserts d0d5670: Chorus, Bitcrush, Tremolo,
+// Echo built -Os as the branch has it and -O2 as an A/B). The plug_file_header words image_size + bss_size, not the .plg file size
+struct Foot
+{
+    const char* name;
+    uint32_t foot;
+};
+const Foot kShipped[] = {{"Dirt", 3000},   {"Tape", 1472},   {"Lofi", 2408},    {"BBD", 1864},
+                         {"Phaser", 4384}, {"Glue", 5104},   {"Console", 1280}, {"Tube", 1264}};
+const Foot kPlanned[] = {{"Chorus", 1816}, {"Bitcrush", 1056}, {"Tremolo", 2024}, {"Echo-Os", 3456}, {"Echo-O2", 4024}};
+
 int main(int argc, char** argv)
 {
     const std::string dir = argc > 1 ? argv[1] : "build/plugin-host";
@@ -175,28 +187,35 @@ int main(int argc, char** argv)
         snprintf(what, sizeof(what), "%s: crc32 of everything after the 64 byte header", kPlugs[i]);
         check(crc32(0, reinterpret_cast<const uint8_t*>(b.data()) + sizeof(h), uint32_t(b.size() - sizeof(h))) == h.crc32,
               what);
-        snprintf(what, sizeof(what), "%s: fits the 8 KB SRAM_L slot alone (either insert)", kPlugs[i]);
-        check(checkLayout(h, 8192, 0) == kOk, what);
+        snprintf(what, sizeof(what), "%s: fits the %u B SRAM_L slot alone (either insert)", kPlugs[i], unsigned(kInsertRoom));
+        check(checkLayout(h, kInsertRoom, 0) == kOk, what);
     }
 
-    // ---- the pair rule (insert2-sram): both inserts share the 8 KB SRAM_L slot, insert 1 from the bottom, insert 2 from the top
+    // ---- the pair rule (insert2-sram): both inserts share the SRAM_L slot (kInsertRoom, 9,728 B since f3-slot), insert 1 from the
+    // bottom, insert 2 from the top. K is the slot, the 4,000 B pairs and the offsets below follow it
     {
+        constexpr uint32_t K = kInsertRoom;
+        static_assert(K % 16 == 0, "the slot is a multiple of 16: insertTopAt aligns down to 16 and the slot is 16 byte aligned");
         uint32_t at, len;
-        check(insertPlace(0, 3000, 0, at, len) && at == 0 && len == 8192, "insert 1 alone: offset 0, the whole slot");
-        check(insertPlace(1, 3000, 0, at, len) && at == ((8192 - 3000) & ~15u) && len == 8192 - at && at % 16 == 0,
+        check(insertPlace(0, 3000, 0, at, len) && at == 0 && len == K, "insert 1 alone: offset 0, the whole slot");
+        check(insertPlace(1, 3000, 0, at, len) && at == ((K - 3000) & ~15u) && len == K - at && at % 16 == 0,
               "insert 2 alone: at the top, 16 byte aligned down");
-        check(insertPlace(1, 4000, 4000, at, len) && at == 4192 && len == 4000, "4,000 + 4,000 B: insert 2 at 4,192, above insert 1");
-        check(insertPlace(0, 4192, 4000, at, len) && len == 4192 && !insertPlace(0, 4193, 4000, at, len),
-              "insert 1 beside a 4,000 B insert 2: up to 4,192 B, one more byte is refused");
-        check(!insertPlace(1, 4001, 4192, at, len) && insertPlace(1, 4000, 4192, at, len),
-              "insert 2 beside a 4,192 B insert 1: 4,000 B fits, 4,001 B (start 4,176, below 4,192) does not");
-        check(insertPairFits(8192, 0) == false && insertPairFits(4096, 4096) && !insertPairFits(4097, 4096) && !insertPairFits(4100, 4092),
-              "pairs: 4,096 + 4,096 fits exactly, a byte more on either side (or the alignment) does not");
-        check(!insertPlace(0, 8193, 0, at, len) && !insertPlace(1, 8193, 0, at, len) && !insertPlace(1, 0, 0, at, len),
+        const uint32_t half = K / 2;   // 4,864
+        check(insertPlace(1, half, half, at, len) && at == half && len == half, "two halves of the slot: insert 2 starts at the middle, above insert 1");
+        check(insertPlace(0, half, half, at, len) && len == half && !insertPlace(0, half + 1, half, at, len),
+              "insert 1 beside a half slot insert 2: up to half the slot, one more byte is refused");
+        check(!insertPlace(1, half + 1, half, at, len) && insertPlace(1, half, half, at, len),
+              "insert 2 beside a half slot insert 1: half fits, one byte more (start rounded down below insert 1's end) does not");
+        check(insertPairFits(K, 0) == false && insertPairFits(half, half) && !insertPairFits(half + 1, half) && !insertPairFits(half + 4, half - 4),
+              "pairs: two halves fit exactly, a byte more on either side (or the alignment) does not");
+        check(!insertPlace(0, K + 1, 0, at, len) && !insertPlace(1, K + 1, 0, at, len) && !insertPlace(1, 0, 0, at, len),
               "more than the slot, or nothing, has no place");
+        check(insertPairFits(5104, 4384) && insertPairFits(4384, 5104) && insertPairFits(5104, K - 5104) && !insertPairFits(5104, K - 5104 + 1),
+              "Glue 5,104 B + Phaser 4,384 B fit in both orders, 5,104 B leaves K - 5,104 for the other insert");
+        check(K - 9488 >= 240, "the slot holds the largest pair of two different shipped inserts (9,488 B) with at least 240 B to spare");
         bool sym = true;   // the loading order does not change the verdict: insert 1 first (project load) or insert 2 first
-        for (uint32_t a = 0; a <= 8192 && sym; a += 97)
-            for (uint32_t b = 1; b <= 8192 && sym; b += 89)
+        for (uint32_t a = 0; a <= K && sym; a += 97)
+            for (uint32_t b = 1; b <= K && sym; b += 89)
             {
                 uint32_t x, y;
                 const bool oneFirst = a && insertPlace(1, b, a, x, y);
@@ -210,30 +229,30 @@ int main(int argc, char** argv)
     {
         InsertPair p = {};
         uint32_t at, len;
-        const uint32_t phaser = 4384, dirt = 3000;
-        // project load with Phaser in both inserts: insert 1 loads, insert 2 is refused before any card read and stays refused
-        check(p.place(0, phaser, at, len) && at == 0, "project load: insert 1 Phaser at the bottom");
-        p.loaded(0, at, phaser);
-        check(!p.place(1, phaser, at, len) && p.noRoom[1] && p.want[1] == phaser, "insert 2 Phaser beside Phaser: refused (Full:Phaser), size kept");
-        check(!p.retry(1) && p.foot[1] == 0, "no retry while insert 1 still holds 4,384 B, insert 2 holds nothing");
+        const uint32_t glue = 5104, dirt = 3000;   // Glue twice (10,208 B) is the one pair of the shipped set that does not fit the slot
+        // project load with Glue in both inserts: insert 1 loads, insert 2 is refused before any card read and stays refused
+        check(p.place(0, glue, at, len) && at == 0, "project load: insert 1 Glue at the bottom");
+        p.loaded(0, at, glue);
+        check(!p.place(1, glue, at, len) && p.noRoom[1] && p.want[1] == glue, "insert 2 Glue beside Glue: refused (Full:Glue), size kept");
+        check(!p.retry(1) && p.foot[1] == 0, "no retry while insert 1 still holds 5,104 B, insert 2 holds nothing");
         // the user picks Dirt for insert 1 (assign unloads it at once): the refused insert 2 fits beside nothing now
         p.freed(0);
         p.clearRefusal(0);
         check(p.retry(1), "insert 1 unloaded: insert 2 is retried (tick sets it pending)");
         check(p.place(0, dirt, at, len) && at == 0, "tick loads insert 1 first: Dirt at the bottom");
         p.loaded(0, at, dirt);
-        check(p.place(1, phaser, at, len) && at >= dirt && !p.noRoom[1], "then insert 2 Phaser at the top beside Dirt");
-        p.loaded(1, at, phaser);
+        check(p.place(1, glue, at, len) && at >= dirt && !p.noRoom[1], "then insert 2 Glue at the top beside Dirt");
+        p.loaded(1, at, glue);
         check(p.foot[0] + p.foot[1] <= kInsertRoom, "both run, no byte shared");
         // a refusal does not move or free the other insert's bytes
         const InsertPair q = p;
         p.freed(0);
         p.clearRefusal(0);
-        check(!p.place(0, 8192 - p.foot[1] + 1, at, len) && p.foot[1] == q.foot[1] && p.foot[0] == 0, "a refused insert 1 leaves insert 2 where it is");
+        check(!p.place(0, kInsertRoom - p.foot[1] + 1, at, len) && p.foot[1] == q.foot[1] && p.foot[0] == 0, "a refused insert 1 leaves insert 2 where it is");
         // random picks, unloads and refusals: the two running ranges never overlap and stay in the slot, a retry always fits
         uint32_t rng = 12345;
         auto rnd = [&rng](uint32_t n) { rng = rng * 1103515245u + 12345u; return (rng >> 8) % n; };
-        const uint32_t sizes[] = {1264, 1280, 1472, 1864, 2408, 3000, 4384, 6000, 7900, 8192};
+        const uint32_t sizes[] = {1264, 1280, 1472, 1864, 2408, 3000, 4384, 5104, 6000, 7900, 8192, kInsertRoom};
         InsertPair z = {};
         uint32_t lo[2] = {0, 0};   // where each running insert starts
         bool sound = true;
@@ -269,7 +288,7 @@ int main(int argc, char** argv)
             sound = sound && z.foot[0] <= start1 && (!z.foot[1] || lo[1] + z.foot[1] == kInsertRoom) && (!z.foot[0] || lo[0] == 0);
         }
         printf("      20,000 random picks: %d refused, %d loaded later by a retry\n", refusedN, retriedN);
-        check(sound && refusedN > 0 && retriedN > 0, "random picks: insert 1 [0, a) and insert 2 [b, 8192) never overlap, every retry fits");
+        check(sound && refusedN > 0 && retriedN > 0, "random picks: insert 1 [0, a) and insert 2 [b, slot end) never overlap, every retry fits");
     }
 
     // ---- the pair matrix of every master insert in the folder (the shipped set)
@@ -296,12 +315,12 @@ int main(int argc, char** argv)
             closedir(d);
         }
         std::sort(m.begin(), m.end(), [](const M& a, const M& b) { return a.file < b.file; });
-        printf("      pair matrix (insert 1 down, insert 2 across, image + bss in B, 8,192 B shared):\n      %-8s %5s", "", "");
+        printf("      pair matrix (insert 1 down, insert 2 across, image + bss in B, %u B shared):\n      %-8s %5s", unsigned(kInsertRoom), "", "");
         for (const M& b : m) printf(" %7s", b.name.c_str());
         printf("\n");
-        int fit = 0, all = 0, alone = 0, distinctNo = 0, glueNo = 0, gluePairs = 0;
+        int fit = 0, all = 0, alone = 0, distinctNo = 0;
         std::string refused;
-        uint32_t most = 0;
+        uint32_t most = 0, mostDistinct = 0;
         for (const M& a : m)
         {
             printf("      %-8s %5u", a.name.c_str(), a.foot);
@@ -311,25 +330,78 @@ int main(int argc, char** argv)
                 const bool ok = insertPairFits(a.foot, b.foot);
                 fit += ok;
                 all++;
-                // Glue and Phaser are a refused pair (user decision 2026-11-10, "Full:<name>" like Phaser + Phaser): 5,096 + 4,384 B
-                const bool knownRefused = (a.file == "glue.plg" && b.file == "phaser.plg") || (a.file == "phaser.plg" && b.file == "glue.plg");
-                if (!ok && &a != &b && !knownRefused) distinctNo++;
-                if (knownRefused) glueNo += ok ? 0 : 1;
-                if (knownRefused) gluePairs++;
+                if (!ok && &a != &b) distinctNo++;
                 if (!ok && &a <= &b) refused += " " + a.name + "+" + b.name;
                 most = a.foot + b.foot > most ? a.foot + b.foot : most;
+                if (&a != &b) mostDistinct = a.foot + b.foot > mostDistinct ? a.foot + b.foot : mostDistinct;
                 printf(" %7s", ok ? "fits" : "NO");
             }
             printf("\n");
         }
-        printf("      %d of %d ordered pairs fit (the same plugin twice included), largest pair %u B, %d of %zu fit alone, refused:%s\n", fit,
-               all, most, alone, m.size(), refused.empty() ? " none" : refused.c_str());
+        printf("      %d of %d ordered pairs fit (the same plugin twice included), largest pair %u B (%u B of two different ones), %d of %zu fit alone, refused:%s\n",
+               fit, all, most, mostDistinct, alone, m.size(), refused.empty() ? " none" : refused.c_str());
         char what[128];
-        snprintf(what, sizeof(what), "the %zu master inserts in the folder: every one fits alone, every pair of two different ones fits but Glue + Phaser", m.size());
+        snprintf(what, sizeof(what), "the %zu master inserts in the folder: every one fits alone, every pair of two different ones fits (F3)", m.size());
         check(m.size() >= 3 && alone == int(m.size()) && distinctNo == 0, what);
-        // the one refused pair stays refused in both orders (it is the user's accepted limit, not a hole of the check above)
-        if (gluePairs > 0)
-            check(gluePairs == 2 && glueNo == 2, "Glue + Phaser is refused in both orders, no other pair of two different inserts is");
+        // the folder is the shipped set: each insert it holds that this table knows has the size the table says (a rebuilt insert that grew
+        // changes the matrix below, so the table has to follow it on purpose)
+        bool synced = true;
+        for (const M& x : m)
+            for (const Foot& f : kShipped)
+                if (lower(x.name) == lower(f.name) && x.foot != f.foot)
+                {
+                    printf("      %s: folder %u B, table %u B\n", f.name, x.foot, f.foot);
+                    synced = false;
+                }
+        check(synced, "the sizes of the shipped inserts in the folder are the ones of kShipped (image + bss of the pinned modules)");
+    }
+
+    // ---- the F3 matrix as constants (no folder needed): every ordered pair of two different inserts of the shipped set (effects-os v1.3.0 and
+    // effects v1.3.0 pins, the 1.4.0 set) and of the planned ones (poly-effects ot-inserts d0d5670, Echo built -Os and -O2) in the slot
+    {
+        std::vector<Foot> all(std::begin(kShipped), std::end(kShipped));
+        const size_t nShipped = all.size();
+        all.insert(all.end(), std::begin(kPlanned), std::end(kPlanned));
+        printf("      F3 matrix of %zu shipped and %zu planned inserts, slot %u B, need = align16(insert 1) + insert 2 (B), worst pairs:\n", nShipped,
+               all.size() - nShipped, unsigned(kInsertRoom));
+        struct Need
+        {
+            uint32_t need;
+            std::string pair;
+        };
+        std::vector<Need> needs;
+        int bad = 0, selfBad = 0;
+        std::string selfRefused;
+        uint32_t worst = 0;
+        for (size_t i = 0; i < all.size(); i++)
+            for (size_t j = 0; j < all.size(); j++)
+            {
+                const uint32_t need = ((all[i].foot + 15u) & ~15u) + all[j].foot;
+                const bool ok = insertPairFits(all[i].foot, all[j].foot);
+                if (ok != (need <= kInsertRoom)) bad += 1000;   // the rule of the header and the arithmetic of this table agree
+                if (i == j)
+                {
+                    if (!ok)
+                    {
+                        selfBad++;
+                        selfRefused += std::string(" ") + all[i].name + "x2=" + std::to_string(all[i].foot * 2);
+                    }
+                    continue;
+                }
+                if (!ok) bad++;
+                worst = need > worst ? need : worst;
+                needs.push_back({need, std::string(all[i].name) + " + " + all[j].name});
+            }
+        std::sort(needs.begin(), needs.end(), [](const Need& a, const Need& b) { return a.need > b.need; });
+        for (size_t i = 0; i < 6 && i < needs.size(); i++) printf("        %5u B  %s\n", needs[i].need, needs[i].pair.c_str());
+        printf("      the worst pair of two different inserts needs %u B, the slot is %u B, %u B spare, a plugin beside a copy of itself refused:%s\n", worst,
+               unsigned(kInsertRoom), unsigned(kInsertRoom - worst), selfRefused.empty() ? " none" : selfRefused.c_str());
+        check(bad == 0, "F3: every ordered pair of two different shipped or planned inserts (Echo -Os and -O2 included) fits the slot, none is refused");
+        check(worst <= kInsertRoom && kInsertRoom - worst >= 240, "F3: the slot has at least 240 B to spare on the worst pair (a rebuilt insert may grow a little)");
+        // room for one more insert of about 3 KB next to the largest one (Glue), in both orders
+        check(insertPairFits(5104, 3072) && insertPairFits(3072, 5104), "F3: one more insert of 3,072 B fits beside Glue (5,104 B), either insert");
+        // Glue twice (10,208 B) is the one pair of a shipped insert with itself that is bigger than the slot: Full:Glue, as for any too big pair
+        check(selfBad == 1 && selfRefused.find("Glue") != std::string::npos, "the only insert that does not fit beside a copy of itself is Glue (Full:Glue), Phaser and Echo twice fit");
     }
 
     // ---- the user's card: /plugins (lowercase, from an early test build) with the new Master inside, "._" twins everywhere

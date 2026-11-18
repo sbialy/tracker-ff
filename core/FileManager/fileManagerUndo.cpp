@@ -4,7 +4,11 @@
 #include "core/interfacePopups.h"
 
 #include "fileManager.h"
+#include "fx34_io.h"
 #include "patternEditor/patternEditor.h"
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
 static cPatternEditor* PTE = &patternEditor;
 
 const uint8_t UNDO_CAPACITY = 20;
@@ -81,8 +85,27 @@ void cFileManager::restorePatternSelection(uint8_t index)
     dest->selectEndTrack = src->selectEndTrack;
     dest->selectEndStep = src->selectEndStep;
 }
+#ifdef FEATURE_PARTS
+// a Part image plays: its snapshots are not any pattern (an undo would put one Part's image into another), so there is no undo then,
+// and a live edit stored to the source patterns ends the history (clearPatternUndo, parts.cpp)
+static bool partsUndoOff()
+{
+    if (!parts::playing()) return false;
+    mtPopups.show(0, "No undo while a Part plays");
+    return true;
+}
+
+void cFileManager::clearPatternUndo()
+{
+    undo = strUndo{};
+}
+#endif
+
 void cFileManager::storePatternUndoRevision()
 {
+#ifdef FEATURE_PARTS
+    if (parts::playing()) return;
+#endif
     if (undo.currentIndex > (UNDO_CAPACITY - 1))
     {
         // zabezpieczenie przed kraksą
@@ -90,7 +113,7 @@ void cFileManager::storePatternUndoRevision()
         undo.storedCount = 0;
     }
 
-    undoPatternBuffer[undo.currentIndex] = *sequencer.getActualPattern();
+    fx34io::copyPattern(&undoPatternBuffer[undo.currentIndex], sequencer.getActualPattern());
     undoPatternBuffer_Indexes[undo.currentIndex] = mtProject.values.actualPattern;
     storePatternSelection(undo.currentIndex);
 
@@ -202,6 +225,9 @@ void cFileManager::undoSongPattern()
 
 void cFileManager::undoPattern()
 {
+#ifdef FEATURE_PARTS
+    if (partsUndoOff()) return;
+#endif
     bool doUndo = 0;
     uint8_t oldIndex = undo.currentIndex;
 
@@ -225,11 +251,11 @@ void cFileManager::undoPattern()
     if (doUndo)
     {
 
-        undoPatternBuffer[oldIndex] = *sequencer.getActualPattern();
+        fx34io::copyPattern(&undoPatternBuffer[oldIndex], sequencer.getActualPattern());
         undoPatternBuffer_Indexes[oldIndex] = mtProject.values.actualPattern;
         storePatternSelection(oldIndex);
 
-        *sequencer.getActualPattern() = undoPatternBuffer[undo.currentIndex];
+        fx34io::copyPattern(sequencer.getActualPattern(), &undoPatternBuffer[undo.currentIndex]);
         mtProject.values.actualPattern = undoPatternBuffer_Indexes[undo.currentIndex];
         restorePatternSelection(undo.currentIndex);
 
@@ -239,6 +265,9 @@ void cFileManager::undoPattern()
 }
 void cFileManager::redoPattern()
 {
+#ifdef FEATURE_PARTS
+    if (partsUndoOff()) return;
+#endif
     bool doRedo = 0;
 
     if (undo.currentIndex < UNDO_CAPACITY - 1 && undo.redoPossibility > 0)
@@ -261,7 +290,7 @@ void cFileManager::redoPattern()
     if (doRedo)
     {
         undo.redoPossibility--;
-        *sequencer.getActualPattern() = undoPatternBuffer[undo.currentIndex];
+        fx34io::copyPattern(sequencer.getActualPattern(), &undoPatternBuffer[undo.currentIndex]);
         mtProject.values.actualPattern = undoPatternBuffer_Indexes[undo.currentIndex];
         restorePatternSelection(undo.currentIndex);
 

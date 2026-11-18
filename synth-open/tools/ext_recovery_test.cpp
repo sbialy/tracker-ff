@@ -76,6 +76,61 @@ void lines()
           "an over long line is cut to the buffer, ends at its newline, the next line is intact");
 }
 
+// The CDC port of the teensy core: write_buffer_free() is the room of the packet being filled (64 B), a full packet goes out and the
+// next one is allocated, at most 8 queued until the host reads them.
+struct Port
+{
+    std::string wire;
+    int queued = 0, fill = 0;
+    int freeRoom() { return queued >= 8 ? 0 : 64 - fill; }
+    void write(const char* p, int n)
+    {
+        wire.append(p, size_t(n));
+        fill += n;
+        while (fill >= 64) { fill -= 64; queued++; }
+    }
+    void hostReads() { queued = 0; }
+};
+
+void sender()
+{
+    bool r = false;
+    char out[320];
+    // the old send: all of it when write_buffer_free() >= n, else nothing
+    const int n = ext::recoveryReply("ping", "09e04f2", "none: no module file", "", out, sizeof(out), &r);
+    Port old;
+    if (old.freeRoom() >= n) old.write(out, n);
+    check(n > 64 && old.wire.empty(), "the old send drops a ping reply over 64 B (the 2026-11-17 silent recovery console)");
+
+    Port p;
+    ext::RecoverySender s;
+    s.start(out, n);
+    s.pump([&] { return p.freeRoom(); }, [&](const char* b, int k) { p.write(b, k); });
+    check(!s.busy() && p.wire == std::string(out, size_t(n)), "the ping reply leaves whole in 64 B pieces");
+
+    std::string big(300, 'x');
+    big.back() = '\n';
+    Port full;
+    full.queued = 7;   // one packet of room left
+    s.start(big.data(), int(big.size()));
+    s.pump([&] { return full.freeRoom(); }, [&](const char* b, int k) { full.write(b, k); });
+    check(s.busy() && full.wire.size() == 64, "a full queue: what fits now goes, the rest is kept");
+    full.hostReads();
+    for (int i = 0; i < 4 && s.busy(); i++) s.pump([&] { return full.freeRoom(); }, [&](const char* b, int k) { full.write(b, k); });
+    check(!s.busy() && full.wire == big, "the rest follows on the next polls, in order");
+
+    Port gone;
+    gone.queued = 8;
+    s.start(big.data(), int(big.size()));
+    int polls = 0;
+    while (s.busy() && polls < ext::RecoverySender::kMaxPolls + 5)
+    {
+        s.pump([&] { return gone.freeRoom(); }, [&](const char* b, int k) { gone.write(b, k); });
+        polls++;
+    }
+    check(!s.busy() && polls == ext::RecoverySender::kMaxPolls, "a host that never reads: the reply is dropped after kMaxPolls polls");
+}
+
 void statusLine(const char* path, uint32_t crc, uint32_t run)
 {
     FILE* f = fopen(path, "rb");
@@ -118,6 +173,7 @@ void statusLine(const char* path, uint32_t crc, uint32_t run)
 int main(int argc, char** argv)
 {
     lines();
+    sender();
     if (argc == 4) statusLine(argv[1], uint32_t(strtoul(argv[2], nullptr, 0)), uint32_t(strtoul(argv[3], nullptr, 0)));
     printf("%s (%d failed)\n", g_fail ? "FAIL" : "PASS", g_fail);
     return g_fail ? 1 : 0;

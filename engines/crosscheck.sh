@@ -26,7 +26,7 @@ while [ $# -gt 0 ]; do
     case "$1" in --with) with+=(--with "${2:?--with needs a group}"); groups+=("$2"); shift 2;; *) echo "crosscheck: unknown argument $1"; exit 2;; esac
 done
 SO="$HERE/../synth-open"
-PY="${PY:-python3}"
+PY="${PY:-$(sh "$HERE/../synth-open/tools/pyenv.sh" python)}" || exit 2
 : "${TOOLCHAIN:?set TOOLCHAIN to the arm-none-eabi- prefix}"
 fail=0
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

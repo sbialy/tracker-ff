@@ -185,7 +185,8 @@ def parse_params_from_source(source_code):
                 continue
     return params
 
-def build_ptfx(c_file, output_file, name=None, author=None, flags_str=None, scratch=None, toolchain_prefix=""):
+def build_ptfx(c_file, output_file, name=None, author=None, flags_str=None, scratch=None, toolchain_prefix="",
+               extra_cflags=None, use_libgcc=False, include_dirs=None):
     with open(c_file, "r") as f:
         source = f.read()
 
@@ -252,6 +253,9 @@ def build_ptfx(c_file, output_file, name=None, author=None, flags_str=None, scra
             "-mlong-calls",
             "-nostdlib",
             f"-I{sdk_dir}",
+            *[f"-I{d}" for d in (include_dirs or [])],
+            # extra flags come last, so they win over the defaults above (-ffp-contract=off, -mno-long-calls for libgcc calls)
+            *(extra_cflags or []),
             "-c", c_file,
             "-o", obj_path
         ]
@@ -297,6 +301,18 @@ def build_ptfx(c_file, output_file, name=None, author=None, flags_str=None, scra
                 print("String Table Assembly Error:\n" + res.stderr.decode(), file=sys.stderr)
                 sys.exit(1)
             ld_objs.append(strings_o_path)
+
+        if use_libgcc:
+            # soft double and 64 bit helpers (__aeabi_dmul ...) of the toolchain, for sources that use double.
+            # The calls must be PC-relative (compile with -mno-long-calls), the loader applies no relocations.
+            res = subprocess.run([toolchain + "gcc", "-mcpu=cortex-m4", "-mthumb", "-mfloat-abi=hard",
+                                  "-mfpu=fpv4-sp-d16", "-print-libgcc-file-name"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if res.returncode != 0:
+                print("libgcc lookup Error:\n" + res.stderr.decode(), file=sys.stderr)
+                sys.exit(1)
+            libgcc = res.stdout.decode().strip()
+            ld_objs = ld_objs + ["--start-group", libgcc, "--end-group"]
 
         ld_cmd = [
             toolchain + "ld",
@@ -344,6 +360,12 @@ def build_ptfx(c_file, output_file, name=None, author=None, flags_str=None, scra
 
         with open(bin_path, "rb") as f:
             code_bytes = f.read()
+
+        # The loader clears bss at [code_size, code_size + bss_size). objcopy stops at the last byte of data, so when the
+        # linker aligned bss_start past it, the first bytes of bss would not be cleared and its tail would lie past the
+        # allocation. Pad the payload up to bss_start.
+        if bss_size > 0 and bss_start > len(code_bytes):
+            code_bytes += bytes(bss_start - len(code_bytes))
 
         code_size = len(code_bytes)
 
@@ -425,10 +447,14 @@ def main():
     parser.add_argument("--flags", help="Capabilities (e.g. EFFECT, STEREO, GENERATOR, CONVERT_TO_MONO)")
     parser.add_argument("--scratch", type=int, help="Scratch working RAM in bytes")
     parser.add_argument("--toolchain", default="", help="Prefix for arm-none-eabi- tools")
+    parser.add_argument("--cflags", default="", help="Extra compiler flags after the defaults, space separated (e.g. '-ffp-contract=off -mno-long-calls')")
+    parser.add_argument("--libgcc", action="store_true", help="Link libgcc (soft double) and the PC-relative calls it needs")
+    parser.add_argument("-I", dest="include_dirs", action="append", default=[], help="Extra include directory")
     args = parser.parse_args()
 
     out_file = args.output or os.path.splitext(args.input_c)[0] + ".ptfx"
-    build_ptfx(args.input_c, out_file, args.name, None, args.flags, args.scratch, args.toolchain)
+    build_ptfx(args.input_c, out_file, args.name, None, args.flags, args.scratch, args.toolchain,
+               args.cflags.split(), args.libgcc, args.include_dirs)
 
 if __name__ == "__main__":
     main()

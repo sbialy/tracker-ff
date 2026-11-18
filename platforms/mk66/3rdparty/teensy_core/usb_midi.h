@@ -324,11 +324,19 @@ class usb_midi_class
         }
         void setHandleSysEx(void (*fptr)(const uint8_t *data, uint16_t length, bool complete)) {
 		// type: 0xF0  SystemExclusive - multiple calls for message bigger than buffer
+                // bool and uint8_t arguments travel the same way on the AAPCS (one zero extended register)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-function-type"
                 usb_midi_handleSysExPartial = (void (*)(const uint8_t *, uint16_t, uint8_t))fptr;
+#pragma GCC diagnostic pop
         }
         void setHandleSystemExclusive(void (*fptr)(const uint8_t *data, uint16_t length, bool complete)) {
 		// type: 0xF0  SystemExclusive - multiple calls for message bigger than buffer
+                // bool and uint8_t arguments travel the same way on the AAPCS (one zero extended register)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-function-type"
                 usb_midi_handleSysExPartial = (void (*)(const uint8_t *, uint16_t, uint8_t))fptr;
+#pragma GCC diagnostic pop
         }
 	void setHandleSystemExclusive(void (*fptr)(uint8_t *data, unsigned int size)) {
 		// type: 0xF0  SystemExclusive - single call, message larger than buffer is truncated

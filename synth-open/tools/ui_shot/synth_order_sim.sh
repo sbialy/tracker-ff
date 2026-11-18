@@ -8,13 +8,15 @@
 # Ends with "RESULT: GREEN" (exit 0) or "RESULT: RED (n failing)". PNGs of the interesting states go to PNG_DIR when it is given.
 #
 #   synth-open/tools/ui_shot/synth_order_sim.sh [PNG_DIR]
-#   CHIP_PLUGIN_SRC  engine_chip.cpp of tracker-engines-os (CHIP is chip.plg since 1.3.0): builds ui_shot with the CHIP host twin, which lists CHIP
-#                    at stored 6 and installs it when the list rests on it. Without it the checks that move to CHIP fail
+#   The binary is the BRIDGE=1 ui_shot (bridge_env.sh: UNICORN_DIR, BRIDGE_AXF): every synth .plg of the card installs into the FlexNVM model
+#   and attaches through the firmware's own path with its real bytes under Unicorn, CHIP (chip.plg since 1.3.0) lists at stored 6 as on the unit
 #   PLG_DIR   folder with the .plg and .plgi of the synth plugins (default: the newest of build/cpu-adopt, plugin-synth)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BUILD="$ROOT/build/ui-shot${CHIP_PLUGIN_SRC:+-chipplg}"   # CHIP is a plugin engine: its host twin (CHIP_PLUGIN_SRC, as in ui_shot.sh) lists it at stored 6
+. "$HERE/bridge_env.sh"
+bridge_env "$ROOT" || exit 2
+BUILD="$ROOT/build/ui-shot-bridge"   # the plugin engines run their card bytes (emu parity T10)
 BIN="$BUILD/ui_shot"
 PNG_DIR="${1:-}"
 [ -n "$PNG_DIR" ] && mkdir -p "$PNG_DIR"
@@ -25,7 +27,7 @@ plg="${PLG_DIR:-}"
 if [ -z "$plg" ]; then for d in "$ROOT/build/cpu-adopt" "$ROOT/build/plugin-synth"; do [ -f "$d/ju6.plg" ] && { plg="$d"; break; }; done; fi
 [ -f "$plg/ju6.plg" ] || { echo "synth_order_sim.sh: no plugins (set PLG_DIR to a folder with ju6.plg ...)" >&2; exit 2; }
 mkdir -p "$BUILD"
-make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
+make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" "${BRIDGE_ARGS[@]}" OUT="$BUILD" >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
 
 fails=0; checks=0
 pass() { checks=$((checks+1)); printf 'ok    %s\n' "$1"; }
@@ -99,6 +101,11 @@ run "$sd" "$SYNTH; enc -$NROWS; wait 800; enc -3; wait 800; $P"
 expect "the encoder stops at the first row" "0" "$(cursor_of 1)"
 run "$sd" "$SYNTH; enc $NROWS; wait 800; enc 3; wait 800; $P"
 expect "the encoder stops at the last row" "$((NROWS - 1))" "$(cursor_of 1)"
+# gate rule (every refusal has its escape): the encoder does not wrap, so the user leaves the end by turning back, or by the arrow that wraps
+run "$sd" "$SYNTH; enc $NROWS; wait 800; enc -1; wait 800; $P"
+expect "escape: the encoder that stopped at the last row turns back (one row up)" "$((NROWS - 2))" "$(cursor_of 1)"
+run "$sd" "$SYNTH; enc -$NROWS; wait 800; enc 1; wait 800; $P"
+expect "escape: the encoder that stopped at the first row turns back (one row down)" "1" "$(cursor_of 1)"
 
 # ---------------------------------------------------------------------------------------------------------------- order and hide from the file
 echo "### scenario 3: order and hide"
@@ -171,6 +178,9 @@ expect "an empty file: the default list" "$DEFAULT_LIST" "$(list_of 1)"
 printf -- '-ACD\r\n-FAT\r\n-VAP\r\n-WTFM\r\n-PERC\r\n-CHIP\r\n-JU6\r\n' >"$sd/Plugins/synth-order.txt"
 run "$sd" "$SYNTH; $P"
 case ",$(list_of 1)," in *,WTFM,*) pass "everything hidden that is on the list: the part's engine still shows, the list is not empty" ;; *) fail "all hidden" "$(list_of 1)" ;; esac
+# gate rule: the list refuses to hide the engine the part plays. The way out: the edit mode shows every engine with its - mark, Insert shows one again
+run "$sd" "$SYNTH; hold Shift; tap F1; unhold Shift; wait 600; tap Up; wait 300; tap Insert; wait 500; tap F1; wait 800; $P"
+case ",$(list_of 1)," in *,VAP,*) pass "escape: with every engine hidden the edit mode still shows one again (Insert), the list has it after F1" ;; *) fail "escape from an all hidden list" "$(list_of 1)" ;; esac
 { for i in $(seq 1 3000); do printf 'JUNK%d\r\n' "$i"; done; printf 'CHIP\r\n'; } >"$sd/Plugins/synth-order.txt"
 run "$sd" "$SYNTH; $P"
 expect "a long file of junk lines (3000): the engines are all there" "$NROWS" "$(list_of 1 | tr ',' '\n' | wc -l | tr -d ' ')"
@@ -253,7 +263,7 @@ struct.pack_into('<III', b, 0x8c, 200, 0xC8, 0xC8)       # stored number, patch 
 struct.pack_into('<I', b, 48, zlib.crc32(bytes(b[64:])) & 0xffffffff)   # header crc32 covers everything after the 64 byte header
 open(sys.argv[2], 'wb').write(b)
 PY
-printf -- '-ACD\r\n-FAT\r\n-VAP\r\n-WTFM\r\n-PERC\r\n-CHIP\r\n-JU6\r\n-FM4\r\n-DTYPE\r\n-CSTYPE\r\n-ATYPE\r\n-TTYPE\r\n-8TYPE\r\n-HANDTYPE\r\n-BTYPE\r\n-ARCTYPE\r\n-PHZG\r\n-%s\r\n' "$WIDE_NAME" >"$sd/Plugins/synth-order.txt"
+printf -- '-ACD\r\n-FAT\r\n-VAP\r\n-WTFM\r\n-PERC\r\n-CHIP\r\n-JU6\r\n-FM4\r\n-DTYPE\r\n-CSTYPE\r\n-ATYPE\r\n-TTYPE\r\n-8TYPE\r\n-HANDTYPE\r\n-BTYPE\r\n-ARCTYPE\r\n-PHZG\r\n-ALCO\r\n-%s\r\n' "$WIDE_NAME" >"$sd/Plugins/synth-order.txt"
 run "$sd" "$SYNTH; hold Shift; tap F1; unhold Shift; wait 800; $(shot s11-hidden-marks); $P; poke rowpx; enc 40; wait 500; $(shot s11-hidden-marks-bottom)"
 L11="$(list_of 1)"
 RP="$(grep '^rowpx' "$WORK/poke.out" | head -1)"
@@ -339,6 +349,23 @@ expect "R6: the Params key on a Missing part stays on the Synth page and shows t
 run "$sd" "instr 65; tap Params; wait 1500; tap Params; wait 300; poke imode; tap Params; wait 300; poke imode; instr 64; tap Params; wait 800; poke imode; wait 300; poke popup"
 expect "R6: another part still cycles through Macros and Automation" "macros automation" "$(imode_of 1) $(imode_of 2)"
 expect "R6: a Missing part picked while the Automation page is open opens on the Synth page" "synth" "$(imode_of 3)"
+# gate rule: a Missing part refuses Edit Patch (F8) and Load Patch (F7) with the not installed popup and stays on the Synth page. The way out is the Model list:
+# one step, the rest, and the part is on an installed engine whose editor opens
+miss_card "$sd"
+run "$sd" "$SYNTH; tap F8; wait 400; poke popup; poke imode; wait 2500; tap F7; wait 400; poke popup; poke imode"
+expect "R6: Edit Patch (F8) on a Missing part says not installed and stays on the Synth page" "popup 'CHIP not installed' synth" "$(popup_of 1) $(imode_of 1)"
+expect "R6: Load Patch (F7) on a Missing part says not installed and stays on the Synth page" "popup 'CHIP not installed' synth" "$(popup_of 2) $(imode_of 2)"
+miss_card "$sd"
+run "$sd" "$SYNTH; tap Down; wait 2500; tap F8; wait 2500; poke popup; poke imode; poke picker"
+expect "R6 escape: a step on the Model list picks an installed engine, then Edit Patch opens (no popup, not on the Synth page)" "popup none other" "$(popup_of 1) $(imode_of 1)"
+# gate rule: the Params key refuses the Macros page of a Missing part. Other keys leave the Synth page (the screen changes), another part opens as usual, the edit
+# mode that has no row under the cursor leaves with F1 and writes nothing
+miss_card "$sd"
+run "$sd" "$SYNTH; shot $WORK/miss_a.png; tap Params; wait 400; tap Pattern; wait 800; shot $WORK/miss_b.png"
+[ "$(sum "$WORK/miss_a.png")" != "$(sum "$WORK/miss_b.png")" ] && pass "R6 escape: the Pattern key leaves the Synth page of a Missing part" || fail "R6 escape: the Pattern key leaves the Synth page of a Missing part" "the screen is the same after the Pattern key"
+miss_card "$sd"
+run "$sd" "$SYNTH; hold Shift; tap F1; unhold Shift; wait 800; tap Delete; wait 300; tap F1; wait 800; $P"
+expect "R2 escape: F1 leaves the edit mode of a Missing part (normal rows, nothing hidden, the part still stored 6, no order file)" "0 6 no" "$(list_of 1 | tr ',' '\n' | grep -c '^-') $(part_stored 1 0) $([ -f "$sd/Plugins/synth-order.txt" ] && echo yes || echo no)"
 # the part still has the files it had: the Missing run wrote none of them (every pick above is a deliberate change)
 miss_card "$sd"
 run "$sd" "$SYNTH; poke rhs; tap Params; wait 300; hold Shift; tap F1; unhold Shift; wait 300; poke picker"

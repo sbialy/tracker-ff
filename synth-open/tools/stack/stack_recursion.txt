@@ -1,0 +1,20 @@
+# Recursion bounds for the static stack walk. The walker cuts a cycle after one round, which is right for a function that cannot
+# nest. A recursive function needs the number of levels it can reach, then the walker adds (levels - 1) rounds of the cycle frames.
+#
+#   recur REGEX structural=N assumed=M   # source, why
+#
+# structural = the most levels the code allows (a proof from the code). assumed = the levels the gate counts. The gate uses assumed
+# and prints the structural worst case on every run as an open finding. `stack_margin.py --strict-recursion` gates on structural.
+# assumed < structural is a WAIVER: it needs a reason and the follow-up that removes it, and it is the owner's decision.
+
+# SdCard::delete_node (platforms/mk66/3rdparty/SD/SD.cpp:337, recursive call :371, frame 112 B, callee chain 888 B).
+# structural 127: the only bound in the code is the path buffer. removeDirWithFiles (SD.cpp:306-316) copies the path into char buff[256] and
+# calls delete_node(buff, 255, ...), which appends '/' + the entry name and fails with FRESULT 100 before it recurses when i + j >= 255
+# (SD.cpp:354-357). Each nested level adds at least 2 characters ('/x'), so from a 1 character start path the 254 character limit
+# allows 127 nested instances. The firmware has no depth cap of its own (FileBrowser::openFolder has none, the user can delete any
+# folder of the card with functDeleteProject_Confirm, fProjEdit.cpp:1346 > cFileManager::deleteProjectOrFolder). A tree that deep can only come
+# from a PC, the firmware itself creates 3 levels (Workspace/{instruments,patterns,samples}, Projects/<name>/...).
+# assumed 8: WAIVER. 127 levels of 112 B is 14.2 KB, more than the whole 8.5 KB stack room, so the honest bound can never pass. 8 is the
+# deepest tree that still leaves the 512 B floor on the weakest row (9 passes by 2 B). It stays until delete_node has a depth cap
+# (follow-up: depth parameter, cap 8, return an error past it, firmware change, its own round), then structural = assumed = 8.
+recur ^SdCard::delete_node\( structural=127 assumed=8

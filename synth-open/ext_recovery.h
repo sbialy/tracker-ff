@@ -72,4 +72,39 @@ inline int recoveryReply(const char* line, const char* build, const char* status
     }
     return n;
 }
+// Sends one reply in pieces. The CDC port takes at most one 64 B packet per write_buffer_free() answer (usb_serial.c: the free room
+// of the packet being filled, the next packet is only allocated after this one went out), so a reply longer than that (ping, every
+// @err line, module with its detail) was dropped whole while it waited for room it could never get: the recovery console looked dead
+// to the tools (2026-11-17, `module` and `help` answered, `ping` never). pump() writes what fits now and keeps the rest for the
+// next poll, never blocks, and drops nothing unless the host stops reading for kMaxPolls polls.
+struct RecoverySender
+{
+    static constexpr int kMaxPolls = 2000;   // about 2 s of main loop polls without room: the host is gone, the reply is dropped
+    const char* buf = nullptr;
+    int len = 0, off = 0, idle = 0;
+    bool busy() const { return off < len; }
+    void start(const char* b, int n)
+    {
+        buf = b;
+        len = n > 0 ? n : 0;
+        off = idle = 0;
+    }
+    // freeFn() = bytes the port takes now, writeFn(p, n) writes them. Returns the bytes written by this call.
+    template <class FreeFn, class WriteFn> int pump(FreeFn freeFn, WriteFn writeFn)
+    {
+        int sent = 0;
+        for (int guard = 0; guard < 16 && busy(); guard++)
+        {
+            int room = freeFn();
+            if (room <= 0) break;
+            const int n = room < len - off ? room : len - off;
+            writeFn(buf + off, n);
+            off += n;
+            sent += n;
+        }
+        if (busy() && !sent && ++idle >= kMaxPolls) off = len;
+        if (sent) idle = 0;
+        return sent;
+    }
+};
 }   // namespace ext

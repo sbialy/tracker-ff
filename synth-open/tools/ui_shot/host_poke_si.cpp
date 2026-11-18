@@ -56,3 +56,11 @@ extern "C" void hostPokeListBar(int ctrl, std::string* out)
     snprintf(b, sizeof b, "listbar %d pos %d", l && !l->disableBar ? 1 : 0, l ? l->listPosition : -1);
     *out = b;
 }
+
+// poke heading: the two text lines of a label control (protected state of cDisplayControl / cLabel), "label <text>|<text2>"
+extern "C" void hostPokeLabelText(int ctrl, std::string* out)
+{
+    cDisplayControl* c = ctrl >= 0 ? display.controlsTable[ctrl] : nullptr;
+    const cLabel* l = static_cast<const cLabel*>(c);
+    *out = std::string("label ") + (c && c->text ? c->text : "") + "|" + (l && l->text2 ? l->text2 : "");
+}

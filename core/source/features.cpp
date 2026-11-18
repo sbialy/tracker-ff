@@ -150,7 +150,11 @@ bool save(Entry& e)
     if (!s_io) return false;
     int n = snprintf(s_text, kFileMax, "feature 1\nid %s\nversion %u\non %u\n", e.d->id, unsigned(e.d->version), unsigned(e.on));
     for (int p = 0; p < e.d->paramCount && n < kFileMax; p++)
-        n += snprintf(s_text + n, size_t(kFileMax - n), "%s %u\n", e.d->params[p].key, unsigned(e.v[p]));
+    {
+        const feat_param& q = e.d->params[p];
+        if ((q.restart & FEAT_PR_OMIT_DEFAULT) && e.v[p] == q.def) continue;
+        n += snprintf(s_text + n, size_t(kFileMax - n), "%s %u\n", q.key, unsigned(e.v[p]));
+    }
     if (e.d->saveState && e.d->stateMax && n < kFileMax - 8)
     {
         const int cap = e.d->stateMax < kMaxState ? e.d->stateMax : kMaxState;
@@ -197,6 +201,15 @@ uint32_t cardMillis() { return s_timer->millis(); }
 const Io kCard = { cardRead, cardWrite, cardExists, cardMkdir, cardRemove, cardMillis };
 #endif
 }   // namespace
+
+const Io* cardIo()
+{
+#ifndef FEATURES_TEST
+    return s_fs ? &kCard : nullptr;
+#else
+    return nullptr;
+#endif
+}
 
 int add(const feat_desc* d)
 {
@@ -261,6 +274,8 @@ void load(const Io* io)
 
 void tick()
 {
+    // an integer row of the page (FEAT_P_INT) writes its value without a callback, so a change is found here, like changed() would
+    for (int i = 0; i < s_n; i++) applyDiff(s_e[i]);
     bool any = false;
     for (int i = 0; i < s_n; i++) any = any || s_e[i].dirty;
     if (!any)
@@ -340,7 +355,7 @@ bool restartPending(int i)
     const Entry& e = s_e[i];
     if ((e.d->flags & FEAT_F_RESTART) && e.on != e.bootOn) return true;
     for (int p = 0; p < e.d->paramCount; p++)
-        if (e.d->params[p].restart && e.v[p] != e.bootV[p] && e.on) return true;
+        if ((e.d->params[p].restart & FEAT_PR_RESTART) && e.v[p] != e.bootV[p] && e.on) return true;
     return false;
 }
 

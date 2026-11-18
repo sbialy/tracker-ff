@@ -2,7 +2,7 @@
 #include "util_math.h"
 mtEffectNormalizer sampleEditorNormalizer;
 
-void mtEffectNormalizer::setParameter(float& value, int idx)
+void mtEffectNormalizer::setParameter(float& value, int /*idx*/)
 {
     assert(idx == 0);
     norm_level = (int)value;

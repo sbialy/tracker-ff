@@ -36,7 +36,7 @@ Two kinds of plugin are loaded:
 
 | Kind | `PLUG_KIND_*` | What it does | Where it runs | Folder |
 | :--- | :--- | :--- | :--- | :--- |
-| **Master insert** | `PLUG_KIND_MASTER_INSERT` (1) | Processes the stereo master bus in place, after the tracks and sends mixer and before the stock limiters | Both inserts share one 8 KB SRAM_L slot (insert 1 from the bottom, insert 2 from the top) | `/Plugins/Master/` |
+| **Master insert** | `PLUG_KIND_MASTER_INSERT` (1) | Processes the stereo master bus in place, after the tracks and sends mixer and before the stock limiters | Both inserts share one 9.5 KB (9,728 B) SRAM_L slot (insert 1 from the bottom, insert 2 from the top) | `/Plugins/Master/` |
 | **Synth engine** | `PLUG_KIND_SYNTH` (4) | Adds a model to the synth model list. The shim's voice pool, macros, patch slots and governor treat it like a built-in engine | Code in the FlexNVM bank, data in an SRAM pool | `/Plugins/Synth/` |
 
 `plug_abi.h` also declares `PLUG_KIND_SEND_FX`, `PLUG_KIND_TRACK_FX` and `PLUG_KIND_OFFLINE`. The current host does not load them.
@@ -80,6 +80,9 @@ SD Card Root/
 │   ├── synth.txt               written by the host: what happened to each engine
 │   ├── host.txt                written by the host: what each insert slot holds
 │   └── .loading                crash marker, exists only while a plugin starts
+├── Waves/                      single cycle .wav files for engines that read them (ABI 1.4, PLUG_EXT_FILES)
+│   ├── my_wave.wav
+│   └── AKWF_bw_saw/AKWF_saw_0001.wav   one level of subfolders is listed too
 ├── Patches/<ENGINE>/*.patch    one folder per engine name, created on first save
 └── Projects/<project>/plugins.txt   insert settings of a project
 ```
@@ -174,7 +177,7 @@ The examples build into `build/plugins/examples/`. The script prints `PASSED` or
 
 ### Building the shipped engines: `engines/`
 
-The shipped synth engines are built in their module repositories (section 18): the ten public ones in tracker-engines-os (`make TOOLCHAIN=... PY=...`, then `make verify`), PHZ and PLK in the private tracker-engines. Each build starts from a scratch copy of the files listed in its `sdk/` (the header set the engines compile against), so an engine cannot depend on a header outside it. The set holds the `.plg` and `.plgi` files, `SET.json` (set version, compiler, flags, SDK version and ABI, render checksums, one record per engine) and `SHA256SUMS`: copy the `.plg` and `.plgi` files to `/Plugins/Synth/`. The checks that need the firmware (its own attach check and the card logo reader) run here on a fetched set: `engines/crosscheck.sh DIR`.
+The shipped synth engines are built in their module repositories (section 18): the ten public ones in tracker-engines-os (`make TOOLCHAIN=... PY=...`, then `make verify`), PHZ, PLK and ALCO in the private tracker-engines. Each build starts from a scratch copy of the files listed in its `sdk/` (the header set the engines compile against), so an engine cannot depend on a header outside it. The set holds the `.plg` and `.plgi` files, `SET.json` (set version, compiler, flags, SDK version and ABI, render checksums, one record per engine) and `SHA256SUMS`: copy the `.plg` and `.plgi` files to `/Plugins/Synth/`. The checks that need the firmware (its own attach check and the card logo reader) run here on a fetched set: `engines/crosscheck.sh DIR`.
 
 ---
 
@@ -207,7 +210,7 @@ header_size  image (image_size)        [0, rw_offset)          text: code, const
 | `+0x0A` | `flags` (u16) | 0. `PLUG_F_S16` (bit 0) is reserved and the host refuses it |
 | `+0x0C` | `uid` | FNV-1a 32 of the `--id` string. What a project stores |
 | `+0x10` | `version` | `major << 16 | minor << 8 | patch` |
-| `+0x14` | `min_host` | Lowest host level needed. The builder writes 1, the host level is 1 (`PLUG_HOST_LEVEL`) |
+| `+0x14` | `min_host` | Lowest host level needed. The builder writes 1. The host level is 2 since ABI 1.4 (`PLUG_HOST_LEVEL`): a plugin that uses a level 2 service checks for it at run time and keeps `min_host` 1, so it still loads on a level 1 host |
 | `+0x18` | `image_size` | Multiple of 4. The host refuses more than 65,536 |
 | `+0x1C` | `bss_size` | Zeroed bytes after the image. The host refuses more than 65,536 |
 | `+0x20` | `rebase_count` | Entries in the rebase table. The host refuses more than 16,384 |
@@ -250,8 +253,8 @@ The host lists a synth engine before it is installed from these numbers alone. A
 | `header_size` | 1,024 | `checkHeader` |
 | `image_size`, `bss_size` | 65,536 each | `checkHeader` |
 | `rebase_count` | 16,384 and at most `image_size / 4` | `checkHeader`, `checkLayout` |
-| One insert | `image + bss` up to 8,192 | the SRAM_L slot, either insert |
-| Two inserts | both `image + bss` together up to 8,192 (less up to 15 B, insert 2 starts 16 B aligned) | the same slot, shared |
+| One insert | `image + bss` up to 9,728 | the SRAM_L slot, either insert |
+| Two inserts | both `image + bss` together up to 9,728 (less up to 15 B, insert 2 starts 16 B aligned) | the same slot, shared |
 | Synth engine | `image + bss` up to 32,768 and `rw + bss` within the 3,072 byte pool | staging buffer and rw pool |
 | Insert instance | `instance_size` up to 16,384 | `checkDesc` |
 
@@ -275,7 +278,7 @@ Section 10 explains the memory behind each of these.
 
 ```c
 struct plug_host {
-    uint32_t struct_size, level;             // sizeof, PLUG_HOST_LEVEL (1)
+    uint32_t struct_size, level;             // sizeof, PLUG_HOST_LEVEL (2 since ABI 1.4)
     float sample_rate;                       // 44117.647
     float (*sinf)(float);   float (*cosf)(float);   float (*tanf)(float);   float (*tanhf)(float);
     float (*expf)(float);   float (*logf)(float);   float (*powf)(float, float);
@@ -283,7 +286,7 @@ struct plug_host {
     void* (*memset)(void*, int, size_t);
     void* (*alloc)(uint32_t bytes, uint32_t flags);   // init only. flags 0: SRAM heap, 1: SDRAM arena
     uint32_t (*cycles)(void);                          // DWT cycle counter
-    const void* (*query)(uint32_t ext_id);             // NULL for every id in host level 1
+    const void* (*query)(uint32_t ext_id);             // level 1: NULL for every id. Level 2: PLUG_EXT_FILES
     float (*exp2f)(float); float (*log2f)(float);      // ABI 1.1: check with PLUG_HAS
 };
 ```
@@ -294,7 +297,8 @@ struct plug_host {
 ### Compatibility
 
 - `abi_major` must equal the host's (1). `abi_minor` and the host level only grow.
-- Optional features are queries: `desc->query(PLUG_EXT_*)` and `host->query(...)` return `NULL` or a struct with its own `struct_size`. The host asks for `PLUG_EXT_SYNTH` and, since ABI 1.2, `PLUG_EXT_CHORD` (paraphony, section 7). `PLUG_EXT_STATE`, `PLUG_EXT_TAIL` and `PLUG_EXT_TEMPO` are declared and the host does not ask for them.
+- Optional features are queries: `desc->query(PLUG_EXT_*)` and `host->query(...)` return `NULL` or a struct with its own `struct_size`. The host asks for `PLUG_EXT_SYNTH` and, since ABI 1.2, `PLUG_EXT_CHORD` (paraphony, section 7). Since ABI 1.3 it also asks master inserts for `PLUG_EXT_TEMPO` (the sequencer's tempo and beat) and `PLUG_EXT_TAIL` (`quiet()`: an insert that makes sound of its own runs on a silent bus), both in `synth-open/plug/README.md`, "Synced inserts". A plugin can ask the host for `PLUG_EXT_STRUM` (id 7, `host->query`, the project's Strum ramp depth, section 12). A host of level 2 (ABI 1.4) also answers `host->query(PLUG_EXT_FILES)` (id 5, section 7). `PLUG_EXT_STATE` is declared and the host does not ask for it.
+- ABI history: 1.0 master inserts. 1.1 synth engines (`PLUG_EXT_SYNTH`, `exp2f`, `log2f`). 1.2 `PLUG_EXT_CHORD` and enum parameters up to 128 values. 1.3 `PLUG_EXT_TEMPO` and `PLUG_EXT_TAIL` for master inserts. 1.4 host level 2, `PLUG_EXT_FILES` and the optional `service` and `view` at the end of `plug_ext_synth` (section 7). Every older file loads and behaves as before on a 1.4 host: the host reads `service` and `view` only when `struct_size` covers them.
 - A host skips a kind, cpu or role it does not know and refuses a plugin whose `min_host` is above its level, before any code runs.
 
 ---
@@ -407,7 +411,7 @@ PLUG_SYNTH_PLUGIN("JU6", polysynth::open::kJu6Def, 7, 0x81)   // name, definitio
 
 All three must be unique among built-in engines and among the engines on the card. If a number is taken, the engine is not listed (`synth.txt` shows `err 6`). The ABI note says a new engine uses its uid for all three, and the example does that: `0x64880b9c` is the FNV-1a hash of `org.example.synth.sawf`. The same three numbers go to `build_plug.py --synth STORED,PATCH,TYPE` so the manifest carries them. They must equal the numbers in the plugin line and the definition's `typeId`, or attach fails with error 8.
 
-The thirteen shipped engines keep the numbers they had when they were built in, so old projects and patches find them: CHIP 6 / `0x08`, JU6 7 / `0x81`, PHZ 8 / `0x82`, FM4 9 / `0x80`, D-Type 10 / `0xA2`, CS-Type 11 / `0x83`, A-Type 12 / `0x84`, T-Type 13 / `0x85`, 8-Type 14 / `0x86`, Hand-Type 15 / `0x87`, B-Type 16 / `0x88`, Arc-Type 17 / `0x89`, PLK 18 / `0x8A`. PHZ and PLK are private modules (source in the private repository `tracker-engines`), this repository keeps their numbers.
+The fourteen shipped engines keep the numbers they had when they were built in (ALCO is new in 1.4.0), so old projects and patches find them: CHIP 6 / `0x08`, JU6 7 / `0x81`, PHZ 8 / `0x82`, FM4 9 / `0x80`, D-Type 10 / `0xA2`, CS-Type 11 / `0x83`, A-Type 12 / `0x84`, T-Type 13 / `0x85`, 8-Type 14 / `0x86`, Hand-Type 15 / `0x87`, B-Type 16 / `0x88`, Arc-Type 17 / `0x89`, PLK 18 / `0x8A`, ALCO 22 / `0x8E`. PHZ, PLK and ALCO are private modules (source in the private repository `tracker-engines`), this repository keeps their numbers. ALCO has no built-in past.
 
 The engine `name` is 1 to 8 printable characters with no `/`. It is the on-screen name and the `Patches/<name>/` folder.
 
@@ -519,7 +523,48 @@ The host points its engine description **straight at your arrays**. Nothing is c
 
 ### Working memory (`work_bytes`, `set_work`)
 
-An engine cannot call `alloc`. Large state (a delay line pool) comes from the host through `PLUG_SYNTH_PLUGIN_WORK`: `work_bytes` and a `set_work(void*, uint32_t)` function. The host hands it out of a 16 KB SDRAM arena, zeroed, 8 byte aligned, after every `init` (every attach) and before any audio call. The block is the engine's while it is attached. When no part plays the engine and another engine needs the room, the host detaches it and gives the block away: when the engine comes back it is attached again (rw copied, `init`, a zeroed block through `set_work`). In the rare case that the blocks of the engines in use have to be packed together, the host stops an engine that plays (its voices are cut), runs `plug_entry` and `init` again and hands it a zeroed block at its new place. So keep nothing in work memory that a fresh `init` would not rebuild, as with rw. The limit is the engines in use at the same time (one per synth part), not every engine used since boot (`synth-open/plug_work.h`). Keep only state there that is touched a few times per sample (a delay line read once per sample). An uncached SDRAM access costs about 20 to 30 cycles on the MK66, so never put hot per-sample state there. The Karplus-Strong plugin PLK (source in the private repository `tracker-engines`) uses it.
+An engine cannot call `alloc`. Large state (a delay line pool) comes from the host through `PLUG_SYNTH_PLUGIN_WORK`: `work_bytes` and a `set_work(void*, uint32_t)` function. The host hands it out of an 18 KB SDRAM arena (16 KB before ABI 1.4), zeroed, 8 byte aligned, after every `init` (every attach) and before any audio call. The block is the engine's while it is attached. When no part plays the engine and another engine needs the room, the host detaches it and gives the block away: when the engine comes back it is attached again (rw copied, `init`, a zeroed block through `set_work`). In the rare case that the blocks of the engines in use have to be packed together, the host stops an engine that plays (its voices are cut), runs `plug_entry` and `init` again and hands it a zeroed block at its new place. So keep nothing in work memory that a fresh `init` would not rebuild, as with rw. The limit is the engines in use at the same time (one per synth part), not every engine used since boot (`synth-open/plug_work.h`). Keep only state there that is touched a few times per sample (a delay line read once per sample). An uncached SDRAM access costs about 20 to 30 cycles on the MK66, so never put hot per-sample state there. The Karplus-Strong plugin PLK (source in the private repository `tracker-engines`) uses it.
+
+### Main thread work and the cycle view (ABI 1.4: `service`, `view`)
+
+Two optional functions at the end of `plug_ext_synth`. A host reads them only when `struct_size` covers them (`PLUG_HAS`), so an engine that sets them still loads on a host before ABI 1.4, which never calls them. With `synth_plug.h` define `PLUG_SYNTH_ABI12` before the include and use `PLUG_SYNTH_PLUGIN_EXT(name, def, stored, patch_engine, work_bytes, set_work, service, view)` (`PLUG_SYNTH_PLUGIN_EXT_CHORD` and `PLUG_SYNTH_PLUGIN_EXT_CHORD_STRUM` take the same two arguments before the chord parameters). Without `PLUG_SYNTH_ABI12` the extension keeps the 100 bytes of ABI 1.1 and the `.plg` bytes of an existing engine do not change.
+
+```c
+uint32_t (*service)(uint32_t part, const float* values, uint32_t count);
+void (*view)(const float* values, uint32_t count, int8_t* out, uint32_t n);
+```
+
+Both run on the **main thread**, never in the audio interrupt, and only while the engine is attached (after `set_work`). `values` are the stored values of the part's patch, `count` of them (your parameters in table order, no macros, no automation, the Patch FX values while that FX has replaced them).
+
+- `service` is called about every 50 ms for every synth part (0 to 2) that plays the engine. It is the only place where the engine may call `PLUG_EXT_FILES`. File reads take milliseconds and the audio interrupt keeps running meanwhile, so publish what you prepare (a table in the work memory) with one aligned store that the audio code reads, an index or a pointer, never a lock. Write the data first, then the store (a compiler barrier between them): the interrupt runs to completion between two instructions of the main thread, so the audio code sees either the old state or the complete new one. Return nonzero when what the part sounds like changed. Keep the call cheap when nothing changed: it runs 20 times a second per part.
+- `view` writes `n` samples (at most `PLUG_VIEW_MAX`, 256) of one cycle of what the oscillator would play with these values, full scale -127 to 127. A pure read: no state changes. The patch editor page draws it in a 200 by 50 pixel box right of the engine logo, above the section grid, and refreshes it at most every 50 ms while the page is open. An engine without `view` has no box.
+- A crash inside either function is not caught by the crash marker (it is written only around attach): test them in the emulator: call them from Python through the extension the way the host does (the work memory and `PLUG_EXT_FILES` stubbed), as the private engine repository does.
+
+### Card files (`PLUG_EXT_FILES`, host level 2)
+
+`host->query(PLUG_EXT_FILES)` returns, on a level 2 host, the single cycle waves of the card folder `/Waves`:
+
+```c
+typedef struct {
+    uint32_t struct_size;
+    int32_t (*count)(void);                                                    // entries, 0 .. PLUG_FILES_MAX (1,024)
+    int32_t (*name)(uint32_t index, char* name, uint32_t cap);                 // path relative to /Waves, its length or < 0
+    int32_t (*read_wave)(uint32_t index, uint32_t first, int16_t* dst, uint32_t max);   // frames of the file or < 0
+    // tail, read it only when struct_size covers it (PLUG_HAS): files by path
+    int32_t (*wave_ref)(uint32_t part, uint32_t param, char* path, uint32_t cap);       // the path the patch stores for this parameter, length or < 0
+    int32_t (*read_path)(const char* path, uint32_t first, int16_t* dst, uint32_t max); // read_wave on a path, PLUG_FILES_E_NONE when not on the card
+    int32_t (*next_path)(const char* path, char* out, uint32_t cap);                    // the path after this one in the list's order, uncapped
+} plug_ext_files;
+```
+
+- **The list**: the `.wav` files of `/Waves` and of its subfolders one level down (the AKWF-FREE layout, `/Waves/AKWF_bw_saw/AKWF_saw_0001.wav`), sorted by path in byte order (`strcmp`, so upper case sorts before lower case). Hidden files, names starting with `.` (the macOS `._` twins) and paths of 48 bytes or more (`PLUG_FILES_PATH`, NUL included) are left out, and at most 128 subfolders are walked. With more than 1,024 files the list keeps the 1,024 smallest paths whatever order the card returns them in, so an index means the same file on any copy of the same folder. The host builds the list at the first call of a session (a walk of the folder, up to about a second for a full one) and keeps it until the next boot: reboot after changing `/Waves`.
+- **A file is an index** of that list, or a checked path under `/Waves` (by path, below): a plugin reads nothing outside `/Waves`.
+- **By path** (the tail of the struct, ABI 1.4, optional): the list stops at 1,024 files and every file added or removed moves every index, so a patch can also store a file's path, relative to `/Waves` (`.patch` field 101). `wave_ref(part, param, ...)` returns the path stored for your parameter `param` in the patch of part `part` (the number `service` was called with), or `PLUG_FILES_E_NONE`: none stored, or the parameter has another value than the one the path was stored with, so the user changed it. `read_path` reads a path directly without the list, so it reaches every file on the card, in any subfolder depth, and answers `PLUG_FILES_E_NONE` for a path that is not valid or not there. `next_path` gives the path that follows one in the list's order over all files (no cap, no table, a walk of the card). The engine's rule: path first, when the file is missing or unreadable the index it always had, when that is 0 or fails the built-in wave. A host without the tail (`struct_size` short) never gives a path, so the index plays as before. A valid path is 5 to 47 printable ASCII characters ending in `.wav`, `/` between folders, no empty segment and none that starts with `.`, none of `\ : * ? " < > |` (`synth-open/wave_path.h`).
+- **Wave file parameter shape** (a contract, host side, nothing is added to the ABI): an integer parameter (`PLUG_FMT_INT`) with range 0 to 1,024 (`PLUG_FILES_MAX`) whose name ends in ` File` (`A File`, `B File`) is shown in the synth editor as the wave file's base name instead of the number. The name comes from the path stored in the patch for that parameter (`wave_ref`) while one is in force, else from entry value - 1 of the host's `/Waves` list, else a word, never the number: value 0 with no path shows `Sine` (what a wave parameter plays for no file), an index past the end of the list shows `Missing`. A stored path that is not on the card shows `? ` and its name (the engine falls back as it always did). A host with no wave in `/Waves` does not list the parameter at all: not in the parameter list, not in the macro target list, not in the automation picker (the engine plays its built-in fallback). A path with a folder (`AKWF_bw_sin/AKWF_sin_0001.wav`) that is not on the card is also looked for by its base name directly in `/Waves`, so a patch made against the full AKWF folders plays on the flat curated set of the release zip (`read_path` does it). The `.wav` is left off and a name over 20 characters is cut in the middle as head of 9 characters, `~`, tail of 10 characters, so the number at the end stays visible. A plugin that wants the name follows the shape and needs no new format, so it still loads on an older host, which shows the number and lists the parameter whatever the card holds.
+- **`read_wave`** opens, reads and closes the file on every call. It reads RIFF WAVE, PCM 8, 16, 24 or 32 bit and float 32 bit (also as `WAVE_FORMAT_EXTENSIBLE`), mono or stereo, at most `PLUG_FILES_FRAMES` (2,048) frames. It delivers the first channel as int16 (8 bit scaled up, 24 and 32 bit cut to their top 16 bits, float clamped to -1 .. 1), frames `[first, first + max)`, and returns the frame count of the whole file, so a small buffer reads a file in pieces. The sample rate is ignored: a single cycle is a cycle at any rate.
+- **Errors** (negative returns): `PLUG_FILES_E_NONE` no such entry, `PLUG_FILES_E_FORMAT` not a wave it reads, `PLUG_FILES_E_LONG` no frames or more than 2,048, `PLUG_FILES_E_CARD` the card failed or the file is gone, `PLUG_FILES_E_CONTEXT` called outside `service` (from `init`, the audio interrupt or an insert: every function does nothing there).
+- **Memory**: deliver into your work memory (`work_bytes`), not onto the stack: the main stack is shared with the audio interrupt. SDRAM is slow for per sample reads, so copy what the audio code reads per sample into SRAM once per block (one wave table level of a few hundred bytes per voice and block costs well under a point of a block at 4 voices, emulated), instead of reading the SDRAM per sample.
+- The host spends about 57 KB of SDRAM on the list (`plug_files.h`), nothing of the internal RAM.
 
 ### Presets and patches
 
@@ -857,11 +902,11 @@ The firmware's own engine bench (`synth-open/tools/phz_cycles/run_bench.sh`) use
 
 | Resource | Insert 1 | Insert 2 | Synth engine |
 | :--- | :--- | :--- | :--- |
-| **Code** | the bottom of the 8,192 B SRAM_L slot, image + bss. No wait states | the top of the same slot. Both together up to 8,192 B. Never written to flash | FlexNVM bank `0x10000000` to `0x10020000`: 128 KB, 32 sectors of 4 KB |
+| **Code** | the bottom of the 9,728 B SRAM_L slot, image + bss. No wait states | the top of the same slot. Both together up to 9,728 B. Never written to flash | FlexNVM bank `0x10000000` to `0x10020000`: 128 KB, 32 sectors of 4 KB |
 | **Writable data** | in the same slot, after the text | the same | rw + bss from a **3,072 B** SRAM pool shared by the installed engines |
 | **Instance** | up to 16 KB from the SRAM heap | same | none (an 8 byte scratch). Per voice 128 B, per part 384 B |
-| **Big tables, delay lines** | `alloc(bytes, 1)`: SDRAM arena, 32 KB per slot | same | `work_bytes`: 16 KB SDRAM arena shared by the engines in use at the same time |
-| **Limit on the file** | `image + bss` 8,192, less what insert 2 holds | `image + bss` 8,192, less what insert 1 holds | `image + bss` 32,768 (staging buffer) |
+| **Big tables, delay lines** | `alloc(bytes, 1)`: SDRAM arena, 32 KB per slot | same | `work_bytes`: 18 KB SDRAM arena shared by the engines in use at the same time |
+| **Limit on the file** | `image + bss` 9,728, less what insert 2 holds | `image + bss` 9,728, less what insert 1 holds | `image + bss` 32,768 (staging buffer) |
 
 Notes:
 
@@ -961,6 +1006,7 @@ White (or opaque, for a PNG with alpha) is drawn in the theme colour. Black (or 
 | File | Written by | Content |
 | :--- | :--- | :--- |
 | `<project>/plugins.txt` (and `Workspace/plugins.txt`) | the host, on project save | The inserts of the project, below |
+| `<project>/project.mtff` (and `Workspace/project.mtff`) | the host, on project save | The other settings of the project that `project.mt` has no room for (the Strum ramp depth, seed, ducking, groove, snap, follow chord, Parts), [`project.mtff` format](#projectmtff-format) |
 | `/Plugins/Synth/<name>.plgi` | you | A logo ([section 11](#11-engine-logos-plgi)) |
 | `/Plugins/host.txt` | the host, after every insert load | Index size, scan result, rejected files with error numbers, the plugin list with uid and version, each insert's state, error, text and instance address, cycles and max cycles |
 | `/Plugins/synth.txt` | the host | Library and bank counts, then one line per file with its name, stored number, state (`on card`, `installed`, `attached`, `not listed`), flash address and `err` code, the erase count of every sector, the last 8 installs (ms, flash commands, erases, evicted) and the logo source and RAM_G use |
@@ -1013,6 +1059,31 @@ p Tilt=3
 
 ---
 
+### `project.mtff` format
+
+Plain text next to `project.mt`, one `key value` per line. Only the host writes it.
+
+```text
+tffproj 1 ff=1.4.0 build=5a1b2c3 cap=32768
+                           required first line, written first on every save: the format version, the Tracker FF version that wrote
+                           the file, its git sha and the largest file it reads. The three tokens are optional and unknown ones are skipped
+mt 3a51c2e0 2324           the CRC32 and the size of the project.mt this file was written with
+strum.ramp 100             the Strum ramp depth, 0 to 100 percent, no line means 0 (off)
+seed.take 42               the random seed of the seeded takes, 1 to 255, no line means Off
+macro.mode 1               the Macro depth of the project: 0 Add, 1 Scale, no line means Per patch (each patch keeps its own, the 1.3.0 behaviour)
+duck.send 3 60 50 50       send ducking: source, depth, release, threshold, no line means off
+track.3.groove -25         per track groove, -50 to 50 (tracks are 1 to 16)
+track.3.snap 2             scale snap of the track: 1 Nearest, 2 Down, 3 Up
+track.3.follow 1 2         follow chord: the chord track and the mode (1 Snap, 2 Transp, 3 Tr+Snap)
+pat.parts.mode 1           the Song screen plays the Parts list
+pat.part.12 <32 hex> 16 2 1 0   Part 12: source pattern of each of the 16 tracks, length, passes, flags, baked pattern
+x.anything else            a line this firmware does not know: kept as it is when the file is rewritten
+```
+
+A project with no setting that differs from the old behaviour has no file. It is the one per project file of the firmware besides `plugins.txt` (master inserts only): the seed, scale snap and ducking were lines of `plugins.txt` and the groove, follow chord and Parts had files of their own while 1.4.0 was in development, none of them was ever released. The `mt` line is checked at load against the CRC in the last four bytes of the `project.mt`: when they differ the `project.mt` was written by something else, project-wide keys (`strum.ramp`) still apply, so do the `track.` and `pat.` lines (the Parts), because track and pattern numbers never move. A Part cell that names a pattern the project no longer has is left empty and `host.txt` says so. Keys that belong to a movable slot of the project (`part.` and `instr.` lines, none of them written by this firmware) are renamed `parked.<key>` and kept. The format version is bumped only when a key changes its meaning, a new key is not a bump. A file of a higher format is left alone: nothing in it is applied, it is never rewritten or removed and the status line in `host.txt` says so. Save and Save As still work: the `project.mt` and the patterns are saved as usual, the file stays byte for byte (Save As copies it unchanged to the new folder) and the FF settings changed in this build are dropped, which `host.txt` and the log say, so they cannot come back when the Workspace is loaded again. Opening such a project from the File screen or the USB console also shows a popup once ("Project from newer FF (format N)", "FF settings not loaded"), as it does for a file of a newer firmware with the same format ("Saved by newer FF A.B.C", "Some settings ignored"). The Workspace reload at power up and the autosave show nothing. A file of a newer firmware with the same format loads, the keys this firmware knows apply, the others are kept as they are and the next save writes this firmware's version in the header (`ff=`). A header with no `ff=` token (a development build) reads as format 1 from an unknown version. The header is written only together with a setting or a kept line, a project with neither has no file. The whole file is at most 32 KB (`kMtffMax`, 32768 bytes, the largest file this build writes is about 28.3 KB, 255 Parts take about 15 KB).
+
+A synth engine plugin gets the depth with `host->query(PLUG_EXT_STRUM)`, a `plug_ext_strum { struct_size, ramp_pct }` that points into firmware RAM and stays valid for the life of the plugin. Ask once at init and read `ramp_pct` at every note-on, the project can change it between notes. `NULL` (a host before this query) means the ramp at 100 percent. `strum_ramp.h` has the functions: `gain(order, units, pct)` for the level of a chord note, depth 0 returns exactly 1.0.
+
 ## 13. Validation, Safe Mode and the Crash Marker
 
 ### `validate_synth.py` is the acceptance gate for engines
@@ -1064,7 +1135,9 @@ You can test almost everything without a device. The tools need `unicorn` for th
 | `tools/plug_scan_cache_test.cpp` | When the Inserts page scans `/Plugins/Master` again: an unchanged folder is not scanned, an added, removed, renamed or resized file is, and so is any folder after a USB storage session or a card change |
 | `tools/plug_bank_test.cpp` | The FlexNVM bank on a simulated flash that loses power after any command. Prints how many engines fit at once at the shipped sizes |
 | `tools/plug_logo_test.cpp` | The PLGI parser and the sidecar/trailer order. Give it `.plgi` or `.plg` files |
-| `tools/plug_sidecar_test.cpp` | The `plugins.txt` codec and file rules on a card that fails or loses power |
+| `tools/plug_sidecar_test.cpp` | The `plugins.txt` codec and file rules on a card that fails or loses power, and the path limits for nested project folders |
+| `tools/plug_mtff_test.cpp` | The `project.mtff` codec and file rules on the same kind of card: unknown lines kept, stale stamp, Save As, nested and too long paths |
+| `tools/run_strum_depth_test.sh` | The Strum ramp depth: depth 0 against a `STRUM_RAMP=0` build and depth 100 against the ramp before the depth, over every input |
 | `tools/plug_ui_nav_test.cpp` | The Inserts page list index logic |
 | `tools/run_smoke.sh` | The host smoke test of the open shim for a set of built-in engines. It never loads a `.plg` |
 | `tools/run_tests.sh` | Every host check above in one run (5 smoke variants, `build_plugs.sh`, the `plug_*` tests against the pinned modules), ends with `RESULT: GREEN` or `RESULT: RED`. `run_host_tests.sh` is the same without `build_plugs.sh`, against `$PLUGDIR` |
@@ -1077,7 +1150,7 @@ A plugin that is correct on the Mac can still fail on the device in ways the emu
 
 **Stale pointers after a plugin is unloaded.** An insert's parameter names and enum names live in the plugin's text segment. The Inserts page keeps lists that point at them. A reload copies the next plugin over the old text (insert 2 ran from FlexNVM then, and a reload **erased the sector**), so a hidden list read garbage on the next redraw and the Tracker faulted. The host now notifies the UI from its unload path before the slot memory is reused and the labels copy their strings. For you: keep every table `const` in the text segment, never point the host at strings built in rw and never keep a pointer into another plugin or into host memory across calls. Synth engines are detached (parts cut, parameters removed) before their flash or rw bytes change, because the host points at your arrays directly.
 
-**Two inserts share 8 KB.** Insert 1 and insert 2 run from the same 8,192 B SRAM_L slot, so a plugin that fits alone can be refused beside a large one (`Full:<name>`, error 13). It loads by itself once the other insert leaves room. Every pair of two different shipped inserts fits (Phaser twice does not, 8,768 B). Keep `image + bss` small: declare tables `const`, keep state in the instance (up to 16 KB from the heap, not counted against the slot) and put delay lines in the SDRAM arena (`alloc(bytes, 1)`). Read the `image` and `bss` sizes `build_plug.py` prints.
+**Two inserts share 9.5 KB.** Insert 1 and insert 2 run from the same 9,728 B SRAM_L slot (8,192 B before 1.4.0), so a plugin that fits alone can be refused beside a large one (`Full:<name>`, error 13). It loads by itself once the other insert leaves room. Every pair of two different shipped inserts fits, the largest is Glue + Phaser with 9,488 B (only Glue twice, 10,208 B, does not). Keep `image + bss` small: declare tables `const`, keep state in the instance (up to 16 KB from the heap, not counted against the slot) and put delay lines in the SDRAM arena (`alloc(bytes, 1)`). Read the `image` and `bss` sizes `build_plug.py` prints.
 
 **A PC-relative reference between the text and rw segments** does not survive the copy to different addresses. The builder refuses it and names the relocation. The ordinary absolute addresses in the literal pool are fine, they are in the rebase table.
 
@@ -1108,7 +1181,7 @@ These are facts from the files in this repository, not legal advice.
 - **The SDK files** in [`synth-open/plug/`](../synth-open/plug/) are **MIT** (`synth-open/plug/LICENSE`, Copyright (c) 2026 sbialy (tracker-ff)). That file names `plug_abi.h`, `plug_rt.c`, `plug.ld`, `build_plug.py`, `emu_plug.py`, `build_plugs.sh` and `README.md` as its scope. The files `synth_plug.h`, `emu_synth.py` and the `examples/` folder are not named in that scope text. The two examples carry their own MIT header.
 - **Your plugin** may use any licence that allows shipping it as a separate file (`synth-open/plug/README.md`). The firmware licence is unchanged. A `.plg` is a separate file loaded by the firmware, and the plugin's own `licence` field in the manifest records the SPDX id you choose.
 - **The repository `LICENSE`** is MIT with a Wholesale Commercial Clone Restriction. Its Part 2 names `.ptfx` Sample Editor plugins as expressly permitted to sell. It does not mention `.plg` plugins. Part 2 prohibits selling the complete firmware, a substantially unmodified derivative of it or `.ptf` firmware images. It grants no right to the Polyend trademarks.
-- **Third party code your plugin may include.** A synth plugin includes `ot/audio/synth_engine.h` and `ot/model/synth_patch.h`, which are **OpenTracker, Apache-2.0** (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `NOTICE.md` item 10, each file has a provenance line). The shipped OpenTracker engine plugins (tracker-engines-os) and insert ports (tracker-effects-os) are **MIT** from opentracker-synths and opentracker-fx (`licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`), with Console and Tube original (private modules, source in the private repository `tracker-effects`, proprietary freeware like PHZ and PLK, see `NOTICE.md` items 13 to 13b). Each module repository ships the notices of its plugins with its release files (section 18). Check the headers you include and the notices that come with them before you distribute a binary.
+- **Third party code your plugin may include.** A synth plugin includes `ot/audio/synth_engine.h` and `ot/model/synth_patch.h`, which are **OpenTracker, Apache-2.0** (`licenses/LICENSE-OpenTracker-Apache-2.0.txt`, `NOTICE.md` item 10, each file has a provenance line). The shipped OpenTracker engine plugins (tracker-engines-os) and insert ports (tracker-effects-os) are **MIT** from opentracker-synths and opentracker-fx (`licenses/LICENSE-OpenTracker-synths-MIT.txt`, `licenses/LICENSE-OpenTracker-fx-MIT.txt`), with Console and Tube original (private modules, source in the private repository `tracker-effects`, proprietary freeware like PHZ, PLK and ALCO, see `NOTICE.md` items 13 to 13b). Each module repository ships the notices of its plugins with its release files (section 18). Check the headers you include and the notices that come with them before you distribute a binary.
 - **Origin of the examples.** `tilt.c` and `saw_synth.cpp` are original code written for this guide. The filter is the textbook Chamberlin state variable filter and the band limiting is the textbook polynomial step. No third party source was copied.
 - The firmware is unofficial, noncommercial community work for the Original Tracker. It is not affiliated with or supported by Polyend.
 
@@ -1135,7 +1208,7 @@ This repository holds the plugin host and this SDK, but no plugin module. tracke
 | Repository | Visibility | Plugins |
 |---|---|---|
 | [tracker-engines-os](https://github.com/sbialy/tracker-engines-os) | public | the synth engines JU6, FM4, B-Type, D-Type, CS-Type, A-Type, T-Type, 8-Type, Hand-Type, Arc-Type |
-| tracker-engines | private | the synth engines PHZ and PLK (freeware binaries) |
+| tracker-engines | private | the synth engines PHZ, PLK and ALCO (freeware binaries) |
 | [tracker-effects-os](https://github.com/sbialy/tracker-effects-os) | public | the master inserts Dirt, Tape, Lo-Fi, BBD, Phaser |
 | tracker-effects | private | the master inserts Console, Tube and Glue (freeware binaries) |
 

@@ -22,6 +22,15 @@ enum : uint16_t
     FEAT_F_DYNAMIC = 8u,      // provided by a module on the card (listed as missing or refused when it did not load)
 };
 
+// feat_param.restart bits. A module built before FEAT_PR_OMIT_DEFAULT only ever set 0 or 1.
+enum : uint8_t
+{
+    FEAT_PR_RESTART = 1u,        // a change takes effect at the next start
+    FEAT_PR_OMIT_DEFAULT = 2u,   // the file has no line for the parameter while it is at its default (a missing line reads as the
+                                 // default, so a file of an image without the parameter and one with it at the default are the same)
+    FEAT_PR_ELSEWHERE = 4u,      // the row is not on the feature page, another Config page edits the same byte (Config > USB)
+};
+
 struct feat_param
 {
     const char* key;    // file key, [a-z0-9_], never renamed (a renamed key reads as its default)
@@ -31,7 +40,7 @@ struct feat_param
     int8_t shown;
     uint8_t enumCount;
     const char* const* enumText;
-    uint8_t restart;    // 1: a change takes effect at the next start
+    uint8_t restart;    // FEAT_PR_* bits: FEAT_PR_RESTART (1) a change takes effect at the next start
     const char* help;   // description box text, null: the feature's help
 };
 

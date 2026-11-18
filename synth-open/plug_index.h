@@ -29,7 +29,7 @@ enum Err : int32_t
     kCommit,     // Place::commit failed (the flash erase, program or verify of a FlexNVM text segment)
     kInit,       // no memory for the instance or init() failed
     kStale,      // the file is not the one the index listed (Place::wantUid / wantCrc): the folder changed since the scan
-    kNoRoom,     // fits the slot alone, not beside the plugin the other insert runs (the two share the 8 KB slot)
+    kNoRoom,     // fits the slot alone, not beside the plugin the other insert runs (the two share the 9.5 KB slot)
 };
 
 inline uint32_t crc32(uint32_t c, const uint8_t* p, uint32_t n)
@@ -66,10 +66,14 @@ inline Err checkLayout(const plug_file_header& h, uint32_t textLen, uint32_t rwL
     return kOk;
 }
 
-// ---- the two master inserts share one 8 KB SRAM_L slot (plug_host.cpp): insert 1 from the bottom, insert 2 from the top, each
-// image + bss in one piece (text, then rw, then bss). Neither ever touches the flash. A pair fits when insert 1's bytes end at or
+// ---- the two master inserts share one 9,728 B (9.5 KB) SRAM_L slot (plug_host.cpp): insert 1 from the bottom, insert 2 from the top,
+// each image + bss in one piece (text, then rw, then bss). Neither ever touches the flash. A pair fits when insert 1's bytes end at or
 // below the start of insert 2's, which is 16 byte aligned (down) so its rw and bss stay aligned like at the slot start.
-constexpr uint32_t kInsertRoom = 8192;
+// The size (f3-slot, 1.4.0): the largest pair of two different shipped or planned inserts is Glue 5,104 B + Phaser 4,384 B = 9,488 B
+// (the alignment of 5,104 costs nothing), 9,728 leaves 240 B on it and 4,624 B beside Glue for one more insert. It was 8,192 B in 1.3.x,
+// where Glue + Phaser did not fit. The slot is static SRAM taken from the heap (every byte of it is a byte less of heap, the stack margin
+// STACK_MARGIN is not touched). Keep it a multiple of 16: the slot is 16 byte aligned and insertTopAt rounds down to 16.
+constexpr uint32_t kInsertRoom = 9728;
 inline uint32_t insertFoot(const plug_file_header& h)
 {
     return h.image_size + h.bss_size;

@@ -1545,7 +1545,7 @@ static void functEncoder(int16_t value)
         TP->inputs.encoderL = 1;
 }
 
-static void functPads(uint8_t pad, uint8_t state, int16_t velo)
+static void functPads(uint8_t pad, uint8_t state, int16_t /*velo*/)
 {
     if (state == buttonPress && TP->inputs.pads[pad] == 0)
         TP->inputs.pads[pad] = 1;

@@ -67,7 +67,6 @@ static void functActionButton7();
 static void functStopPatternCancel();
 static void functStopPatternYes();
 
-static void functActionSource();
 static void functActionGain();
 static void functActionMonitor();
 static void functActionRecord();
@@ -211,12 +210,15 @@ void cSampleRecorder::update()
         ip->unblockAllInputs();
 
         newFileManager.clearStatus();
+        wasSampleMemoryOverwritten = 0;
 
         if (SR->saveOrSaveloadFlag == cSampleRecorder::saveTypeLoad)
         {
             uint8_t button = interfaceButtonSampleLoad;
             SR->firstFreeInstrumentSlotFound++;
-            SR->eventFunct(eventSwitchModule, SR, &button, &SR->firstFreeInstrumentSlotFound);
+            // The handler reads the options through a uint32_t pointer.
+            uint32_t slot = static_cast<uint8_t>(SR->firstFreeInstrumentSlotFound);
+            SR->eventFunct(eventSwitchModule, SR, &button, &slot);
         }
         else
         {
@@ -287,6 +289,9 @@ void cSampleRecorder::start(uint32_t options)
 
     if (sequencer.isPlay())
     {
+        // stop() puts this instrument back, also when the recorder is left from here.
+        globalLastUsedInstrumentIndex = mtProject.values.lastUsedInstrument;
+
         if (mtMenuPopup.isPopupVisible())
         {
             handleStartupWithPopupAndMenu();
@@ -308,8 +313,6 @@ void cSampleRecorder::start(uint32_t options)
 
     if (options == 0)
     {
-        wasSampleMemoryOverwritten = 0;
-
         saveOrSaveloadFlag = cSampleRecorder::saveTypeNormal;
         setCurrentScreenType(cSampleRecorder::screenTypeConfig);
     }
@@ -373,11 +376,6 @@ void cSampleRecorder::start(uint32_t options)
 
     activateLabelsBorder();
 
-    if (options > 0 && options != interfaceButtonSampleRec)
-    {
-        functSwitchModule(options);
-    }
-
     globalLastUsedInstrumentIndex = mtProject.values.lastUsedInstrument;
 
     if (mtProject.values.lastUsedInstrument >= MIDI_INSTRUMENTS_START_IDX &&
@@ -394,6 +392,13 @@ void cSampleRecorder::start(uint32_t options)
 
         mtProject.values.lastUsedInstrument = recorderMidiLastUsedInstrumentIndex;
     }
+
+    // This can leave the recorder for another module. It has to come last, so that stop()
+    // puts back the instrument replaced above before that module starts.
+    if (options > 0 && options != interfaceButtonSampleRec)
+    {
+        functSwitchModule(options);
+    }
 }
 
 void cSampleRecorder::stop()
@@ -409,6 +414,14 @@ void cSampleRecorder::stop()
     radio->clearRDS();
     radio->setSeekCallback(nullptr);
     radio->enable(false);
+
+    if (recordInProgressFlag)
+    {
+        // The module can be taken off the screen in the middle of a recording (power button,
+        // card removed). Nothing else would end the recording then.
+        recordInProgressFlag = 0;
+        recorder.stop();
+    }
 
     moduleRefresh = 0;
     avoidPopOnStart.tryUnblockSoundOnExit();
@@ -503,12 +516,12 @@ void cSampleRecorder::setConfigScreenFunct()
     ip->clearButtonsRange(interfaceButton0, interfaceButton7);
 
     ip->setButtonObj(interfaceButton0, buttonPress, functSelectButton0);
-    ip->setButtonObj(interfaceButton0 + RADIO_COL1, buttonPress, functActionRadioFreq);
-    ip->setButtonObj(interfaceButton0 + RADIO_COL2, buttonPress, functActionRadioLeft);
-    ip->setButtonObj(interfaceButton0 + RADIO_COL3, buttonPress, functActionRadioRight);
+    ip->setButtonObj(interfaceButton0 + int(RADIO_COL1), buttonPress, functActionRadioFreq);
+    ip->setButtonObj(interfaceButton0 + int(RADIO_COL2), buttonPress, functActionRadioLeft);
+    ip->setButtonObj(interfaceButton0 + int(RADIO_COL3), buttonPress, functActionRadioRight);
     // ip->setButtonObj(interfaceButton4, buttonPress, functActionButton4);
-    ip->setButtonObj(interfaceButton0 + GAIN_COL, buttonPress, functActionGain);
-    ip->setButtonObj(interfaceButton0 + MONITOR_COL, buttonPress, functActionMonitor);
+    ip->setButtonObj(interfaceButton0 + int(GAIN_COL), buttonPress, functActionGain);
+    ip->setButtonObj(interfaceButton0 + int(MONITOR_COL), buttonPress, functActionMonitor);
     ip->setButtonObj(interfaceButton7, buttonPress, functActionButton7);
 }
 
@@ -1177,7 +1190,7 @@ static void functActionButton6()
         FileSystem* fileSystem = TrackerImpl::getInstance()->getPlatform()->getFileSystem();
         char localPatch[70];
         uint16_t cnt = 1;
-        char localName[32];
+        char localName[MAX_NAME_LENGTH];
         strcpy(localName, SR->keyboardManager.getName());
         do
         {
@@ -1350,6 +1363,16 @@ static void functActionButton7()
     {
         case cSampleRecorder::screenTypeConfig:
         {
+            if (SR->waitForPreRollEnd && !sequencer.isSetInternalClock())
+            {
+                // The count-in follows the clock, and an external clock may never come.
+                // Everything but this button is locked while waiting for it, so a second
+                // press has to give the wait up instead of arming it again.
+                SR->waitForPreRollEnd = false;
+                SR->recordInProgressFlag = 0;
+                mtPopups.hideInfoPopup();
+                break;
+            }
 #ifndef TRACKER_MINI
             if (sequencer.isPreRollConfigOn() &&
                 SR->recorderConfig.source != cSampleRecorder::sourceTypeRadio)
@@ -2285,7 +2308,8 @@ static void functSwitchModule(uint8_t button)
     if (button == interfaceButtonMaster && !SR->isSwitchingFromMenu)
     {
         SR->dontTurnOffRadio = 1;
-        uint8_t option = interfaceButtonSampleRec;
+        // The handler reads the options through a uint32_t pointer.
+        uint32_t option = interfaceButtonSampleRec;
         SR->eventFunct(eventSwitchModule, SR, &button, &option);
         return;
     }
