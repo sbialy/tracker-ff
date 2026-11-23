@@ -206,8 +206,8 @@ class cConfigEditor : public ModuleBase
 #endif
     char audioPerformanceText[30];
     char audioPerformanceText2[30];
-    char usbStreamText[16];
-    char usbStreamText2[16];
+    char usbStreamText[24];   // also the line in counters (showDiagnosticInfo)
+    char usbStreamText2[24];
     char heapUsageText[30];
     char stackUsageText[30];
     //----------------------------------

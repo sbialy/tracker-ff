@@ -927,6 +927,11 @@ void cConfigEditor::showBatteryInfo()
 #endif
 }
 
+#if defined(AUDIO_PERFORMANCE_INFO_ENABLED) && !defined(PLATFORM_IMX)
+extern "C" void ff_linein_counts(uint32_t out[4]);   // core/libs/Audio/Input.cpp
+extern "C" volatile uint32_t ff_audio_late;          // platforms/mk66/3rdparty/Audio/output_i2s.cpp
+#endif
+
 void cConfigEditor::showDiagnosticInfo()
 {
 #ifdef AUDIO_PERFORMANCE_INFO_ENABLED
@@ -963,6 +968,22 @@ void cConfigEditor::showDiagnosticInfo()
         display.setControlShow(usbStreamLabelControl);
         display.refreshControl(usbStreamLabelControl);
     }
+#ifndef PLATFORM_IMX
+    else
+    {   // the same slot without USB audio: line in block counters since power on (core/libs/Audio/LineInRing.h) and late
+        // output blocks (output_i2s.cpp), d = read twice by the old code, s = skipped by it, u = repeated now, L = late
+        uint32_t c[4];
+        ff_linein_counts(c);
+        snprintf(usbStreamText, sizeof(usbStreamText), "LIN d%lu s%lu", static_cast<unsigned long>(c[0]),
+                 static_cast<unsigned long>(c[1]));
+        snprintf(usbStreamText2, sizeof(usbStreamText2), "u%lu L%lu", static_cast<unsigned long>(c[2]),
+                 static_cast<unsigned long>(ff_audio_late));
+        display.setControlText(usbStreamLabelControl, usbStreamText);
+        display.setControlText2(usbStreamLabelControl, usbStreamText2);
+        display.setControlShow(usbStreamLabelControl);
+        display.refreshControl(usbStreamLabelControl);
+    }
+#endif
 #endif
 
 #ifdef MEMORY_USAGE_INFO_ENABLED

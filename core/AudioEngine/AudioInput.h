@@ -26,7 +26,11 @@ class AudioInput
     AudioAmplifier* getUsbRecordingAmplifier(InputChannels channel);
 
   private:
-    AudioInputStream i2sStream;
+#ifdef PLATFORM_IMX
+    AudioInputStream i2sStream;   // the IMX input interrupt already copies to its own buffer
+#else
+    AudioInputStream i2sStream{ false, true };   // line in through the block ring (core/libs/Audio/LineInRing.h)
+#endif
     AudioInputStream usbStream{ true }; // no buffer on the original (mtAudioEngine::updateInputAudioBuffers): no blocks
     AudioAmplifier usbRecordingAmplifier[InputChannels::kChannelsCount];
     AudioRecordQueue recordingQueueI2s[InputChannels::kChannelsCount];

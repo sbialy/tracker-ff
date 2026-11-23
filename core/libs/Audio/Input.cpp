@@ -1,8 +1,39 @@
 #include "Input.h"
+#include "LineInRing.h"
 #include "utility/dspinst.h"
+#include <cr_section_macros.h>
+
+#if !defined(PLATFORM_IMX)
+namespace
+{
+constexpr uint32_t kLineInBlocks = 8;   // 4 KB: the cushion block, a short backlog after a double render, writes in flight
+// SDRAM like the other audio scratch (the internal RAM is the heap and the stack). Only the CPU touches it, never the DMA.
+__NOINIT(EXTERNAL_RAM) uint32_t s_lineInSlots[kLineInBlocks][AUDIO_BLOCK_SAMPLES];
+LineInRing<kLineInBlocks, AUDIO_BLOCK_SAMPLES> s_lineIn;
+} // namespace
+
+extern "C" void ff_linein_counts(uint32_t out[4])
+{
+    out[0] = s_lineIn.dup;
+    out[1] = s_lineIn.skip;
+    out[2] = s_lineIn.under;
+    out[3] = s_lineIn.drop;
+}
+#else
+extern "C" void ff_linein_counts(uint32_t out[4])
+{
+    out[0] = out[1] = out[2] = out[3] = 0;
+}
+#endif
 
 AUDIO_CORE_FLASH void AudioInputStream::update()
 {
+#if !defined(PLATFORM_IMX)
+    if (lineInRing)
+    {
+        data = const_cast<uint32_t*>(s_lineIn.fetch());   // exactly one block per render, nullptr before the first input block
+    }
+#endif
 #ifdef AUDIO_NULL_IS_SILENCE
     if (data == nullptr && silentWithoutData)
         return;
@@ -75,5 +106,16 @@ AUDIO_CORE_FLASH void AudioInputStream::update()
 
 AUDIO_CORE_FLASH void AudioInputStream::setInBuffer(void* data)
 {
+#if !defined(PLATFORM_IMX)
+    if (lineInRing)
+    {   // the input interrupt: copy the half the DMA just finished, the DMA fills the other half for the next 2.9 ms
+        if (data != nullptr)
+        {
+            if (s_lineIn.slots == nullptr) s_lineIn.slots = s_lineInSlots;
+            s_lineIn.push(data);
+        }
+        return;
+    }
+#endif
     AudioInputStream::data = data;
 }

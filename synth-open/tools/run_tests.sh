@@ -125,6 +125,9 @@ c++ -std=c++20 -O1 -Wall -Wextra -I synth-open -I synth-open/tools/plug_stub syn
 # the integer sequencer clock against the stock double accumulator (core/source/internalTickClock.h), 1 simulated minute per run here
 c++ -std=c++20 -O2 -Wall -I core/source synth-open/tools/seq_tick_test.cpp -o "$T/seq_tick_test" > "$L/seq_tick_test.build.log" 2>&1 \
   || echo "BUILD FAIL seq_tick_test"
+# the line in block ring against the 1.4.0 bare pointer read on a simulated interrupt timeline (core/libs/Audio/LineInRing.h)
+c++ -std=c++20 -O2 -Wall -Wextra -include algorithm -I core/libs/Audio synth-open/tools/linein_ring_test.cpp -o "$T/linein_ring_test" \
+  > "$L/linein_ring_test.build.log" 2>&1 || echo "BUILD FAIL linein_ring_test"
 # the sequencer's private random generator of the seeded random takes (core/source/seqRandom.h)
 c++ -std=c++20 -O2 -Wall -Wextra -I core/source synth-open/tools/seq_random_test.cpp -o "$T/seq_random_test" > "$L/seq_random_test.build.log" 2>&1 \
   || echo "BUILD FAIL seq_random_test"
@@ -206,6 +209,7 @@ c++ -g -fsanitize=address,undefined -fno-sanitize-recover=all "${SB[@]}" -o "$T/
  echo "### run plug_index_test"; "$T/plug_index_test" "$PLUGDIR"; echo "### rc=$?"
  echo "### run seq_tick_test"; "$T/seq_tick_test" 1; echo "### rc=$?"
  echo "### run seq_random_test"; "$T/seq_random_test"; echo "### rc=$?"
+ echo "### run linein_ring_test"; "$T/linein_ring_test"; echo "### rc=$?"
  echo "### run tape_fx_test"; "$T/tape_fx_test"; echo "### rc=$?"
  echo "### run kern_sample_read_test"; "$T/kern_sample_read_test"; echo "### rc=$?"
  echo "### run kern_env_steady_test"; "$T/kern_env_steady_test"; echo "### rc=$?"
