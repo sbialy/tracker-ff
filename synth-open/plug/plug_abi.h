@@ -45,7 +45,7 @@ enum
 enum
 {
     PLUG_CPU_CM4F = 1,   // Cortex-M4F, fpv4-sp-d16, hard float (original Tracker, MK66)
-    PLUG_CPU_CM7 = 2,    // Cortex-M7, fpv5 (Tracker+ / Mini, IMX), no host yet
+    PLUG_CPU_CM7 = 2,    // Cortex-M7, fpv5 (Tracker+ / Mini, IMX): only the IMX host runs it (build_plug.py --cpu cm7)
 };
 
 // plug_file_header.flags
@@ -351,7 +351,7 @@ typedef struct
 
 // ---- PLUG_EXT_CHORD (ABI 1.2): paraphony. A synth engine that can sound a whole chord in one voice (one filter, one set of
 // envelopes for every chord note) answers this query with the indices of two of its own parameters:
-//   param_index  an enum of exactly PLUG_CHORD_COUNT values in the order of plug_chord.h (the MIDI Chord FX table, 0 = the
+//   param_index  an enum of PLUG_CHORD_COUNT values (a host accepts 68 up to that, a higher chord value plays as plain notes) in the order of plug_chord.h (the MIDI Chord FX table, 0 = the
 //                played note alone). The engine reads p->end[param_index] in note_on and latches it in the voice: the host
 //                may change the value right after note_on returns.
 //   mode_param   an enum: 0 Poly (the engine as it was, Chord is not sounded), 1 Para (every note plays its chord in one voice).

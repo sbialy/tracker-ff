@@ -77,6 +77,8 @@ static void functStopPatternYes();
 static void functStopPatternNo();
 // Too long instrument
 static void functTooLongSampleOk();
+// Stereo sample on a pair project: drop to mono, then open
+static void functStereoToMonoOk();
 // Too long processed instrument
 static void functTooLongProcessedSampleOk();
 //**************************************************************************
@@ -85,9 +87,12 @@ void cSampleEditor::start([[maybe_unused]] uint32_t options)
 {
     moduleRefresh = 1;
 
+    // the channel count and so the edit buffer stride follow the instrument, before any length check
+    mtEffect::selectEditChannels(mtProject.values.lastUsedInstrument);
+
     if (mtProject.values.lastUsedInstrument < kSampleInstrumentsCount &&
         mtProject.instrument[mtProject.values.lastUsedInstrument].sample.length >
-          EDIT_BUFF_SIZE / 2)
+          mtEffect::maxFrames())
     {
         if (mtMenuPopup.isPopupVisible())
         {
@@ -99,6 +104,24 @@ void cSampleEditor::start([[maybe_unused]] uint32_t options)
         setTooLongSampleFunctions();
         return;
     }
+
+#if !defined(PLATFORM_IMX) && !defined(FEATURE_STEREO_EDIT)
+    // MK66: stereo samples exist in projects with linked stereo pairs only. The editor and the ptfx effects write the left channel, so the
+    // instrument drops to mono first (isStereo off, address[1] = address[0]), never L edited under a stale R
+    if (mtProject.values.lastUsedInstrument < kSampleInstrumentsCount &&
+        mtProject.sampleMemory[mtProject.values.lastUsedInstrument].isStereo)
+    {
+        if (mtMenuPopup.isPopupVisible())
+        {
+            handleStartupWithPopupAndMenu();
+            return;
+        }
+
+        showPopupStereoToMonoWindow();
+        setStereoToMonoFunctions();
+        return;
+    }
+#endif
 
     if (sequencer.getSeqState() != Sequencer::SEQ_STATE_STOP)
     {
@@ -256,6 +279,11 @@ void cSampleEditor::update()
     if (needRefreshPlayhead)
     {
         refreshPlayhead();
+    }
+
+    if (currentEffect == nullptr)
+    {
+        return;   // a start that ended in a popup (stereo sample, playing sequencer) before the first effect was chosen
     }
 
     if (!currentEffect->isDataLoaded() && currentEffect->getLoadingState())
@@ -543,6 +571,11 @@ void cSampleEditor::setTooLongSampleFunctions()
     ip->clearAll();
     ip->setButtonObj(interfaceButton7, buttonPress, functTooLongSampleOk);
 }
+void cSampleEditor::setStereoToMonoFunctions()
+{
+    ip->clearAll();
+    ip->setButtonObj(interfaceButton7, buttonPress, functStereoToMonoOk);
+}
 void cSampleEditor::setTooLongProcessedSampleFunctions()
 {
     ip->clearAll();
@@ -674,6 +707,12 @@ void cSampleEditor::noteOffHandle(uint8_t channel,
 
 bool cSampleEditor::isCurrentSampleStereo()
 {
+    // a MIDI or synth instrument has no sample (start() shows an empty editor for it)
+    if (mtProject.values.lastUsedInstrument >= kSampleInstrumentsCount)
+    {
+        return false;
+    }
+
 #ifdef PLATFORM_IMX
     if (confirmedDataIsChanged && currentEffect != nullptr)
     {
@@ -1942,7 +1981,7 @@ static void functPreview()
         return;
     }
 
-    if (processedLength > EDIT_BUFF_SIZE / 2)
+    if (processedLength > mtEffect::maxFrames())
     {
         SE->showPopupTooLongProcessedSampleWindow();
         SE->setTooLongProcessedSampleFunctions();
@@ -2006,7 +2045,13 @@ static void functPlay()
 
     std::vector<int16_t*> addresses;
 
-    for (int channel = 0; channel < mtEffect::kChannels; channel++)
+#ifdef FEATURE_STEREO_EDIT
+    // always one address per chain of the voice (a mono edit repeats the left one), a linked pair leader has two chains
+    constexpr int kPreviewChannels = strSampleMemory::Channel::kCount;
+#else
+    constexpr int kPreviewChannels = mtEffect::kChannels;
+#endif
+    for (int channel = 0; channel < kPreviewChannels; channel++)
     {
         addresses.push_back(
           SE->currentEffect->getSampleAddresToPreview((mtEffect::Channel)channel));
@@ -2019,7 +2064,7 @@ static void functPlay()
     }
 
     mtPadBoard.startNoteWithoutInstrument(
-      60,
+      60 + SE->editorInstrument->tuneResample,
       addresses,
       SE->currentEffect->getSampleLengthToPreview(),
       vol,
@@ -2060,7 +2105,7 @@ static void functSave()
         return;
     }
 
-    if (processedLength > EDIT_BUFF_SIZE / 2)
+    if (processedLength > mtEffect::maxFrames())
     {
         SE->showPopupTooLongProcessedSampleWindow();
         SE->setTooLongProcessedSampleFunctions();
@@ -2178,6 +2223,14 @@ static void functTooLongSampleOk()
     SE->avoidStop = true;
     SE->hideStaticPopup();
     SE->eventFunct(eventSwitchToPreviousModule, SE, 0, 0);
+}
+
+static void functStereoToMonoOk()
+{
+    SE->hideStaticPopup();
+    newFileManager.dropInstrumentToMono(mtProject.values.lastUsedInstrument);
+    newFileManager.setProjectStructChanged();
+    SE->start(0);
 }
 
 // Too long processed instrument

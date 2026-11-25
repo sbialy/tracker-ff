@@ -2,7 +2,7 @@
 // leaves the hooks alone and the entry uncalled, the crash marker skips one boot, the status line says why.
 //
 //   c++ -std=c++20 -O1 -Wall -I synth-open -I core/include synth-open/tools/ext_loader_test.cpp -o /tmp/ext_loader_test
-//   /tmp/ext_loader_test [module.plg IMAGE_CRC RUN_ADDRESS]
+//   /tmp/ext_loader_test [module.plg IMAGE_CRC RUN_ADDRESS | extras.plg IMAGE_CRC RUN_ADDRESS rel]
 // With the three arguments it also loads a real module file (synth-open/plug/pack_ext.py output) as the image it was packed for
 // would, and checks that one bit of image id or one byte of the file is refused.
 #include "ext_loader.h"
@@ -61,18 +61,21 @@ constexpr uint32_t kImageCrc = 0x1234ABCDu;
 constexpr uint32_t kLoadBytes = 3072, kSlotBytes = kLoadBytes + EXT_NOINIT_BYTES;
 
 // A module file as pack_ext.py writes it: header, manifest, image (text then data), no rebase table.
-std::string makeModule(uint32_t imageCrc, uint32_t run, uint32_t textBytes = 256, uint32_t dataBytes = 32, uint32_t bss = 128)
+// table: extras.plg's sub-slot table after the manifest (ext_abi.h ext_rel_table_t), empty for the console module
+std::string makeModule(uint32_t imageCrc, uint32_t run, uint32_t textBytes = 256, uint32_t dataBytes = 32, uint32_t bss = 128,
+                       const std::string& table = std::string())
 {
     std::string manifest(96, '\0');
     uint32_t ms = 96;
     memcpy(&manifest[0], &ms, 4);
     memcpy(&manifest[4], "module", 6);
+    manifest += table;
     std::string image(textBytes + dataBytes, '\0');
     for (size_t i = 0; i < image.size(); i++) image[i] = char(i * 7 + 1);
     plug_file_header h;
     memset(&h, 0, sizeof(h));
     h.magic = PLUG_MAGIC;
-    h.header_size = 64 + 96;
+    h.header_size = uint16_t(64 + manifest.size());
     h.abi_major = PLUG_ABI_MAJOR;
     h.abi_minor = PLUG_ABI_MINOR;
     h.kind = EXT_PLUG_KIND;
@@ -87,6 +90,25 @@ std::string makeModule(uint32_t imageCrc, uint32_t run, uint32_t textBytes = 256
     h.reserved[0] = imageCrc;
     h.reserved[1] = run;
     return std::string(reinterpret_cast<const char*>(&h), sizeof(h)) + payload;
+}
+// the sub-slot table of a small bundle: MOD/IT 1 KB at 0, the other tenants empty after it (pack_ext.py writes it from the linked elf)
+ext_rel_table_t smallTable(uint32_t region = EXT_REL_BYTES)
+{
+    ext_rel_table_t t;
+    memset(&t, 0, sizeof(t));
+    t.magic = EXT_REL_TABLE_MAGIC;
+    t.version = EXT_REL_TABLE_VERSION;
+    t.count = EXT_SUB_COUNT;
+    t.region_bytes = region;
+    t.sub[0] = {0, EXT_SUB_ALIGN};
+    for (uint32_t i = 1; i < EXT_SUB_COUNT; i++) t.sub[i] = {EXT_SUB_ALIGN, 0};
+    t.used_bytes = EXT_SUB_ALIGN;
+    return t;
+}
+std::string tableBytes(const ext_rel_table_t& t) { return std::string(reinterpret_cast<const char*>(&t), sizeof(t)); }
+std::string makeExtras(uint32_t imageCrc, uint32_t run, const ext_rel_table_t& t = smallTable())
+{
+    return makeModule(imageCrc, run, 256, 32, 128, tableBytes(t));
 }
 // re-seal the file CRC after editing the header (a well formed file with one wrong field)
 std::string reseal(std::string f)
@@ -265,7 +287,8 @@ void synthetic()
     }
 }
 
-// MOD/IT (modit.plg): the same file rules from a second path, one use at a time of the one slot (ext_loader.h moditLoad)
+// extras.plg (MOD/IT first): the same file rules from a second path into the release region of its own (ext_loader.h extrasLoad)
+constexpr uint32_t kRelBytes = EXT_REL_BYTES;
 struct ModitRun
 {
     ext::ModitState st;
@@ -273,131 +296,241 @@ struct ModitRun
     int reads;
     bool statusFile, markerFile;
 };
-ModitRun modit(MemFs& fs, std::vector<uint8_t>& slot, ext::Status console, bool consolePending, bool entryOk = true, uint32_t imageCrc = kImageCrc,
-               uintptr_t run = 0x70F50000u)
+ext_rel_table_t g_table;   // what the last extrasLoad copied
+ModitRun modit(MemFs& fs, std::vector<uint8_t>& region, bool entryOk = true, uint32_t imageCrc = kImageCrc, uintptr_t run = 0x70F50000u)
 {
     int entered = 0;
-    const ext::Slot s{slot.data(), kLoadBytes, run};
-    const ext::ModitState st = ext::moditLoad(fs, s, console, consolePending, [&] { return imageCrc; },
-                                              [&](const plug_file_header&) { return ++entered, entryOk; });
+    const ext::Slot s{region.data(), kRelBytes, run};
+    memset(&g_table, 0, sizeof(g_table));
+    const ext::ModitState st =
+      ext::extrasLoad(fs, s, [&] { return imageCrc; }, [&](const plug_file_header&) { return ++entered, entryOk; }, &g_table);
     return {st, entered, fs.reads, fs.exists(ext::kStatus), fs.exists(ext::kMarker)};
 }
 
 void moditCases()
 {
     const uint32_t run = 0x70F50000u;
-    std::vector<uint8_t> slot(kSlotBytes, 0xEE);
-    auto tailIntact = [&] {
-        for (uint32_t i = kLoadBytes; i < kSlotBytes; i++)
-            if (slot[i] != 0xEE) return false;
-        return true;
-    };
+    std::vector<uint8_t> region(kRelBytes, 0xEE);
     {
         MemFs fs;
-        ModitRun r = modit(fs, slot, ext::Status::kOff, false);
-        check(r.st == ext::ModitState::kMissing && r.entered == 0, "modit: no file: missing, the entry is not called");
+        ModitRun r = modit(fs, region);
+        check(r.st == ext::ModitState::kMissing && r.entered == 0, "extras: no file: missing, the entry is not called");
     }
-    {   // the console's file is not the MOD/IT file
+    {   // the console's file is not the bundle
         MemFs fs;
         fs.files[ext::kPath] = makeModule(kImageCrc, run);
-        ModitRun r = modit(fs, slot, ext::Status::kOff, false);
-        check(r.st == ext::ModitState::kMissing && r.reads == 0, "modit: only module.plg on the card: missing, the console file is not read");
+        ModitRun r = modit(fs, region);
+        check(r.st == ext::ModitState::kMissing && r.reads == 0, "extras: only module.plg on the card: missing, the console file is not read");
+    }
+    {   // a 1.4.0 modit.plg is not read any more
+        MemFs fs;
+        fs.files["/Plugins/Ext/modit.plg"] = makeModule(kImageCrc, run);
+        check(modit(fs, region).st == ext::ModitState::kMissing, "extras: only an old modit.plg: missing");
     }
     {
         MemFs fs;
-        fs.files[ext::kModitPath] = makeModule(kImageCrc, run);
-        std::fill(slot.begin(), slot.end(), 0xEE);
-        ModitRun r = modit(fs, slot, ext::Status::kOff, false);
-        const std::string& f = fs.files[ext::kModitPath];
-        bool image = memcmp(slot.data(), f.data() + 160, 288) == 0;
+        fs.files[ext::kExtrasPath] = makeExtras(kImageCrc, run);
+        std::fill(region.begin(), region.end(), 0xEE);
+        ModitRun r = modit(fs, region);
+        const std::string& f = fs.files[ext::kExtrasPath];
+        bool image = memcmp(region.data(), f.data() + 160 + sizeof(ext_rel_table_t), 288) == 0;
         bool bss = true;
-        for (int i = 288; i < 288 + 128; i++) bss = bss && slot[i] == 0;
-        check(r.st == ext::ModitState::kReady && r.entered == 1, "modit: good file: ready, entry called once");
+        for (int i = 288; i < 288 + 128; i++) bss = bss && region[i] == 0;
+        check(r.st == ext::ModitState::kReady && r.entered == 1, "extras: good file: ready, entry called once");
         check(image && bss, "  text and data copied, bss cleared");
-        check(tailIntact(), "  the slot tail (the recovery console's reply area) is not touched");
         check(!r.statusFile && !r.markerFile, "  no status file, no crash marker (loaded on use, never at boot)");
         check(!fs.isOpen, "  the card file is closed");
+        check(memcmp(&g_table, &tableBytes(smallTable())[0], sizeof(g_table)) == 0, "  the sub-slot table is read from the file header");
+    }
+    {   // a round 1 extras.plg (fixed sub-slots, no table after the manifest) is refused before anything is loaded
+        MemFs fs;
+        fs.files[ext::kExtrasPath] = makeModule(kImageCrc, run);
+        ModitRun r = modit(fs, region);
+        check(r.st == ext::ModitState::kDamaged && r.entered == 0, "extras: a round 1 file without the sub-slot table: refused (damaged)");
+    }
+    {   // every broken table is refused, the entry never runs
+        struct Bad
+        {
+            const char* what;
+            void (*edit)(ext_rel_table_t&);
+        };
+        const Bad bad[] = {
+          {"table version 1", [](ext_rel_table_t& t) { t.version = 1; }},
+          {"table magic", [](ext_rel_table_t& t) { t.magic ^= 1; }},
+          {"table count", [](ext_rel_table_t& t) { t.count = EXT_SUB_COUNT - 1; }},
+          {"packed for another region size", [](ext_rel_table_t& t) { t.region_bytes = EXT_REL_BYTES + 1024; }},
+          {"a sub-slot off the 1 KB grid", [](ext_rel_table_t& t) { t.sub[1].at += 16; }},
+          {"overlapping sub-slots", [](ext_rel_table_t& t) { t.sub[1].at = 0; }},
+          {"past the region", [](ext_rel_table_t& t) { t.sub[4].bytes = EXT_REL_BYTES; t.used_bytes += EXT_REL_BYTES; }},
+          {"used bytes not the last end", [](ext_rel_table_t& t) { t.used_bytes += 1024; }},
+          {"text, data and bss past used bytes", [](ext_rel_table_t& t) { t.sub[0].bytes = 0; for (auto& u : t.sub) u.at = 0; t.used_bytes = 0; }},
+        };
+        bool ok = true;
+        for (const Bad& b : bad)
+        {
+            ext_rel_table_t t = smallTable();
+            b.edit(t);
+            MemFs fs;
+            fs.files[ext::kExtrasPath] = makeExtras(kImageCrc, run, t);
+            ModitRun r = modit(fs, region);
+            if (r.st != ext::ModitState::kDamaged || r.entered != 0) printf("  not refused: %s\n", b.what), ok = false;
+        }
+        check(ok, "extras: 9 broken sub-slot tables refused (version, magic, count, region, grid, overlap, past the region, used, file size)");
+        ext_rel_table_t t = smallTable();   // a tenant with a 40 KB sub-slot of its own still fits when the region is that big
+        t.sub[4] = {EXT_SUB_ALIGN, EXT_REL_BYTES - EXT_SUB_ALIGN};
+        t.used_bytes = EXT_REL_BYTES;
+        MemFs fs;
+        fs.files[ext::kExtrasPath] = makeExtras(kImageCrc, run, t);
+        check(modit(fs, region).st == ext::ModitState::kReady, "extras: a table that fills the region exactly: ready");
     }
     {
         MemFs fs;
-        fs.files[ext::kModitPath] = makeModule(kImageCrc ^ 1u, run);
-        ModitRun r = modit(fs, slot, ext::Status::kOff, false);
-        check(r.st == ext::ModitState::kOtherImage && r.entered == 0, "modit: built for another image: refused, entry not called");
+        fs.files[ext::kExtrasPath] = makeExtras(kImageCrc ^ 1u, run);
+        ModitRun r = modit(fs, region);
+        check(r.st == ext::ModitState::kOtherImage && r.entered == 0, "extras: built for another image: refused, entry not called");
     }
     {
         MemFs fs;
-        fs.files[ext::kModitPath] = makeModule(kImageCrc, run + 16);
-        check(modit(fs, slot, ext::Status::kOff, false).st == ext::ModitState::kDamaged, "modit: linked for another slot address: damaged");
+        fs.files[ext::kExtrasPath] = makeExtras(kImageCrc, run + 16);
+        check(modit(fs, region).st == ext::ModitState::kDamaged, "extras: linked for another address: damaged");
+    }
+    {   // a tenant packed on its own at a sub-slot (pack_ext.py --base-offset) is not the bundle: the loader runs only offset 0
+        MemFs fs;
+        fs.files[ext::kExtrasPath] = makeExtras(kImageCrc, run + 16 * 1024);
+        check(modit(fs, region).st == ext::ModitState::kDamaged, "extras: linked at a sub-slot base (+16 KB): damaged");
+    }
+    {   // a module linked for the console slot is refused by the address
+        MemFs fs;
+        fs.files[ext::kExtrasPath] = makeExtras(kImageCrc, 0x70D8A000u);
+        check(modit(fs, region).st == ext::ModitState::kDamaged, "extras: a module linked at the console slot: damaged");
     }
     {
         MemFs fs;
-        std::string f = makeModule(kImageCrc, run);
+        std::string f = makeExtras(kImageCrc, run);
         f[f.size() / 2] ^= 0x10;
-        fs.files[ext::kModitPath] = f;
-        ModitRun r = modit(fs, slot, ext::Status::kOff, false);
-        check(r.st == ext::ModitState::kDamaged && r.entered == 0, "modit: one bit flipped mid file: damaged, entry not called");
+        fs.files[ext::kExtrasPath] = f;
+        ModitRun r = modit(fs, region);
+        check(r.st == ext::ModitState::kDamaged && r.entered == 0, "extras: one bit flipped mid file: damaged, entry not called");
     }
     {
         MemFs fs;
-        std::string f = makeModule(kImageCrc, run);
-        fs.files[ext::kModitPath] = f.substr(0, f.size() - 100);
-        check(modit(fs, slot, ext::Status::kOff, false).st == ext::ModitState::kDamaged, "modit: a file cut short: damaged");
+        std::string f = makeExtras(kImageCrc, run);
+        fs.files[ext::kExtrasPath] = f.substr(0, f.size() - 100);
+        check(modit(fs, region).st == ext::ModitState::kDamaged, "extras: a file cut short: damaged");
     }
     {
         MemFs fs;
-        fs.files[ext::kModitPath] = std::string(300, 'x');
-        check(modit(fs, slot, ext::Status::kOff, false).st == ext::ModitState::kDamaged, "modit: not a module: damaged");
+        fs.files[ext::kExtrasPath] = std::string(300, 'x');
+        check(modit(fs, region).st == ext::ModitState::kDamaged, "extras: not a module: damaged");
     }
-    {   // text, data and bss must stay inside the load part: the tail is the recovery console's reply area
+    {   // text, data and bss must stay inside the region
         MemFs fs;
-        fs.files[ext::kModitPath] = makeModule(kImageCrc, run, 256, 32, kLoadBytes);
-        check(modit(fs, slot, ext::Status::kOff, false).st == ext::ModitState::kDamaged, "modit: bss past the load part: damaged");
+        fs.files[ext::kExtrasPath] = makeModule(kImageCrc, run, 256, 32, kRelBytes, tableBytes(smallTable()));
+        check(modit(fs, region).st == ext::ModitState::kDamaged, "extras: bss past the region: damaged");
     }
     {
         MemFs fs;
-        fs.files[ext::kModitPath] = makeModule(kImageCrc, run);
-        ModitRun r = modit(fs, slot, ext::Status::kOff, false, false);
-        check(r.st == ext::ModitState::kDamaged && r.entered == 1, "modit: the entry refuses: damaged");
+        fs.files[ext::kExtrasPath] = makeExtras(kImageCrc, run);
+        ModitRun r = modit(fs, region, false);
+        check(r.st == ext::ModitState::kDamaged && r.entered == 1, "extras: the entry refuses: damaged");
     }
-    // the console module owns the slot: nothing is read, nothing is written
-    for (int pending = 0; pending < 2; pending++)
+    // two tenants: the console module in its slot, extras.plg in the release region, both orders. Nothing of one is written by the other,
+    // the hook table keeps both modules' pointers, the image id is computed once for both.
+    for (int extrasFirst = 0; extrasFirst < 2; extrasFirst++)
     {
+        const uint32_t conRun = 0x70D8A000u;
+        std::vector<uint8_t> con(kSlotBytes, 0xC5);
+        std::fill(region.begin(), region.end(), 0xEE);
         MemFs fs;
-        fs.files[ext::kModitPath] = makeModule(kImageCrc, run);
-        std::fill(slot.begin(), slot.end(), 0xEE);
-        ModitRun r = modit(fs, slot, pending ? ext::Status::kOff : ext::Status::kLoaded, pending != 0);
-        bool untouched = std::all_of(slot.begin(), slot.end(), [](uint8_t b) { return b == 0xEE; });
-        check(r.st == ext::ModitState::kBusy && r.entered == 0 && r.reads == 0 && untouched,
-              pending ? "modit: the console module is about to load (key window): busy, file not read, slot untouched"
-                      : "modit: the console module is loaded: busy, file not read, slot untouched");
+        fs.files[ext::kPath] = makeModule(kImageCrc, conRun, 400, 64, 64);
+        fs.files[ext::kExtrasPath] = makeExtras(kImageCrc, run);
+        ext_hooks_t table;
+        memset(&table, 0, sizeof(table));
+        int crcCalls = 0;
+        bool idKnown = false;
+        auto id = [&] { if (!idKnown) { crcCalls++; idKnown = true; } return kImageCrc; };
+        auto conUpdate = +[]() {};
+        auto conLog = +[](const char*) {};
+        auto extrasModit = +[](uint32_t) -> uint32_t { return 7; };
+        auto bootConsole = [&] {
+            const ext::Slot s{con.data(), kLoadBytes, conRun};
+            return ext::boot(fs, true, s, id, [&](const plug_file_header&) {
+                ext_hooks_t hk;
+                memset(&hk, 0, sizeof(hk));
+                hk.update = conUpdate;
+                hk.log = conLog;
+                ext::mergeHooks(table, hk);
+                return true;
+            });
+        };
+        ext_rel_table_t relTable;
+        auto useExtras = [&] {
+            const ext::Slot s{region.data(), kRelBytes, run};
+            return ext::extrasLoad(fs, s, id, [&](const plug_file_header&) {
+                ext_hooks_t hk;
+                memset(&hk, 0, sizeof(hk));
+                hk.modit = extrasModit;
+                ext::mergeHooks(table, hk);
+                return table.modit != nullptr;
+            }, &relTable);
+        };
+        ext::Status cst;
+        ext::ModitState est;
+        std::vector<uint8_t> conAfterBoot;
+        if (extrasFirst)
+        {
+            est = useExtras();
+            cst = bootConsole();
+        }
+        else
+        {
+            cst = bootConsole();
+            conAfterBoot = con;
+            est = useExtras();
+        }
+        const std::string& cf = fs.files[ext::kPath];
+        const std::string& ef = fs.files[ext::kExtrasPath];
+        const bool conImage = memcmp(con.data(), cf.data() + 160, 400) == 0;
+        const bool relImage = memcmp(region.data(), ef.data() + 160 + sizeof(ext_rel_table_t), 288) == 0;
+        bool conTail = true;
+        for (uint32_t i = kLoadBytes; i < kSlotBytes; i++) conTail = conTail && con[i] == 0xC5;
+        check(cst == ext::Status::kLoaded && est == ext::ModitState::kReady,
+              extrasFirst ? "two tenants, extras.plg first: both loaded" : "two tenants, console first: both loaded");
+        check(conImage && relImage && conTail, "  each image in its own memory, the console slot tail untouched");
+        check(extrasFirst || con == conAfterBoot, "  loading extras.plg writes nothing into the console slot");
+        check(table.update == conUpdate && table.log == conLog && table.modit == extrasModit,
+              "  the hook table keeps the console's and the bundle's pointers (merged field by field)");
+        check(crcCalls == 1, "  the image id is computed once for both");
     }
-    // every other state of the console leaves the slot free: a refused or crashed module, none, Shift held (kOff, not pending)
-    for (ext::Status c : {ext::Status::kOff, ext::Status::kNone, ext::Status::kOtherImage, ext::Status::kCrashed, ext::Status::kEntry, ext::Status::kCrc,
-                          ext::Status::kHeader})
-    {
-        MemFs fs;
-        fs.files[ext::kModitPath] = makeModule(kImageCrc, run);
-        std::fill(slot.begin(), slot.end(), 0xEE);
-        ModitRun r = modit(fs, slot, c, false);
-        check(r.st == ext::ModitState::kReady && r.entered == 1, "modit: console state leaves the slot free: loads");
+    {   // mergeHooks: a null field never clears one set before
+        ext_hooks_t t, a, b;
+        memset(&t, 0, sizeof(t));
+        memset(&a, 0, sizeof(a));
+        memset(&b, 0, sizeof(b));
+        t.struct_size = sizeof(t);
+        a.usbSof = +[]() {};
+        a.spinExpired = +[](uint32_t) { return 1; };
+        b.modit = +[](uint32_t) -> uint32_t { return 1; };
+        b.struct_size = 1234;
+        ext::mergeHooks(t, a);
+        ext::mergeHooks(t, b);
+        check(t.usbSof == a.usbSof && t.spinExpired == a.spinExpired && t.modit == b.modit && t.struct_size == sizeof(t) && !t.update && !t.logv,
+              "mergeHooks: set fields copied, null fields keep the old value, struct_size stays the image's");
     }
-    check(ext::slotBusy(ext::Status::kLoaded, false) && ext::slotBusy(ext::Status::kOff, true) && !ext::slotBusy(ext::Status::kOff, false),
-          "slotBusy: loaded or pending only");
-    // the recovery console's reply (ext_recovery.h) moves to the slot tail while modit.plg holds the load part
-    check(ext::recoveryReplyOffset(false) == 0 && ext::recoveryReplyOffset(true) == EXT_LOAD_BYTES, "recovery reply: slot start, or the tail while modit is loaded");
-    check(ext::recoveryReplyOffset(true) + ext::kRecoveryReplyBytes <= EXT_SLOT_BYTES && ext::kRecoveryReplyBytes == 320,
-          "  the reply (320 B) fits the slot tail");
+    check(ext::kRecoveryReplyBytes == 320, "recovery reply: 320 B at the console slot start (release modules never load there)");
+    check(sizeof(ext_rel_table_t) == 56 && EXT_SUB_COUNT == 5 && EXT_REL_BYTES % EXT_SUB_ALIGN == 0,
+          "sub-slot table: 56 B, five tenants, the region a whole number of 1 KB sub-slot units");
     // the popup lines: one for each refusal, different, short enough for the popup
     {
-        const ext::ModitState all[] = {ext::ModitState::kBusy, ext::ModitState::kMissing, ext::ModitState::kOtherImage, ext::ModitState::kDamaged};
+        const ext::ModitState all[] = {ext::ModitState::kMissing, ext::ModitState::kOtherImage, ext::ModitState::kDamaged};
         bool ok = true;
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < 3; i++)
         {
             ok = ok && strlen(ext::moditLine1(all[i])) > 0 && strlen(ext::moditLine1(all[i])) <= 36 && strlen(ext::moditLine2(all[i])) > 0 &&
                  strlen(ext::moditLine2(all[i])) <= 36;
-            for (int j = i + 1; j < 4; j++) ok = ok && strcmp(ext::moditLine1(all[i]), ext::moditLine1(all[j])) != 0;
+            for (int j = i + 1; j < 3; j++) ok = ok && strcmp(ext::moditLine1(all[i]), ext::moditLine1(all[j])) != 0;
         }
-        check(ok, "popup lines: four refusals, four different first lines, both lines 1 to 36 characters");
+        check(ok, "popup lines: three refusals, three different first lines, both lines 1 to 36 characters");
         check(strlen(ext::moditLine1(ext::ModitState::kReady)) == 0, "  nothing to say when ready");
     }
 }
@@ -436,21 +569,57 @@ void realModule(const char* path, uint32_t imageCrc, uint32_t run)
     std::string bad = bytes;
     bad[bad.size() / 2] ^= 0x10;
     check(one(bad, imageCrc, run).first == ext::Status::kCrc, "real module: one bit flipped mid file is refused");
-    {   // the same file as /Plugins/Ext/modit.plg (when it is the MOD/IT module): loaded on use, by the image and the address it was packed for
-        auto use = [&](uint32_t crc, uint32_t base, ext::Status console, bool pending) {
-            MemFs fs;
-            fs.files[ext::kModitPath] = bytes;
-            int entered = 0;
-            const ext::Slot s{slot.data(), EXT_LOAD_BYTES, uintptr_t(base)};
-            const ext::ModitState st = ext::moditLoad(fs, s, console, pending, [&] { return crc; }, [&](const plug_file_header&) { return ++entered, true; });
-            return std::make_pair(st, entered);
-        };
-        auto good = use(imageCrc, run, ext::Status::kOff, false);
-        check(good.first == ext::ModitState::kReady && good.second == 1, "real module as modit.plg: ready on use");
-        check(use(imageCrc ^ 1u, run, ext::Status::kOff, false).first == ext::ModitState::kOtherImage, "  another image: refused with the other-firmware popup");
-        check(use(imageCrc, run + 16, ext::Status::kOff, false).first == ext::ModitState::kDamaged, "  another slot address: damaged");
-        check(use(imageCrc, run, ext::Status::kLoaded, false).first == ext::ModitState::kBusy, "  console module loaded: busy");
+}
+
+// A real extras.plg (build_extras.sh output): loaded on use into the release region by the image and the address it was packed for
+void realExtras(const char* path, uint32_t imageCrc, uint32_t run)
+{
+    FILE* f = fopen(path, "rb");
+    if (!f)
+    {
+        check(false, "real extras.plg: open");
+        return;
     }
+    std::string bytes;
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) bytes.append(buf, n);
+    fclose(f);
+    plug_file_header h;
+    memcpy(&h, bytes.data(), sizeof(h));
+    printf("real extras.plg %s: %zu B, image %u B, bss %u B, entry +0x%x, image id %08x, run %08x\n", path, bytes.size(), h.image_size,
+           h.bss_size, h.entry_offset, h.reserved[0], h.reserved[1]);
+    std::vector<uint8_t> region(EXT_REL_BYTES, 0xEE);
+    ext_rel_table_t t;
+    memset(&t, 0, sizeof(t));
+    auto use = [&](uint32_t crc, uint32_t base) {
+        MemFs fs;
+        fs.files[ext::kExtrasPath] = bytes;
+        int entered = 0;
+        const ext::Slot s{region.data(), EXT_REL_BYTES, uintptr_t(base)};
+        const ext::ModitState st = ext::extrasLoad(fs, s, [&] { return crc; }, [&](const plug_file_header&) { return ++entered, true; }, &t);
+        return std::make_pair(st, entered);
+    };
+    auto good = use(imageCrc, run);
+    check(good.first == ext::ModitState::kReady && good.second == 1, "real extras.plg: ready on use");
+    // the sub-slot table pack_ext.py wrote from the linked sizes (extras.ld): every tenant has code, the entry is in the MOD/IT one, the
+    // image part of each tenant ends inside its own sub-slot
+    {
+        static const char* const names[] = {"modit", "theme", "selftest", "takefile", "capture"};
+        const uint8_t* img = reinterpret_cast<const uint8_t*>(bytes.data()) + h.header_size;
+        bool ok = t.version == EXT_REL_TABLE_VERSION && t.used_bytes <= EXT_REL_BYTES && h.entry_offset < t.sub[0].bytes;
+        for (uint32_t i = 0; i < EXT_SUB_COUNT; i++)
+        {
+            uint32_t last = 0;
+            for (uint32_t k = t.sub[i].at; k < t.sub[i].at + t.sub[i].bytes && k < h.image_size; k++) if (img[k]) last = k - t.sub[i].at + 1;
+            printf("  %-9s +%6u %6u B, file bytes used %u\n", names[i], t.sub[i].at, t.sub[i].bytes, last);
+            ok = ok && last > 0;
+        }
+        printf("  %u of %u B of the region\n", t.used_bytes, EXT_REL_BYTES);
+        check(ok, "real extras.plg: table version 2, five tenants with code, entry in the MOD/IT sub-slot, inside EXT_REL_BYTES");
+    }
+    check(use(imageCrc ^ 1u, run).first == ext::ModitState::kOtherImage, "  another image: refused with the other-firmware popup");
+    check(use(imageCrc, run + 16).first == ext::ModitState::kDamaged, "  another address: damaged");
 }
 }   // namespace
 
@@ -458,7 +627,9 @@ int main(int argc, char** argv)
 {
     synthetic();
     moditCases();
-    if (argc == 4) realModule(argv[1], uint32_t(strtoul(argv[2], nullptr, 0)), uint32_t(strtoul(argv[3], nullptr, 0)));
+    // a 4th argument "rel": the file is extras.plg (release region), else the console module.plg
+    if (argc == 5 && strcmp(argv[4], "rel") == 0) realExtras(argv[1], uint32_t(strtoul(argv[2], nullptr, 0)), uint32_t(strtoul(argv[3], nullptr, 0)));
+    else if (argc == 4) realModule(argv[1], uint32_t(strtoul(argv[2], nullptr, 0)), uint32_t(strtoul(argv[3], nullptr, 0)));
     printf("%s (%d failed)\n", g_fail ? "FAIL" : "PASS", g_fail);
     return g_fail ? 1 : 0;
 }

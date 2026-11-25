@@ -38,7 +38,11 @@ static const uint16_t framesPlacesCC[2][4] = {
 #ifdef FEATURE_SYNTH_OPEN
 // the patch panel on the right of the Synth screen (Slot / patch name), the 7th place
 static const uint16_t framesPlacesSynthSlot[1][4] = {
-    { (800 / 8) * 6 + 1, 31, (800 / 8) * 2 - 3, 391 },
+    { (800 / 8) * 6 + 1, 31, (800 / 8) * 2 - 3, 195 },
+};
+// the "New note" block below it, the 8th place (New Note Action of the part)
+static const uint16_t framesPlacesSynthNna[1][4] = {
+    { (800 / 8) * 6 + 1, 229, (800 / 8) * 2 - 3, 193 },
 };
 #endif
 
@@ -302,6 +306,21 @@ void cInstrumentEditor::initDisplayControls()
     prop.data = &imgGridData;
     imgGridControl = display.createControl<ImgGrid>(&prop);
 
+#if GUI_TABLES
+    {   // the Table page grid (TablePage.cpp): the content area between the title bar and the labels
+        strControlProperties propT;
+        propT.x = 0;
+        propT.y = 29;
+        propT.w = 800;
+        propT.h = 394;
+        propT.style = 0;
+        propT.value = 0;
+        propT.colors = nullptr;
+        propT.data = nullptr;
+        tableGridControl = display.createControl<cTableGrid>(&propT);
+    }
+#endif
+
     synthCCArrows.bitmaps[0].bitmapIndex = displayArrowU;
     synthCCArrows.bitmaps[0].xValue = (800 / 8) * 0 + (800 / 16);
     synthCCArrows.bitmaps[0].yValue = 450;
@@ -339,6 +358,9 @@ void cInstrumentEditor::initDisplayControls()
     prop2.colors = display.getTheme().blankSpaceCoverLabelColors;
     prop2.style = controlStyleFont1;
     noteLabel = display.createControl<cLabel>(&prop2);
+#ifdef FEATURE_SYNTH_OPEN
+    nnaLabel = display.createControl<cLabel>(&prop2);
+#endif
 #if GUI_HANDLE_SYNTH && defined(FEATURE_PLUG_HOST)
     // before the blank space covers: the display draws from the last created control to the first, so an earlier one ends on top
     initSynthView();
@@ -358,6 +380,17 @@ void cInstrumentEditor::initDisplayControls()
     blankSpaceCover[1] = display.createControl<cLabel>(&prop2);
 }
 
+// The Table page is the last page of both editors, so the page counts in the titles grow by one with it
+#if GUI_TABLES
+#define PAGE_COUNT_SAMPLE "3"
+#define PAGE_COUNT_SYNTH "4"
+#define PAGE_COUNT_SYNTH_NOAUTO "3"
+#else
+#define PAGE_COUNT_SAMPLE "2"
+#define PAGE_COUNT_SYNTH "3"
+#define PAGE_COUNT_SYNTH_NOAUTO "2"
+#endif
+
 void cInstrumentEditor::showTitleBar()
 {
     songTimer.show();
@@ -373,10 +406,17 @@ void cInstrumentEditor::showTitleBar()
             }
             else
             {
-                label = "Instrument Parameters 1/2";
+                label = "Instrument Parameters 1/" PAGE_COUNT_SAMPLE;
             }
             break;
-        case mtInstEditModeEnv: label = "Instrument Automation 2/2"; break;
+        case mtInstEditModeEnv: label = "Instrument Automation 2/" PAGE_COUNT_SAMPLE; break;
+#if GUI_TABLES
+        case mtInstEditModeTable:
+            label = isSynthInstrument(mtProject.values.lastUsedInstrument)
+                        ? "Synth Table " PAGE_COUNT_SYNTH "/" PAGE_COUNT_SYNTH
+                        : "Instrument Table " PAGE_COUNT_SAMPLE "/" PAGE_COUNT_SAMPLE;
+            break;
+#endif
         case mtInstEditModeMidi:
             label = "MIDI Instrument Parameters";
             songTimer.hide();
@@ -384,8 +424,8 @@ void cInstrumentEditor::showTitleBar()
         case mtInstEditModeInstrSynth: label = "Instrument MIDI Mapping"; break;
 #if GUI_HANDLE_SYNTH
 #if GUI_SYNTH_AUTO
-        case mtInstEditModeSynth: label = "Synth Parameters 1/3"; break;
-        case mtInstEditModeSynthMacros: label = "Synth Macros 2/3"; break;
+        case mtInstEditModeSynth: label = "Synth Parameters 1/" PAGE_COUNT_SYNTH; break;
+        case mtInstEditModeSynthMacros: label = "Synth Macros 2/" PAGE_COUNT_SYNTH; break;
         case mtInstEditModeSynthAutomation:
         {
             // the automation belongs to the open slot's file: its number and name are in the title
@@ -393,15 +433,16 @@ void cInstrumentEditor::showTitleBar()
             assert(syntPartIdx >= 0 && syntPartIdx < kSynthInstrumentsCount);
             snprintf(synthPatchNameText,
                      sizeof(synthPatchNameText),
-                     "Synth Automation 3/3 - Slot %d %s",
+                     "Synth Automation 3/" PAGE_COUNT_SYNTH " - Slot %d %s",
                      synth->getPatchSlot(syntPartIdx),
                      synth->getPatchName(syntPartIdx).c_str());
             label = synthPatchNameText;
             break;
         }
 #else
-        case mtInstEditModeSynth: label = "Synth Parameters 1/2"; break;
-        case mtInstEditModeSynthMacros: label = "Synth Macros 2/2"; break;
+        // no Automation page (a synth build without FEATURE_PART_AUTO): Synth, Macros and the Table page when there is one
+        case mtInstEditModeSynth: label = "Synth Parameters 1/" PAGE_COUNT_SYNTH_NOAUTO; break;
+        case mtInstEditModeSynthMacros: label = "Synth Macros 2/" PAGE_COUNT_SYNTH_NOAUTO; break;
 #endif
         case mtInstEditModeSynthPatchEdit:
         {
@@ -508,6 +549,7 @@ void cInstrumentEditor::showInstrumentEnv()
 
     display.setControlHide(blankSpaceCover[0]);
     display.setControlHide(noteLabel);
+    display.setControlHide(nnaLabel);
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);
     display.setControlHide(imgGridControl);
@@ -713,7 +755,7 @@ void cInstrumentEditor::showEffectScreen()
 {
     showTitleBar();
     showSendScreenFrame();
-    frameData.placesCount = 4;
+    frameData.placesCount = 5;
 
     for (uint8_t i = 0; i < 8; i++)
     {
@@ -757,11 +799,9 @@ void cInstrumentEditor::showEffectScreen()
     display.setControlText(label[4], "Instrument");
     display.setControlText2(label[4], "MIDI Mapping");
 
-    for (uint8_t i = 5; i < 7; i++)
-    {
-        display.setControlText(label[i], "");
-        display.setControlText2(label[i], "");
-    }
+    display.setControlText(label[5], "Repitch");
+    display.setControlText(label[6], "");
+    display.setControlText2(label[6], "");
     display.setControlText(label[7], "Back");
     display.setControlText2(label[7], "");
 
@@ -773,6 +813,7 @@ void cInstrumentEditor::showEffectScreen()
     showParamsReverbSend();
     showParamsOverdrive();
     showParamsBitDepth();
+    showParamsRepitch();
 
     display.setRemoveControlStyle(label[1], controlStyleShowBitmap);
     display.setRemoveControlStyle(label[6], controlStyleShowBitmap);
@@ -802,6 +843,7 @@ void cInstrumentEditor::showEffectScreen()
     display.refreshControl(bgLabel);
 
     display.setControlHide(noteLabel);
+    display.setControlHide(nnaLabel);
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);
     display.setControlHide(imgGridControl);
@@ -817,10 +859,11 @@ void cInstrumentEditor::showEffectScreen()
 
 void cInstrumentEditor::showSendScreenFrame()
 {
-    if (selectedPlaceSends > 3)
+    if (selectedPlaceSends > 4)
         return;
 
-    display.setControlValue(frameControl, selectedPlaceSends);
+    // place 4 is the Repitch row in the sixth column (the fifth is the MIDI Mapping button)
+    display.setControlValue(frameControl, selectedPlaceSends == 4 ? 5 : selectedPlaceSends);
     display.setControlShow(frameControl);
     display.refreshControl(frameControl);
 }
@@ -888,6 +931,7 @@ void cInstrumentEditor::showInstrumentParams()
     display.setControlData(label[7], &labelDataMore);
 
     display.setControlHide(noteLabel);
+    display.setControlHide(nnaLabel);
 
     display.setControlPosition(blankSpaceCover[0], (800 / 8) * 7 + 1, -1);
     display.setControlSize(blankSpaceCover[0], 800 / 8 - 3, 394);
@@ -1202,6 +1246,7 @@ void cInstrumentEditor::showInstrumentMidiParams()
     display.setControlHide(instrumentSynthCCListControl);
     display.setControlHide(instrumentListControl);
     display.setControlHide(noteLabel);
+    display.setControlHide(nnaLabel);
     display.setControlHide(blankSpaceCover[0]);
     display.setControlHide(imgGridControl);
     hideSynthView();
@@ -1791,6 +1836,19 @@ void cInstrumentEditor::showParamsBitDepth()
     display.refreshControl(barControl[1]);
 }
 
+// Tempo repitch of the sample modes (Steps in the top byte of wavetableCurrentWindow): the played part of the sample lasts that many steps
+void cInstrumentEditor::showParamsRepitch()
+{
+    if (!editorInstrument->takesRepitch())
+        strcpy(labelText[5], "-");
+    else if (editorInstrument->repitchSteps() == 0)
+        strcpy(labelText[5], "Off");
+    else
+        sprintf(labelText[5], "%d steps", editorInstrument->repitchSteps());
+    display.setControlText2(label[5], labelText[5]);
+    display.refreshControl(label[5]);
+}
+
 void cInstrumentEditor::refreshFramePosition()
 {
     switch (mode)
@@ -1859,7 +1917,7 @@ void cInstrumentEditor::refreshFramePosition()
         case mtInstEditModeSynth:
         {
 #ifdef FEATURE_SYNTH_OPEN
-            frameData.placesCount = 7;
+            frameData.placesCount = 8;
 #else
             frameData.placesCount = 6;
 #endif
@@ -1872,6 +1930,7 @@ void cInstrumentEditor::refreshFramePosition()
             frameData.places[5] = &framesPlaces[5][0];
 #ifdef FEATURE_SYNTH_OPEN
             frameData.places[6] = &framesPlacesSynthSlot[0][0];
+            frameData.places[7] = &framesPlacesSynthNna[0][0];
 #endif
             break;
         }

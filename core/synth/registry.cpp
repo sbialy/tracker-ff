@@ -7,6 +7,9 @@
 #else
 #include "open_engine.h"
 #endif
+#if defined(PLATFORM_IMX) && !defined(FEATURE_SYNTH_OPEN)
+#include "engines/PlugSynthVoice.h"
+#endif
 
 namespace polysynth
 {
@@ -44,6 +47,10 @@ void InstrumentTypeRegistry::registerInstrumentTypes(
     // Open-Source Custom Synth Engines
     registry.addInstrumentType(static_cast<int>(InstrumentTypeId::kChiptuneSynth),
                                createChiptuneSynth());
+#if defined(PLATFORM_IMX)
+    // plugin engines (P7 H5): each one joins this registry when a part picks it (plugimx::attach)
+    plugimx::setRegistry(&registry);
+#endif
 #endif
 }
 

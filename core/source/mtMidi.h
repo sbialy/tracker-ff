@@ -59,6 +59,7 @@ class UsbMidi;
 
 void midiInit(UartMidi* uartMidi, UsbMidi* usbMidi);
 void midiUpdate();
+void midiUiUpdate(); // main loop: the UI work the MIDI input asked for (pattern view refresh)
 void handleJackNoteOn(byte channel, byte pitch, byte velocity);
 void handleJackNoteOff(byte channel, byte pitch, byte velocity);
 
@@ -85,6 +86,12 @@ void handleJackSongPosition(unsigned int);
 void handleJackPitchBend(uint8_t channel, int bend);
 void handleUsbPitchBend(uint8_t channel, int bend);
 
+void handleJackChannelPressure(uint8_t channel, uint8_t pressure);
+void handleUsbChannelPressure(uint8_t channel, uint8_t pressure);
+
+void handleJackProgramChange(uint8_t channel, uint8_t program);
+void handleUsbProgramChange(uint8_t channel, uint8_t program);
+
 void handleJackControlChange(byte channel, byte number, byte value);
 void handleUSBControlChange(byte channel, byte number, byte value);
 
@@ -100,6 +107,11 @@ void sendPolyPressure(uint8_t note, uint8_t value, uint8_t channel, bool toSynth
 void sendPitchbend(int16_t value, int8_t channel, bool toSynth);
 void sendMidiNoteOn(uint8_t note, uint8_t velo, uint8_t channel, bool toSynth);
 void sendMidiNoteOff(uint8_t note, uint8_t velo, uint8_t channel, bool toSynth);
+
+// MPE out (core/source/mtMpeOut.h): the lower zone of the project, 0 = Off, 1..15 = member channels. project.mtff mpe.out
+void mpeOutSet(uint8_t members);
+uint8_t mpeOutMembers();
+void mpeOutBusLost();
 
 void resetMidi();
 void setHandleNoteOnAction(void (*action)(uint8_t, uint8_t, uint8_t));

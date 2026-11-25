@@ -18,7 +18,7 @@ bool mtEffectBitcrusher::startProcess()
     if (length == 0)
         return false;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         channelParams[channel].srcAddr = confirmed[channel].selection.addr;
         channelParams[channel].dstAddr = processed[channel].selection.addr;
@@ -52,7 +52,7 @@ int32_t mtEffectBitcrusher::processBlock()
     uint32_t dif = length - processedSamples;
     uint32_t processedBlockLength = dif > 8192 ? 8192 : dif;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         int16_t* dst = channelParams[channel].dstAddr;
         const int16_t* src = channelParams[channel].srcAddr;
@@ -104,7 +104,7 @@ int32_t mtEffectBitcrusher::processBlock()
     if (processedSamples >= length)
     {
         state = false;
-        for (int channel = 0; channel < kChannels; channel++)
+        for (int channel = 0; channel < nChannels(); channel++)
         {
             processed[channel].selection.length = processedSamples;
             processed[channel].area.length =

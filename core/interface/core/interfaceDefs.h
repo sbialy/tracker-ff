@@ -8,6 +8,7 @@
 #include "mtStructs.h"
 
 #include "interfaceFxDesc.h"
+#include "interfaceFxDescZ.h"
 
 #if defined(PLATFORM_IMX) || defined(FEATURE_SYNTH_OPEN)
 #define GUI_HANDLE_SYNTH 1
@@ -411,10 +412,14 @@ class InterfaceGlobals
 #ifdef FEATURE_SYNTH_OPEN
         Sequencer::strFxConsts::enFxType::FX_TYPE_PATCH_CHANGE,
         Sequencer::strFxConsts::enFxType::FX_TYPE_PATCH_MORPH,
+#elif defined(FEATURE_SYNTH_PATCHFX)
+        Sequencer::strFxConsts::enFxType::FX_TYPE_PATCH_CHANGE, // Tracker+ and Mini (P12): the Patch and Morph FX, as on the MK66
+        Sequencer::strFxConsts::enFxType::FX_TYPE_PATCH_MORPH,
 #endif
         Sequencer::strFxConsts::enFxType::FX_TYPE_COND,
         Sequencer::strFxConsts::enFxType::FX_TYPE_TAPE,
         Sequencer::strFxConsts::enFxType::FX_TYPE_SNAP,
+        Sequencer::strFxConsts::enFxType::FX_TYPE_TABLE,
         Sequencer::strFxConsts::enFxType::FX_TYPE_BREAK_PATTERN,
 
     };
@@ -483,10 +488,14 @@ class InterfaceGlobals
 #ifdef FEATURE_SYNTH_OPEN
         "O - Patch",
         "o - Morph",
+#elif defined(FEATURE_SYNTH_PATCHFX)
+        "O - Patch",
+        "o - Morph",
 #endif
         "K - Chance FX",
         "W - Tape",
         "N - Snap",
+        "Y - Table",
         "x - Break pattern"
     };
 
@@ -550,15 +559,22 @@ class InterfaceGlobals
 #ifdef FEATURE_SYNTH_OPEN
         "Patch",
         "Morph",
+#elif defined(FEATURE_SYNTH_PATCHFX)
+        "Patch",
+        "Morph",
 #endif
         "Chance FX",
         "Tape",
         "Snap",
+        "Table",
         "Break pattern"
     };
 
     static constexpr const char* const* ptrFxNames = &ptrAllFxNames[1];
 
+#if defined(FW_TRIM) && defined(FEATURE_SYNTH_OPEN)
+    char* fxDescPtr(int16_t id) { return const_cast<char*>(fxDescZText(id)); }   // inflated on first use (interfaceFxDescZ.cpp)
+#else
     char* fxDescPtr(int16_t id)
     {
         if (id >= 0)
@@ -566,6 +582,7 @@ class InterfaceGlobals
         else
             return nullptr;
     }
+#endif
 
     // oswiezanie listy plikow w sampleloaderze
     bool refreshFileExplorer = false;

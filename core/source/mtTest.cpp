@@ -8,6 +8,7 @@
 #include "mtSleep.h"
 
 #include "mtTest.h"
+#include "mtTestGlue.h"
 
 #include "Platform.h"
 
@@ -654,6 +655,7 @@ void cTest::runRAMTest()
 
             for (uint32_t i = 0; i < TOTAL_EXTERNAL_MEMORY / 4; i++)
             {
+                if (ramTestSkips(ptrMem + i)) continue;
                 *(ptrMem + i) = i;
             }
 
@@ -661,6 +663,7 @@ void cTest::runRAMTest()
 
             for (uint32_t i = 0; i < TOTAL_EXTERNAL_MEMORY / 4; i++)
             {
+                if (ramTestSkips(ptrMem + i)) continue;
                 uint32_t read = *(ptrMem + i);
                 if (read != i)
                 {
@@ -1559,4 +1562,31 @@ static void functPowerButton(uint8_t state)
         TP->inputs.powerButton = 1;
     else if (state == buttonRelease && TP->inputs.powerButton == 1)
         TP->inputs.powerButton = 2;
+}
+
+// ext_hooks.selftest (ext_abi.h EXT_SELFTEST_*): the self test tenant of /Plugins/Ext/extras.plg, the image keeps the start code (mtTestGlue.cpp).
+// Built in every variant, gc-sections drops it where nothing takes its address (resident self test).
+#include "ext_abi.h"
+#include "ext_tenants.h"
+
+uint32_t selftestDispatch(uint32_t op, void* arg)
+{
+    switch (op)
+    {
+        case EXT_SELFTEST_SETUP:
+        {
+            Platform* p = static_cast<Platform*>(arg);
+            mtTest.setCodecAudio(p->getCodecAudio());
+            mtTest.setRadio(p->getRadio());
+            mtTest.setButtons(p->getButtons());
+            mtTest.setEncoder(p->getEncoder());
+            mtTest.setTimer(p->getTimer());
+            mtTest.setBattery(p->getBattery());
+            mtTest.setFileSystem(p->getFileSystem());
+            return 1;
+        }
+        case EXT_SELFTEST_START: mtTest.runTestingProcedure(static_cast<InputProcessor*>(arg)); return 1;
+        case EXT_SELFTEST_LOOP: mtTest.testLoop(); return 1;
+        default: return 0;
+    }
 }

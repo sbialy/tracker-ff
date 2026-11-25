@@ -23,8 +23,6 @@ AUDIO_CORE_RAM void UsbOutputStream::update()
         return;
     }
 
-    bool isAudioUsb = nullptr != usbAudio;
-
     for (int channel = 0; channel < kUsbChannelsCount; channel++)
     {
         audio_block_t* block = receiveReadOnly(usbChannelToInput[channel]);

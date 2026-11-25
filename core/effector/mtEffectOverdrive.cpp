@@ -20,7 +20,7 @@ bool mtEffectOverdrive::startProcess()
 {
     length = confirmed[0].selection.length;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         channelParams[channel].srcAddr = confirmed[channel].selection.addr;
         channelParams[channel].dstAddr = processed[channel].selection.addr;
@@ -50,7 +50,7 @@ int32_t mtEffectOverdrive::processBlock()
         case RECIPROCAL: gainNorm *= 10; break;
     };
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         for (uint16_t i = 0; i < blockLength; i++)
         {
@@ -129,7 +129,7 @@ int32_t mtEffectOverdrive::processBlock()
 
     if (!state)
     {
-        for (int channel = 0; channel < kChannels; channel++)
+        for (int channel = 0; channel < nChannels(); channel++)
         {
             processed[channel].selection.length = processedSamples;
             processed[channel].area.length =

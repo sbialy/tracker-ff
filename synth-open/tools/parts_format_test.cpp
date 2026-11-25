@@ -23,7 +23,7 @@ static List g_a;
 int main()
 {
     memset(&g_a, 0, sizeof(g_a));
-    // the record is the 20 bytes the text codec of plug_mtff.h writes field by field (plug_mtff_test checks that round trip)
+    // the record is the 20 bytes the text codec of mtff_codec.h writes field by field (plug_mtff_test checks that round trip)
     CHECK(sizeof(Part) == kRecordSize && offsetof(Part, length) == kTracks && offsetof(Part, baked) == kTracks + 3);
 
     // song order: End stops the song, nextIndex wraps by returning -1

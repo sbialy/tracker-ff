@@ -55,6 +55,9 @@ typedef struct
     progress_control_t progress;
     localList_t* list;
 
+    // bit t = track t is the hidden follower of a linked stereo pair: no column, the tracks after it move left (core/source/stereoPairs.h)
+    uint16_t hidden = 0;
+
     uint8_t normalTracksCount;
     uint8_t midiTracksCount;
 

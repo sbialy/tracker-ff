@@ -32,13 +32,12 @@ void mtEffectModular::configurePlugin(const PtfxHeader& hdr,
 
     processingWithoutCopying = (m_flags & PTFX_FLAG_GENERATOR) != 0;
 
-    for (int idx = 0; idx < kChannels; idx++)
+    for (int idx = 0; idx < nChannels(); idx++)
     {
         if (confirmed[idx].area.addr == nullptr || processed[idx].area.addr == nullptr)
         {
-            int16_t* confirmedBuffer = externalRamEffectsBuff + idx * EDIT_BUFF_SIZE;
-            int16_t* processedBuffer =
-              externalRamEffectsBuff + idx * EDIT_BUFF_SIZE + EDIT_BUFF_SIZE / 2;
+            int16_t* confirmedBuffer = confirmedBuf(idx);
+            int16_t* processedBuffer = processedBuf(idx);
 
             confirmed[idx].area.addr = confirmedBuffer;
             confirmed[idx].selection.addr = confirmedBuffer;
@@ -124,8 +123,11 @@ bool mtEffectModular::startProcess()
 
     m_processedSamples = 0;
     m_state = true;
+#if defined(FEATURE_STEREO_EDIT) && !defined(PLATFORM_IMX)
+    m_pass = 0;
+#endif
 
-    for (int ch = 0; ch < kChannels; ch++)
+    for (int ch = 0; ch < nChannels(); ch++)
     {
         m_srcAddr[ch] = isGenerator ? nullptr : confirmed[ch].selection.addr;
         if (!isGenerator && m_srcAddr[ch] == nullptr)
@@ -146,6 +148,16 @@ int32_t mtEffectModular::processBlock()
     uint32_t remaining = m_length - m_processedSamples;
     uint32_t blockSize = remaining > 8192 ? 8192 : remaining;
 
+#if defined(FEATURE_STEREO_EDIT) && !defined(PLATFORM_IMX)
+    // a plugin that is not flagged STEREO (every se_*.ptfx) ignores the channel count and works on in[0] / out[0], so a stereo
+    // sample runs through it twice, one whole pass per channel, each with its own init: both channels equal the mono result
+    const bool perPass = nChannels() > 1 && !(m_flags & PTFX_FLAG_STEREO);
+    const int chBegin = perPass ? m_pass : 0;
+    const int chEnd = perPass ? m_pass + 1 : nChannels();
+#else
+    constexpr int chBegin = 0;
+    const int chEnd = nChannels();
+#endif
     const int16_t* inPtrs[kChannels] = { nullptr };
 
     if (!isGenerator)
@@ -165,7 +177,7 @@ int32_t mtEffectModular::processBlock()
             if (blockSize > toAppend)
                 blockSize = toAppend;
             uint32_t inOffset = m_processedSamples - bodyStart;
-            for (int ch = 0; ch < kChannels; ch++)
+            for (int ch = chBegin; ch < chEnd; ch++)
             {
                 const int16_t* base = (confirmed[ch].selection.addr != nullptr)
                                         ? confirmed[ch].selection.addr
@@ -177,10 +189,10 @@ int32_t mtEffectModular::processBlock()
 
     // Process block across active channels (kChannels = 1 on MK66, 2 on IMX)
     int32_t count = m_processBlockFunc(
-        isGenerator ? m_srcAddr : inPtrs,
-        m_dstAddr,
+        (isGenerator ? m_srcAddr : inPtrs) + chBegin,
+        m_dstAddr + chBegin,
         blockSize,
-        kChannels
+        chEnd - chBegin
     );
 
     if (count <= 0)
@@ -189,7 +201,7 @@ int32_t mtEffectModular::processBlock()
     }
     else
     {
-        for (int ch = 0; ch < kChannels; ch++)
+        for (int ch = chBegin; ch < chEnd; ch++)
         {
             m_dstAddr[ch] += count;
         }
@@ -200,12 +212,33 @@ int32_t mtEffectModular::processBlock()
             m_state = false;
         }
     }
+#if defined(FEATURE_STEREO_EDIT) && !defined(PLATFORM_IMX)
+    if (perPass && !m_state && m_pass + 1 < nChannels())
+    {
+        // channel done: next pass from the start of the selection with a fresh plugin state
+        m_pass++;
+        m_processedSamples = 0;
+        m_prependSamples = 0;
+        m_appendSamples = 0;
+        if (m_scratchMem && m_scratchSize > 0)
+            memset(m_scratchMem, 0, m_scratchSize);
+        if (m_initFunc)
+            m_initFunc(m_scratchMem, m_scratchSize, m_hostApi);
+        if (m_setParamFunc)
+        {
+            for (uint8_t i = 0; i < 12; i++)
+                m_setParamFunc(i, m_paramValues[i]);
+        }
+        m_state = true;
+        return count > 0 ? count : 0;
+    }
+#endif
 
     if (!m_state && m_processedSamples > 0)
     {
         bool wasEmpty = (confirmed[0].area.length == 0);
         bool isGenerator = (m_flags & PTFX_FLAG_GENERATOR) != 0;
-        for (int ch = 0; ch < kChannels; ch++)
+        for (int ch = 0; ch < nChannels(); ch++)
         {
             processed[ch].selection.length = m_processedSamples;
             if (wasEmpty || isGenerator)
@@ -221,6 +254,10 @@ int32_t mtEffectModular::processBlock()
         }
     }
 
+#if defined(FEATURE_STEREO_EDIT) && !defined(PLATFORM_IMX)
+    if (perPass && m_pass > 0)
+        return -1; // the progress bar counted the first pass
+#endif
     return (count > 0) ? count : 0;
 }
 

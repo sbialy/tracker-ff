@@ -45,6 +45,9 @@ class mtEffectModular : public mtEffect
     uint32_t m_length = 0;
     uint32_t m_processedSamples = 0;
     bool     m_state = false;
+#if defined(FEATURE_STEREO_EDIT) && !defined(PLATFORM_IMX)
+    uint8_t  m_pass = 0;
+#endif
     float    m_paramValues[12] = { 0.0f };
     const int16_t* m_srcAddr[kChannels] = { nullptr };
     int16_t*       m_dstAddr[kChannels] = { nullptr };

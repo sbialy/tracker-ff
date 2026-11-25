@@ -11,7 +11,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BIN="${1:-$ROOT/build/ui-shot/ui_shot}"
+BIN="${1:-${UI_SHOT_BIN:-$ROOT/build/ui-shot/ui_shot}}"
 [ -x "$BIN" ] || { echo "sidecar_path_sim.sh: no $BIN (ui_shot.sh pattern builds it)" >&2; exit 2; }
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/sidecar_path_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT

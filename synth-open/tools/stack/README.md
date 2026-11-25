@@ -13,7 +13,7 @@ make stack-margin-release TOOLCHAIN=$PWD/agt/12.3.rel1/bin/arm-none-eabi-      #
 
 `make stack-margin` is the same on the image of the last `make original` with the same variables (SYNTH_OPEN=1 only, the walker rules
 and the tables are those of the synth-open image). Packages with plugins (`package_release.sh --modules` or `--card`) refuse an image without `<image>.ptf.stack-margin` saying PASS for the sha256 of that exact .ptf (`STACK_GATE=skip` for a layout test).
-About 50 s on a Mac. CI runs it next to the stack ratchet (`.github/workflows/build.yml`).
+About 50 s on a Mac. CI runs it on the pinned 10.3 after the 12.3 stack ratchet (`.github/workflows/build.yml`).
 
 Files:
 

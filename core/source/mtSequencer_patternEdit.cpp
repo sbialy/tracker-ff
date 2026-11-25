@@ -4,9 +4,12 @@
 #include "mtChord.h"
 #include "mtPatternGen.h"
 #include "mtSequencer.h"
+#include "mtTuning.h"
 #include "mtStructs.h"
 #include "patternEditor/patternEditor.h"
+#include "stereoPairs.h"
 #include "tapeFx.h"
+#include "tables_format.h"
 
 #include "ctype.h"
 #include "util_math.h"
@@ -42,7 +45,7 @@ void Sequencer::fillRandomNotes(int16_t fillStep,
     strPattern::strTrack::strStep* step;
     uint8_t root = mtProject.values.padBoardRootNote;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -77,7 +80,7 @@ void Sequencer::fillLinearNotes(int16_t fillStep,
     //	uint8_t scale = mtProject.values.padBoardScale;
     uint8_t root = mtProject.values.padBoardRootNote;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -121,7 +124,7 @@ void Sequencer::fillRoleNotes(int16_t role, int16_t scale, int16_t density)
     const uint32_t seed = (uint32_t)utilMathRandom::random();
     patternGen::Cell cells[MAXSTEP + 1];
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         const uint8_t r = patternGen::roleOfTrack((uint8_t)role, t - sel->firstTrack);
         const uint8_t low = r == patternGen::roleBass ? (isSampleTrack(t) ? 48 : 36) : 60;
@@ -166,7 +169,7 @@ void Sequencer::fillLinearInstruments(int16_t fillStep, int16_t from, int16_t to
         return;
     strPattern::strTrack::strStep* step;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -208,7 +211,7 @@ void Sequencer::fillLinearFx(int16_t fxIndex,
 
     strPattern::strTrack::strStep* step;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -246,7 +249,7 @@ uint8_t Sequencer::generateRandomFx()
             && retVal != fx.FX_TYPE_PATCH_CHANGE // a random patch switch is never wanted from the picker (no-op id in stock)
             && retVal != fx.FX_TYPE_R10         // the retired Tape Start id, a hole in the list
             && retVal != fx.FX_TYPE_TAPE        // a random pick would silence a track
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
             && retVal != fx.FX_TYPE_PATCH_MORPH  // nor a random morph
 #endif
             && retVal != fx.FX_TYPE_STRUM)      // a strum needs a MIDI Chord in the other slot
@@ -275,7 +278,7 @@ void Sequencer::fillRandomFx(int16_t fxIndex,
 
     strPattern::strTrack::strStep* step;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -366,7 +369,7 @@ void Sequencer::fillLinearMicromove(int16_t fillStep,
     if (!isSelectionCorrect(sel))
         return;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -399,7 +402,7 @@ void Sequencer::fillRandomMicromove(int16_t fillStep,
     if (!isSelectionCorrect(sel))
         return;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -424,7 +427,7 @@ void Sequencer::quantizeMicromove(int16_t fillStep, int16_t strength, int16_t de
     if (strength == 0)
         return;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -446,7 +449,7 @@ void Sequencer::fillLinearVolume(int16_t fillStep,
     if (!isSelectionCorrect(sel))
         return;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -479,7 +482,7 @@ void Sequencer::fillRandomVolume(int16_t fillStep,
     if (!isSelectionCorrect(sel))
         return;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -531,7 +534,7 @@ void Sequencer::fillRandomInstruments(int16_t fillStep, int16_t from, int16_t to
         return;
     strPattern::strTrack::strStep* step;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -562,7 +565,7 @@ void Sequencer::invertSelectedSteps(uint8_t elements)
     strPattern::strTrack::strStep* stepB;
     strPattern::strTrack::strStep buffStep;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t a = sel->firstStep, b = sel->lastStep;
              a <= ((sel->lastStep - sel->firstStep) / 2) + sel->firstStep;
@@ -925,9 +928,9 @@ void Sequencer::changeSelectionNote(int16_t value, bool octaveShift)
     strPattern::strTrack::strStep* step;
 
     if (octaveShift)
-        value = value * 12;
+        value = value * tuning::octaveKeys();
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -1001,7 +1004,7 @@ void Sequencer::changeSelectionFxValue(uint8_t fxIndex, int16_t value)
 
     strPattern::strTrack::strStep::strFx* _fx;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -1079,7 +1082,7 @@ void Sequencer::setSelectionFxValueByPad(uint8_t fxIndex, int16_t pad)
 
     strPattern::strTrack::strStep::strFx* _fx;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -1119,7 +1122,7 @@ void Sequencer::changeSelectionMicromove(int16_t value)
     bool somethingWasChanged = false;
     newFileManager.storePatternUndoRevision();
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep; s <= sel->lastStep; s++)
         {
@@ -1157,7 +1160,7 @@ void Sequencer::setSelectionMicromoveByPad(int16_t pad)
     newFileManager.storePatternUndoRevision();
     bool somethingWasChanged = false;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep; s <= sel->lastStep; s++)
         {
@@ -1186,7 +1189,7 @@ void Sequencer::changeSelectionVolume(int16_t value)
     bool somethingWasChanged = false;
     newFileManager.storePatternUndoRevision();
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep; s <= sel->lastStep; s++)
         {
@@ -1225,7 +1228,7 @@ void Sequencer::setSelectionVolumeByPad(int16_t pad)
     newFileManager.storePatternUndoRevision();
     bool somethingWasChanged = false;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep; s <= sel->lastStep; s++)
         {
@@ -1261,7 +1264,7 @@ void Sequencer::changeSelectionFxType(uint8_t index, int16_t value)
 
     strPattern::strTrack::strStep::strFx* _fx;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -1275,7 +1278,7 @@ void Sequencer::changeSelectionFxType(uint8_t index, int16_t value)
 
                 uint8_t previousType = _fx->type;
 
-                _fx->type = clamp<int>(interfaceGlobals.fxNameToId(name), 0, fx.FX_TYPE_SNAP); // the highest FX id (rel140-snapfx: R11)
+                _fx->type = clamp<int>(interfaceGlobals.fxNameToId(name), 0, fx.FX_TYPE_TABLE); // the highest FX id (rel141-tables: R12)
 
                 if (previousType != _fx->type && !isMultiSelection())
                 {
@@ -1308,7 +1311,7 @@ void Sequencer::setSelectionFxType(uint8_t fxSlot, int16_t value)
 
     newFileManager.storePatternUndoRevision();
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -1400,7 +1403,7 @@ void Sequencer::changeSelectionInstrument(int16_t value)
 
     strPattern::strTrack::strStep* step;
 
-    for (uint8_t trackIdx = sel->firstTrack; trackIdx <= sel->lastTrack; trackIdx++)
+    for (uint8_t trackIdx = sel->firstTrack; trackIdx <= sel->lastTrack; trackIdx = stereopairs::next(trackIdx))
     {
         for (uint8_t s = sel->firstStep, offset = 0; s <= sel->lastStep; s++, offset++)
         {
@@ -1465,7 +1468,7 @@ void Sequencer::setSelectionInstrument(int16_t value)
 
     strPattern::strTrack::strStep* step;
 
-    for (int trackIdx = sel->firstTrack; trackIdx <= sel->lastTrack; trackIdx++)
+    for (int trackIdx = sel->firstTrack; trackIdx <= sel->lastTrack; trackIdx = stereopairs::next(trackIdx))
     {
         for (int stepIdx = sel->firstStep, offset = 0; stepIdx <= sel->lastStep;
              stepIdx++, offset++)
@@ -1540,7 +1543,7 @@ void Sequencer::setSelectionNote(int16_t value)
 
     strPattern::strTrack::strStep* step;
 
-    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t++)
+    for (uint8_t t = sel->firstTrack; t <= sel->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = sel->firstStep; s <= sel->lastStep; s++)
         {
@@ -1664,7 +1667,7 @@ void Sequencer::clearSelected(strSelection* selection, uint8_t elements)
     if (!isSelectionCorrect(selection))
         return;
 
-    for (uint8_t t = selection->firstTrack; t <= selection->lastTrack; t++)
+    for (uint8_t t = selection->firstTrack; t <= selection->lastTrack; t = stereopairs::next(t))
     {
         stopOpenNoteOnTrack(t);
 
@@ -1733,7 +1736,7 @@ void Sequencer::insert(strSelection* selection)
     if (!isSelectionCorrect(selection))
         return;
 
-    for (uint8_t t = selection->firstTrack; t <= selection->lastTrack; t++)
+    for (uint8_t t = selection->firstTrack; t <= selection->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = MAXSTEP; s > selection->firstStep; s--)
         {
@@ -1750,7 +1753,7 @@ void Sequencer::insertReversed(strSelection* selection)
     if (!isSelectionCorrect(selection))
         return;
 
-    for (uint8_t t = selection->firstTrack; t <= selection->lastTrack; t++)
+    for (uint8_t t = selection->firstTrack; t <= selection->lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = MINSTEP; s < selection->firstStep; s++)
         {
@@ -1773,7 +1776,7 @@ bool Sequencer::backspace()
 
     strPattern::strTrack::strStep *stepFrom, *stepTo;
 
-    for (uint8_t t = selection.firstTrack; t <= selection.lastTrack; t++)
+    for (uint8_t t = selection.firstTrack; t <= selection.lastTrack; t = stereopairs::next(t))
     {
         for (uint8_t s = selection.firstStep - 1; s < currentPattern->track[0].length; s++)
         {
@@ -1918,6 +1921,9 @@ void Sequencer::pasteSelectionFromBuffer(strSelection* from, strSelection* to, u
          destTrackIdx <= to->firstTrack + tracksToCopy - 1;
          destTrackIdx++, trackOffset++)
     {
+        // a follower of a linked stereo pair is neither read nor written (its data stays as it is)
+        if (stereopairs::isFollower(destTrackIdx) || stereopairs::isFollower(from->firstTrack + trackOffset))
+            continue;
         for (int destStepIdx = to->firstStep, stepOffset = 0;
              destStepIdx <= to->firstStep + rowsToCopy - 1;
              destStepIdx++, stepOffset++)
@@ -2114,7 +2120,11 @@ AUDIO_CORE_RAM int16_t Sequencer::getFxMax(uint8_t fxID, bool forRandom)
         case fx.FX_TYPE_STRUM: return FX_VALUE_MAX;
         case fx.FX_TYPE_TAPE: return tapefx::kValueMax;
         case fx.FX_TYPE_SNAP: return kSnapFxMax;
+        case fx.FX_TYPE_TABLE: return tables::kFxValueMax;
 #ifdef FEATURE_SYNTH_OPEN
+        case fx.FX_TYPE_PATCH_CHANGE: return 15;
+        case fx.FX_TYPE_PATCH_MORPH: return 100;
+#elif defined(FEATURE_SYNTH_PATCHFX)
         case fx.FX_TYPE_PATCH_CHANGE: return 15;
         case fx.FX_TYPE_PATCH_MORPH: return 100;
 #endif
@@ -2166,7 +2176,8 @@ int16_t Sequencer::getFxDefault(uint8_t fxID)
         case fx.FX_TYPE_COND: return 50;
         case fx.FX_TYPE_TAPE: return tapefx::kValueDefault; // one step
         case fx.FX_TYPE_SNAP: return 1; // Nearest
-#ifdef FEATURE_SYNTH_OPEN
+        case fx.FX_TYPE_TABLE: return 1;
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
         case fx.FX_TYPE_PATCH_MORPH: return 50;
 #endif
 
@@ -2442,6 +2453,14 @@ void Sequencer::makeFxValLabelWithAlgin(char* ptr,
             static const char* const snapCell[kSnapFxMax + 1] = { "off", "nea", "dwn", " up", "trk" };
             const uint8_t v = valueFromFx > kSnapFxMax ? kSnapFxMax : uint8_t(valueFromFx);
             strncpy(ptr, len > 4 ? snapFull[v] : snapCell[v], len);
+            break;
+        }
+        case fx.FX_TYPE_TABLE:
+        {   // 0 stops the table of the track, 1..16 the table
+            if (valueFromFx == 0)
+                strncpy(ptr, len > 4 ? "Stop" : "off", len);
+            else
+                snprintf(ptr, len, len > 4 ? "Table %d" : "%3d", int(valueFromFx));
             break;
         }
         case fx.FX_TYPE_TEMPO:

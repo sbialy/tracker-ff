@@ -1,4 +1,4 @@
-// Host test of project.mtff (synth-open/plug_mtff.h): the text codec and the file rules the firmware runs on project load, Workspace
+// Host test of project.mtff (core/FileManager/mtff_codec.h): the text codec and the file rules the firmware runs on project load, Workspace
 // save, project open and Save / Save As (plug_host.cpp calls the same templates on the SD card), on an in-memory card with FatFs
 // rename rules that fails or loses power at any step. NOT firmware.
 //
@@ -16,7 +16,11 @@ struct MigrateCall
 };
 static std::vector<MigrateCall> g_migrate;
 #define MTFF_MIGRATE_PROBE(m, file, ours) g_migrate.push_back({file.format, ours.format, file.ff, ours.ff, int((m).depth)})
-#include "plug_mtff.h"
+// Tracker+ and Mini layout (synth.N.auto.K lines) unless the build is the MK66 one (-DMTFF_NO_SYNTH_AUTO: the same lines are unknown lines)
+#ifndef MTFF_NO_SYNTH_AUTO
+#define MTFF_SYNTH_AUTO 1
+#endif
+#include "../../core/FileManager/mtff_codec.h"
 
 #include <cstdio>
 #include <string>
@@ -47,7 +51,13 @@ struct Host
     MtStamp stamp{};
     char tmp[kMtffMax];
     parts::List pl{};
-    Host() { m.parts = &pl; }
+    tables::Pool tp{};
+    Host()
+    {
+        m.parts = &pl;
+        m.tables = &tp;   // every Host test runs with the table pool: a project without tables must give the very same files
+        tables::poolClear(tp);
+    }
 };
 
 SidecarState load(MemFs& fs, Host& h, const char* path = kWs)
@@ -73,7 +83,7 @@ std::string text(const char* b, int n) { return std::string(b, size_t(n)); }
 
 int main()
 {
-    char out[4096];
+    char out[16384];   // the PARTS=0 case below writes a second copy at out + 8192
 
     // ---- codec
     {
@@ -457,6 +467,154 @@ int main()
             st.rawN = int(strlen(stale));
             check(mtffRead(st.raw, st.rawN, st.m, false) && st.m.fxSlots == 4, "keys: the key applies on a stale file (slot bound lines are parked, this one is not)");
         }
+        // mpe.out (Project Settings > MPE out, core/source/mtMpeOut.h): 1..15 member channels, absent = Off, never written at 0, anything else reads as Off
+        {
+            Mtff r{};
+            const char* m4 = "tffproj 1\nmpe.out 4\n";
+            check(mtffRead(m4, int(strlen(m4)), r) && r.mpeOut == 4 && mtffAny(r), "mpe.out 4 reads into the Mtff field");
+            const char* mbad[] = {"mpe.out 0", "mpe.out 16", "mpe.out x", "mpe.out 4 5", "mpe.out"};
+            bool badOk = true;
+            for (const char* b : mbad)
+            {
+                char t[64];
+                snprintf(t, sizeof(t), "tffproj 1\n%s\n", b);
+                Mtff q{};
+                if (!mtffRead(t, int(strlen(t)), q) || q.mpeOut != 0) badOk = false;
+            }
+            check(badOk, "mpe.out 0, 16, a letter, two numbers or no number read as Off");
+            char o[256];
+            Mtff w{};
+            int n = mtffWrite(w, "", 0, o, sizeof(o));
+            check(n == 0, "mpe.out Off writes no file");
+            w.mpeOut = 7;
+            n = mtffWrite(w, "", 0, o, sizeof(o));
+            check(n > 0 && strstr(o, "mpe.out 7\n") != nullptr, "mpe.out 7 is written");
+        }
+        // tune.n / tune.period / tune.root / tune.hz (the Tuning rows of the Project Settings page, core/source/mtTuning.h): absent = 12 notes of 1200 cents at
+        // key 60 / 261.6256 Hz, a field equal to the default is never written and a line that holds the default is dropped on read
+        {
+            Mtff r{}, w{};
+            char o[512];
+            const char* t31 = "tffproj 1\ntune.n 31\ntune.period 1901955\ntune.root 48\ntune.hz 2640000\n";
+            check(mtffRead(t31, int(strlen(t31)), r) && r.tuneN == 31 && r.tunePeriodMc == 1901955 && r.tuneRoot1 == 49 && r.tuneHzE4 == 2640000, "tune: the four keys read into the Mtff fields (root stored +1)");
+            const char* defs = "tffproj 1\ntune.n 12\ntune.period 1200000\ntune.root 60\ntune.hz 2616256\n";
+            check(mtffRead(defs, int(strlen(defs)), r) && r.tuneN == 0 && r.tunePeriodMc == 0 && r.tuneRoot1 == 0 && r.tuneHzE4 == 0 && !mtffAny(r), "tune: lines that hold the default read as absent (no file is needed)");
+            const char* bad[] = {"tuneN 0", "tune.n 0", "tune.n 129", "tune.n x", "tune.n 5 6", "tune.period 9999", "tune.period 4800001", "tune.root 128", "tune.hz 79999", "tune.hz 40000001", "tune.n -3"};
+            bool badOk = true;
+            for (const char* b : bad)
+            {
+                std::string tx = std::string("tffproj 1\n") + b + "\n";
+                badOk = badOk && mtffRead(tx.data(), int(tx.size()), r) && r.tuneN == 0 && r.tunePeriodMc == 0 && r.tuneRoot1 == 0 && r.tuneHzE4 == 0;
+            }
+            check(badOk, "tune: out of range, malformed and trailing values leave the key absent");
+            memset(&w, 0, sizeof(w));
+            check(!mtffAny(w) && mtffWrite(w, "", 0, o, sizeof(o)) == 0, "tune: no tuning, no file (a 12 EDO project has the file it had before)");
+            w.tuneN = 19;
+            int n = mtffWrite(w, "", 0, o, sizeof(o));
+            check(mtffAny(w) && text(o, n) == "tffproj 1\ntune.n 19\n", "tune: only the field that differs is written");
+            w.tuneN = 13; w.tunePeriodMc = 1901955; w.tuneRoot1 = 49; w.tuneHzE4 = 2640000;
+            n = mtffWrite(w, "tffproj 1\ntune.n 5\nx.future 1\n", 30, o, sizeof(o));
+            Mtff back{};
+            check(text(o, n) == "tffproj 1\ntune.n 13\ntune.root 48\ntune.period 1901955\ntune.hz 2640000\nx.future 1\n" && mtffRead(o, n, back) && back.tuneN == 13 && back.tunePeriodMc == 1901955 && back.tuneRoot1 == 49 && back.tuneHzE4 == 2640000,
+                  "tune: the four lines are regenerated in place of the old ones, the unknown line is kept, a write then a read gives the same fields");
+            // a stale file still applies it (a project-wide key)
+            const char* stale = "tffproj 1\nmt 12345678 2324\ntune.n 31\npat.parts.mode 1\n";
+            check(mtffRead(stale, int(strlen(stale)), r, false) && r.tuneN == 31, "tune: the key applies on a stale file");
+        }
+        // tune.file / tune.cents (phase 2, a Scala tuning): the degrees are embedded, a mismatch plays as equal steps, written only for a Scala tuning
+        {
+            uint32_t deg[128];
+            char name[tuning::kNameMax];
+            auto fresh = [&](Mtff& m) { memset(&m, 0, sizeof(m)); m.tuneDeg = deg; m.tuneName = name; };
+            Mtff r;
+            fresh(r);
+            const char* t7 = "tffproj 1\ntune.n 7\ntune.file just.scl\ntune.cents 203910 386314 498045 701955 884359 1088269\n";
+            check(mtffRead(t7, int(strlen(t7)), r) && r.tuneScl == 1 && r.tuneN == 7 && deg[0] == 0 && deg[1] == 203910 && deg[6] == 1088269 && !strcmp(name, "just.scl") && mtffAny(r),
+                  "scale: tune.cents + tune.file read into the live tables (7 notes, 6 values, period 1200)");
+            const char* t12 = "tffproj 1\ntune.cents 100000 200000 300000 400000 500000 600000 700000 800000 900000 1000000 1100000\n";
+            fresh(r);
+            check(mtffRead(t12, int(strlen(t12)), r) && r.tuneScl == 1 && r.tuneN == 0 && deg[11] == 1100000 && name[0] == 0, "scale: 12 notes (tune.n absent) takes 11 values");
+            const char* t1 = "tffproj 1\ntune.n 1\ntune.period 78000\ntune.cents\n";
+            fresh(r);
+            check(mtffRead(t1, int(strlen(t1)), r) && r.tuneScl == 1 && r.tuneN == 1 && deg[0] == 0, "scale: N = 1 (Carlos) has a tune.cents with no value");
+            const char* bads[] = {
+                "tffproj 1\ntune.n 7\ntune.cents 203910 386314 498045 701955 884359\n",              // one value short
+                "tffproj 1\ntune.n 7\ntune.cents 203910 386314 498045 701955 884359 1088269 1100000\n", // one too many
+                "tffproj 1\ntune.n 7\ntune.cents 203910 386314 498045 701955 884359 1200000\n",       // last degree = period
+                "tffproj 1\ntune.n 7\ntune.cents 203910 386314 498045 498045 884359 1088269\n",       // not ascending
+                "tffproj 1\ntune.n 7\ntune.cents 0 386314 498045 701955 884359 1088269\n",            // a degree at the unison
+                "tffproj 1\ntune.n 7\ntune.cents 203910 386314 x 701955 884359 1088269\n",            // not a number
+                "tffproj 1\ntune.n 3\ntune.period 300000\ntune.cents 100000 400000\n",               // degree above the period
+            };
+            bool badOk = true;
+            for (const char* b : bads)
+            {
+                fresh(r);
+                badOk = badOk && mtffRead(b, int(strlen(b)), r) && r.tuneScl == 0 && deg[1] == 0 && deg[0] == 0;
+            }
+            check(badOk, "scale: a count that does not match tune.n, a degree not ascending, a degree at the unison, one above the period or text: no scale, the tables are cleared");
+            // write: only a Scala tuning writes the two lines, and the read of it gives the tables back
+            Mtff w;
+            fresh(w);
+            char o[2048];
+            check(!mtffAny(w) && mtffWrite(w, "", 0, o, sizeof(o)) == 0, "scale: no Scala tuning, no file");
+            mtffRead(t7, int(strlen(t7)), w);
+            int n = mtffWrite(w, "tffproj 1\ntune.cents 1 2\nx.future 1\n", 36, o, sizeof(o));
+            check(n > 0 && text(o, n) == "tffproj 1\ntune.n 7\ntune.file just.scl\ntune.cents 203910 386314 498045 701955 884359 1088269\nx.future 1\n",
+                  "scale: written after tune.hz as tune.file and tune.cents, the old copies replaced, the unknown line kept");
+            uint32_t deg2[128];
+            char name2[tuning::kNameMax];
+            Mtff back;
+            memset(&back, 0, sizeof(back));
+            back.tuneDeg = deg2;
+            back.tuneName = name2;
+            check(mtffRead(o, n, back) && back.tuneScl == 1 && !memcmp(deg, deg2, sizeof(uint32_t) * 7) && !strcmp(name2, "just.scl"), "scale: a write then a read gives the same table");
+            // a long 128 note table fits in the file and in the line
+            Mtff big;
+            fresh(big);
+            big.tuneN = 128;
+            big.tunePeriodMc = 4800000;
+            big.tuneScl = 1;
+            for (int i = 1; i < 128; i++) deg[i] = uint32_t(i) * 37000u;
+            snprintf(name, sizeof(name), "%s", "twenty-three-chars-xxx.");
+            static char ob[4096];
+            n = mtffWrite(big, "", 0, ob, sizeof(ob));
+            Mtff bb;
+            memset(&bb, 0, sizeof(bb));
+            bb.tuneDeg = deg2;
+            bb.tuneName = name2;
+            check(n > 0 && n < 1500 && mtffRead(ob, n, bb) && bb.tuneScl == 1 && bb.tuneN == 128 && deg2[127] == 127u * 37000u && !strcmp(name2, name),
+                  "scale: 128 notes (127 values, 23 character name) is about 1.1 KB and reads back");
+            // a build with no tables (tuneDeg null) reads the two lines as nothing and does not write them back: the line count of the old tests stays
+            Mtff nt;
+            memset(&nt, 0, sizeof(nt));
+            check(mtffRead(t7, int(strlen(t7)), nt) && nt.tuneScl == 0 && nt.tuneN == 7, "scale: a reader with no table ignores the lines, tune.n still reads");
+        }
+        // tune.names (phase 3, ups and downs note names): "ud" is the one value that is kept, anything else is the default, written only for ud
+        {
+            Mtff r{}, w{}, back{};
+            char o[512];
+            check(mtffRead("tffproj 1\ntune.names ud\n", 25, r) && r.tuneNames == 1, "names: tune.names ud reads");
+            bool badOk = true;
+            const char* bad[] = {"tune.names", "tune.names deg", "tune.names udx", "tune.names loud", "tune.names 1", "tune.names ud ud"};
+            for (const char* b : bad)
+            {
+                std::string tx = std::string("tffproj 1\n") + b + "\n";
+                Mtff q{};
+                badOk = badOk && mtffRead(tx.data(), int(tx.size()), q) && (q.tuneNames == 0 || std::string(b) == "tune.names ud ud");
+            }
+            check(badOk, "names: deg, a longer word, a number and no value leave the default");
+            check(!mtffAny(w) && mtffWrite(w, "", 0, o, sizeof(o)) == 0, "names: default writes nothing");
+            w.tuneNames = 1;
+            int n = mtffWrite(w, "tffproj 1\ntune.names deg\nx.future 1\n", 36, o, sizeof(o));
+            check(mtffAny(w) && text(o, n) == "tffproj 1\ntune.names ud\nx.future 1\n" && mtffRead(o, n, back) && back.tuneNames == 1, "names: written once (the old line replaced), the unknown line kept");
+            w.tuneN = 31;
+            n = mtffWrite(w, "", 0, o, sizeof(o));
+            check(text(o, n) == "tffproj 1\ntune.n 31\ntune.names ud\n", "names: after tune.n");
+            const char* stale = "tffproj 1\nmt 12345678 2324\ntune.names ud\n";
+            Mtff s2{};
+            check(mtffRead(stale, int(strlen(stale)), s2, false) && s2.tuneNames == 1, "names: the key applies on a stale file");
+        }
         // macro.mode (the Macro depth row of the Project Settings page): 0 Add, 1 Scale, read into 1 and 2 (0 is no key), written only when set
         {
             Host f;
@@ -659,6 +817,27 @@ int main()
         check(!save(fe, h3, 0) && fe.files[kWs] == "tffproj 1\ntrack.2.groove 9\n", "rules: and the file the card could not read is not written over");
     }
 
+    // ---- linked stereo pairs: track.N.pair on the odd tracks 1 3 5 7 (core/source/stereoPairs.h)
+    {
+        Mtff a{};
+        a.pairs = 0x0A;   // pairs 2 and 4: tracks 3+4 and 7+8
+        char out[512];
+        const int k = mtffWrite(a, "", 0, out, sizeof(out));
+        check(k > 0 && text(out, k) == "tffproj 1\ntrack.3.pair 1\ntrack.7.pair 1\n", "pairs: the mask 0x0A is the lines track.3.pair 1 and track.7.pair 1, nothing else");
+        Mtff r{};
+        check(mtffRead(out, k, r) && r.pairs == 0x0A, "pairs: the file reads back to the same mask");
+        Mtff none{};
+        check(mtffWrite(none, "", 0, out, sizeof(out)) == 0, "pairs: no pair, nothing else set = no file");
+        const char* odd = "tffproj 1\ntrack.2.pair 1\ntrack.1.pair 2\ntrack.1.pair\ntrack.9.pair 1\ntrack.3.pair 1 1\ntrack.5.pair 1\ntrack.8.pair 1\n";
+        check(mtffRead(odd, int(strlen(odd)), r) && r.pairs == 0x04, "pairs: a key on an even track or past 8, a value other than 1 or a second number: skipped, track.5.pair links pair 3");
+        const char* keep = "tffproj 1\ntrack.1.pair 1\nfoo 1\ntrack.2.pair 1\n";
+        Mtff q{};
+        check(mtffRead(keep, int(strlen(keep)), q) && q.pairs == 1, "pairs: the line of an even track is read as nothing");
+        const int w = mtffWrite(q, keep, int(strlen(keep)), out, sizeof(out));
+        check(w > 0 && text(out, w) == "tffproj 1\ntrack.1.pair 1\nfoo 1\n", "pairs: the owned lines are rewritten from the mask (a line of an even track is dropped like a groove line of a track it does not own), foreign lines are kept");
+        const char* newer = "tffproj 9\ntrack.1.pair 1\n";
+        check(mtffRead(newer, int(strlen(newer)), q) && q.newer && q.pairs == 0, "pairs: a file of a newer format applies nothing");
+    }
     // ---- header: the format version and the Tracker FF version of the writer (ref/mtff-version.md)
     auto ver = [](int a, int b, int c, const char* build) {
         MtffId id{};
@@ -675,17 +854,17 @@ int main()
         m.self = ver(1, 4, 0, "5a1b2c3");
         m.depth = 100;
         int n = mtffWrite(m, "", 0, out, sizeof(out));
-        check(text(out, n) == "tffproj 1 ff=1.4.0 build=5a1b2c3 cap=32768\nstrum.ramp 100\n", "header: format, ff version, build sha and cap, first line");
+        check(text(out, n) == "tffproj 1 ff=1.4.0 build=5a1b2c3 cap=40960\nstrum.ramp 100\n", "header: format, ff version, build sha and cap, first line");
         m.hasStamp = true;
         m.crc = 0x3a51c2e0u;
         m.size = 2324;
         n = mtffWrite(m, "", 0, out, sizeof(out));
-        check(text(out, n).rfind("tffproj 1 ff=1.4.0 build=5a1b2c3 cap=32768\nmt 3a51c2e0 2324\n", 0) == 0, "header: the stamp is the second line");
+        check(text(out, n).rfind("tffproj 1 ff=1.4.0 build=5a1b2c3 cap=40960\nmt 3a51c2e0 2324\n", 0) == 0, "header: the stamp is the second line");
         Mtff nb{};
         nb.self = ver(1, 4, 12, "");
         nb.depth = 5;
         n = mtffWrite(nb, "", 0, out, sizeof(out));
-        check(text(out, n) == "tffproj 1 ff=1.4.12 cap=32768\nstrum.ramp 5\n", "header: no sha, no build token");
+        check(text(out, n) == "tffproj 1 ff=1.4.12 cap=40960\nstrum.ramp 5\n", "header: no sha, no build token");
         Mtff none{};
         none.depth = 5;
         n = mtffWrite(none, "", 0, out, sizeof(out));
@@ -700,7 +879,7 @@ int main()
         longest.self = ver(255, 255, 255, "abcdefgh12345");
         longest.depth = 1;
         n = mtffWrite(longest, "", 0, out, sizeof(out));
-        check(text(out, n) == "tffproj 1 ff=255.255.255 build=abcdefgh cap=32768\nstrum.ramp 1\n", "header: the sha is cut at 8 characters");
+        check(text(out, n) == "tffproj 1 ff=255.255.255 build=abcdefgh cap=40960\nstrum.ramp 1\n", "header: the sha is cut at 8 characters");
     }
     {   // read
         Mtff r{};
@@ -728,7 +907,7 @@ int main()
         const char* sha = "tffproj 1 ff=1.4.0 build=ab-cdef\n";
         check(mtffRead(sha, int(strlen(sha)), r) && strcmp(r.writer.build, "ab") == 0, "header: a build token stops at the first character that is no letter or digit");
         // a higher format: the header is still read, so the status line can name the writer
-        const char* newer = "tffproj 2 ff=1.5.0 build=beef cap=32768\nstrum.ramp 100\nfuture 1\n";
+        const char* newer = "tffproj 2 ff=1.5.0 build=beef cap=40960\nstrum.ramp 100\nfuture 1\n";
         check(mtffRead(newer, int(strlen(newer)), r) && r.newer && r.format == 2 && mtffWriterVersion(r) == kV150 && r.depth == 0,
               "format 2: read as newer with its writer named, nothing applied");
         const char* newerBare = "tffproj 9\nstrum.ramp 100\n";
@@ -760,7 +939,7 @@ int main()
         const std::string first(out, size_t(n));
         const int n2 = mtffWrite(w2, first.c_str(), int(first.size()), out, sizeof(out));
         const std::string second(out, size_t(n2));
-        check(second.rfind("tffproj 1 ff=1.5.0 build=cafe123 cap=32768\n", 0) == 0 && second.find("tffproj", 1) == std::string::npos,
+        check(second.rfind("tffproj 1 ff=1.5.0 build=cafe123 cap=40960\n", 0) == 0 && second.find("tffproj", 1) == std::string::npos,
               "header: a rewrite carries the version of the build that saves, one header line");
     }
     {   // the file rules: load, hook, save
@@ -773,7 +952,7 @@ int main()
               "load: no file, the hook is not called, versions 0");
         const int mut = fs.mutations;
         check(save(fs, h, 0) && fs.files.empty() && fs.mutations == mut, "save: nothing set writes nothing (no header on its own), the card is not touched");
-        check(save(fs, h, 100) && fs.files[kWs] == "tffproj 1 ff=1.4.0 build=5a1b2c3 cap=32768\nmt 0000aaaa 2324\nstrum.ramp 100\n" && fs.clean({kWs}),
+        check(save(fs, h, 100) && fs.files[kWs] == "tffproj 1 ff=1.4.0 build=5a1b2c3 cap=40960\nmt 0000aaaa 2324\nstrum.ramp 100\n" && fs.clean({kWs}),
               "save: the header is the first line of the file");
 
         // same build again: the hook is called with equal versions
@@ -796,7 +975,7 @@ int main()
         g_migrate.clear();
         check(load(up, u) == SidecarState::kLoaded && g_migrate.size() == 1 && g_migrate[0].fileFf < g_migrate[0].ourFf && u.m.depth == 30 && mtffWriterVersion(u.m) < mtffSelfVersion(u.m),
               "upgrade: an older writer is read, the hook sees file < ours");
-        check(save(up, u, 31) && up.files[kWs] == "tffproj 1 ff=1.4.0 build=5a1b2c3 cap=32768\nmt 0000aaaa 2324\nstrum.ramp 31\n",
+        check(save(up, u, 31) && up.files[kWs] == "tffproj 1 ff=1.4.0 build=5a1b2c3 cap=40960\nmt 0000aaaa 2324\nstrum.ramp 31\n",
               "upgrade: the next save writes this build's header");
 
         // a bare header (a dev build): format 1, writer unknown
@@ -808,7 +987,7 @@ int main()
         g_migrate.clear();
         check(load(dev, d) == SidecarState::kLoaded && g_migrate.size() == 1 && g_migrate[0].fileFormat == 1 && g_migrate[0].fileFf == 0 && d.m.depth == 30,
               "dev file: no header fields = format 1, writer unknown, the hook sees (1, 0) and nothing else is migrated");
-        check(save(dev, d, 30) && dev.files[kWs] == "tffproj 1 ff=1.4.0 build=5a1b2c3 cap=32768\nmt 0000aaaa 2324\nstrum.ramp 30\nx.keep 1\n",
+        check(save(dev, d, 30) && dev.files[kWs] == "tffproj 1 ff=1.4.0 build=5a1b2c3 cap=40960\nmt 0000aaaa 2324\nstrum.ramp 30\nx.keep 1\n",
               "dev file: saved with the header, the unknown line kept");
 
         // downgrade: a newer writer in the same format: known keys apply, unknown ones are carried, the header becomes ours
@@ -821,7 +1000,7 @@ int main()
         check(load(dn, w) == SidecarState::kLoaded && w.m.depth == 30 && w.m.groove[1] == 12 && !w.m.newer && mtffWriterVersion(w.m) == kV150 &&
                   g_migrate.size() == 1 && g_migrate[0].fileFf > g_migrate[0].ourFf && w.m.writerCap == 40000,
               "downgrade: a 1.5.0 file of format 1 loads on 1.4.0, known keys apply, the hook sees file > ours");
-        check(save(dn, w, 35) && dn.files[kWs] == "tffproj 1 ff=1.4.0 build=5a1b2c3 cap=32768\nmt 0000aaaa 2324\nstrum.ramp 35\ntrack.2.groove 12\nfx.future 3 4 5\nx.newkey hello world\n",
+        check(save(dn, w, 35) && dn.files[kWs] == "tffproj 1 ff=1.4.0 build=5a1b2c3 cap=40960\nmt 0000aaaa 2324\nstrum.ramp 35\ntrack.2.groove 12\nfx.future 3 4 5\nx.newkey hello world\n",
               "downgrade: the save writes our header and keeps the lines this build does not know, byte exact");
         Host w2;
         w2.stamp = {0xaaaau, 2324u, true};
@@ -1036,6 +1215,229 @@ int main()
             check(ok, mode == 0 ? "refused: power loss at every step of Save, the newer file is the same byte for byte after every cut"
                                 : "refused: power loss at every step of Save As, the Workspace file and the target are the newer file or the target is absent, never torn");
         }
+    }
+
+    // ---- tables (tbl.N, instr.N.table: core/source/tables_format.h)
+    {
+        tables::Pool tp;
+        tables::poolClear(tp);
+        Mtff m{};
+        m.tables = &tp;
+        check(!tables::poolAny(tp) && mtffWrite(m, "", 0, out, sizeof(out)) == 0, "tables: an empty pool writes no file (no key for the old sound)");
+        const char* old = "tffproj 1 ff=1.4.0 build=abc1234 cap=40960\nmt 3a51c2e0 2324\nstrum.ramp 100\ntrack.3.snap 2\nx.unknown 7\n";
+        Mtff r{};
+        tables::Pool rp;
+        r.tables = &rp;
+        check(mtffRead(old, int(strlen(old)), r) && !tables::poolAny(rp), "tables: a file without table keys reads as no tables");
+        r.self = r.writer;
+        int n = mtffWrite(r, old, int(strlen(old)), out, sizeof(out));
+        check(text(out, n) == old, "tables: a file without table keys writes back byte identical (tables on in the build)");
+        // one table: 4 rows, row 1 +12, row 2 +7 V50, row 3 Volume FX 30, tic 12 Loop, len 4. Instrument 1 and synth instrument 65 name it
+        tables::Table& t = tp.table[2];
+        t.tic = 12;
+        t.len = 4;
+        t.row[0].note = 0;
+        t.row[1].note = 12;
+        t.row[2].note = 7;
+        t.row[2].vol = 50;
+        t.row[3].fxType = 18;
+        t.row[3].fxVal = 30;
+        tp.bind[0] = 3;
+        tp.bind[64] = 3;
+        n = mtffWrite(m, "", 0, out, sizeof(out));
+        check(text(out, n) == "tffproj 1\ntbl.3 12 1 4 00ff00000cff000007320000" "80ff121e\ninstr.1.table 3\ninstr.65.table 3\n",
+              "tables: tbl.3 with the used rows only, then the bindings");
+        tables::poolClear(rp);
+        check(mtffRead(out, n, r) && memcmp(&rp, &tp, sizeof(tp)) == 0, "tables: write then read gives the same pool");
+        char out2[4096];
+        r.self = MtffId{};   // the bare header of m
+        const int n2 = mtffWrite(r, out, n, out2, sizeof(out2));
+        if (!(n2 == n && memcmp(out, out2, size_t(n)) == 0)) printf("      [%s] vs [%s]\n", text(out, n).c_str(), text(out2, n2).c_str());
+        check(n2 == n && memcmp(out, out2, size_t(n)) == 0, "tables: read then write gives the same text (owned lines not kept twice)");
+        // a table that only changes its header (Once, no rows) is written without a row blob
+        tables::poolClear(tp);
+        tp.table[15].loop = 0;
+        n = mtffWrite(m, "", 0, out, sizeof(out));
+        check(text(out, n) == "tffproj 1\ntbl.16 12 0 16\n", "tables: header only table (Once) has no row field");
+        check(mtffRead(out, n, r) && rp.table[15].loop == 0 && tables::rowEmpty(rp.table[15].row[0]), "tables: header only table reads back");
+        // bad lines: the table stays empty, ranges clamp
+        const char* bad = "tffproj 1\ntbl.17 12 1 4\ntbl.0 12 1 4\ntbl.2 12 1 4 0cff00\ntbl.4 12 3 4\ntbl.5 12 1 0\ntbl.6 1 1 2 7fff0000c8640000\n"
+                          "instr.68.table 1\ninstr.2.table 17\ninstr.3.table 2 x\ninstr.4.tablex 2\ninstr.5.table 16\n";
+        check(mtffRead(bad, int(strlen(bad)), r), "tables: bad lines parse");
+        bool emptyBad = true;
+        for (int i : {1, 3, 4}) emptyBad = emptyBad && tables::tableEmpty(rp.table[i]);
+        check(emptyBad, "tables: odd hex count, loop above 1, length 0 leave the table empty");
+        check(rp.table[5].tic == tables::kTicMin && rp.table[5].len == 2 && rp.table[5].row[0].note == tables::kNoteMax && rp.table[5].row[1].note == tables::kNoteMin &&
+                  rp.table[5].row[1].vol == tables::kVolMax,
+              "tables: tic below the floor reads as 4, N and V clamp to their ranges");
+        check(rp.bind[1] == 0 && rp.bind[2] == 0 && rp.bind[3] == 0 && rp.bind[4] == 16, "tables: bindings out of range or malformed are ignored, 16 is kept");
+        n = mtffWrite(r, bad, int(strlen(bad)), out, sizeof(out));
+        const std::string w = text(out, n);
+        check(w.find("tbl.17 12 1 4\n") != std::string::npos && w.find("instr.68.table 1\n") != std::string::npos && w.find("instr.4.tablex 2\n") != std::string::npos &&
+                  w.find("tbl.2 12 1 4 0cff00\n") == std::string::npos,
+              "tables: keys out of range are somebody else's and kept, malformed owned keys are dropped");
+        // a build without tables keeps the lines as unknown lines
+        Mtff noT{};
+        const char* withT = "tffproj 1\ntbl.3 12 1 4 0cff0000\ninstr.1.table 3\n";
+        check(mtffRead(withT, int(strlen(withT)), noT), "tables: a build without the pool reads the file");
+        n = mtffWrite(noT, withT, int(strlen(withT)), out, sizeof(out));
+        check(text(out, n) == withT, "tables: a build without the pool keeps tbl. and instr. lines byte exact");
+        // size: 16 full tables and every instrument bound fit the cap together with a large file
+        tables::poolClear(tp);
+        for (auto& tb : tp.table)
+            for (auto& row : tb.row) row = tables::Row{-24, 100, 40, 48};
+        for (auto& b : tp.bind) b = 16;
+        n = mtffWrite(m, "", 0, out, sizeof(out));
+        printf("      16 full tables + 67 bindings: %d B of text\n", n);
+        check(n > 0 && n < 4096, "tables: the largest table text is under 4 KB");
+    }
+    {   // stale project.mt: the tables apply, the bindings (slot-bound) are parked and dropped
+        Host h;
+        MemFs fs;
+        h.stamp = {0x1111u, 2324u, true};
+        fs.files[kWs] = "tffproj 1\nmt 00002222 2324\ntbl.1 12 1 2 0cff0000\ninstr.1.table 1\n";
+        check(load(fs, h) == SidecarState::kLoaded && h.m.stale && h.m.parked == 1, "tables stale: the binding line is parked");
+        check(h.tp.table[0].row[0].note == 12 && h.tp.bind[0] == 0, "tables stale: the table applies, the binding does not");
+        save(fs, h, 0);
+        check(fs.files[kWs].find("parked.instr.1.table 1\n") != std::string::npos && fs.files[kWs].find("\ninstr.1.table") == std::string::npos &&
+                  fs.files[kWs].find("tbl.1 12 1 2 0cff0000\n") != std::string::npos,
+              "tables stale: the save keeps the parked line and the table, no live binding");
+        Host g;
+        MemFs fs2;
+        g.stamp = {0x2222u, 2324u, true};
+        fs2.files[kWs] = "tffproj 1\nmt 00002222 2324\ntbl.1 12 1 2 0cff0000\ninstr.1.table 1\n";
+        check(load(fs2, g) == SidecarState::kLoaded && !g.m.stale && g.tp.bind[0] == 1, "tables: a fresh stamp applies the binding");
+        const std::string before = fs2.files[kWs];
+        save(fs2, g, 0);
+        check(fs2.files[kWs] == before, "tables: load then save of a file with tables is byte identical");
+    }
+    {   // synth automation slots (Tracker+ and Mini) or, on the MK66 layout, the same lines kept as unknown lines
+        const char* kLine1 = "synth.2.auto.1 1 2 6 0 50 50 10 500 500\n";
+        const char* kLine2 = "synth.3.auto.4 2 0 0 3 -35 80 20 1500 250\n";
+        std::string txt = std::string("tffproj 1\n") + kLine1 + kLine2;
+        Mtff m{};
+        mtffClear(m);
+        check(mtffRead(txt.data(), int(txt.size()), m), "synth auto: the file reads");
+        static char out[4096];
+#ifdef MTFF_SYNTH_AUTO
+        const MtffAutoSlot& a = m.synthAuto[1][0];
+        const MtffAutoSlot& b = m.synthAuto[2][3];
+        check(a.type == 1 && a.shape == 2 && a.speed == 6 && a.dest == 0 && a.amount == 50 && a.sustain == 50 && a.attack == 10 && a.decay == 500 && a.release == 500,
+              "synth auto: LFO slot 1 of part 2 read");
+        check(b.type == 2 && b.shape == 0 && b.speed == 0 && b.dest == 3 && b.amount == -35 && b.sustain == 80 && b.attack == 20 && b.decay == 1500 && b.release == 250,
+              "synth auto: Env slot 4 of part 3 read, negative amount");
+        check(m.synthAuto[0][0].type == 0 && m.synthAuto[1][1].type == 0 && mtffAny(m), "synth auto: the other slots are Off, mtffAny sees the project");
+        int n = mtffWrite(m, txt.data(), int(txt.size()), out, sizeof(out));
+        check(n > 0 && std::string(out, size_t(n)).find(kLine1) != std::string::npos && std::string(out, size_t(n)).find(kLine2) != std::string::npos,
+              "synth auto: both slots written back as read");
+        const std::string once(out, size_t(n));
+        Mtff m2{};
+        mtffClear(m2);
+        check(mtffRead(once.data(), int(once.size()), m2) && memcmp(m.synthAuto, m2.synthAuto, sizeof(m.synthAuto)) == 0, "synth auto: write then read is the same slots");
+        const int n2 = mtffWrite(m2, once.data(), int(once.size()), out, sizeof(out));
+        check(n2 == n && memcmp(out, once.data(), size_t(n)) == 0, "synth auto: write is a fixed point (no growing lines)");
+        // bad lines leave the slot Off, nothing else is lost: type 3, shape 5, dest 4, amount 101, speed 29, a missing field, a part 4, a slot 5
+        const char* bad = "tffproj 1\nsynth.1.auto.1 3 0 0 0 0 0 0 0 0\nsynth.1.auto.2 1 5 0 0 0 0 0 0 0\nsynth.1.auto.3 1 0 0 4 0 0 0 0 0\n"
+                          "synth.1.auto.4 1 0 0 0 101 0 0 0 0\nsynth.2.auto.1 1 0 29 0 0 0 0 0 0\nsynth.2.auto.2 1 0 0 0 0 0 0 0\n"
+                          "synth.4.auto.1 1 0 0 0 0 0 0 0 0\nsynth.1.auto.5 1 0 0 0 0 0 0 0 0\nsynth.3.auto.1 1 0 0 0 0 0 10001 0 0\nseed.take 9\n";
+        Mtff mb{};
+        mtffClear(mb);
+        bool allOff = true;
+        check(mtffRead(bad, int(strlen(bad)), mb), "synth auto: a file of bad lines reads");
+        for (auto& pr : mb.synthAuto)
+            for (auto& sl : pr) allOff = allOff && sl.type == 0;
+        check(allOff && mb.seed == 9, "synth auto: every bad line leaves its slot Off, the other keys apply");
+        // a project with the slots and nothing else is a file, the same project with all slots Off is none
+        Mtff only{};
+        mtffClear(only);
+        only.synthAuto[0][2] = a;
+        n = mtffWrite(only, nullptr, 0, out, sizeof(out));
+        check(n > 0 && std::string(out, size_t(n)).find("synth.1.auto.3 1 2 6 0 50 50 10 500 500\n") != std::string::npos, "synth auto: slot 3 of part 1 is written under its own key");
+        mtffClear(only);
+        check(!mtffAny(only), "synth auto: no slot on, mtffAny is false");
+        // a stale file (another project.mt) still applies the slots (a project-wide key, parts never move)
+        Host h;
+        MemFs fs;
+        h.stamp = {0x1111u, 2324u, true};
+        fs.files[kWs] = std::string("tffproj 1\nmt 00002222 2324\n") + kLine1;
+        check(load(fs, h) == SidecarState::kLoaded && h.m.stale && h.m.synthAuto[1][0].type == 1 && h.m.parked == 0, "synth auto: a stale file still applies the slot, nothing parked");
+#else
+        // MK66 layout: no struct field, the lines are not owned, a load and save keeps them byte exact and in order
+        int n = mtffWrite(m, txt.data(), int(txt.size()), out, sizeof(out));
+        check(n > 0 && std::string(out, size_t(n)) == std::string("tffproj 1\n") + kLine1 + kLine2, "synth auto (MK66 layout): the lines are kept as unknown lines, byte exact");
+        check(!mtffAny(m), "synth auto (MK66 layout): they set nothing");
+#endif
+    }
+    // reset: the compat rule per key (move 2 step 4, projectSidecar.cpp mtffApply). A file with every key set, then for each key the same
+    // file without that key's lines: the read gives the cleared value (0, what the apply turns into the behaviour of a firmware without
+    // the feature) for exactly that key's fields and keeps every other field. A new key adds a row here
+    {
+        Mtff full{};
+        mtffClear(full);
+        full.depth = 40;
+        full.seed = 7;
+        full.fxSlots = 4;
+        full.macroMode = 2;
+        full.duck = DuckParams{3, 60, 50, 50};
+        for (int t = 0; t < kMtffTracks; t++)
+        {
+            full.groove[t] = int8_t(t - 5 == 0 ? 9 : t - 5);
+            full.snap[t] = uint8_t(1 + t % 3);
+            full.followMode[t] = uint8_t(1 + t % 3);
+            full.followSource[t] = uint8_t((t + 1) % kMtffTracks);
+        }
+        full.pairs = 0x5;
+        static char text[8192];
+        const int n = mtffWrite(full, nullptr, 0, text, sizeof(text));
+        Mtff back{};
+        mtffClear(back);
+        check(n > 0 && mtffRead(text, n, back), "reset: the file with every key reads");
+        auto same = [](const Mtff& a, const Mtff& b, unsigned skip) {   // the feature fields, skip = the bits of the key left out
+            bool ok = true;
+            if (!(skip & 1)) ok = ok && a.depth == b.depth;
+            if (!(skip & 2)) ok = ok && a.seed == b.seed;
+            if (!(skip & 4)) ok = ok && a.fxSlots == b.fxSlots;
+            if (!(skip & 8)) ok = ok && a.macroMode == b.macroMode;
+            if (!(skip & 16)) ok = ok && memcmp(&a.duck, &b.duck, sizeof(a.duck)) == 0;
+            if (!(skip & 32)) ok = ok && memcmp(a.groove, b.groove, sizeof(a.groove)) == 0;
+            if (!(skip & 64)) ok = ok && memcmp(a.snap, b.snap, sizeof(a.snap)) == 0;
+            if (!(skip & 128)) ok = ok && memcmp(a.followMode, b.followMode, sizeof(a.followMode)) == 0 && memcmp(a.followSource, b.followSource, sizeof(a.followSource)) == 0;
+            if (!(skip & 256)) ok = ok && a.pairs == b.pairs;
+            return ok;
+        };
+        check(same(full, back, 0), "reset: every key round trips");
+        struct Row { const char* key; bool track; unsigned bit; };
+        static const Row kRows[] = { {"strum.ramp", false, 1}, {"seed.take", false, 2}, {"fx.slots", false, 4}, {"macro.mode", false, 8},
+                                     {"duck.send", false, 16}, {"groove", true, 32}, {"snap", true, 64}, {"follow", true, 128}, {"pair", true, 256} };
+        for (const Row& r : kRows)
+        {
+            std::string without;
+            int dropped = 0;
+            for (const char* p = text; p < text + n;)
+            {
+                const char* le = mtff::lineEnd(p, text + n);   // the '\n' (or the end)
+                const char* e = le < text + n ? le + 1 : le;
+                if (le > p && le[-1] == '\r') le--;
+                int t;
+                const char* rest;
+                const bool hit = r.track ? (mtff::trackKey(p, le, t, rest) && mtff::isKey(rest, le, r.key)) : mtff::isKey(p, le, r.key);
+                if (hit) dropped++;
+                else without.append(p, size_t(e - p));
+                p = e;
+            }
+            Mtff m{};
+            mtffClear(m);
+            Mtff zero{};
+            mtffClear(zero);
+            const bool read = mtffRead(without.data(), int(without.size()), m);
+            char what[160];
+            snprintf(what, sizeof what, "reset: no %s%s line (%d dropped) reads as the cleared value, every other key kept", r.track ? "track.N." : "", r.key, dropped);
+            check(dropped > 0 && read && same(full, m, r.bit) && same(zero, m, ~r.bit & 511u), what);
+        }
+        Mtff bare{}, zero{};
+        mtffClear(bare);
+        mtffClear(zero);
+        check(mtffRead("tffproj 1\n", 10, bare) && same(zero, bare, 0) && !mtffAny(bare), "reset: a file with no key reads as a cleared Mtff (a 1.3.0 project)");
     }
     printf("%s: %d failed\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;

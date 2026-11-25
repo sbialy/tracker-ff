@@ -60,10 +60,12 @@ class AudioPlayMemory : public AudioStream
     static constexpr int SLIDE_MAX = 255;
     static constexpr int SLIDE_MIN = 0;
     static constexpr uint16_t GRANULAR_LOOKUP_SIZE = 1000;
-    static constexpr int NOTE_LOOKUP_SIZE = 120;
+    static constexpr int NOTE_LOOKUP_SIZE = 128; // keys 0..127 (the pattern byte). The table was 120 entries: keys 120..127 played key 119 (the tune clamp)
     static uint16_t gaussTab[GRANULAR_LOOKUP_SIZE];
     static uint16_t squareTab[GRANULAR_LOOKUP_SIZE];
     static uint16_t triangleTab[GRANULAR_LOOKUP_SIZE];
+    // The keys a note may reach: 120 (the notes above play key 119, as the firmware always did) while the project has no tuning, 128 with one
+    static inline int keyLimit = 120;
     static float notes[NOTE_LOOKUP_SIZE];
     static float wt32Note[NOTE_LOOKUP_SIZE];
     static float wt64Note[NOTE_LOOKUP_SIZE];
@@ -196,6 +198,8 @@ class AudioPlayMemory : public AudioStream
     void envelopeSetLoop(uint8_t state);
     void envelopeSetPassFlag(uint8_t state);
     void envelopeSetIsRandom(bool value);
+    // Random amp LFO of a linked stereo pair: both chains draw from the same seed so L and R hold the same value (0 = own draw, as before)
+    void envelopeSetPairSeed(uint32_t seed);
     AUDIO_CORE_FLASH void envelopeSetWavetable(uint8_t mode, uint8_t shape, uint8_t bend, uint8_t sust);
 
     void envelopeUpdate(audio_block_t* block);
@@ -491,6 +495,13 @@ class AudioPlayMemory : public AudioStream
     uint8_t granularForcedFlag;
     uint8_t granularLengthForcedFlag = 0;
     uint8_t reverseDirectionFlag;
+    // 1 while the instrument mode (1-Shot Rev, Pingpong Rev) is the part of reverseDirectionFlag set at note-on. The step FX
+    // Reverse toggles against it (FX on a reverse instrument plays forward).
+    uint8_t instrReverse = 0;
+    // The tempo (BPM) the pitch of a Repitch note was last scaled for, 0 = the note does not follow the tempo (retuneRepitch)
+    float repitchTempo = 0.0f;
+    void applyRepitch();
+    void retuneRepitch();
 
     uint16_t forcedStartPoint;
     uint16_t forcedLoopPoint1;
@@ -508,6 +519,7 @@ class AudioPlayMemory : public AudioStream
     //******************************************************************ENVELOPE PRIVATE BLOCK
     // START****************************************************************************//
     void envelopeSwitchPhase(uint8_t nextPhase);
+    void envelopeDrawRandom();
     uint16_t envelopeMilliseconds2count(float milliseconds);
 
     struct strEnvelopeData
@@ -515,6 +527,8 @@ class AudioPlayMemory : public AudioStream
         uint8_t endReleaseFlag = 0;
         uint8_t endKillReleaseFlag = 0;
         bool isRandom;
+        uint32_t randSeed = 0; // pair seed, 0 = unpaired
+        uint32_t randN = 0;    // draws since the seed was set
         audio_block_t* inputQueueArray[1];
         // state
         uint8_t state;      // idle, delay, attack, hold, decay, sustain, release, forced

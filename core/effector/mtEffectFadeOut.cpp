@@ -11,7 +11,7 @@ bool mtEffectFadeOut::startProcess()
 {
     length = confirmed[0].selection.length;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         channelParams[channel].srcAddr = confirmed[channel].selection.addr;
         channelParams[channel].dstAddr = processed[channel].selection.addr;
@@ -31,7 +31,7 @@ int32_t mtEffectFadeOut::processBlock()
     uint32_t dif = length - processedSamples;
     uint32_t processedBlockLength = dif > 8192 ? 8192 : dif;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         for (uint16_t i = 0; i < processedBlockLength; i++)
         {
@@ -53,7 +53,7 @@ int32_t mtEffectFadeOut::processBlock()
 
     if (!state)
     {
-        for (int channel = 0; channel < kChannels; channel++)
+        for (int channel = 0; channel < nChannels(); channel++)
         {
             processed[channel].selection.length = processedSamples; // redundancy
             processed[channel].area.length =

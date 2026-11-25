@@ -28,7 +28,7 @@ PNG_DIR="${1:-}"
 BASE_REF="${BASE_REF:-release-1.4.0-int}"
 OLD_REF="${OLD_REF:-tracker-ff-v1.3.0}"
 CACHE="${FX34_CACHE:-$ROOT/build/rel140-4fx}"
-NCPU="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+NCPU="$(sh "$HERE/../jobs.sh" n)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/fx34_compat.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 SAN="${SAN:-}"   # SAN=address,undefined: the sanitizer build of this tree (build/ui-shot-bridge-san), a report fails the run
@@ -38,8 +38,8 @@ SAN="${SAN:-}"   # SAN=address,undefined: the sanitizer build of this tree (buil
 bridge_env "$ROOT" || exit 2
 NEWB="$ROOT/build/ui-shot-bridge${SAN:+-san}"
 mkdir -p "$NEWB" "$CACHE"
-make -s -C "$HERE" -j"$NCPU" "${BRIDGE_ARGS[@]}" OUT="$NEWB" ${SAN:+SAN=$SAN} >"$NEWB.make.log" 2>&1 || { tail -30 "$NEWB.make.log"; exit 2; }
-NEW="$NEWB/ui_shot"
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$NCPU" "${BRIDGE_ARGS[@]}" OUT="$NEWB" ${SAN:+SAN=$SAN} >"$NEWB.make.log" 2>&1 || { tail -30 "$NEWB.make.log"; exit 2; }
+NEW="${UI_SHOT_BIN:-$NEWB/ui_shot}"   # UI_SHOT_BIN: a prebuilt BRIDGE=1 binary of this tree (SAN or not), no make; the two old trees still build their own
 
 # The 1.3.0 host has no projsave / projopen script command (the Save As and Open the Project screen starts). They are host only code of
 # this directory, not firmware: the handler of this tree is put into the copy of the old host before it is built
@@ -57,23 +57,30 @@ k = d.index('    if (c == "audio")')
 open(dst, 'w').write(d[:k] + s[i:j] + d[k:])
 PY
 }
-host_of() {   # host_of REF DIR: a ui_shot of that ref, built once (the stamp is the commit)
+host_of() {   # host_of REF NAME [same-version]: a ui_shot of that ref, built once into CACHE/NAME-KEY (KEY from the stamp), HOST_DIR = that dir
     local ref="$1" dir="$2" sha
     sha="$(git -C "$ROOT" rev-parse "$ref^{commit}" 2>/dev/null)" || { echo "fx34_compat_sim.sh: no ref $ref" >&2; exit 2; }
     sha="$sha host-patch-1"   # the cache key: the commit and the version of patch_old_host
-    if [ "$(cat "$dir/.ref" 2>/dev/null)" != "$sha" ] || [ ! -x "$dir/build/ui-shot/ui_shot" ]; then
+    # same-version: the base host is built with the version.mk of THIS tree. The firmware version is stamped into every pattern file header (and its CRC) and
+    # the project files, so a base of the previous release differed in those bytes on any version bump (A2 red on 1.4.1 against release-1.4.0-int). A has to
+    # prove "switch off writes the same bytes as the build before the switch existed", not "the version stamp is unchanged", so the base takes our stamp
+    [ "${3:-}" = same-version ] && sha="$sha ver-$(shasum <"$ROOT/version.mk" | cut -c1-12)"
+    # the dir name carries the stamp, so a cache shared by several worktrees (run_tests passes FX34_CACHE) never rebuilds a host another sim
+    # is running: a missing one is built in a private dir and renamed into place
+    HOST_DIR="$CACHE/$2-$(printf '%s' "$sha" | shasum | cut -c1-12)"; dir="$HOST_DIR.tmp.$$"
+    if [ ! -x "$HOST_DIR/build/ui-shot/ui_shot" ]; then
         rm -rf "$dir"; mkdir -p "$dir"
         git -C "$ROOT" archive "$ref" | tar -x -C "$dir" || exit 2
+        [ "${3:-}" = same-version ] && cp "$ROOT/version.mk" "$dir/version.mk"
         patch_old_host "$dir"
         # CHIP_PLUGIN_SRC (set by run_tests.sh) would move the old tree's binary to build/ui-shot-chipplg, where the check above never looks
-        env -u CHIP_PLUGIN_SRC make -s -C "$dir/synth-open/tools/ui_shot" -j"$NCPU" >"$dir/make.log" 2>&1 || { tail -30 "$dir/make.log"; exit 2; }
+        env -u CHIP_PLUGIN_SRC make -s -C "$dir/synth-open/tools/ui_shot" -j"$NCPU" >"$dir/make.log" 2>&1 || { tail -30 "$dir/make.log"; rm -rf "$dir"; exit 2; }
         echo "$sha" >"$dir/.ref"
+        { [ -e "$HOST_DIR" ] && rm -rf "$dir"; } || mv "$dir" "$HOST_DIR"
     fi
 }
-host_of "$BASE_REF" "$CACHE/base140"
-host_of "$OLD_REF" "$CACHE/fw130"
-BASE="$CACHE/base140/build/ui-shot/ui_shot"
-OLD="$CACHE/fw130/build/ui-shot/ui_shot"
+host_of "$BASE_REF" base140 same-version; BASE="$HOST_DIR/build/ui-shot/ui_shot"
+host_of "$OLD_REF" fw130; OLD="$HOST_DIR/build/ui-shot/ui_shot"
 echo "     this tree $(git -C "$ROOT" rev-parse --short HEAD)   base $BASE_REF $(git -C "$ROOT" rev-parse --short "$BASE_REF")   old $OLD_REF $(git -C "$ROOT" rev-parse --short "$OLD_REF^{commit}")"
 
 fails=0; checks=0
@@ -84,7 +91,11 @@ expect() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1" "expected: $2
 fresh() { rm -rf "$1"; mkdir -p "$1/Plugins/Master" "$1/Plugins/Synth"; }
 # ui_shot BIN SD "script": the stdout lines of the script
 ui() { ASAN_OPTIONS=detect_leaks=0 "$1" "$2" "$3" 2>"$WORK/err.txt" || { echo "ui_shot failed:"; tail -5 "$WORK/err.txt"; fails=$((fails+1)); }; }
-tree_sums() { (cd "$1" && find . -type f -not -path './Plugins/*' | sort | xargs shasum 2>/dev/null); }
+# The cap= token of the project.mtff header is the kMtffMax of the build that wrote it (32768 on the base, 40960 since Table lite):
+# it is a build constant, not project data, so the header line is compared with that token masked. Every other byte counts.
+tree_sums() { (cd "$1" && find . -type f -not -path './Plugins/*' | sort | while IFS= read -r f; do
+    case "$f" in */project.mtff) printf '%s  %s\n' "$(sed -E '1s/ cap=[0-9]+$/ cap=N/' "$f" | shasum | cut -d' ' -f1)" "$f" ;;
+                 *) shasum "$f" ;; esac; done); }
 hex_of() { od -An -tx1 "$1" | tr -d ' \n'; }
 
 # ---------------------------------------------------------------------------------------------------------------------------------- A
@@ -112,7 +123,8 @@ sd="$WORK/b"; fresh "$sd"; ui "$NEW" "$sd" "wait 500" >/dev/null
 expect "B1 a new project starts with the switch off" "0" "$(state_of "$sd")"
 # The header the firmware writes first (ref/mtff-version.md): "tffproj 1 ff=<version of this tree> build=<the host's build id> cap=<kMtffMax>"
 VER="$(sed -n 's/^SYNTH_OPEN_VER := *//p' "$ROOT/version.mk" | head -1 | cut -d- -f1)"
-HDR="tffproj 1 ff=$VER build=uishot cap=32768"
+CAP="$(sed -n 's/^constexpr int kMtffMax = \([0-9]*\);.*/\1/p' "$ROOT/core/FileManager/mtff_codec.h")"   # kMtffMax of this tree
+HDR="tffproj 1 ff=$VER build=uishot cap=$CAP"
 expect "B2 and its project.mtff is the three lines it always was (header, mt, strum.ramp), no fx.slots line" "$HDR|mt|strum.ramp 100" "$(sed -E 's/^mt .*/mt/' "$sd/Workspace/project.mtff" | tr '\n' '|' | sed 's/|$//')"
 for v in "3" "0" "on" "4 7" "04x" "5" ""; do
     printf 'tffproj 1\nfx.slots %s\n' "$v" >"$sd/Workspace/project.mtff"
@@ -192,8 +204,7 @@ expect "E3 this tree opens that copy as a 2 FX project" "fx34state on 0 n 0 park
 # ---------------------------------------------------------------------------------------------------------------------------------- F
 echo "### F the retired Tape Start id 51: dev projects load as Tape (id 50) with the value + 64"
 # TAPE_PRE_REF: the last release-1.4.0-int before Tape Stop and Tape Start became one FX (id 50, 65-128 = Start). Its ui_shot is built from a git archive
-host_of "${TAPE_PRE_REF:-84a380f42e748a4f61576da0e99357a737837747}" "$CACHE/pretape"
-PRE="$CACHE/pretape/build/ui-shot/ui_shot"
+host_of "${TAPE_PRE_REF:-84a380f42e748a4f61576da0e99357a737837747}" pretape; PRE="$HOST_DIR/build/ui-shot/ui_shot"
 SW_ON='tap File; wait 800; tap F7; wait 800; tap F8; enc 1; tap F8; wait 300'
 # a sample track: a Stop (id 50), Starts of id 51 in FX1 and FX2, value 0 (plays as 1), 200 (plays as 64), and with the switch on FX3 and FX4 of id 51
 TAPE_OLD='plen 24; setstep 0 0 60 0 50 6 0 0; setstep 0 6 60 0 51 6 0 0; setstep 0 9 62 0 0 0 51 12; setstep 0 12 60 0 51 0 0 0; setstep 0 18 60 0 51 200 0 0'

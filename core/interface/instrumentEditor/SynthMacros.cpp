@@ -280,6 +280,7 @@ void cInstrumentEditor::showSynthMacrosScreen()
     display.setControlHide(list3Control);
     display.setControlHide(list4Control);
     display.setControlHide(noteLabel);
+    display.setControlHide(nnaLabel);
     display.setControlHide(blankSpaceCover[0]);
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);

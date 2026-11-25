@@ -24,6 +24,7 @@ extern Sequencer sequencer;
 // "fx34play ARGS", ARGS one of
 //   player T            the sample player of track T: the FX it holds per rank, the hold mask and the value of a few parameters
 //   synth P             the synth part P: the value of every source of the panning and the delay send, and the one that plays
+//   partauto P          the pan, delay send, reverb send and gain of the synth part P with every source (the Auto one is the synth automation, part_auto_sim.sh)
 //   slots T             the 4 FX ranks of the step track T started last (stepToSend)
 //   custom T            Performance mode on, track T in custom play mode 15: the Performance FX of every step is a Roll (id 3)
 extern "C" void hostPokeFx34(const char* args, std::string* out)
@@ -71,6 +72,42 @@ extern "C" void hostPokeFx34(const char* args, std::string* out)
                  e.lastSynthFxId[a][2].value_or(0), e.lastSynthFxId[a][3].value_or(0));
 #else
         snprintf(buf, sizeof buf, "synth none");
+#endif
+    }
+    else if (!strcmp(what, "partauto"))
+    {   // partauto P: the 4 part params of synth part P (pan, delay send, reverb send, gain): the value of every source (instrument, Fx1, Fx2, Performance,
+        // Fx3, Fx4, Auto), the value the engine applies, then the multipliers of the part's two panning amplifiers (65536 = 1.0) and the kAuto mask
+#ifdef FEATURE_SYNTH
+        audioEngine& e = engine;
+        std::string l;
+        static const char* const kName[] = { "pan", "dly", "rev", "gain" };
+        const int ids[] = { (int)audioEngine::SynthParam::kPanning, (int)audioEngine::SynthParam::kDelaySend, (int)audioEngine::SynthParam::kReverbSend,
+                            (int)audioEngine::SynthParam::kVolume };
+        for (int k = 0; k < 4; k++)
+        {
+            char t[200];
+            snprintf(t, sizeof t, " %s [", kName[k]);
+            l += t;
+            for (int src = 0; src < (int)audioEngine::SynthValuesSource::kSynthValuesSourceCount; src++)
+            {
+                const auto& v = e.synthParams[a][ids[k]][src];
+                if (v.has_value()) snprintf(t, sizeof t, "%s%.2f", src ? " " : "", (double)*v);
+                else snprintf(t, sizeof t, "%s-", src ? " " : "");
+                l += t;
+            }
+            snprintf(t, sizeof t, "] = %.2f", (double)e.calculateParamValue((int)a, (audioEngine::SynthParam)ids[k]));
+            l += t;
+        }
+        snprintf(buf, sizeof buf, "partauto %ld%s amp %d,%d mask %u", a, l.c_str(),
+                 (int)e.synthVoice.getPanningAmplifier((int)a, SynthVoice::Channels::kLeft)->multiplier,
+                 (int)e.synthVoice.getPanningAmplifier((int)a, SynthVoice::Channels::kRight)->multiplier,
+#ifdef FEATURE_SYNTH_OPEN
+                 (unsigned)e.synthAutoMask[a]);
+#else
+                 0u); // the stock Tracker+ synth has no automation slots, so no kAuto values
+#endif
+#else
+        snprintf(buf, sizeof buf, "partauto none");
 #endif
     }
     else if (!strcmp(what, "slots"))

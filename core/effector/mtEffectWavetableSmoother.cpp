@@ -19,7 +19,7 @@ bool mtEffectWavetableSmoother::startProcess()
     {
         return false;
     }
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         channelParams[channel].sourceWindowMax =
           (confirmed[channel].selection.length / effectWavetableSmootherParams.windowSize) - 1;
@@ -62,7 +62,7 @@ int32_t mtEffectWavetableSmoother::processBlock()
     uint32_t dif = length - channelParams[0].processedSamples;
     uint32_t processedBlockLength = dif > 8192 ? 8192 : dif;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
 
         if (channelParams[channel].sourceWindowMax ==
@@ -119,7 +119,7 @@ int32_t mtEffectWavetableSmoother::processBlock()
     if (processedBlockLength < 8192)
     {
         state = false;
-        for (int channel = 0; channel < kChannels; channel++)
+        for (int channel = 0; channel < nChannels(); channel++)
         {
             processed[channel].selection.length =
               channelParams[channel].processedSamples; // redundancy

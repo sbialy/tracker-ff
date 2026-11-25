@@ -36,6 +36,7 @@
 #include <string>
 #include <vector>
 
+#if defined(FEATURE_PLUG_HOST) && defined(FEATURE_SYNTH_OPEN)   // the engine plugin host (plug_synth.cpp), not on the IMX sims
 namespace plug
 {
 const plug_ext_synth* uishotSynthExt(int typeId);   // plug_synth.cpp, the BRIDGE=1 overlay (gen_overlay.py BRIDGE_RENDER_HELPERS)
@@ -422,11 +423,18 @@ int plugRender(const std::string& name, const std::string& transcript, const std
     return rc == 0 && faults == 0 ? 0 : 1;
 }
 }   // namespace
+#endif
 
 bool hostPlugRenderCommand(const std::string& c, std::istringstream& is)
 {
     if (c != "plugrender") return false;
+#if !defined(FEATURE_PLUG_HOST) || !defined(FEATURE_SYNTH_OPEN)
+    (void)is;
+    printf("plugrender: no engine plugin host in this build (plus sim)\n");
+    return false;
+#else
     std::string name, tr, out, opt;
     is >> name >> tr >> out >> opt;
     return plugRender(name, tr, out, opt == "install") == 0;
+#endif
 }

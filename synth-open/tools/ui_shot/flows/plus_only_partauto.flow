@@ -1,0 +1,15 @@
+# IMX round 2: the part destinations of the synth automation on Tracker+ through the stock synth part path (core/AudioEngine/partAuto.h, the
+# kAuto source of audioEngine::updateSynthAuto). plus_flows.sh writes the store from the poke file: 7 s after the pattern screen Pan +40 and
+# Reverb send +30 on Synth 1, 2 s later both off. The console boot runs about 6 s past the first pattern screen and the audio callback
+# (engine.update) only runs from the replay's advances on (--wav), so earlier pokes would come and go before any audio block. The flow waits through both.
+# Ends on the poke read (UISHOT_TRACE_PARTAUTO): Synth 1's Pan and Reverb send moved by +40 and +30 with the mask 5, then came back to the base
+title: Part destinations on Tracker+ (IMX round 3)
+check: texts
+pause: 80ms
+
+wait 1500ms
+tap Pattern
+wait 1500ms
+shot partauto-on
+wait 2500ms
+shot partauto-off

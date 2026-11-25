@@ -197,7 +197,9 @@ bool checkChord(uint32_t c, uint32_t x, uint32_t t, uint32_t tn, uint32_t rw, ui
     const uint32_t params = r32(x + X::params);
     const uint32_t ch = params + pi * P::size, md = params + mp * P::size;
     const uint8_t cf = r8(ch + P::fmt), mf = r8(md + P::fmt);
-    const bool chOk = (cf == PLUG_FMT_ENUM || cf == PLUG_FMT_INT) && rf(ch + P::min) == 0.0f && rf(ch + P::max) == float(PLUG_CHORD_COUNT - 1);
+    const bool chOk = (cf == PLUG_FMT_ENUM || cf == PLUG_FMT_INT) && rf(ch + P::min) == 0.0f &&
+                      rf(ch + P::max) >= float(PLUG_CHORD_COUNT_V1 - 1) && rf(ch + P::max) <= float(PLUG_CHORD_COUNT - 1) &&
+                      rf(ch + P::max) == float(int(rf(ch + P::max)));
     const bool mdOk = (mf == PLUG_FMT_ENUM || mf == PLUG_FMT_INT || mf == PLUG_FMT_ON_OFF) && rf(md + P::min) == 0.0f && rf(md + P::max) >= 1.0f;
     return chOk && mdOk;
 }

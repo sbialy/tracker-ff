@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "mtEnvelopeGenerator.h"
+#include <stddef.h>
 #include <stdint.h>
 
 //=====================================================================
@@ -67,7 +68,25 @@ const uint32_t SAMPLE_MEMORY_SIZE = (45 * 256 * 1024);     // 11,25 MB = 133.746
 // Tmini / Tplus
 const uint32_t EXTERAL_MEMORY_ADDRESS = 0x80000000;
 const uint32_t TOTAL_EXTERNAL_MEMORY = (64 * 1024 * 1024); // 64 MB
-const uint32_t SAMPLE_MEMORY_SIZE = ((60 * 1024 - 96) * 1024); // ~60 MB minus 64 KB for pattern buffers and 32 KB for the 1.4.0 SDRAM growth
+// User decision 2026-11-20 (kept with the 96 KiB mtff cut): the last 144 KiB pay for the master insert host (synth-open/plug_host.cpp
+// arenas 65,536, index 28,288, status 27,136, names 10,880, sidecar and paths 6,824, plug_ui pick list 1,092, the IMX insert code
+// slot 9,728 = 148,512 B of SDRAM). The free SDRAM stays at about 30 KB as before the insert host (make plus link, imx-p6 round 3).
+// User decision 2026-11-20 (P7 H5 round 2): a further 96 KiB pay for the three IMX synth plugin code slots (plug_imx.cpp s_synthSlot,
+// 3 x 36,864 = 110,592 B of SDRAM, 81,184 B over EXTERNAL_RAM without this cut), about 17 KB stay free.
+// User decision 2026-11-20 (P12 round 2): a further 176 KiB of standing headroom for the remaining IMX feature rounds (Patch FX bank,
+// Morph and the later P12 rows), so this constant is not touched every round.
+// Total IMX cut 512 KiB: 96 mtff + 144 inserts + 96 synth slots + 176 headroom.
+const uint32_t SAMPLE_MEMORY_SIZE = ((60 * 1024 - 96 - 96 - 144 - 96 - 176) * 1024); // ~60 MB minus 64 KB for pattern buffers, 32 KB for the 1.4.0 SDRAM growth, 96 KB for project.mtff (projectSidecar.cpp: two 40 KiB kMtffMax buffers and the shared paths, 82,692 B of SDRAM), 144 KB for the master insert host, 96 KB for the synth plugin code slots and 176 KB of headroom for the IMX feature rounds
+#endif
+
+#if defined(PLATFORM_IMX) && (defined(FEATURE_EXT_IMX) || defined(UISHOT_EXT_IMX))
+// The sample pool's runtime size: SAMPLE_MEMORY_SIZE, minus the extension module slot in develop mode (/.develop at boot). User decision
+// 2026-11-20: the EXT slot borrows the pool's last 48 KiB for that session only (core/source/Tracker.cpp borrowExtSlot, synth-open/ext_imx.cpp),
+// 0 B static. Everything that bounds a write into the pool uses SAMPLE_POOL_BYTES, the edit buffers move down with it.
+extern uint32_t samplePoolBytes;
+#define SAMPLE_POOL_BYTES samplePoolBytes
+#else
+#define SAMPLE_POOL_BYTES SAMPLE_MEMORY_SIZE
 #endif
 
 const uint32_t DELAY_MEMORY_SIZE = (3 * 512 * 1024);               // 1,5 MB
@@ -79,6 +98,13 @@ const uint32_t EDIT_BUFF_SIZE = (15 * 256 * 1024); // 3,75 MB
 constexpr int SAMPLE_CHANNELS = 2;
 #else
 constexpr int SAMPLE_CHANNELS = 1;
+#endif
+
+// Planes the sample recorder UI holds (spectrum, undo). Separate from SAMPLE_CHANNELS, which also sets EDIT_BUFF_OFFSET.
+#if defined(FEATURE_STEREO_REC) && !defined(PLATFORM_IMX)
+constexpr int kRecorderChannels = 2;
+#else
+constexpr int kRecorderChannels = SAMPLE_CHANNELS;
 #endif
 
 const uint32_t EDIT_BUFF_OFFSET = SAMPLE_MEMORY_SIZE - (2 * SAMPLE_CHANNELS * EDIT_BUFF_SIZE);
@@ -122,11 +148,13 @@ const uint8_t SYNTH_INSTRUMENTS_START_IDX = MIDI_INSTRUMENTS_START_IDX + kMidiIn
 const uint8_t PATTERN_INDEX_MIN = 1;
 const uint8_t PATTERN_INDEX_MAX = 255;
 
-const uint8_t FX_MAX = 54; // list positions, kept above the last FX of the list (features-140: Morph, Chance FX, Tape, rel140-snapfx: Snap)
+const uint8_t FX_MAX = 55; // list positions, kept above the last FX of the list (features-140: Morph, Chance FX, Tape, rel140-snapfx: Snap, rel141-tables: TBL)
 #ifdef FEATURE_SYNTH_OPEN
-const uint8_t FX_COUNT = 52; // + "Patch" (FX_TYPE_PATCH_CHANGE) and "Morph" (FX_TYPE_PATCH_MORPH), SYNTH_OPEN only, + "Strum" (FX_TYPE_STRUM), + "Chance FX" (FX_TYPE_COND), + "Tape" (Stop and Start), + "Snap"
+const uint8_t FX_COUNT = 53; // + "Patch" (FX_TYPE_PATCH_CHANGE) and "Morph" (FX_TYPE_PATCH_MORPH), SYNTH_OPEN only, + "Strum" (FX_TYPE_STRUM), + "Chance FX" (FX_TYPE_COND), + "Tape" (Stop and Start), + "Snap", + "Table"
+#elif defined(FEATURE_SYNTH_PATCHFX)
+const uint8_t FX_COUNT = 53; // Tracker+ and Mini (IMX port P12): + "Patch" (FX_TYPE_PATCH_CHANGE) and "Morph" (FX_TYPE_PATCH_MORPH), + "Strum", + "Chance FX", + "Tape", + "Snap", + "Table" (Table lite, ff_config.h FEATURE_TABLES)
 #else
-const uint8_t FX_COUNT = 50; // + "Strum" (FX_TYPE_STRUM), + "Chance FX" (FX_TYPE_COND), + "Tape" (Stop and Start), + "Snap"
+const uint8_t FX_COUNT = 51; // + "Strum" (FX_TYPE_STRUM), + "Chance FX" (FX_TYPE_COND), + "Tape" (Stop and Start), + "Snap", + "Table"
 #endif
 const uint8_t FX_COUNT_HIDDEN_FXes = 1; // ile fxów na końcu listy jest ukrytych
 
@@ -396,8 +424,21 @@ enum instrumentPlayMode
     playModeBeatSlice,
     playModeWavetable, // tylko na uzytek interface - sample type obsługuje to w silniku
     playModeGranular,
+    // Appended, so a .pti keeps its meaning. An older firmware plays a note of these as silence (the dispatch default) and its
+    // mode list would show a garbage label, so a project that uses them should not go back to an older firmware.
+    playModeSingleShotRev,
+    playModePingpongRev,
+    // Single cycle oscillator on a plain sample: loops forward over the loop region, the Start point is ignored (the cycle starts at its
+    // loop start) and the pitch is normalised to the loop length (C5 sounds 523.25 Hz whatever the length of the cycle)
+    playModeOscillator,
     playModeCount
 };
+
+// 1-Shot and 1-Shot Rev share the point layout (start, end, no loop points)
+inline bool isSingleShotMode(uint8_t playMode)
+{
+    return playMode == playModeSingleShot || playMode == playModeSingleShotRev;
+}
 
 enum mtSampleType
 {
@@ -642,7 +683,23 @@ struct strInstrument
     uint16_t loopPoint2;
     uint16_t endPoint;
 
+    // Wavetable window (a Wavetable instrument) and, on the sample modes that take it, the Repitch Steps in the top byte:
+    // 0 = off, 1..255 = the played part of the sample (Start to End) lasts that many steps (1/16 notes) at any tempo, RAM only.
+    // A wavetable position never reaches bit 24 (a window is at least 32 frames: 16 M frames of SDRAM / 32 = 2^19), so a .pti
+    // written before has the byte at 0. The only writers for a wav instrument are the Wavetable position handlers of the sample
+    // page (Wavetable mode) and the Wavetable load remap: picking Wavetable and loading a Wavetable sample drop the byte, the
+    // cursor drawing of the sample page masks it (kRepitchWindowMask).
     uint32_t wavetableCurrentWindow;
+    static constexpr uint32_t kRepitchWindowMask = 0x00FFFFFFu;
+    bool takesRepitch() const
+    {
+        return playMode <= playModePingpong || playMode == playModeSingleShotRev || playMode == playModePingpongRev;
+    }
+    uint8_t repitchSteps() const { return takesRepitch() ? (uint8_t)(wavetableCurrentWindow >> 24) : 0; }
+    void setRepitchSteps(uint8_t steps)
+    {
+        wavetableCurrentWindow = (wavetableCurrentWindow & kRepitchWindowMask) | ((uint32_t)steps << 24);
+    }
     //    uint16_t wavetableSync;
     //    uint16_t wavetablePWM;
     //    uint16_t wavetableFlip;
@@ -806,6 +863,18 @@ inline bool isPlayModeStreamable(uint8_t playMode)
     {
         return false;
     }
+    // The reverse modes start at the tail of the sample, and only the head is pre cached in SDRAM: a streamed reverse note-on
+    // has an empty ring until the first async backward fetch lands (getSample returns 0, counted as a miss), so the first
+    // chunk of the reversed sound would be lost. RAM only, the instrument is promoted like a Wavetable one.
+    if (playMode == playModeSingleShotRev || playMode == playModePingpongRev)
+    {
+        return false;
+    }
+    // A cycle is a few hundred frames: a long sample set to Oscillator is promoted to RAM like a Wavetable one
+    if (playMode == playModeOscillator)
+    {
+        return false;
+    }
 #ifndef PLATFORM_IMX
     if (playMode == playModeSlice || playMode == playModeBeatSlice)
     {
@@ -813,6 +882,12 @@ inline bool isPlayModeStreamable(uint8_t playMode)
     }
 #endif
     return true;
+}
+
+// A Repitch instrument follows the tempo while it sounds, which a stream that prefetches by the pitch of the note-on cannot do: RAM only
+inline bool isInstrumentStreamable(const strInstrument& instrument)
+{
+    return isPlayModeStreamable(instrument.playMode) && instrument.repitchSteps() == 0;
 }
 
 struct WaveformPeakPoint
@@ -856,7 +931,28 @@ typedef struct
 
     uint8_t macroValue[kSynthMacrosCount];
 
+    // New Note Action (ref/synth-nna-design.md section 5): these two bytes were alignment padding. Release is stored as 0 0 (a project
+    // saved without the field, or by a build that does not know it). Another mode is stored as nna = mode and nnaCheck = nna ^ 0xA5,
+    // a pair that does not match reads as Release.
+    uint8_t nna;
+    uint8_t nnaCheck;
 } SynthPartSettings;
+static_assert(sizeof(SynthPartSettings) == 64, "SynthPartSettings is part of the .mt file: its size must not change");
+static_assert(offsetof(SynthPartSettings, nna) == 62, "the NNA pair sits in the padding after macroValue");
+
+enum SynthNna : uint8_t { kNnaRelease = 0, kNnaContinue = 1, kNnaCut = 2, kNnaFade = 3 };
+constexpr uint8_t kNnaCheckXor = 0xA5;
+// The mode of a part: Release unless the pair is valid
+inline uint8_t synthNnaMode(const SynthPartSettings& s)
+{
+    return (s.nnaCheck == uint8_t(s.nna ^ kNnaCheckXor) && s.nna <= kNnaFade) ? s.nna : uint8_t(kNnaRelease);
+}
+// Release writes 0 0 (the padding of an old project), the others the pair with its check byte
+inline void synthNnaSet(SynthPartSettings& s, uint8_t mode)
+{
+    s.nna = mode;
+    s.nnaCheck = mode ? uint8_t(mode ^ kNnaCheckXor) : uint8_t(0);
+}
 
 //----------------------------------------------------------------------------------
 struct strMtValues
@@ -1094,6 +1190,7 @@ struct strMtConfig
         uint8_t middleC;
         uint8_t slaveClockComp;
         uint8_t trackNotesInChannel[kSampleTracks]; // per-track MIDI in: 0 = off, 1..16 = channel
+        uint8_t programIn;                          // SYNTH_OPEN: 1 = a MIDI Program Change picks a synth bank slot (0 off). Size-prefixed storage: an old config loads it as 0
     } midi;
 
     struct strGlobalValues

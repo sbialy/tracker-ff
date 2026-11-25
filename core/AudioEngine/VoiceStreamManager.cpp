@@ -1,6 +1,7 @@
 #include "VoiceStreamManager.h"
 #include "cr_section_macros.h"
 #include "log.h"
+#include "stereoPairs.h"
 #include <string.h>
 
 extern strMtProject mtProject;
@@ -20,6 +21,35 @@ __NOINIT(EXTERNAL_RAM)
 __attribute__((aligned(32))) static int16_t
   s_voiceLoopWrapBuffers[VoiceStreamManager::kVoiceCount][VoiceStreamManager::kMaxChannels]
                         [VoiceStreamManager::kLoopWrapFrames];
+
+// Ring and loop wrap storage of channel ch of voice v. The IMX build has a second ring per voice. The MK66 has one ring per voice, and a
+// linked stereo pair (stereoPairs.h) keeps the R channel of its leader voice (v 0 2 4 6) in the ring of the follower voice (v | 1): the follower
+// track plays nothing while linked, so that ring is idle and no SDRAM is added. VoiceStreamState::isStereo is true only for such a leader on
+// MK66, so no other voice ever asks for channel 1 (an unlinked track with a stereo instrument plays its left channel)
+#ifdef PLATFORM_IMX
+static inline int16_t* ringOf(int v, int ch)
+{
+    return s_voiceRingBuffers[v][ch];
+}
+static inline int16_t* loopWrapOf(int v, int ch)
+{
+    return s_voiceLoopWrapBuffers[v][ch];
+}
+#else
+static inline int16_t* ringOf(int v, int ch)
+{
+    return s_voiceRingBuffers[ch ? (v | 1) : v][0];
+}
+static inline int16_t* loopWrapOf(int v, int ch)
+{
+    return s_voiceLoopWrapBuffers[ch ? (v | 1) : v][0];
+}
+#endif
+
+// Stream misses (getSample found neither ring nor loop wrap data): samples that played as 0. Channel 1 cannot miss alone (the window commits
+// after both channels), so g_missR stays 0 unless that breaks
+static volatile uint32_t s_missL = 0;
+static volatile uint32_t s_missR = 0;
 
 #ifdef PLATFORM_IMX
 __NOINIT(EXTERNAL_RAM)
@@ -258,7 +288,7 @@ bool VoiceStreamManager::setupInstrumentStream(int instrIdx,
     s_instrumentStreamPaths[instrIdx][PATCH_SIZE - 1] = '\0';
 
     mem.isStreamed = true;
-    mem.isStereo = isStereo && (kMaxChannels > 1);
+    mem.isStereo = isStereo; // MK66: plays as stereo on a leader voice of a linked pair only (v.isStereo), else left
     mem.ramFrames = preCacheFrames;
     mem.preCacheFrames = preCacheFrames;
     mem.fileDataOffset = dataOffset;
@@ -335,7 +365,7 @@ bool VoiceStreamManager::setupInstrumentStream(int instrIdx,
 
     // 2. Build 600-point Waveform Peak Cache per channel
     int16_t windowBuf[64];
-    for (int ch = 0; ch < numChannels; ++ch)
+    for (int ch = 0; ch < numChannels && ch < kMaxChannels; ++ch)   // MK66 peaks are mono
     {
         const int16_t* ramBase = mem.address[ch];
         WaveformPeakPoint* peaks = s_instrumentWaveformPeaks[instrIdx][ch];
@@ -941,7 +971,11 @@ void VoiceStreamManager::notifyNoteOn(int voiceIdx,
     v.instrIdx = (uint8_t)instrIdx;
     v.playMode = playMode;
     v.direction = dir;
-    v.isStereo = mem.isStereo && (kMaxChannels > 1);
+    #ifdef PLATFORM_IMX
+    v.isStereo = mem.isStereo;
+#else
+    v.isStereo = mem.isStereo && stereopairs::isLeader(voiceIdx);   // the voice guard: only a leader owns a second ring (its follower's)
+#endif
     v.startFrame = startFrame;
     v.endFrame = endFrame;
     v.loopStartFrame = loopStartFrame;
@@ -993,6 +1027,33 @@ void VoiceStreamManager::notifyNoteOn(int voiceIdx,
     v.loopWrapEndFrame = 0;
     v.fadeInCounter = (initialFrame < effectivePreCache) ? 32 : 0;
     v.active = true;
+}
+
+uint32_t VoiceStreamManager::getMissCount(int channel) const
+{
+    return channel == 0 ? s_missL : s_missR;
+}
+
+void VoiceStreamManager::resetMissCount()
+{
+    s_missL = 0;
+    s_missR = 0;
+}
+
+// The ring of a voice changed owner (a pair linked or unlinked): what the ring holds is no longer what its hash says, so no retrigger may reuse it
+void VoiceStreamManager::dropVoiceRing(int voiceIdx)
+{
+    if (voiceIdx < 0 || voiceIdx >= kVoiceCount)
+    {
+        return;
+    }
+    auto& v = voices[voiceIdx];
+    v.active = false;
+    v.generation = v.generation + 1;
+    v.ringSampleHash = 0;
+    v.validStartFrame = 0;
+    v.validEndFrame = 0;
+    v.loopWrapReady = false;
 }
 
 void VoiceStreamManager::notifyNoteOff(int voiceIdx)
@@ -1067,7 +1128,7 @@ AUDIO_CORE_RAM int16_t VoiceStreamManager::getSample(int voiceIdx,
     uint32_t vEnd = v.validEndFrame;
     if (absFrame >= vStart && absFrame < vEnd)
     {
-        sampleVal = s_voiceRingBuffers[voiceIdx][ch][absFrame & kRingMask];
+        sampleVal = ringOf(voiceIdx, ch)[absFrame & kRingMask];
         hit = true;
     }
     else if (v.loopWrapReady)
@@ -1076,7 +1137,7 @@ AUDIO_CORE_RAM int16_t VoiceStreamManager::getSample(int voiceIdx,
         uint32_t lwEnd = v.loopWrapEndFrame;
         if (absFrame >= lwStart && absFrame < lwEnd)
         {
-            sampleVal = s_voiceLoopWrapBuffers[voiceIdx][ch][absFrame - lwStart];
+            sampleVal = loopWrapOf(voiceIdx, ch)[absFrame - lwStart];
             hit = true;
         }
     }
@@ -1086,6 +1147,11 @@ AUDIO_CORE_RAM int16_t VoiceStreamManager::getSample(int voiceIdx,
         if (channel == 0)
         {
             v.fadeInCounter = 0;
+            s_missL = s_missL + 1;
+        }
+        else
+        {
+            s_missR = s_missR + 1;
         }
         return 0;
     }
@@ -1264,11 +1330,11 @@ void VoiceStreamManager::completeChannelTransfer()
         {
             count = kLoopWrapFrames;
         }
-        memcpy(&s_voiceLoopWrapBuffers[vIdx][ch][0], srcSamples, count * sizeof(int16_t));
+        memcpy(&loopWrapOf(vIdx, ch)[0], srcSamples, count * sizeof(int16_t));
     }
     else
     {
-        int16_t* ring = s_voiceRingBuffers[vIdx][ch];
+        int16_t* ring = ringOf(vIdx, ch);
         uint32_t ringStartIdx = startF & kRingMask;
         if (ringStartIdx + count <= kRingFrames)
         {
@@ -1356,14 +1422,14 @@ void VoiceStreamManager::fillJobSynchronously(const AsyncJob& job)
         {
             uint32_t lwCount = (count > kLoopWrapFrames) ? kLoopWrapFrames : count;
             readInstrumentFramesBlocking(
-              job.instrIdx, ch, startF, lwCount, &s_voiceLoopWrapBuffers[vIdx][ch][0]);
+              job.instrIdx, ch, startF, lwCount, &loopWrapOf(vIdx, ch)[0]);
         }
         else
         {
             int16_t* tempDest = reinterpret_cast<int16_t*>(s_dmaStagingBuffer);
             if (readInstrumentFramesBlocking(job.instrIdx, ch, startF, count, tempDest))
             {
-                int16_t* ring = s_voiceRingBuffers[vIdx][ch];
+                int16_t* ring = ringOf(vIdx, ch);
                 uint32_t ringStartIdx = startF & kRingMask;
                 if (ringStartIdx + count <= kRingFrames)
                 {

@@ -1,0 +1,15 @@
+# IMX round 4: per track pattern length (polymeter). Track 1 is cut to 4 steps while track 2 keeps the pattern length, both play a note on step 1 (Synth 1). The trace counts the note ons per note: the short track sounds about four times as often
+# Replay: plus_flows.sh mini  (setup pokes in plus_flows.sh, the poke trace UISHOT_TRACE_FFSTATE is the read, poke_ok in plus_flows.sh)
+title: per track pattern length (Tracker Mini, IMX round 4)
+check: texts
+pause: 80ms
+
+wait 1500ms
+tap Fn1
+wait 3000ms
+tap Play
+wait 9000ms
+shot plen-playing
+tap Play
+wait 1500ms
+shot plen-stopped

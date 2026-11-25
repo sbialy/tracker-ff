@@ -454,6 +454,7 @@ void plugUiSlotGone(int k)
     for (int c = kParamCol0; c < kParamCol0 + kParamCols; c++) blankList(c);
 }
 
+#ifdef FEATURE_SYNTH_OPEN   // the engine host (plug_synth.cpp, MK66) is its only caller
 void plugUiSynthLoading(const char* name)
 {   // plug_synth.cpp synthEnsure, before an install: the main loop stops until it is done, so the popup is drawn here and now.
     // Before the display is up (the boot project's engines) there is nothing to draw on.
@@ -463,6 +464,7 @@ void plugUiSynthLoading(const char* name)
     mtPopups.show(0, text);
     display.processDisplayUpdateImmediate();
 }
+#endif
 
 bool plugUiShiftHeld()
 {

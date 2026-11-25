@@ -9,6 +9,8 @@ using namespace mtAudioEngineConstans;
 //********************************** NOTE_ON
 uint8_t playerEngine ::noteOn(uint8_t instr_idx, int8_t note, int8_t _velocity)
 {
+    if (pairLeader != nullptr)
+        return pairLeader->noteOn(instr_idx, note, _velocity); // follower of a linked pair (a preview or a take, the sequencer skips it): the leader plays it
     if (mtProject.instrument[instr_idx].isActive != 1)
         return 0;
     if (isBlockedNoteOn[instr_idx])
@@ -52,9 +54,11 @@ uint8_t playerEngine ::noteOn(uint8_t instr_idx, int8_t note, int8_t _velocity)
 
     bool isAmpRandom = (mtProject.instrument[instr_idx].envelope[envAmp].loop == 1) &&
                        (mtProject.instrument[instr_idx].lfo[envAmp].shape == lfoShapeRandom);
+    const uint32_t ampPairSeed = (isAmpRandom && pairFollower != nullptr) ? (timer->micros() | 1u) : 0u; // one seed for L and R of a linked pair
     for (int channel = 0; channel < (int)playMemPtr.size(); channel++)
     {
         playMemPtr[channel]->envelopeSetIsRandom(isAmpRandom);
+        playMemPtr[channel]->envelopeSetPairSeed(ampPairSeed);
         playMemPtr[channel]->envelopeNoteOn(instr_idx, note);
     }
 
@@ -91,6 +95,8 @@ AUDIO_CORE_RAM uint8_t playerEngine ::noteOn(uint8_t instr_idx,
                                              uint8_t fx4_id,
                                              uint8_t fx4_val)
 {
+    if (pairLeader != nullptr)
+        return pairLeader->noteOn(instr_idx, note, velocity, fx1_id, fx1_val, fx2_id, fx2_val, fx3_id, fx3_val, fx4_id, fx4_val);
     if (mtProject.instrument[instr_idx].isActive != 1)
         return 0;
     if (isBlockedNoteOn[instr_idx])
@@ -238,7 +244,7 @@ AUDIO_CORE_RAM uint8_t playerEngine ::noteOn(uint8_t instr_idx,
         {
             const uint8_t tapeVal = tape1 ? fx1_val : tape2 ? fx2_val : tape3 ? fx3_val : fx4_val;
             const uint32_t frames = tapefx::lengthFrames(tapefx::lengthMs(tapeVal, sequencer.getStepPeriodMs()));
-            for (int channel = 0; channel < playMemPtr.size(); channel++)
+            for (size_t channel = 0; channel < playMemPtr.size(); channel++)
             {
                 playMemPtr[channel]->setTapeOnPlay(tapefx::isStart(tapeVal), frames);
             }
@@ -248,9 +254,12 @@ AUDIO_CORE_RAM uint8_t playerEngine ::noteOn(uint8_t instr_idx,
     bool isAmpRandom = (mtProject.instrument[instr_idx].envelope[envAmp].loop == 1) &&
                        (mtProject.instrument[instr_idx].lfo[envAmp].shape == lfoShapeRandom);
 
+    const uint32_t ampPairSeed = (isAmpRandom && pairFollower != nullptr) ? (timer->micros() | 1u) : 0u; // one seed for L and R of a linked pair
+
     for (int channel = 0; size_t(channel) < playMemPtr.size(); channel++)
     {
         playMemPtr[channel]->envelopeSetIsRandom(isAmpRandom);
+        playMemPtr[channel]->envelopeSetPairSeed(ampPairSeed);
         playMemPtr[channel]->envelopeNoteOn(instr_idx,
                                             note); // zawsze odpalamy nawet jak nie aktywny
     }
@@ -291,6 +300,8 @@ AUDIO_CORE_RAM uint8_t playerEngine ::noteOn(uint8_t instr_idx,
 //@formatter:off
 AUDIO_CORE_RAM void playerEngine::noteOff(int8_t option)
 {
+    if (pairLeader != nullptr)
+        return; // follower of a linked stereo pair: a note off of its steps must not release the leader's R chain
     switch (option)
     {
         case Sequencer::STEP_NOTE_OFF_FADE: noteOffFade(); break;
@@ -507,6 +518,7 @@ AUDIO_CORE_RAM void playerEngine::handleNoteOnFilter()
 
 AUDIO_CORE_RAM void playerEngine::handleNoteOnGain()
 {
+    tableVol = 100; // a new note starts at its own gain, a table applies its row after the note-on
     assert(playMemPtr[0] != nullptr);
     if (!playMemPtr[0]->isPlaying())
     {
@@ -529,6 +541,15 @@ AUDIO_CORE_RAM void playerEngine::handleNoteOnPanning()
     if (!playMemPtr[0]->isPlaying()) // todo: see handleNoteOnGain() description
     {
 #ifndef PLATFORM_IMX
+        if (monoToStereoRPtr != nullptr)
+        {   // linked pair: L chain to the left bus, R chain to the right bus
+            monoToStereoPtr->gain(1.0f, MonoToStereo::Channel::left);
+            monoToStereoPtr->gain(0.0f, MonoToStereo::Channel::right);
+            monoToStereoRPtr->gain(0.0f, MonoToStereo::Channel::left);
+            monoToStereoRPtr->gain(1.0f, MonoToStereo::Channel::right);
+            setRefreshBit(PANNING_MASK);
+            return;
+        }
         monoToStereoPtr->gain(1.0f, MonoToStereo::Channel::left);
         monoToStereoPtr->gain(1.0f, MonoToStereo::Channel::left);
         monoToStereoPtr->gain(1.0f, MonoToStereo::Channel::right);

@@ -73,6 +73,12 @@ AUDIO_CORE_FLASH void AudioEffectShortDelay::setRate(uint8_t syncRateIdx)
     if (!isSync)
         return;
 
+    // The index is six bits of a project value, and nothing checks it when a project is loaded.
+    constexpr uint8_t kLastSyncRateIdx =
+      sizeof(tempoSyncRatesShortDelay) / sizeof(tempoSyncRatesShortDelay[0]) - 1;
+    if (syncRateIdx > kLastSyncRateIdx)
+        syncRateIdx = kLastSyncRateIdx;
+
     float tempo = sequencer.getCurrentTempo();
 
     float freq = (tempo / 15.0f); // *4,bo  beat = 4 step i /60, bo min = 60s
@@ -166,6 +172,9 @@ AUDIO_CORE_RAM void AudioEffectShortDelay::update(void)
     audio_block_t* outputRight;
 
     input = receiveReadOnly(0);
+#ifdef FW_STEREO_SENDS
+    audio_block_t* side = receiveReadOnly(1);
+#endif
 #ifdef AUDIO_NULL_IS_SILENCE
     const FxMuteGate::Step muteStep = muteGate.step();
     if (muteStep >= FxMuteGate::kEnterSleep)
@@ -174,12 +183,21 @@ AUDIO_CORE_RAM void AudioEffectShortDelay::update(void)
         // and its send mixer leave update_all
         if (input != nullptr)
             release(input);
+#ifdef FW_STEREO_SENDS
+        if (side != nullptr)
+            release(side);
+#endif
         if (muteStep == FxMuteGate::kEnterSleep)
             clearForWake();
         muteGate.sleep(this);
         return;
     }
+#ifdef FW_STEREO_SENDS
+    // the side only counts while the ping pong takes it
+    const bool silentInput = isZeroOrMissing(input) && (!stereoIn || isZeroOrMissing(side));
+#else
     const bool silentInput = isZeroOrMissing(input);
+#endif
     if (!noRefresh && timeInSamples >= 1 && quietSamplesCount >= timeInSamples &&
         (lastFilterInRight | lastFilterInLeft | lastFilterInMono | lastFilterOutRight | lastFilterOutLeft | lastFilterOutMono) == 0 &&
         silentInput)
@@ -202,8 +220,15 @@ AUDIO_CORE_RAM void AudioEffectShortDelay::update(void)
         {
             release(input);
         }
+#ifdef FW_STEREO_SENDS
+        if (side != nullptr)
+            release(side);
+#endif
         return;
     }
+#endif
+#ifdef FW_STEREO_SENDS
+    sideIn = stereoIn ? (side != nullptr ? side->data : zeroblock) : nullptr;
 #endif
     outputLeft = allocate();
     outputRight = allocate();
@@ -252,6 +277,11 @@ AUDIO_CORE_RAM void AudioEffectShortDelay::update(void)
     {
         release(input);
     }
+#ifdef FW_STEREO_SENDS
+    if (side != nullptr)
+        release(side);
+    sideIn = nullptr;
+#endif
 }
 
 #ifdef AUDIO_NULL_IS_SILENCE
@@ -359,6 +389,9 @@ AUDIO_CORE_RAM int32_t AudioEffectShortDelay::runPingpong(int16_t input[],
     const uint32_t tis = timeInSamples;
     uint32_t silent = silentSamplesCount;
     int32_t inR = lastFilterInRight, inL = lastFilterInLeft, outRs = lastFilterOutRight, outLs = lastFilterOutLeft;
+#ifdef FW_STEREO_SENDS
+    const int16_t* const sideData = sideIn; // nullptr: the old mono input into the left line only
+#endif
     for (int sample = 0; sample < sampleCount; sample++)
     {
         uint32_t d = (head - tis) & delaylineLengthMask;
@@ -373,9 +406,27 @@ AUDIO_CORE_RAM int32_t AudioEffectShortDelay::runPingpong(int16_t input[],
         int16_t outL = fL, outR = fR;
         *outputLeft++ = outL;
         *outputRight++ = outR;
+#ifdef FW_STEREO_SENDS
+        int32_t inputShifted;
+        int32_t inputShiftedR = 0;
+        if (sideData != nullptr)
+        {
+            const int32_t mid = *input++;
+            const int32_t sd = sideData[sample];
+            inputShifted = clamp16(mid + sd) << kFeedbackShift;
+            inputShiftedR = clamp16(mid - sd) << kFeedbackShift;
+        }
+        else
+        {
+            inputShifted = ((*input++) << kFeedbackShift);
+        }
+        int32_t nL = inputShifted + fR * fb;
+        int32_t nR = inputShiftedR + fL * fb;
+#else
         int32_t inputShifted = ((*input++) << kFeedbackShift);
         int32_t nL = inputShifted + fR * fb;
         int32_t nR = fL * fb;
+#endif
         int16_t sL = (int16_t)signed_saturate_rshift(nL + (nL < 0 ? kFeedbackRoundBias : 0), 16, kFeedbackShift);
         int16_t sR = (int16_t)signed_saturate_rshift(nR + (nR < 0 ? kFeedbackRoundBias : 0), 16, kFeedbackShift);
         if constexpr (kTrackQuiet)

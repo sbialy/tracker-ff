@@ -3,4 +3,4 @@
 #include <stdint.h>
 
 constexpr uint32_t kPlayOrderBytes = 5120;   // the table as strPlayOrderWithEffects pairs (step, fx), 20 orders of 128
-extern const uint8_t playOrderDeflated[730];
+extern const uint8_t playOrderDeflated[703];

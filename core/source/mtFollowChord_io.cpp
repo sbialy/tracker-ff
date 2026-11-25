@@ -4,6 +4,7 @@
 #include "fileManager.h"
 #include "fileManagerDefs.h"
 #include "mtStructs.h"
+#include "stereoPairs.h"
 
 #include <string.h>
 
@@ -36,7 +37,7 @@ void cycleMode(uint8_t track)
     if (m == kOff && (setting.source[track] == track || setting.source[track] >= kAllTracks))
     {
         // no usable chord track yet: the one another follower uses (one chord track is the usual case), else track 1 or 2
-        uint8_t src = track == 0 ? 1 : 0;
+        uint8_t src = track == 0 ? (stereopairs::isFollower(1) ? 2 : 1) : 0;   // never the hidden second track of a linked pair
         for (int t = 0; t < kAllTracks; t++)
         {
             if (t != track && setting.mode[t] != kOff && setting.source[t] != track)
@@ -59,7 +60,7 @@ void cycleSource(uint8_t track)
     do
     {
         s = uint8_t((s + 1) % kAllTracks);
-    } while (s == track);
+    } while (s == track || stereopairs::isFollower(s));   // a hidden follower is no chord track
     setting.source[track] = s;
     if (setting.mode[track] == kOff)
         setting.mode[track] = kSnap; // picking a chord track turns following on

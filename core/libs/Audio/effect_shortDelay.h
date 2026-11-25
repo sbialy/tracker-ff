@@ -1,6 +1,7 @@
 #ifndef LIBS_AUDIO_EFFECT_SHORTDELAY_H_
 #define LIBS_AUDIO_EFFECT_SHORTDELAY_H_
 #include "AudioStream.h"
+#include "stereo_sends.h"
 #ifdef AUDIO_NULL_IS_SILENCE
 #include "fx_mute_gate.h"
 #endif
@@ -13,7 +14,11 @@ class AudioEffectShortDelay : public AudioStream
 {
   public:
     AudioEffectShortDelay(void)
+#ifdef FW_STEREO_SENDS
+      : AudioStream(2, inputQueueArray)
+#else
       : AudioStream(1, inputQueueArray)
+#endif
     {
         blockUpdate();
     }
@@ -30,6 +35,10 @@ class AudioEffectShortDelay : public AudioStream
     int getTime();
     void setRate(uint8_t r);
     void setPingpongEnable(bool pp);
+#ifdef FW_STEREO_SENDS
+    // stereo input of the ping pong (stereo_sends.h): on while a stereo pair is linked, off = the old mono input into the left line
+    void setStereoIn(bool on) { stereoIn = on; }
+#endif
     void setSyncEnable(bool se);
     void setFilterFrequency(float frequency);
     virtual void update(void);
@@ -44,6 +53,9 @@ class AudioEffectShortDelay : public AudioStream
 #ifdef AUDIO_NULL_IS_SILENCE
     // Mixer Mute (fx_mute_gate.h): feed is the send mixer, muted the project's delayMute
     void setMuteFeed(AudioStream* feed) { muteGate.setFeed(feed); }
+#ifdef FW_STEREO_SENDS
+    void setMuteFeed2(AudioStream* feed) { muteGate.setFeed2(feed); }
+#endif
     void setMuted(bool muted) { muteGate.setMuted(muted, this); }
     bool isMuted() const { return muteGate.muted(); }
     void cutMuteRing() { muteGate.cutRing(); }
@@ -67,7 +79,13 @@ class AudioEffectShortDelay : public AudioStream
     int16_t* pingpongDelaylineLeft;
     int16_t* monoDelayline;
     uint32_t headIdx;
+#ifdef FW_STEREO_SENDS
+    audio_block_t* inputQueueArray[2];
+    const int16_t* sideIn = nullptr; // the side (L - R) / 2 block of this update(), set while the ping pong takes a stereo input
+    bool stereoIn = false;           // a pair is linked: the ping pong takes M + S into the left line and M - S into the right one
+#else
     audio_block_t* inputQueueArray[1];
+#endif
     uint32_t timeInSamples;
     uint8_t feedback;
     bool noRefresh;

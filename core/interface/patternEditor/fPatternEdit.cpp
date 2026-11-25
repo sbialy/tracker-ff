@@ -1,9 +1,10 @@
-#ifdef FEATURE_PARTS
-#include "parts.h"
-#endif
+#include "mtNoteName.h"
+#include "fPatternEdit_ff.inc"
 #include "tapeFx.h"
+#include "ff_host_seam.h"
 #include "mtCapture.h"
 #include "mtStructs.h"
+#include "stereoPairs.h"
 #include "mtFollowChord.h"
 #include "patternEditor/patternEditor.h"
 #include <assert.h>
@@ -64,7 +65,6 @@ static void functPastePattern();
 
 static void functNamePattern();
 static void functNameTrack();
-static void functGroove(uint8_t state);
 static void functFollowMode();
 static void functFollowSource();
 static void functMoveVmFx();
@@ -445,12 +445,14 @@ void cPatternEditor::hideControlsUnderMiniMenu()
 
     for (; trackStart < trackEnd; trackStart++)
     {
+        // the menu covers screen columns: a hidden follower of a linked pair takes none, so the real track is the one in that column
+        const int tr = trackerPattern.colTrack(trackStart - trackerPattern.firstVisibleTrack);
         for (int row = 2; row < 14; row++)
         {
-            trackerPattern.track[trackStart].row[row].note[0] = 0;
-            trackerPattern.track[trackStart].row[row].instr[0] = 0;
-            trackerPattern.track[trackStart].row[row].fx[0][0] = 0;
-            trackerPattern.track[trackStart].row[row].fx[1][0] = 0;
+            trackerPattern.track[tr].row[row].note[0] = 0;
+            trackerPattern.track[tr].row[row].instr[0] = 0;
+            trackerPattern.track[tr].row[row].fx[0][0] = 0;
+            trackerPattern.track[tr].row[row].fx[1][0] = 0;
         }
     }
     display.refreshControl(patternControl);
@@ -541,6 +543,7 @@ void cPatternEditor::refreshEditStateFromOutsideModule()
 // przeniesienie danych z sekewncji  do struktury wyswietlania
 void cPatternEditor::refreshPattern()
 {
+    FF_HOST_PREEMPT(FF_PREEMPT_PATTERN_REFRESH);
     seq = sequencer.getPatternToUI();
     trackerPattern.patternLength = seq->track[0].length + 1;
     trackerPattern.selectedParam = editParam;
@@ -667,12 +670,19 @@ void cPatternEditor::refreshPattern()
     trackerPattern.fxBank34 = bank34;
     trackerPattern.vmColumns = vmColumnsOn();
 
+    trackerPattern.hidden = stereopairs::hiddenMask();
+    if (stereopairs::isFollower(trackerPattern.actualTrack))
+        trackerPattern.actualTrack--; // the cursor never rests on a hidden track
     for (uint8_t trackIdx = 0; trackIdx < kAllTracks; trackIdx++)
     {
         // sprawdzanie mutow
         trackerPattern.inactive[trackIdx] = isSampleTrack(trackIdx)
                                               ? mtProject.values.trackMute[trackIdx]
                                               : mtProject.values.midiTrackMute[trackIdx % 8];
+        // a linked stereo pair is one column labelled "1+2", its follower is hidden (see trackerPattern.hidden)
+        if (isSampleTrack(trackIdx))
+            trackerPattern.tracksNames[trackIdx] = stereopairs::isLeader(trackIdx) ? stereopairs::label(trackIdx >> 1)
+                                                                                  : &mtProject.values.TrackNames[trackIdx][0];
 
         // polymeter: the steps past the track's own length stay editable but are drawn dimmed
         const uint8_t trackLastStep = Sequencer::getTrackLastStep(seq, trackIdx);
@@ -754,11 +764,12 @@ void cPatternEditor::refreshPattern()
 
             if (seqStep.note >= 0)
             {
-                row.note[0] = mtNotes[seqStep.note][0];
-                row.note[1] = mtNotes[seqStep.note][1];
-                row.note[2] = mtNotes[seqStep.note][2];
-                row.note[3] = mtNotes[seqStep.note][3];
-                row.note[4] = mtNotes[seqStep.note][4];
+                const char* const nn = noteName(seqStep.note);
+                row.note[0] = nn[0];
+                row.note[1] = nn[1];
+                row.note[2] = nn[2];
+                row.note[3] = nn[3];
+                row.note[4] = nn[4];
                 showInstrument = true;
             }
             else if (seqStep.note == Sequencer::STEP_NOTE_OFF_DEFAULT)
@@ -1050,17 +1061,30 @@ void cPatternEditor::focusOnActual()
 {
     int columnCounts = patternViewMode > 0 ? 8 : (vmColumnsOn() ? 3 : 4);
 
-    if (trackerPattern.actualTrack >= trackerPattern.firstVisibleTrack + columnCounts)
+    // counted in screen columns: the hidden followers of linked stereo pairs take no room
+    const uint16_t hid = stereopairs::hiddenMask();
+    trackerPattern.hidden = hid;
+    if (stereopairs::isFollower(trackerPattern.actualTrack))
+        trackerPattern.actualTrack--;
+    int vAct = 0, vFirst = 0, vTotal = 0;
+    for (int t = 0; t < kAllTracks; t++)
     {
-        trackerPattern.firstVisibleTrack = trackerPattern.actualTrack - (columnCounts - 1);
+        if ((hid >> t) & 1)
+            continue;
+        vAct += t < trackerPattern.actualTrack;
+        vFirst += t < trackerPattern.firstVisibleTrack;
+        vTotal++;
     }
-    else if (trackerPattern.actualTrack < trackerPattern.firstVisibleTrack)
-    {
-        trackerPattern.firstVisibleTrack = trackerPattern.actualTrack;
-    }
-
-    trackerPattern.firstVisibleTrack =
-      clamp<int8_t>(trackerPattern.firstVisibleTrack, 0, kAllTracks - columnCounts);
+    if (vAct >= vFirst + columnCounts)
+        vFirst = vAct - (columnCounts - 1);
+    else if (vAct < vFirst)
+        vFirst = vAct;
+    vFirst = clamp<int>(vFirst, 0, vTotal - columnCounts);
+    int firstTrack = 0;
+    for (int v = 0; firstTrack < kAllTracks - 1; firstTrack++)
+        if (!((hid >> firstTrack) & 1) && v++ == vFirst)
+            break;
+    trackerPattern.firstVisibleTrack = firstTrack;
 
     // polymeter: the Length label shows the cursor track
     if (moduleRefresh)
@@ -1374,21 +1398,11 @@ const uint8_t changeLengthVals[changeLengthVals_elements] = { 1,  2,  4,  8,  16
                                                               48, 64, 80, 96, 128 };
 const uint8_t changeStepVals_elements = 7;
 const uint8_t changeStepVals[changeLengthVals_elements] = { 0, 1, 2, 4, 8, 16, 32 };
-#ifdef FEATURE_PARTS
-// the screen shows the playing Part: its length is the Part's (the Parts list), the source patterns keep theirs
-static bool partLengthLocked()
-{
-    if (!parts::playing()) return false;
-    mtPopups.showInfoPopup("A Part is playing", "set its length in the Parts list");
-    return true;
-}
-#endif
+#include "fPatternEdit_parts.inc"
 
 void cPatternEditor::changeActualPatternLength(int16_t value)
 {
-#ifdef FEATURE_PARTS
-    if (partLengthLocked()) return;
-#endif
+    FF_PE_PART_LENGTH_OR_RETURN();
     if (buttons->isButtonPressed(interfaceButtonShift))
     {   // Shift: the length of the cursor track only (polymeter)
         changeActualTrackLength(value, false);
@@ -1431,9 +1445,7 @@ static int nextDefinedLastStep(int last, int16_t dir)
 
 void cPatternEditor::changeActualTrackLength(int16_t value, bool definedValues)
 {
-#ifdef FEATURE_PARTS
-    if (partLengthLocked()) return;
-#endif
+    FF_PE_PART_LENGTH_OR_RETURN();
     Sequencer::strPattern* pattern = sequencer.getPatternToUI();
     const int track = trackerPattern.actualTrack;
     const int last = Sequencer::getTrackLastStep(pattern, track);
@@ -1451,9 +1463,7 @@ void cPatternEditor::changeActualTrackLength(int16_t value, bool definedValues)
 
 void cPatternEditor::changeActualPatternLengthByDefinedValues(int16_t dir)
 {
-#ifdef FEATURE_PARTS
-    if (partLengthLocked()) return;
-#endif
+    FF_PE_PART_LENGTH_OR_RETURN();
     if (buttons->isButtonPressed(interfaceButtonShift))
     {
         changeActualTrackLength(dir, true);
@@ -1548,22 +1558,33 @@ static void functMuteTrack(uint8_t button, uint8_t state)
     if (state == buttonPress)
     {
         bool midiTrack = !isSampleTrack(PTE->trackerPattern.actualTrack);
-        int trackIdx = midiTrack ? button + 8 : button;
+        int trackIdx = midiTrack ? button + 8 : stereopairs::nthVisible(button);   // a linked pair is one button, the follower has none
 
         if (trackIdx >= kAllTracks)
         {
             return;
         }
 
+        if (!midiTrack)
+            button = uint8_t(trackIdx);
+
         auto& mute =
-          midiTrack ? mtProject.values.midiTrackMute[button] : mtProject.values.trackMute[button];
+          midiTrack ? mtProject.values.midiTrackMute[button] : mtProject.values.trackMute[midiTrack ? button : stereopairs::base(button)];
 
         mute = !mute;
         if (!midiTrack)
         {
-            engine.muteTrack(button, mtProject.values.trackMute[button]);
+            stereopairs::mirror(mtProject.values.trackMute); // a linked pair mutes as one
+            engine.muteTrack(stereopairs::base(button), mtProject.values.trackMute[stereopairs::base(button)]);
         }
         PTE->trackerPattern.inactive[trackIdx] = mute;
+        if (!midiTrack)
+        {   // the pair keeps one mute: both columns show it
+            const int b = stereopairs::base(button);
+            PTE->trackerPattern.inactive[b] = mute;
+            if (stereopairs::isLeader(b))
+                PTE->trackerPattern.inactive[b + 1] = true;
+        }
 
         display.refreshControl(PTE->patternControl);
 
@@ -1578,7 +1599,7 @@ static void functRecArmTrack(uint8_t button, uint8_t state)
     if (state == buttonPress)
     {
         bool midiTrack = !isSampleTrack(PTE->trackerPattern.actualTrack);
-        int trackIdx = midiTrack ? button + 8 : button;
+        int trackIdx = midiTrack ? button + 8 : stereopairs::nthVisible(button);   // a linked pair is one button, the follower has none
 
         if (trackIdx >= kAllTracks)
         {
@@ -2512,6 +2533,7 @@ void cPatternEditor::previousTrack()
         if (PTE->trackerPattern.actualTrack > 0)
         {
             PTE->trackerPattern.actualTrack--;
+            PTE->trackerPattern.actualTrack = stereopairs::skip(PTE->trackerPattern.actualTrack, -1);
             cursorAtEdge = false;
         }
 
@@ -2552,7 +2574,10 @@ void cPatternEditor::previousTrack()
         // PTE->trackerPattern.firstVisibleTrack--;
 
         if (PTE->trackerPattern.actualTrack > 0)
+        {
             PTE->trackerPattern.actualTrack--;
+            PTE->trackerPattern.actualTrack = stereopairs::skip(PTE->trackerPattern.actualTrack, -1);
+        }
         PTE->focusOnActual();
     }
 
@@ -2582,6 +2607,7 @@ void cPatternEditor::nextTrack()
         if (PTE->trackerPattern.actualTrack < kAllTracks - 1)
         {
             PTE->trackerPattern.actualTrack++;
+            PTE->trackerPattern.actualTrack = stereopairs::skip(PTE->trackerPattern.actualTrack, 1);
             cursorAtEdge = false;
         }
 
@@ -2622,7 +2648,10 @@ void cPatternEditor::nextTrack()
         // PTE->trackerPattern.firstVisibleTrack++;
 
         if (PTE->trackerPattern.actualTrack < kAllTracks - 1)
+        {
             PTE->trackerPattern.actualTrack++;
+            PTE->trackerPattern.actualTrack = stereopairs::skip(PTE->trackerPattern.actualTrack, 1);
+        }
         PTE->focusOnActual();
     }
 
@@ -3592,10 +3621,7 @@ static void functChangePatternLength(uint8_t state)
 }
 
 // page 3, Groove: hold the button and turn the encoder, the value is the one of the track under the cursor (place 2 as Step jump)
-static void functGroove(uint8_t state)
-{
-    functChangePatternEditStep(state);
-}
+#include "fPatternEdit_groove.inc"
 
 static void functChangePatternEditStep(uint8_t state)
 {
@@ -3628,8 +3654,8 @@ static void functPreview()
     sequencer.playSelection();
 }
 
-// Capture (Config > Features, green mode, button 3): a short press, taken on the release, puts the notes played in the last pass of the
-// playing pattern in the copy buffer. A long press (the first hold event of the button, 333 ms) forgets the played notes instead and its
+// Capture (Config > Features, green mode, button 3): a short press, taken on the release, writes the take (the notes played since the last gap) into
+// the destination track of the playing pattern, one Undo. A long press (the first hold event of the button, 333 ms) forgets the played notes instead and its
 // release captures nothing. Shift + button 3 is the track mute, which takes the button over while Shift is down.
 static void functCapture(uint8_t state)
 {
@@ -3653,6 +3679,7 @@ static void functCapture(uint8_t state)
         if (pressed && !cleared)
         {
             sequencer.captureCommit();
+            PTE->refreshPattern();
         }
         pressed = false;
     }
@@ -4677,7 +4704,7 @@ void cPatternEditor::lightUpPadBoard()
         {
             int8_t show_note = seq->track[track].step[trackerPattern.actualStep].note;
 
-            if (show_note < 0)
+            if (show_note < 0 || stereopairs::isFollower(track))
             {
                 continue;
             }
@@ -5008,6 +5035,11 @@ static void functPads(uint8_t pad, uint8_t state, int16_t velo)
                         if (state == buttonPress)
                         {
                             sequencer.setSelectionNote(noteFromPad);
+                        }
+                        // Capture: a step entry note is a played note too (decision D2), it reaches no handleNoteOn
+                        if (state == buttonPress || state == buttonRelease)
+                        {
+                            sequencer.captureTap(noteFromPad, 127, state == buttonPress, capSrc(kCapSrcPad));
                         }
                     }
                 }
@@ -5488,9 +5520,7 @@ void cPatternEditor::setActionButtonPage3Funct()
 
     ip->setButtonObj(interfaceButton0, buttonPress, functNamePattern);
     ip->setButtonObj(interfaceButton1, buttonPress, functNameTrack);
-#ifdef FEATURE_PLUG_HOST // the groove is kept in project.mtff (track.N.groove), written by the plugin host's project calls (plug_host.cpp)
-    ip->setButtonObj(interfaceButton2, functGroove);
-#endif
+    FF_PE_GROOVE_BUTTON();
     // features-140: Follow chord on F4 and F5 (idea-groove has F3 on this page)
     ip->setButtonObj(interfaceButton3, buttonPress, functFollowMode);
     ip->setButtonObj(interfaceButton4, buttonPress, functFollowSource);

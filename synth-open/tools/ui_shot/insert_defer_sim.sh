@@ -19,7 +19,7 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 TIMELINE=0
 [ "${1:-}" = "--timeline" ] && { TIMELINE=1; shift; }
 BUILD="$ROOT/build/ui-shot"
-BIN="$BUILD/ui_shot"
+BIN="${UI_SHOT_BIN:-$BUILD/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (run_tests)
 PNG_DIR="${1:-}"
 [ -n "$PNG_DIR" ] && mkdir -p "$PNG_DIR"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/insert_defer_sim.XXXXXX")"

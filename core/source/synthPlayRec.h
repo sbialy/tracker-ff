@@ -10,9 +10,7 @@
 
 #include <stdint.h>
 
-#if defined(FEATURE_SYNTH_OPEN) && !defined(PLATFORM_IMX)
-#define FEATURE_SYNTH_REC 1
-#endif
+#include "../include/ff_config.h" // FEATURE_SYNTH_REC
 
 namespace synthplayrec
 {

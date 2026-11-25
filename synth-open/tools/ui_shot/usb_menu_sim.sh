@@ -8,7 +8,7 @@
 # round trip with Restart now on the USB page, um3 drive On, restart, Storage, Off, um4 mode 1 carry-over, um5 Reset config, metro the Metronome
 # shortcut of the Sample Recorder. Exit 0 when every case passes.
 set -uo pipefail
-U=$1; O=$2; UPD=${3:-}; mkdir -p "$O"; rc=0
+U="${UI_SHOT_BIN:-$1}"; O=$2; UPD=${3:-}; mkdir -p "$O"; rc=0
 G=$(cd "$(dirname "$0")" && pwd)/goldens/usbmenu; mkdir -p "$G"
 run() {  # name env script: OUT/name/sd is the card, OUT/name/log.txt the output
   local d=$O/$1; rm -rf "$d/shots" "$d/log.txt"; mkdir -p "$d/sd" "$d/shots"

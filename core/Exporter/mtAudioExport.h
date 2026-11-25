@@ -83,6 +83,9 @@ class mtAudioExport
     uint16_t bufferedBlocks[stem_totalCount] = { 0 };
 
     uint8_t maxStemInCurrentExport = 0;
+    uint16_t pairedStemMask = 0;   // bit n: the stem of track n+1 is the follower of a linked stereo pair (stereoPairs.h), its audio is in the leader's file, no file of its own
+
+    bool isPairedStem(int stemIdx) const { return stemIdx < 16 && ((pairedStemMask >> stemIdx) & 1); }
 
     uint32_t seqTimerPeriod = 0;
     uint32_t seqTimerLastExecutionTime = 0;

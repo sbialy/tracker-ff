@@ -31,6 +31,7 @@ class cMtPadBoard
     void releaseInstrumentsTakenByPads();
     void cutAllInstrument();
 
+    void refreshNotes(); // lays the pads out again (a tuning changed which keys a pad may hold)
     uint8_t countPadsWithNote(int8_t note, uint8_t* pads);
     uint8_t getNoteFromPad(int8_t pad, bool isBeatSlice = false);
     int8_t getEmptyVoice();

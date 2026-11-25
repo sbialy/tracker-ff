@@ -69,7 +69,7 @@ bool mtEffectTimestretch::startProcess()
 {
     targetSamples = getExpectedProcessLength();
 
-    if (targetSamples > EDIT_BUFF_SIZE / 2)
+    if (targetSamples > maxFrames())
     {
         mtPopups.show(0, "Stretched sample is too long!");
 
@@ -84,7 +84,7 @@ bool mtEffectTimestretch::startProcess()
 
     length = confirmed[0].selection.length;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         channelParams[channel].srcAddr = confirmed[channel].selection.addr;
         channelParams[channel].dstAddr = processed[channel].selection.addr;
@@ -92,7 +92,7 @@ bool mtEffectTimestretch::startProcess()
 
     processedSamples = 0;
     finished = false;
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         channelParams[channel].sola.init(channelParams[channel].dstAddr,
                                          channelParams[channel].srcAddr,
@@ -113,14 +113,14 @@ int32_t mtEffectTimestretch::processBlock()
 
     uint32_t processedSamples = 0;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         processedSamples = channelParams[channel].sola.processSequence();
     }
 
     if (processedSamples == 0)
     {
-        for (int channel = 0; channel < kChannels; channel++)
+        for (int channel = 0; channel < nChannels(); channel++)
         {
             processed[channel].selection.length = targetSamples;
             processed[channel].area.length = targetSamples;

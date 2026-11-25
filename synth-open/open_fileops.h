@@ -3,7 +3,11 @@
 // fails (or loses power) at any step.
 #pragma once
 
+#if defined(FEATURE_SYNTH) && !defined(FEATURE_SYNTH_OPEN)
+// Tracker+ and Mini core (project.mtff, core/FileManager/projectSidecar.cpp): the closed library's FileSystem has no Presence (it is the open shim's)
+#else
 #include "PolySynth/FileSystem.h"
+#endif
 
 #include <cstdio>
 
@@ -16,7 +20,18 @@ namespace polysynth::open
 // interrupt, and neither function below calls the other or itself.
 constexpr size_t kBakPathMax = 255 + 4 + 1;
 
+#ifdef POLYSYNTH_FS_PRESENCE
 using Presence = polysynth::FileSystem::Presence;
+#else
+// A build without the open synth stack (Tracker+ and Mini, whose closed library header has no Presence): the project store's card file
+// layer (core/FileManager/projectStoreIo.h) runs these templates with the same three answers
+enum class Presence
+{
+    kAbsent,
+    kPresent,
+    kUnknown,
+};
+#endif
 
 // `to` becomes the file `from`. FatFs does not rename over a file, so the old file steps aside as <to>.bak and goes back when `from` cannot
 // take its place. Ops provides

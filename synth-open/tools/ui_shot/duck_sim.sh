@@ -10,7 +10,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 BUILD="$ROOT/build/ui-shot"
-BIN="$BUILD/ui_shot"
+BIN="${UI_SHOT_BIN:-$BUILD/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (run_tests)
 PNG_DIR="${1:-}"
 [ -n "$PNG_DIR" ] && mkdir -p "$PNG_DIR"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/duck_sim.XXXXXX")"

@@ -121,7 +121,7 @@ void cSampleImporter::initDisplayControls()
     spectrum[1].init();
     memset(selectionTab, 0, sizeof(selectionTab));
 
-    strControlProperties prop5;
+    [[maybe_unused]] strControlProperties prop5;
     prop.x = 100;
     prop.y = 75 + ((300 - (MAX_16BIT / 300)) / 2);
     prop.w = 600;
@@ -1012,7 +1012,7 @@ void cSampleImporter::updateMemoryButtonLabel()
     {
         bool streamed = mtProject.sampleMemory[selectedSlot].isStreamed;
         bool canStream = (mtProject.instrument[selectedSlot].sample.length > kStreamPreCacheFrames) &&
-                         isPlayModeStreamable(mtProject.instrument[selectedSlot].playMode);
+                         isInstrumentStreamable(mtProject.instrument[selectedSlot]);
         display.setControlText(label[7], streamed ? "Mode: [S]" : "Mode: RAM");
         display.setControlColors(
           label[7],

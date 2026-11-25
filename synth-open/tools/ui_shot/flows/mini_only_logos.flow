@@ -1,0 +1,31 @@
+# P7: the card logos of the plugin synth engines on the Mini Model list and in the patch editor. The card holds pluck.plg and alco.plg with their
+# .plgi logos (plus_flows.sh stages them). Instr held + Up x3 picks Synth 1, Menu box 1 opens its parameters, Down steps the Model list from WTFM (Synth 1 of the new project a replay starts)
+# to PLK (row 7, after the 7 built-ins), F8 opens the patch editor. plus_flows.sh reads the logo slots afterwards (UISHOT_TRACE_LOGOS): PLK has
+# a list and an editor slot in RAM_G, ALCO a list slot.
+# Replay: plus_flows.sh mini
+title: Plugin engine logos on the Mini (P7)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Instr
+wait 400ms
+tap Up x3
+wait 300ms
+release Instr
+wait 600ms
+press Menu
+wait 400ms
+tap Right
+wait 300ms
+release Menu
+wait 1500ms
+expect text "Synth 1"
+tap Down x4
+wait 1500ms
+expect text "PLK"
+shot logos-list
+tap F8
+wait 1500ms
+expect text "Edit Patch"
+shot logos-editor

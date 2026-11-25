@@ -47,7 +47,7 @@ endif
 # PLUG_HOST and CUSTOM_DEFINES come from the command line (the Makefile's RELEASE_ARGS), so they are known here.
 MODIT_MODULE ?= $(if $(and $(filter 1,$(SYNTH_OPEN)),$(filter 1,$(PLUG_HOST)),$(filter -DFEATURE_EXT_HOOKS,$(CUSTOM_DEFINES))),1,0)
 ifeq ($(MODIT_MODULE),1)
-CPP_SRCS 	:= $(filter-out ./FileManager/fileManagerImportMod.cpp ./FileManager/fileManagerImportIt.cpp ./FileManager/fileManagerExportToMod.cpp,$(CPP_SRCS))
+CPP_SRCS 	:= $(filter-out ./FileManager/fileManagerImportMod.cpp ./FileManager/fileManagerImportIt.cpp ./FileManager/fileManagerExportToMod.cpp ./source/mtSequencer_captureMod.cpp ./source/mtSequencer_captureFile.cpp ./source/ThemeManagerJson.cpp ./source/mtTest.cpp,$(CPP_SRCS))
 endif
 C_SRCS 	 	+= $(shell find ./libs/ -name *.c)
 
@@ -162,6 +162,25 @@ endif
 DEVTOOLS_CORE_OBJS := $(patsubst %.cpp,$(OBJ_DIR)/source/%.o,$(DEVTOOLS_CORE_SRCS))
 OBJS		+= $(DEVTOOLS_CORE_OBJS)
 
+# P5 plugin host core on Tracker+ and Mini (ref/ff-imx-port-plan.md R2.1b-d): plug_imx.cpp with plug_index.h and plug_load.h, the SDRAM
+# code slots, the cache steps and the services table. No plug_nvm.cpp, plug_fccob.h or bank journal (FlexNVM is MK66 only). It reaches
+# synth-open/ by relative includes, so the IMX core gets no synth-open include path. Until P6/P7 call it, no symbol of libcore.a's
+# plug_imx.o is referenced and the link pulls nothing of it.
+# P6 (H4) master insert host on IMX: FEATURE_PLUG_HOST with plug_host.cpp (both inserts in plug::imx::insertSlot, SDRAM), plug_insert.cpp
+# and plug_ui.cpp (Inserts page, picker), -I synth-open and synth-open/plug for the core sites. The synth engine plugin side (plug_synth.cpp,
+# plug_nvm.cpp, the FlexNVM bank) stays MK66 only: its core sites need FEATURE_PLUG_HOST && FEATURE_SYNTH_OPEN. plug_ui.cpp builds with
+# -Wno-error=array-bounds: GCC 12.3 reports a false positive at plug_ui.cpp:144 (s_bound[col] after listAt(col), col is 0..6 there).
+# Insert host SDRAM: 148,512 B, paid by the 144 KiB sample pool cut (core/source/mtStructs.h, user decision 2026-11-20).
+ifeq ($(PLATFORM),IMX)
+SYNTH_OPEN_DIR ?= ../synth-open
+# ext_imx.cpp: the extension module loader (P10 H7), on with FEATURE_EXT_IMX (below). Its 48 KiB slot is borrowed from the sample pool in
+# develop mode only (core/source/Tracker.cpp borrowExtSlot, user decision 2026-11-20): 0 B of static SDRAM
+PLUG_IMX_SRCS := $(SYNTH_OPEN_DIR)/plug_imx.cpp $(SYNTH_OPEN_DIR)/plug_host.cpp $(SYNTH_OPEN_DIR)/plug_insert.cpp $(SYNTH_OPEN_DIR)/plug_ui.cpp $(SYNTH_OPEN_DIR)/ext_imx.cpp
+PLUG_IMX_OBJS := $(patsubst $(SYNTH_OPEN_DIR)/%.cpp,$(OBJ_DIR)/synth-open/%.o,$(PLUG_IMX_SRCS))
+OBJS		+= $(PLUG_IMX_OBJS)
+$(PLUG_IMX_OBJS): COMPILER_OPTIONS += -Werror -Wno-error=stack-usage=
+$(OBJ_DIR)/synth-open/plug_ui.o: COMPILER_OPTIONS += -Wno-error=array-bounds
+endif
 OBJS_SORTED := $(sort $(OBJS))
 OBJ_DIRS	:= $(dir $(OBJS_SORTED))
 DEPS		:= $(OBJS_SORTED:.o=.d)
@@ -203,6 +222,18 @@ endif
 ifeq ($(PARTS),1)
 DEFINES+=-DFEATURE_PARTS
 endif
+# PROJECT_STORE=1 (default with PLUG_HOST=1): project.mtff, the FF settings of a project (core/FileManager/projectSidecar.h), a core
+# store of its own that the file manager calls through ff_hooks.h. Default on with PLUG_HOST=1 here, and always on Tracker+ and Mini (the
+# PLATFORM=IMX branch below): a build without the open synth stack takes the card file layer headers of synth-open (plug_sidecar_io.h,
+# open_fileops.h) and the store's own stat.
+PROJECT_STORE ?= $(if $(filter 1,$(PLUG_HOST)),1,0)
+ifeq ($(PROJECT_STORE),1)
+DEFINES+=-DFEATURE_PROJECT_STORE
+ifneq ($(SYNTH_OPEN),1)
+SYNTH_OPEN_DIR ?= ../synth-open
+INCLUDES+=-I$(SYNTH_OPEN_DIR)
+endif
+endif
 ifeq ($(SYNTH_OPEN),1)
 # Patch.h uses __fp16. FEATURE_SYNTH_OPEN also makes interfaceDefs.h set GUI_HANDLE_SYNTH=1.
 COMPILER_OPTIONS+=-mfp16-format=ieee
@@ -239,10 +270,10 @@ endif
 PLUG_HOST ?= 0
 PLUG_BENCH ?= 0
 ifeq ($(MODIT_MODULE),1)
-DEFINES+=-DFEATURE_MODIT_MODULE
+DEFINES+=-DFEATURE_MODIT_MODULE -DFEATURE_CAPTURE_MODULE -DFEATURE_THEME_MODULE -DFEATURE_SELFTEST_MODULE
 endif
 ifeq ($(PLUG_HOST),1)
-DEFINES+=-DFEATURE_PLUG_HOST
+DEFINES+=-DFEATURE_PLUG_HOST -DFEATURE_FF_CORE
 INCLUDES+=-I$(SYNTH_OPEN_DIR)/plug
 # SEND_DUCK=1 (default with PLUG_HOST=1): send ducking, a chosen track or synth part pulls the delay and reverb returns down
 # (core/libs/Audio/effect_duck.h). The settings live in the plugin sidecar, so it needs the plugin host. SEND_DUCK=0 is the build without it.
@@ -265,6 +296,36 @@ endif
 else ifeq ($(PLATFORM), IMX)
 COMPILER_OPTIONS+=-mcpu=cortex-m7 -mfpu=fpv5-sp-d16 -mfp16-format=ieee
 DEFINES+=-DPLATFORM_IMX -DFEATURE_SYNTH
+# project.mtff on Tracker+ and Mini (PROJECT_STORE=0 leaves it out): the store without the plugin host, see the MK66 branch above
+PROJECT_STORE ?= 1
+ifeq ($(PROJECT_STORE),1)
+SYNTH_OPEN_DIR ?= ../synth-open
+DEFINES+=-DFEATURE_PROJECT_STORE
+INCLUDES+=-I$(SYNTH_OPEN_DIR)
+endif
+# FF core features on Tracker+ and Mini (FEATURE_FF_CORE): the project.mtff features that need no plugin host (core/FileManager/projectSidecar.cpp,
+# FEATURE_PROJECT_STORE, owns the file): Project Settings page, FX3/FX4, Scale snap, Follow chord, Seed, Groove, the newer FF popup, Soft Knee, Parts. On the MK66
+# release the same define comes with PLUG_HOST=1. PARTS=0 builds without the Parts view (a define is not a make dependency: wipe the object dir)
+PARTS ?= 1
+# FEATURE_FF_FEATURES (core/source/feature_flags.h): Config > Features with the MIDI remote, Play stop lock and Chord names, the settings in /Features/<id>.cfg
+DEFINES+=-DFEATURE_FF_CORE -DFEATURE_SAT_SOFTKNEE -DFEATURE_FF_FEATURES -DFEATURE_PLUG_HOST
+# the extension module loader (synth-open/ext_imx.cpp, P10): /Plugins/Ext/module.plg in develop mode, slot borrowed from the sample pool
+DEFINES+=-DFEATURE_EXT_IMX
+# the master insert host's core sites (plug_host.h, plug_ui.h) and synth-open/plug for plug_api.h, P6
+INCLUDES+=-I$(SYNTH_OPEN_DIR) -I$(SYNTH_OPEN_DIR)/plug
+# P7 H5: the plugin synth engine adapter reads the OpenTracker engine interface (synth-open/ot/audio/synth_engine.h), that object only
+$(filter %/synth/engines/PlugSynthVoice.o,$(OBJS)): INCLUDES += -I$(SYNTH_OPEN_DIR)/ot
+# Send ducking on Tracker+ and Mini (P11): the settings are in project.mtff (core), the detector is wired in connectSendDuck
+SEND_DUCK ?= 1
+ifeq ($(SEND_DUCK),1)
+DEFINES+=-DFEATURE_SEND_DUCK
+endif
+ifneq ($(PARTS),0)
+DEFINES+=-DFEATURE_PARTS
+endif
+# P12: the Patch step FX and its bank of 16 patch slots per synth part over the stock polysynth:: patch API (core/synth/Synth.cpp, the bank's
+# 17,160 B in SDRAM, paid by the IMX sample pool cut). The MK66 has the same FX inside FEATURE_SYNTH_OPEN
+DEFINES+=-DFEATURE_SYNTH_PATCHFX
 else 
 $(error Invalid PLATFORM value $(PLATFORM))
 endif
@@ -301,10 +362,25 @@ endif
 # They are not archived into libTracker.a: synth-open/modit/build_modit.sh links them against the finished image. Their .su files sit in
 # the build dir like every other one, so the stack ratchet reads the module's frames too.
 ifeq ($(MODIT_MODULE),1)
-MODIT_OBJS := $(addprefix $(OBJ_DIR)/modit/,fileManagerImportMod.o fileManagerImportIt.o fileManagerExportToMod.o modit_dispatch.o modit_entry.o)
+MODIT_OBJS := $(addprefix $(OBJ_DIR)/modit/,fileManagerImportMod.o fileManagerImportIt.o fileManagerExportToMod.o modit_dispatch.o modit_entry.o mtSequencer_captureMod.o mtSequencer_captureFile.o ThemeManagerJson.o mtTest.o)
 $(MODIT_OBJS): COMPILER_OPTIONS += -include $(abspath $(SYNTH_OPEN_DIR))/modit/modit_names.h
 $(MODIT_OBJS): EXTRA_OPT := $(if $(filter 1,$(TRIM)),-Os)
 $(OBJ_DIR)/modit/fileManager%.o: FileManager/fileManager%.cpp
+	@mkdir -p $(dir $@)
+	$(TOOLCHAIN)c++ $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) $(EXTRA_OPT) -o "$@" "$<"
+# the theme and self test tenants of extras.plg (EXT_SUB_THEME, EXT_SUB_SELFTEST): the custom theme JSON parser and the factory self test
+$(OBJ_DIR)/modit/ThemeManagerJson.o: source/ThemeManagerJson.cpp
+	@mkdir -p $(dir $@)
+	$(TOOLCHAIN)c++ $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) $(EXTRA_OPT) -o "$@" "$<"
+$(OBJ_DIR)/modit/mtTest.o: source/mtTest.cpp
+	@mkdir -p $(dir $@)
+	$(TOOLCHAIN)c++ $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) $(EXTRA_OPT) -o "$@" "$<"
+# the Capture tenant of extras.plg (EXT_SUB_CAPTURE): the take logic, no renames (the image has no Sequencer::captureOp)
+$(OBJ_DIR)/modit/mtSequencer_captureMod.o: source/mtSequencer_captureMod.cpp
+	@mkdir -p $(dir $@)
+	$(TOOLCHAIN)c++ $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) $(EXTRA_OPT) -o "$@" "$<"
+# the take file writer and reader, the second Capture tenant (EXT_SUB_TAKEFILE)
+$(OBJ_DIR)/modit/mtSequencer_captureFile.o: source/mtSequencer_captureFile.cpp
 	@mkdir -p $(dir $@)
 	$(TOOLCHAIN)c++ $(DEFINES) $(INCLUDES) $(CPP_OPTIONS) $(COMPILER_OPTIONS) $(EXTRA_OPT) -o "$@" "$<"
 $(OBJ_DIR)/modit/modit_%.o: $(SYNTH_OPEN_DIR)/modit/modit_%.cpp

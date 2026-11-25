@@ -20,14 +20,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 SAN="${SAN:-}"
 BUILD="$ROOT/build/ui-shot${SAN:+-san}"
-BIN="${BIN:-}"
+BIN="${BIN:-${UI_SHOT_BIN:-}}"
 OUT="${1:-}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/sample_loader_browse_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 if [ -z "${BIN:-}" ]; then   # the tree's own binary is built, a BIN given is used as it is
     BIN="$BUILD/ui_shot"
     mkdir -p "$BUILD"
-    make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" ${SAN:+SAN=$SAN} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
+    make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" ${SAN:+SAN=$SAN} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
 fi
 [ -x "$BIN" ] || { echo "sample_loader_browse_sim.sh: no ui_shot at $BIN" >&2; exit 99; }
 export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}"

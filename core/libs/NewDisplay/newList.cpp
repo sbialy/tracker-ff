@@ -577,8 +577,8 @@ void NewList::drawImagesList(int x1, int x2, int y, int rowH)
 
         int idx = data->imageIds[dataIdx];
 
-#ifdef FEATURE_SYNTH_OPEN
-        // no bitmap for this entry (a synth plugin engine in the model list): its text, centred in the row
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH)
+        // no bitmap for this entry (a synth plugin engine in the model list, also on the stock IMX list): its text, centred in the row
         if (idx < 0 && data->params != nullptr && data->params[dataIdx] != nullptr)
         {
             API_CMD_TEXT(x1 + (x2 - x1) / 2, y + (rowH * rowIdx), font->handle, OPT_CENTER, data->params[dataIdx]);
@@ -598,7 +598,7 @@ void NewList::drawImagesList(int x1, int x2, int y, int rowH)
         }
 #define LIST_BMP (*bm)
 #else
-        if (idx >= displayBitmapsCount)
+        if (idx < 0 || idx >= displayBitmapsCount)
         {
             continue;
         }

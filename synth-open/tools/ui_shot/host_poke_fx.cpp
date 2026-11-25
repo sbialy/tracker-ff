@@ -56,6 +56,8 @@ namespace
 {
 struct TapBlock { float rms; int zc; };
 std::vector<TapBlock> g_tap;
+class SampleTap;
+SampleTap* g_tapStream;
 class SampleTap final : public AudioStream
 {
   public:
@@ -72,12 +74,21 @@ class SampleTap final : public AudioStream
             if (i > 0 && ((prev < 0 && v >= 0) || (prev >= 0 && v < 0))) zc++;
             prev = v;
         }
-        g_tap.push_back({float(std::sqrt(sum / AUDIO_BLOCK_SAMPLES)), zc});
+        float rms = float(std::sqrt(sum / AUDIO_BLOCK_SAMPLES));
+        if (ampTrack >= 0)   // "audiostat tapamp N": the level after the track's amplifier (its gain), the pitch of the voice
+            rms *= float(instrumentPlayer[ampTrack].ampPtr[0]->gainMultiplier()) / AudioAmplifier::kUnityGain;
+        g_tap.push_back({rms, zc});
         release(b);
     }
+    int ampTrack = -1;
   private:
     audio_block_t* queue[1];
 };
+}
+// 1 when the sample voice (play memory channel 0) of a track is playing: the IMX round 4 flows count its starts (host_poke.cpp UISHOT_TRACE_FFSTATE)
+extern "C" int hostTrackPlaying(int track)
+{
+    return track >= 0 && track < 16 && !instrumentPlayer[track].playMemPtr.empty() && instrumentPlayer[track].playMemPtr[0]->isPlaying() ? 1 : 0;
 }
 extern "C" void hostTapAttach(int track)
 {
@@ -85,6 +96,14 @@ extern "C" void hostTapAttach(int track)
     static AudioConnection* c = nullptr;
     delete c;
     c = new AudioConnection(instrumentPlayer[track].playMemPtr[0], 0, tap, 0);
+    tap->ampTrack = -1;
+    g_tapStream = tap;
+}
+// "audiostat tapamp N": the same tap after the voice's amplifier (the level the step volume and the volume FX set), tables_sim.sh
+extern "C" void hostTapAttachAmp(int track)
+{   // the sample chain after the voice is silent on the host, so the tap stays on the voice and takes the amplifier's gain per block
+    hostTapAttach(track);
+    g_tapStream->ampTrack = track;
 }
 extern "C" void hostTapClear() { g_tap.clear(); }
 extern "C" size_t hostTapCount() { return g_tap.size(); }
@@ -94,6 +113,9 @@ extern "C" void hostTapGet(size_t i, float* rms, int* zc) { *rms = g_tap[i].rms;
 // whether the FX and its send mixer are in update_all, and how many updates the FX ran since the last fxmute (hostFxUpdates)
 extern "C" void hostPokeFxMute(std::string* out)
 {
+#ifndef FEATURE_SYNTH_OPEN
+    *out = "n/a (stock synth stack)";
+#else
     audioEngine& e = engine;
     auto* m = e.getMixerAndFx();
     char b[320];
@@ -103,6 +125,7 @@ extern "C" void hostPokeFxMute(std::string* out)
              (int)e.polyverb->isMuted(), (int)e.polyverb->isMuteAsleep(), (int)e.polyverb->isActive(),
              (int)m->getPreFxMixer(MixerAndFxs<audioEngine::kVoices>::FxType::kReverb)->isActive());
     *out = b;
+#endif
 }
 
 // "fxauto": the USB 8+3 auto mute (fx_auto_mute.h): the setting, the override, what the platform reports, the project flags, the gates and the
@@ -110,6 +133,9 @@ extern "C" void hostPokeFxMute(std::string* out)
 #include "fx_auto_mute.h"
 extern "C" void hostPokeFxAuto(std::string* out)
 {
+#ifndef FEATURE_SYNTH_OPEN
+    *out = "n/a (stock synth stack)";
+#else
     audioEngine& e = engine;
     auto* m = e.getMixerAndFx();
     using Fx = MixerAndFxs<audioEngine::kVoices>::FxType;
@@ -122,4 +148,5 @@ extern "C" void hostPokeFxAuto(std::string* out)
              (int)e.polyverb->isMuteAsleep(), (int)e.polyverb->isActive(), (int)m->getPreFxMixer(Fx::kDelay)->isActive(),
              (int)m->getPreFxMixer(Fx::kReverb)->isActive());
     *out = b;
+#endif
 }

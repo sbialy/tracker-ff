@@ -118,7 +118,7 @@ class OpenPatch final : public Patch
     uint8_t modSerial() const { return modSer; }
     uint8_t cfgSerial() const { return cfgSer; }
     const SlotCfg& live() const { return *cfg; }                    // render path
-    bool modActive() const { return cfg->modOn != 0; }              // render path
+    bool modActive() const { return (cfg->modOn | cfg->partOn) != 0; } // render path (a part slot is stepped too)
     void liveCfg(SlotCfg& out) const { out = *cfg; }                // the stress test compares it with the slot file
     const SlotCfg* ownCfg() const { return &own; }
     // The live config becomes `next` (a row of the Patch FX bank or ownCfg()). A macro whose bipolar flag differs goes to the resting

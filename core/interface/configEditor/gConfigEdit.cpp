@@ -1,4 +1,5 @@
 #include "Platform.h"
+#include "mtNoteName.h"
 #include "Profiler.h"
 #include "configEditor.h"
 #include "mtGridEditor.h"
@@ -29,7 +30,7 @@ const char creditsText[] = {
     "\n(No Wholesale Commercial Clones; see LICENSE)."
 #ifdef FEATURE_SYNTH_OPEN
     "\n"
-    "\ntracker-ff 1.4.0: unofficial community firmware,"
+    "\ntracker-ff 2.0.0: unofficial community firmware,"
     "\nnot affiliated with Polyend."
     "\nSynth engines: OpenTracker (Apache-2.0),"
     "\ngithub.com/sandlbn/polyend-tracker-re"
@@ -186,7 +187,7 @@ void cConfigEditor::initDisplayControls()
 
     for (uint8_t i = 0; i < 48; i++)
     {
-        interfaceGlobals.padNamesPointer[i] = (char*)mtNotes[mtGrid.pad[i].note];
+        interfaceGlobals.padNamesPointer[i] = (char*)padName(i, mtGrid.pad[i].note);
         sprintf(interfaceGlobals.padFinetuneNames[i], "%d", mtGrid.pad[i].microtune);
     }
 
@@ -693,7 +694,7 @@ void cConfigEditor::showGridScreen()
 
     for (uint8_t i = 0; i < 48; i++)
     {
-        interfaceGlobals.padNamesPointer[i] = (char*)mtNotes[mtGrid.pad[i].note];
+        interfaceGlobals.padNamesPointer[i] = (char*)padName(i, mtGrid.pad[i].note);
         sprintf(interfaceGlobals.padFinetuneNames[i], "%d", mtGrid.pad[i].microtune);
 
         if (mtGrid.pad[i].ledEnable)
@@ -872,7 +873,7 @@ void cConfigEditor::refreshPadValue(uint8_t value, enScreenType screen)
                 display.refreshControl(padBar[value]);
             }
             display.setControlText2(label[value],
-                                    mtNotes[mtGrid.pad[gridEditor.getSelectedPad()].note]);
+                                    noteName(mtGrid.pad[gridEditor.getSelectedPad()].note));
             display.refreshControl(label[value]);
             break;
         case 1:
@@ -927,6 +928,11 @@ void cConfigEditor::showBatteryInfo()
 #endif
 }
 
+#if defined(AUDIO_PERFORMANCE_INFO_ENABLED) && !defined(PLATFORM_IMX)
+extern "C" void ff_linein_counts(uint32_t out[4]);   // core/libs/Audio/Input.cpp
+extern "C" volatile uint32_t ff_audio_late;          // platforms/mk66/3rdparty/Audio/output_i2s.cpp
+#endif
+
 void cConfigEditor::showDiagnosticInfo()
 {
 #ifdef AUDIO_PERFORMANCE_INFO_ENABLED
@@ -963,6 +969,22 @@ void cConfigEditor::showDiagnosticInfo()
         display.setControlShow(usbStreamLabelControl);
         display.refreshControl(usbStreamLabelControl);
     }
+#ifndef PLATFORM_IMX
+    else
+    {   // the same slot without USB audio: line in block counters since power on (core/libs/Audio/LineInRing.h) and late
+        // output blocks (output_i2s.cpp), d = read twice by the old code, s = skipped by it, u = repeated now, L = late
+        uint32_t c[4];
+        ff_linein_counts(c);
+        snprintf(usbStreamText, sizeof(usbStreamText), "LIN d%lu s%lu", static_cast<unsigned long>(c[0]),
+                 static_cast<unsigned long>(c[1]));
+        snprintf(usbStreamText2, sizeof(usbStreamText2), "u%lu L%lu", static_cast<unsigned long>(c[2]),
+                 static_cast<unsigned long>(ff_audio_late));
+        display.setControlText(usbStreamLabelControl, usbStreamText);
+        display.setControlText2(usbStreamLabelControl, usbStreamText2);
+        display.setControlShow(usbStreamLabelControl);
+        display.refreshControl(usbStreamLabelControl);
+    }
+#endif
 #endif
 
 #ifdef MEMORY_USAGE_INFO_ENABLED

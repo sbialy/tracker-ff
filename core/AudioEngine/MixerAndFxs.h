@@ -1,6 +1,7 @@
 #ifndef AUDIOENGINE_MIXERANDFXS_H_
 #define AUDIOENGINE_MIXERANDFXS_H_
 #include "Audio.h"
+#include "stereo_sends.h"
 
 enum struct MixerAndFxChannelType
 {
@@ -50,6 +51,10 @@ class MixerAndFxs
 
     MixerAndFxs();
     AudioMixer<kSendsInputsCount>* getPreFxMixer(FxType type);
+#ifdef FW_STEREO_SENDS
+    // the side (L - R) / 2 send mixer of an FX (stereo_sends.h)
+    AudioMixer<kSendsInputsCount>* getSideMixer(FxType type) { return &sideMixer[type]; }
+#endif
     AudioMixer<kTracksAndSynthVoices>* getTracksMixer(MixerAndFxChannelType channel);
     AudioMixer<kTrackAndSendsMixerInputs>* getTracksAndSendsMixer(MixerAndFxChannelType channel);
     AudioEffectShortDelay* getDelay();
@@ -80,6 +85,9 @@ class MixerAndFxs
 
   private:
     AudioMixer<kSendsInputsCount> preFxMixer[FxType::kFxCount];
+#ifdef FW_STEREO_SENDS
+    AudioMixer<kSendsInputsCount> sideMixer[FxType::kFxCount];
+#endif
     AudioMixer<kTracksAndSynthVoices>
       tracksAndSynthMixer[(int)MixerAndFxChannelType::kChannelCount];
     AudioMixer<kTrackAndSendsMixerInputs>

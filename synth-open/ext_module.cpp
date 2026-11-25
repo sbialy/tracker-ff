@@ -13,13 +13,20 @@
 #include "FileSystemAdapter.h"
 #include "Platform.h"
 #include "ext_hooks.h"
+#include "ext_tenants.h"
 #include "fileManager.h"
+#include "mtCapture.h"
+#include "mtSequencer.h"
 
 #ifndef UI_SHOT_HOST
 #include "display.h"
 #endif
 
 #include <string.h>
+#ifdef UI_SHOT_HOST
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 extern "C" {
 ext_hooks_t ext_hooks;
@@ -47,6 +54,13 @@ namespace
 __attribute__((section(".noinit.$RAM4.ext"), aligned(16)))
 #endif
 uint8_t s_ext[EXT_SLOT_BYTES];
+// the release modules (extras.plg, ext_abi.h EXT_REL_BYTES and the EXT_SUB_* sub-slots): a region of their own, so they never share with
+// the console module above. Not cleared by the startup either, the loader writes text and data and clears bss.
+#ifndef UI_SHOT_HOST
+__attribute__((section(".noinit.$RAM4.ext2"), aligned(16)))
+#endif
+uint8_t s_extRel[EXT_REL_BYTES];
+ext_rel_table_t s_relTable;   // the sub-slot table of the loaded extras.plg (ext_loader.h checkRelTable), zero until a load passed it
 
 FileSystem* s_fs;
 Timer* s_timer;
@@ -144,6 +158,12 @@ __attribute__((used, section(".rodata.tailpad"))) constexpr TailPad s_tailPad{};
 // image keeps them, the module links against them (ld --just-symbols). Never called. The SD card and vector table ones are in
 // ext_keep_platform (the core build has no platform headers).
 volatile uint32_t s_keepSink;
+#ifdef FEATURE_SELFTEST_MODULE
+}   // namespace
+void selftestKeep();   // core/source/mtTestGlue.cpp
+namespace
+{
+#endif
 __attribute__((noinline, used)) void keepForModule()
 {
     s_keepSink = display.isIdle() + ext_modulesCount;
@@ -154,7 +174,14 @@ __attribute__((noinline, used)) void keepForModule()
     asm volatile("" ::"r"(&polysynth::open::loadShots));
     asm volatile("" ::"r"(&polysynth::open::setAdmitPermille));
     asm volatile("" ::"r"(&polysynth::open::admitPermille));
-    asm volatile("" ::"r"(&cFileManager::moditKeep));   // modit.plg: moveToPrevOperationStep and the 5 argument loadFileToMemory
+    asm volatile("" ::"r"(&cFileManager::moditKeep));   // extras.plg (MOD/IT): moveToPrevOperationStep and the 5 argument loadFileToMemory
+    asm volatile("" ::"r"(&captureScratch));             // extras.plg (Capture): the commit scratch in the image's SDRAM
+#ifdef FEATURE_CAPTURE_MODULE
+    asm volatile("" ::"r"(&Sequencer::captureKeep));     // extras.plg (Capture): Sequencer::recVelocity
+#endif
+#ifdef FEATURE_SELFTEST_MODULE
+    asm volatile("" ::"r"(&selftestKeep));               // extras.plg (self test): the input, audio, display, MIDI and reset calls only it makes
+#endif
     ext_keep_platform();
 }
 
@@ -163,7 +190,8 @@ void (*s_stockVectors[5])(void);
 bool s_entered;
 constexpr int kVectors = 16 + 100;   // _VectorsRam / _VectorsFlash: 16 system vectors + NVIC_NUM_INTERRUPTS (MK66)
 
-bool enter(const plug_file_header& h)
+// mem: the slot or region the module was loaded into (its run address)
+bool enter(const plug_file_header& h, uint8_t* mem)
 {
     asm volatile("" ::"r"(&keepForModule));
     *reinterpret_cast<volatile uint32_t*>(0x4000D000) = 0;   // system MPU: let the core fetch from SDRAM (plug::load does the same)
@@ -172,13 +200,14 @@ bool enter(const plug_file_header& h)
     ext_hooks_t hk;
     memset(&hk, 0, sizeof(hk));
     hk.struct_size = sizeof(hk);
-    const ext_entry_fn entry = reinterpret_cast<ext_entry_fn>((uintptr_t(s_ext) + h.entry_offset) | 1u);
+    const ext_entry_fn entry = reinterpret_cast<ext_entry_fn>((uintptr_t(mem) + h.entry_offset) | 1u);
     const bool ok = entry(&hk, EXT_ABI_VERSION, 1) == 0;
     asm volatile("cpsid i" ::: "memory");
     if (ok)
     {
-        ext_hooks = hk;
-        for (int i = 0; i < 5; i++) s_stockVectors[i] = saved[i];
+        ext::mergeHooks(ext_hooks, hk);   // the other module's pointers stay
+        if (!s_entered)   // the first accepted entry saw the stock vectors, a second one may see the first module's
+            for (int i = 0; i < 5; i++) s_stockVectors[i] = saved[i];
         s_entered = true;
     }
     else
@@ -190,24 +219,76 @@ bool enter(const plug_file_header& h)
     return ok;
 }
 #else
-// ui_shot: the rules run, no module code (the host cannot run Arm code). The image id is 0, so a card module is refused.
-uint32_t imageCrc() { return 0; }
+// ui_shot: the rules run, no module code (the host cannot run Arm code). The image id is 0, so a card module is refused, unless the build
+// names a release image (UISHOT_MODIT_ID, UISHOT_MODIT_RUN: its id and the run address of its extension slot, then that release's modit.plg passes)
+#ifndef UISHOT_MODIT_ID
+#define UISHOT_MODIT_ID 0u
+#endif
+#ifndef UISHOT_MODIT_RUN
+#define UISHOT_MODIT_RUN 0x70D88000u
+#endif
+uint32_t imageCrc() { return UISHOT_MODIT_ID; }
 const char* imageDiag(ext::Status) { return ""; }
-bool enter(const plug_file_header&) { return false; }
-// modit.plg on the host: the three sources are in the binary (Makefile), the card file runs the loader rules and the hook is set here
-bool enterModit(const plug_file_header&)
+// UISHOT_HOST_CONSOLE=1: a stand-in console module for the coexistence sims. The console file (make_host_module.py --run kConsoleHostRun) passes
+// the loader rules, this entry merges two native hooks the way a console entry would, the exit line says whether they survived the
+// extras.plg load (and the modit hook survived the console). Without it a console file is refused at the entry, as before.
+constexpr uintptr_t kConsoleHostRun = 0x70D8A000u;
+uint32_t s_hostConsoleUpdates;
+void hostConsoleUpdate() { s_hostConsoleUpdates++; }
+void hostConsoleLog(const char*) {}
+struct HostConsoleReport
 {
-    ext_hooks.modit = &cFileManager::moditDispatch;
+    ~HostConsoleReport()
+    {
+        if (getenv("UISHOT_HOST_CONSOLE"))
+            fprintf(stderr, "host console: update calls %lu, update hook %s, log hook %s, modit hook %s\n", static_cast<unsigned long>(s_hostConsoleUpdates),
+                    ext_hooks.update == hostConsoleUpdate ? "console" : "lost", ext_hooks.log == hostConsoleLog ? "console" : "lost",
+                    ext_hooks.modit ? "set" : "null");
+    }
+} s_hostConsoleReport;
+bool enter(const plug_file_header&, uint8_t* mem)
+{
+    if (mem != s_ext || !getenv("UISHOT_HOST_CONSOLE")) return false;
+    ext_hooks_t hk;
+    memset(&hk, 0, sizeof(hk));
+    hk.update = hostConsoleUpdate;
+    hk.log = hostConsoleLog;
+    ext::mergeHooks(ext_hooks, hk);
     return true;
 }
-constexpr uintptr_t kModitHostRun = 0x70D88000u;   // the run address a host test module is packed for (tools/modit/make_host_module.py)
+// extras.plg on the host: the three MOD/IT sources are in the binary (Makefile), the card file runs the loader rules and the hook is set here
+bool enterModit(const plug_file_header&, uint8_t*)
+{
+    ext_hooks_t hk;
+    memset(&hk, 0, sizeof(hk));
+    hk.modit = &cFileManager::moditDispatch;
+#ifdef FEATURE_CAPTURE_MODULE
+    hk.capture = &Sequencer::captureOp;
+#endif
+#ifdef FEATURE_THEME_MODULE
+    hk.theme = &themeParseOp;
+#endif
+#ifdef FEATURE_SELFTEST_MODULE
+    hk.selftest = &selftestDispatch;
+#endif
+    ext::mergeHooks(ext_hooks, hk);
+    return true;
+}
+constexpr uintptr_t kModitHostRun = UISHOT_MODIT_RUN;   // the run address a host test module is packed for (tools/modit/make_host_module.py)
 #endif
 }   // namespace
 
 namespace
 {
 ext::Status s_status = ext::Status::kOff;
-bool s_moditLoaded;   // modit.plg sits in the slot's load part: the recovery console answers from the slot tail
+// The image id, once per power cycle for every module (the console's boot and the first extras.plg use share it)
+bool s_idKnown;
+uint32_t s_id;
+uint32_t cachedImageCrc()
+{
+    if (!s_idKnown) { s_id = imageCrc(); s_idKnown = true; }
+    return s_id;
+}
 // decision D4: the module is card code, so Shift held at power on skips it for the session. It loads
 // when the plugin host's key window closes (the same 4 s and the same key path), not in TrackerImpl::init
 constexpr uint32_t kKeyWindowMs = 4000;
@@ -237,10 +318,21 @@ extern "C" const char* ext_status_short(void)
     }
 }
 
+// The card and the platform for extras.plg before ext_boot: the interface's start applies a custom theme (ThemeManager::applyTheme) before the
+// tracker init calls ext_boot, so the theme tenant binds them itself. ext_hooks is zero from the startup (bss) and only the loads write it.
+extern "C" void ext_extras_bind(void* platformPtr)
+{
+    if (s_fs || !platformPtr) return;
+    Platform* platform = static_cast<Platform*>(platformPtr);
+    s_platform = platform;
+    s_fs = platform->getFileSystem();
+    s_timer = platform->getTimer();
+}
+
 extern "C" void ext_boot(void* platformPtr, int develop)
 {
-    memset(&ext_hooks, 0, sizeof(ext_hooks));
-    // the card and the platform are kept without develop mode too: modit.plg (MOD/IT) loads from it on the first use
+    // no memset of ext_hooks: extras.plg may have been loaded already (a custom theme at start), its hooks stay
+    // the card and the platform are kept without develop mode too: extras.plg (MOD/IT) loads from it on the first use
     Platform* platform = static_cast<Platform*>(platformPtr);
     s_platform = platform;
     s_fs = platform->getFileSystem();
@@ -251,15 +343,12 @@ extern "C" void ext_boot(void* platformPtr, int develop)
     s_bootMs = now();
 }
 
-// MOD import, IT import and IT export (modit.plg, ext_loader.h moditLoad): /Plugins/Ext/modit.plg into the slot on the first use, never at
-// boot. 0 when the hook is set (loaded now, or before), else the lines of the popup of the click. The image id is computed once per
-// power cycle (the console module's boot does the same sum for its own file), a refused file is read again on the next use.
-// The slot is the console module's while it is loaded or about to load (develop mode, the key window of the boot): then busy, nothing
-// is read. In every other state nothing in it matters (a refused file's bytes, a crash report already written, the recovery reply).
+// MOD import, IT import and IT export (extras.plg, ext_loader.h extrasLoad): /Plugins/Ext/extras.plg into the release region on the first use,
+// never at boot. 0 when the hook is set (loaded now, or before), else the lines of the popup of the click. The image id is shared with the
+// console module's boot (cachedImageCrc), a refused file is read again on the next use. The console module's slot is never touched, so this
+// works with the console loaded, pending or absent.
 extern "C" int ext_modit_check(const char** line1, const char** line2)
 {
-    static bool s_idKnown;
-    static uint32_t s_id;
     ext::ModitState st = ext::ModitState::kReady;
     if (!ext_hooks.modit)
     {
@@ -269,18 +358,15 @@ extern "C" int ext_modit_check(const char** line1, const char** line2)
         {
             CardFs card{s_fs};
 #ifndef UI_SHOT_HOST
-            const ext::Slot slot{s_ext, EXT_LOAD_BYTES, uintptr_t(s_ext)};
+            const ext::Slot slot{s_extRel, EXT_REL_BYTES, uintptr_t(s_extRel)};
 #define MODIT_ENTER enter
 #else
-            const ext::Slot slot{s_ext, EXT_LOAD_BYTES, kModitHostRun};
+            const ext::Slot slot{s_extRel, EXT_REL_BYTES, kModitHostRun};
 #define MODIT_ENTER enterModit
 #endif
-            st = ext::moditLoad(card, slot, s_status, s_pending, [&] {
-                if (!s_idKnown) { s_id = imageCrc(); s_idKnown = true; }
-                return s_id;
-            }, [](const plug_file_header& h) { return MODIT_ENTER(h) && ext_hooks.modit != nullptr; });
+            st = ext::extrasLoad(card, slot, cachedImageCrc,
+                                 [](const plug_file_header& h) { return MODIT_ENTER(h, s_extRel) && ext_hooks.modit != nullptr; }, &s_relTable);
 #undef MODIT_ENTER
-            if (st == ext::ModitState::kReady) s_moditLoaded = true;
         }
     }
     if (st != ext::ModitState::kReady)
@@ -300,8 +386,12 @@ static void ext_load()
 #else
     const uint32_t reset = 0;
 #endif
+#ifndef UI_SHOT_HOST
     const ext::Slot slot{s_ext, EXT_LOAD_BYTES, uintptr_t(s_ext), reset};
-    s_status = ext::boot(card, true, slot, imageCrc, enter, imageDiag);
+#else
+    const ext::Slot slot{s_ext, EXT_LOAD_BYTES, kConsoleHostRun, reset};
+#endif
+    s_status = ext::boot(card, true, slot, cachedImageCrc, [](const plug_file_header& h) { return enter(h, s_ext); }, imageDiag);
     const bool loaded = s_status == ext::Status::kLoaded;
     s_markerMs = now();
     s_markerSet = loaded;
@@ -332,13 +422,12 @@ static void recoveryPoll()
         const int c = usb_serial_getchar();
         if (c < 0 || !s_line.feed(c)) continue;
         const char* status = s_pending ? "pending: the module loads 4 s after start" : s_safe ? "skipped: Shift was held at start" : ext::statusText(s_status);
-        // the diagnostic text sits in the load part: gone once modit.plg was loaded over it
-        const char* detail = s_status == ext::Status::kOtherImage && !s_pending && !s_moditLoaded ? diagText() : "";
-        // the slot is idle while no console module runs: no stack, no SRAM for the reply. Its start while nothing is loaded, its reset
-        // surviving tail (never written by the loader) once modit.plg holds the load part
-        char* const out = reinterpret_cast<char*>(s_ext) + ext::recoveryReplyOffset(s_moditLoaded);
+        // the diagnostic text sits in the console slot's load part (release modules never load there)
+        const char* detail = s_status == ext::Status::kOtherImage && !s_pending ? diagText() : "";
+        // the console slot is idle while no console module runs: no stack, no SRAM for the reply, its first bytes (before the diag text)
+        char* const out = reinterpret_cast<char*>(s_ext);
         constexpr int kOut = ext::kRecoveryReplyBytes;
-        static_assert(EXT_LOAD_BYTES + ext::kRecoveryReplyBytes <= EXT_SLOT_BYTES, "the reply fits the slot tail");
+        static_assert(ext::kRecoveryReplyBytes <= kDiagAt, "the reply stays before the diag text");
         bool restart = false;
         const char* build = s_platform->getSystemInfo()->buildId;
         const int n = ext::recoveryReply(s_line.buf, build ? build : "?", status, detail, out, kOut, &restart);
@@ -393,11 +482,11 @@ extern "C" void ext_power_down(void)
     memset(&ext_hooks, 0, sizeof(ext_hooks));
 #ifndef UI_SHOT_HOST
     if (!s_entered) return;
-    const uintptr_t lo = uintptr_t(s_ext), hi = lo + sizeof(s_ext);
+    const uintptr_t lo = uintptr_t(s_ext), hi = lo + sizeof(s_ext), rlo = uintptr_t(s_extRel), rhi = rlo + sizeof(s_extRel);
     for (int i = 0; i < kVectors; i++)
     {
         const uintptr_t v = uintptr_t(_VectorsRam[i]);
-        if (v < lo || v >= hi) continue;
+        if ((v < lo || v >= hi) && (v < rlo || v >= rhi)) continue;
         if (i >= 3 && i <= 6) _VectorsRam[i] = s_stockVectors[i - 3];
         else if (i == 15) _VectorsRam[i] = s_stockVectors[4];
         else

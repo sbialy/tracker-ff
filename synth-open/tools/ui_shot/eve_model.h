@@ -46,9 +46,9 @@ class EveModel : public DisplayDriver
     uint32_t getDisplayListOffset() override { return uint32_t(dl_.size()) * 4u; }
     void IncCMDOffset(uint16_t) override {}
     void WriteData32(uint32_t data) override;
-    void beginCoProList() override {}
-    void beginCoProListNoCheck() override {}
-    void endCoProList() override { run(); }
+    void beginCoProList() override { listStart_ = in_.size(); }
+    void beginCoProListNoCheck() override { listStart_ = in_.size(); }
+    void endCoProList() override;
     void awaitCoProEmpty() override { run(); }
     uint8_t isCoProEmpty() override { return 1; }
     void writeDataRAMG(const uint8_t* d, uint32_t n, uint32_t dst) override;
@@ -76,6 +76,9 @@ class EveModel : public DisplayDriver
         uint32_t fmt[32] = {};       // bitmap formats drawn
         uint32_t romTextCalls = 0;   // CMD_TEXT / NUMBER on a font without CMD_SETFONT2 (ROM font stand-in used)
         uint32_t dlOverflow = 0;
+        // the command FIFO (RAM_CMD) is a 4 KB ring: one list (begin..endCoProList, one SPI burst on the MK66) of more than 4,092 bytes
+        // wraps over its own start and the coprocessor runs only (bytes mod 4096) of it (FT812 datasheet, EVE_CheckFreeSpace)
+        uint32_t cmdFifoOverflow = 0, cmdListWordsMax = 0;
         // display list budget (parts-ui DL measurement): words of the last and the largest frame (CMD_SWAP), and per control slot
         // of RAM_G (150000 + i * 8192, display.cpp step2) the bytes the last update stored and the largest ever
         uint32_t frameWords = 0, frameWordsMax = 0;
@@ -130,6 +133,7 @@ class EveModel : public DisplayDriver
     std::vector<uint32_t> dl_;
     std::vector<uint32_t> in_;
     size_t inPos_ = 0;
+    size_t listStart_ = 0;
     std::vector<uint32_t> frame_;
     std::vector<uint32_t> work_;
     Bitmap bmp_[32];

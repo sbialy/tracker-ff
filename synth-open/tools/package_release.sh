@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Package a tracker-ff (synth-open) firmware image with the license texts that must travel with it.
-#   synth-open/tools/package_release.sh <image.ptf> [out_dir] [--zip] [--card CARD_DIR --notices MODULES_DIR | --modules MODULES_DIR [--effects PTFX_DIR] [--with GROUP]] [--ext MODULE.plg] [--modit MODIT.plg]
+#   synth-open/tools/package_release.sh <image.ptf> [out_dir] [--zip] [--card CARD_DIR --notices MODULES_DIR | --modules MODULES_DIR [--effects PTFX_DIR] [--with GROUP]] [--ext MODULE.plg] [--extras EXTRAS.plg]
 # Makes <out_dir>/<image name without .ptf>/ (default out_dir: build/release) laid out as the root of the SD card:
 #   Firmware/<image>.ptf, Plugins/ (Synth, Master, Ext), Effects/, Patches/ where given, one README-RELEASE.txt, and the
 #   folder tracker-ff/ with LICENSE, NOTICE.md, UPGRADING.md, CONTRIBUTORS.md, SHA256SUMS (paths relative to the card root) and licenses/ (one text per
@@ -10,11 +10,11 @@
 # --card CARD_DIR copies the card files of a PLUG_HOST release, laid out as on the SD card (Plugins/Synth/*.plg *.plgi,
 # Plugins/Master/*.plg, optional Plugins/Ext/module.plg, Effects/*.ptfx, Patches/), into the package beside Firmware/.
 # --ext MODULE.plg adds the developer mode extension module as Plugins/Ext/module.plg (the path the firmware loads it from).
-# --modit MODIT.plg adds the MOD/IT module as Plugins/Ext/modit.plg (build/modit.plg of make original-release: MOD import, IT import and IT export are
-# in that file, not in the image). It is checked against the .ptf first (synth-open/plug/check_ext.py: the image id in the module must be the
-# one of this image, a module of another build is refused). A package with plugins (--modules or --card) needs it, from --modit or from a card
-# kit that has Plugins/Ext/modit.plg: without it the Import Mod and Export As .it buttons of the image only say the module is missing.
-# MODIT=skip leaves it out (a layout test, never a release) and says so.
+# --extras EXTRAS.plg (old name --modit) adds the release card modules as Plugins/Ext/extras.plg (build/extras.plg of make original-release: MOD
+# import, IT import and IT export are in that file, not in the image, later the other EXT_SUB_* tenants of ext_abi.h). It is checked against the .ptf first (synth-open/plug/check_ext.py: the image id in the module must be the
+# one of this image, a module of another build is refused). A package with plugins (--modules or --card) needs it, from --extras or from a card
+# kit that has Plugins/Ext/extras.plg: without it the Import Mod and Export As .it buttons of the image only say the module is missing.
+# EXTRAS=skip (old name MODIT=skip) leaves it out (a layout test, never a release) and says so.
 # --modules MODULES_DIR does the same from the pinned plugin modules of the four module repositories (python3 -I engines/external.py
 # fetch MODULES_DIR): it checks them against engines/external.lock.json and engines/engines.json first, lays the engines of
 # engines.json out in Plugins/Synth (.plg + .plgi) and the inserts in Plugins/Master, and copies the notice files of every module
@@ -37,13 +37,21 @@
 # image against the real stack room, floor 512 B) leaves <image>.ptf.stack-margin next to the image with PASS and the sha256 of the .ptf it ran for.
 # A package with plugins is made only from an image that has that stamp with PASS and the same sha256 (a rebuilt image needs a new gate run).
 # STACK_GATE=skip skips the check (a layout test, never a release) and says so.
+# --imx plus|mini makes the zip of the Tracker+ or the Tracker Mini (IMX): the image is TrackerPlus_<TAG>_<A.B.C>.ptf or
+# TrackerMini_<TAG>_<A.B.C>.ptf and goes to Firmware/ of a card layout like the original's, with the shared card content (Plugins/Synth and
+# Plugins/Master, Effects, Waves, Tunings, README-RELEASE.txt, tracker-ff/ with its own SHA256SUMS) and without what the IMX image does not read:
+# no Plugins/Ext (extras.plg and the console module are linked into the IMX image or bound to the MK66 image, --ext and --extras are refused),
+# no Plugins/Synth/chip.plg and chip.plgi (the stock CHIP plays, core/synth/synth_types.h refuses chip.plg) and no Effects/se_*.ptfx (the IMX image
+# has the nine Sample Editor effects built in, a card copy would be listed twice). It needs --modules or --card. The stack gate and the mismatch
+# gate are about the MK66 image and run with the package of the original from the same module folder, not here. The zip of the IMX package is
+# named like its image, TrackerPlus_<TAG>_<A.B.C>.zip.
 # With --zip the folder is also zipped next to itself (<name>.zip, needs zip). The zip has no wrapper directory: its root is the card root,
 # so it unzips straight onto the SD card. The zip is the only thing a release publishes: the image is inside it as Firmware/<image>.ptf and the
 # release page lists a SHA256SUMS of the zip alone (the list inside the zip, tracker-ff/SHA256SUMS, covers every file in it).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ptf=""; out="$root/build/release"; zip=0; card=""; modules=""; notices=""; effects=""; ext=""; modit=""; groups=(); with=()
+ptf=""; imx=""; out="$root/build/release"; zip=0; card=""; modules=""; notices=""; effects=""; ext=""; modit=""; groups=(); with=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --zip) zip=1 ;;
@@ -51,8 +59,9 @@ while [ $# -gt 0 ]; do
     --modules) shift; modules="${1:?--modules needs a directory}"; [ -d "$modules" ] || { echo "no such modules dir: $modules" >&2; exit 2; } ;;
     --notices) shift; notices="${1:?--notices needs a directory}"; [ -d "$notices" ] || { echo "no such notices dir: $notices" >&2; exit 2; } ;;
     --ext) shift; ext="${1:?--ext needs a module.plg}"; [ -f "$ext" ] || { echo "no such module: $ext" >&2; exit 2; } ;;
-    --modit) shift; modit="${1:?--modit needs a modit.plg}"; [ -f "$modit" ] || { echo "no such module: $modit" >&2; exit 2; } ;;
+    --extras|--modit) shift; modit="${1:?--extras needs an extras.plg}"; [ -f "$modit" ] || { echo "no such module: $modit" >&2; exit 2; } ;;
     --with) shift; groups+=("${1:?--with needs a group}"); with+=(--with "$1") ;;
+    --imx) shift; imx="${1:?--imx needs plus or mini}"; case "$imx" in plus | mini) ;; *) echo "--imx takes plus or mini" >&2; exit 2 ;; esac ;;
     --effects) shift; effects="${1:?--effects needs a directory}"; [ -d "$effects" ] || { echo "no such effects dir: $effects" >&2; exit 2; } ;;
     *) if [ -z "$ptf" ]; then ptf="$1"; else out="$1"; fi ;;
   esac
@@ -60,9 +69,17 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$ptf" ] && [ -f "$ptf" ] || { echo "usage: $0 <image.ptf> [out_dir] [--zip]" >&2; exit 2; }
 case "$(basename "$ptf")" in *.ptf) ;; *) echo "not a .ptf: $ptf" >&2; exit 2 ;; esac
+if [ -n "$imx" ]; then
+  # an IMX image: TrackerPlus_<TAG>_<A.B.C>.ptf or TrackerMini_<TAG>_<A.B.C>.ptf, named for the model (make plus, make mini)
+  case "$imx" in plus) want=TrackerPlus ;; *) want=TrackerMini ;; esac
+  [[ "$(basename "$ptf")" =~ ^${want}_[A-Za-z0-9]+_[0-9]+\.[0-9]+\.[0-9]+\.ptf$ ]] || { echo "--imx $imx needs an image named ${want}_<TAG>_<A.B.C>.ptf, not $(basename "$ptf")" >&2; exit 2; }
+  [ -z "$modit" ] && [ -z "$ext" ] || { echo "--imx takes no --extras and no --ext: the IMX image reads neither" >&2; exit 2; }
+else
 # Both name shapes pass, the public release PolyendTracker_<TAG>_<A.B.C>.ptf and the build image PolyendTracker_<TAG>_<sha7>.ptf
 # (rc, dev, test, console), with the 31 char limit of the bootloader. The folder and zip take the name of the image.
 "$root/synth-open/tools/check_ptf_name.sh" "$ptf" >&2 || exit 2
+fi
+[ -z "$imx" ] || [ -n "$modules" ] || [ -n "$card" ] || { echo "--imx needs --modules or --card" >&2; exit 2; }
 
 [ ${#groups[@]} = 0 ] || [ -n "$modules" ] || { echo "--with needs --modules" >&2; exit 2; }
 [ -z "$notices" ] || [ -n "$card" ] || { echo "--notices goes with --card (--modules reads its own folder)" >&2; exit 2; }
@@ -75,8 +92,10 @@ mkdir -p "$out" && out="$(cd "$out" && pwd)" || { echo "package_release: cannot 
 dest="$out/$name"
 
 gate_modit="$modit"
-[ -n "$gate_modit" ] || { [ -z "$card" ] || [ ! -f "$card/Plugins/Ext/modit.plg" ] || gate_modit="$card/Plugins/Ext/modit.plg"; }
-if [ -n "$modules" ] || [ -n "$card" ]; then
+[ -n "$gate_modit" ] || { [ -z "$card" ] || [ ! -f "$card/Plugins/Ext/extras.plg" ] || gate_modit="$card/Plugins/Ext/extras.plg"; }
+if [ -n "$imx" ]; then
+  echo "package_release: --imx $imx: the stack gate and the mismatch gate (MK66 image) are not run here, they run with the package of the original from the same modules" >&2
+elif [ -n "$modules" ] || [ -n "$card" ]; then
   if [ "${STACK_GATE:-}" = skip ]; then
     echo "WARNING: STACK_GATE=skip, the static stack gate was NOT checked for this package" >&2
   else
@@ -96,22 +115,22 @@ if [ -n "$modules" ] || [ -n "$card" ]; then
       gate_plg="$(mktemp -d)"; trap 'rm -rf "$gate_plg"' EXIT
       cp "$card"/Plugins/Synth/*.pl* "$card"/Plugins/Master/*.pl* "$gate_plg"/ 2>/dev/null || true
     fi
-    IMAGE="$ptf" PLG_DIR="$gate_plg" MODIT_PLG="$gate_modit" "$root/synth-open/tools/release_gate.sh" >&2 || { echo "package_release: the release gate failed, no package made (MISMATCH_GATE=skip only for a layout test)" >&2; exit 1; }
+    IMAGE="$ptf" PLG_DIR="$gate_plg" EXTRAS_PLG="$gate_modit" "$root/synth-open/tools/release_gate.sh" >&2 || { echo "package_release: the release gate failed, no package made (MISMATCH_GATE=skip only for a layout test)" >&2; exit 1; }
   fi
 fi
 # the MOD/IT module of a release package: bound to this image, or the package is not made
 if [ -n "$modit" ]; then
-  python3 -I "$root/synth-open/plug/check_ext.py" "$modit" "$ptf" >&2 || { echo "package_release: $modit does not belong to $ptf, no package made (build it after the image: make original-release)" >&2; exit 1; }
+  python3 -I "$root/synth-open/plug/check_ext.py" --rel "$modit" "$ptf" >&2 || { echo "package_release: $modit does not belong to $ptf, no package made (build it after the image: make original-release)" >&2; exit 1; }
 fi
-if [ -n "$modules" ] || [ -n "$card" ]; then
-  if [ -z "$modit" ] && { [ -z "$card" ] || [ ! -f "$card/Plugins/Ext/modit.plg" ]; }; then
-    if [ "${MODIT:-}" = skip ]; then
-      echo "WARNING: MODIT=skip, this package has NO MOD/IT module (Plugins/Ext/modit.plg)" >&2
+if [ -z "$imx" ] && { [ -n "$modules" ] || [ -n "$card" ]; }; then
+  if [ -z "$modit" ] && { [ -z "$card" ] || [ ! -f "$card/Plugins/Ext/extras.plg" ]; }; then
+    if [ "${EXTRAS:-${MODIT:-}}" = skip ]; then
+      echo "WARNING: EXTRAS=skip, this package has NO MOD/IT module (Plugins/Ext/extras.plg)" >&2
     else
-      echo "package_release: no MOD/IT module: pass --modit build/modit.plg (make original-release builds it) or put Plugins/Ext/modit.plg in the card kit" >&2; exit 1
+      echo "package_release: no MOD/IT module: pass --extras build/extras.plg (make original-release builds it) or put Plugins/Ext/extras.plg in the card kit" >&2; exit 1
     fi
   elif [ -z "$modit" ]; then
-    python3 -I "$root/synth-open/plug/check_ext.py" "$card/Plugins/Ext/modit.plg" "$ptf" >&2 || { echo "package_release: the card kit's modit.plg does not belong to $ptf" >&2; exit 1; }
+    python3 -I "$root/synth-open/plug/check_ext.py" --rel "$card/Plugins/Ext/extras.plg" "$ptf" >&2 || { echo "package_release: the card kit's extras.plg does not belong to $ptf" >&2; exit 1; }
   fi
 fi
 rm -rf "$dest"
@@ -178,12 +197,19 @@ if [ -n "$card" ]; then
   done
   cp -R "$card/Plugins" "$dest/Plugins"
   [ ! -d "$card/Effects" ] || cp -R "$card/Effects" "$dest/Effects"
+  if [ -n "$imx" ]; then
+    # what the IMX image does not read: no Ext folder, no chip.plg (stock CHIP plays), no se_*.ptfx (built in)
+    rm -rf "$dest/Plugins/Ext" "$dest/Plugins/Synth/chip.plg" "$dest/Plugins/Synth/chip.plgi"
+    rm -f "$dest"/Effects/se_*.ptfx
+  fi
   [ ! -d "$card/Patches" ] || cp -R "$card/Patches" "$dest/Patches"
   # the curated /Waves set (releases/waves, 143 AKWF-FREE single cycle waves, flat, with the CC0 credit and a readme): checked against its manifest first
   python3 -I "$root/synth-open/tools/waves_curated.py" stage "$dest" >&2 || { echo "package_release: the curated /Waves set does not match releases/waves/MANIFEST.txt" >&2; exit 1; }
+  # the example Scala tunings (releases/tunings/*.scl, Project Settings > Tuning > Scale file reads /Tunings)
+  [ ! -d "$root/releases/tunings" ] || { mkdir -p "$dest/Tunings"; cp "$root"/releases/tunings/*.scl "$dest/Tunings/"; }
 fi
 [ -z "$ext" ] || { mkdir -p "$dest/Plugins/Ext"; cp "$ext" "$dest/Plugins/Ext/module.plg"; }
-[ -z "$modit" ] || { mkdir -p "$dest/Plugins/Ext"; cp "$modit" "$dest/Plugins/Ext/modit.plg"; }
+[ -z "$modit" ] || { mkdir -p "$dest/Plugins/Ext"; cp "$modit" "$dest/Plugins/Ext/extras.plg"; }
 cp "$root/LICENSE" "$root/NOTICE.md" "$root/UPGRADING.md" "$root/CONTRIBUTORS.md" "$docs/"
 
 # Full license texts that are files in the repository
@@ -228,7 +254,7 @@ header platforms/mk66/3rdparty/Audio/input_i2s.h            LICENSE-PJRC-AudioLi
 rev="${PKG_REV:-$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 # A public release image (PolyendTracker_<TAG>_<A.B.C>.ptf) names its release tag, as the published 1.2.0 kit did, never a local commit
 case "$name" in
-  PolyendTracker_*_[0-9]*.[0-9]*.[0-9]*) [ -n "${PKG_REV:-}" ] || rev="tag tracker-ff-v${name##*_}" ;;
+  PolyendTracker_*_[0-9]*.[0-9]*.[0-9]* | TrackerPlus_*_[0-9]*.[0-9]*.[0-9]* | TrackerMini_*_[0-9]*.[0-9]*.[0-9]*) [ -n "${PKG_REV:-}" ] || rev="tag tracker-ff-v${name##*_}" ;;
 esac
 case "$rev" in tag\ *) ;; *) rev="commit $rev" ;; esac
 # The words of the README that depend on the optional groups (none on: 14 plugin engines, CHIP among them since 1.3.0, ALCO since 1.4.0)
@@ -242,7 +268,36 @@ done
 plugnotes=""
 [ -z "$notices" ] || plugnotes="tracker-ff/licenses/plugins/<module set>/   the notices and licences of the plugins, per module set ($freeware are freeware: LICENSE.md there)
 "
-if [ -n "$card" ]; then
+if [ -n "$imx" ]; then
+case "$imx" in plus) model="Tracker+" ;; *) model="Tracker Mini" ;; esac
+cat > "$dest/README-RELEASE.txt" <<EOF
+tracker-ff  ($name)
+Unofficial community firmware for the Polyend $model (IMX), a fork of Polyend's Tracker Community Edition. It is built from the same source as the firmware of the original Tracker. The synth parts keep the stock engines and the image also reads $((nplug - 1)) plugin synth engines from the card.
+Not affiliated with, endorsed by or supported by Polyend. Free, non-commercial.
+Built from $rev of https://github.com/sbialy/tracker-ff (fork of https://github.com/polyend/tracker-ce).
+
+tracker-ff/LICENSE     the repository license (MIT with the Wholesale Commercial Clone Restriction): free to share, not to sell
+tracker-ff/NOTICE.md   third-party notices and attributions
+tracker-ff/UPGRADING.md  how to update and how to go back, read it before you flash
+tracker-ff/CONTRIBUTORS.md  the people who contributed reports, fixes or ideas
+tracker-ff/licenses/   the full license text of every bundled third-party component (OpenTracker Apache-2.0, opentracker-synths MIT, opentracker-fx MIT, ...)
+tracker-ff/SHA256SUMS  checksums of every file, paths from the card root: shasum -a 256 -c tracker-ff/SHA256SUMS
+${plugnotes}
+Install
+1. Back up the SD card first. UPGRADING.md lists what to copy.
+2. Unzip this whole zip onto the root of the SD card and let the computer replace the files that are there. The zip is laid out like the card: Firmware/ holds the image, Plugins/Synth/ and Plugins/Master/ the plugins, Effects/ the optional effects, Waves/ and Tunings/ the example waves and scales.
+3. Put the card in the $model, open Config > Firmware > Firmware update, pick the image and confirm. Leave the .ptf of your old version in /Firmware as your way back. The file name of the image must stay as it is.
+4. Wait until the $model restarts by itself. Config > Firmware then shows the version.
+
+What the card files do
+- Plugins/Synth/ holds the plugin synth engines. A synth part that uses one loads it when the part picks it, and without the file the part shows Missing and keeps its settings and its patch file. The stock CHIP engine plays CHIP, so there is no chip.plg in this zip.
+- Plugins/Master/ holds the master insert plugins.
+- Effects/ holds the optional effects. The nine Sample Editor effects are built into this image, so there are no se_*.ptfx files in this zip.
+- Waves/ holds 143 single cycle waves for ALCO Wave mode (A File and B File), flat in /Waves, from AKWF-FREE by Kristoffer Ekstrand (CC0 1.0, credit in Waves/AKWF-LICENSE.txt). Waves you already have in /Waves stay, nothing there is deleted. The full AKWF-FREE set (4,358 waves) is at https://github.com/KristofferKarlAxelEkstrand/AKWF-FREE
+- Tunings/ holds five example Scala tunings (just intonation, Bohlen-Pierce, 22 shruti and the overtone series). Pick one in Project Settings > Tuning > Scale file. Put your own .scl files in the same folder.
+- No Plugins/Ext/extras.plg: the MOD and IT import and export, the custom themes, the factory self test and Capture are part of this image.
+EOF
+elif [ -n "$card" ]; then
 cat > "$dest/README-RELEASE.txt" <<EOF
 tracker-ff  ($name)
 Unofficial community firmware for the original Polyend Tracker (MK66), a fork of Polyend's Tracker Community Edition with $ntotal open synth engines (5 built in, $nplug plugins).
@@ -268,9 +323,10 @@ Flash the image from this zip and not the .ptf alone, because the image needs th
 What the card files do
 - Without the synth plugins the projects that use the $nword plugin engines show Missing on those parts. A Missing part keeps its settings and its patch file.
 - When you update from 1.2.x or 1.1.0, Plugins/Synth/chip.plg is required: CHIP is no longer in the image and without chip.plg the CHIP parts show Missing.
-- Plugins/Ext/modit.plg is the MOD and IT module. MOD import, IT import and MOD/IT export load it from the card on first use (about a second) and the image does not hold that code. It belongs to this exact image, so after a firmware update copy the modit.plg of the same release. Without it or with the one of another release the import and export keys say so and nothing else changes.
+- Plugins/Ext/extras.plg holds the MOD and IT module. MOD import, IT import and MOD/IT export load it from the card on first use (about a second) and the image does not hold that code. It belongs to this exact image, so after a firmware update copy the extras.plg of the same release. A modit.plg from 1.4.0 is no longer read and can be deleted. Without it or with the one of another release the import and export keys say so and nothing else changes.
 - Effects/ holds the optional effects and the nine Sample Editor effects that are no longer in the image (se_*.ptfx: Amplifier, Overdrive, Delay, Bitcrusher, Chorus, Flanger, Equalizer, Limiter, Compressor). Without those files their rows in the Sample Editor show Missing.
-- Waves/ holds 143 single cycle waves for ALCO Wave mode (A File and B File), flat in /Waves, from AKWF-FREE by Kristoffer Ekstrand (CC0 1.0, credit in Waves/AKWF-LICENSE.txt). Waves you already have in /Waves stay, nothing there is deleted. The full AKWF-FREE set (4,358 waves) is at https://github.com/KristofferKarlAxelEkstrand/AKWF-FREE${patchesline}
+- Waves/ holds 143 single cycle waves for ALCO Wave mode (A File and B File), flat in /Waves, from AKWF-FREE by Kristoffer Ekstrand (CC0 1.0, credit in Waves/AKWF-LICENSE.txt). Waves you already have in /Waves stay, nothing there is deleted. The full AKWF-FREE set (4,358 waves) is at https://github.com/KristofferKarlAxelEkstrand/AKWF-FREE
+- Tunings/ holds five example Scala tunings (just intonation, Bohlen-Pierce, 22 shruti and the overtone series). Pick one in Project Settings > Tuning > Scale file. Put your own .scl files in the same folder.${patchesline}
 EOF
 else
 cat > "$dest/README-RELEASE.txt" <<EOF

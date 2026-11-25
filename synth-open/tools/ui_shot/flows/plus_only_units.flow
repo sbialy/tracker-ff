@@ -1,0 +1,29 @@
+# P7 polish: the plugin engine parameters print with the MK66 units in the Tracker+ patch editor (PlugSynthVoice formatValue). The card holds
+# pluck.plg and alco.plg (plus_flows.sh stages the logos card). Synth 1 steps to PLK as in *_logos.flow, F8 opens the patch editor, Down selects
+# the second parameter of the first section (Pick Pos). plus_flows.sh reads the value text of the selected parameter afterwards (UISHOT_TRACE_SYNTHTEXT, the
+# synthtext line): the last one must be "Pick Pos = 35%", the MK66 text at its default (OG emu: synthfmt 0 Pick_Pos 0.35 = 35%).
+# Replay: plus_flows.sh plus
+title: Plugin engine param units on Tracker+ (P7 polish)
+check: texts
+pause: 90ms
+
+use boot-to-pattern
+press Instr
+wait 400ms
+tap Up x3
+wait 300ms
+release Instr
+wait 600ms
+use goto-instrument
+wait 1500ms
+expect text "Synth 1"
+tap Down x4
+wait 1500ms
+expect text "PLK"
+tap F8
+wait 1500ms
+expect text "Edit Patch"
+shot units-editor
+tap Down
+wait 1500ms
+shot units-param

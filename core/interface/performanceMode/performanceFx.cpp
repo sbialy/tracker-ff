@@ -1,6 +1,7 @@
 
 
 #include "mtAudioEngine.h"
+#include "stereoPairs.h"
 #include "mtSequencer.h"
 
 #include "performanceFx.h"
@@ -76,6 +77,12 @@ enum
     performanceFxesCount
 };
 
+// A linked stereo pair is one voice: a Performance effect on its second track acts on the leader (stereoPairs.h)
+static inline playerEngine& pairPlayer(uint8_t track)
+{
+    return instrumentPlayer[isSampleTrack(track) ? stereopairs::base(track) : track];
+}
+
 cPerformEngine performance(performanceFxesCount, performanceDataSource, performanceDataSourceCount);
 
 //##################################################################################
@@ -96,7 +103,7 @@ void volumeSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeVolumePerformanceMode(value);
+        pairPlayer(track).changeVolumePerformanceMode(value);
     }
     sequencer.setPerformanceMidiVolume(track, value);
 }
@@ -104,7 +111,7 @@ void volumeClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endVolumePerformanceMode();
+        pairPlayer(track).endVolumePerformanceMode();
     }
     sequencer.setPerformanceMidiVolume(track, 0);
 }
@@ -117,14 +124,14 @@ void panningSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changePanningPerformanceMode(value);
+        pairPlayer(track).changePanningPerformanceMode(value);
     }
 }
 void panningClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endPanningPerformanceMode();
+        pairPlayer(track).endPanningPerformanceMode();
     }
 }
 const fxSetup panningSetup = { -100, 100, nullptr };
@@ -136,14 +143,14 @@ void bitDepthSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeBitDepthPerformanceMode(value);
+        pairPlayer(track).changeBitDepthPerformanceMode(value);
     }
 }
 void bitDepthClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endBitDepthPerformanceMode();
+        pairPlayer(track).endBitDepthPerformanceMode();
     }
 }
 const fxSetup bitDepthSetup = { -12, 12, nullptr };
@@ -159,14 +166,14 @@ void overdriveSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeOverdrivePerformanceMode(value);
+        pairPlayer(track).changeOverdrivePerformanceMode(value);
     }
 }
 void overdriveClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endOverdrivePerformanceMode();
+        pairPlayer(track).endOverdrivePerformanceMode();
     }
 }
 const fxSetup overdriveSetup = { -100, 100, nullptr };
@@ -182,7 +189,7 @@ void tuneSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeTunePerformanceMode(value);
+        pairPlayer(track).changeTunePerformanceMode(value);
     }
     sequencer.setPerformanceMidiTune(track, value);
 }
@@ -190,7 +197,7 @@ void tuneClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endTunePerformanceMode();
+        pairPlayer(track).endTunePerformanceMode();
     }
     sequencer.setPerformanceMidiTune(track, 0);
 }
@@ -203,32 +210,32 @@ void lowPassSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeFilterTypePerformanceMode(1);
-        instrumentPlayer[track].changeCutoffPerformanceMode(value);
+        pairPlayer(track).changeFilterTypePerformanceMode(1);
+        pairPlayer(track).changeCutoffPerformanceMode(value);
     }
 }
 void highPassSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeFilterTypePerformanceMode(2);
-        instrumentPlayer[track].changeCutoffPerformanceMode(value);
+        pairPlayer(track).changeFilterTypePerformanceMode(2);
+        pairPlayer(track).changeCutoffPerformanceMode(value);
     }
 }
 void bandPassSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeFilterTypePerformanceMode(3);
-        instrumentPlayer[track].changeCutoffPerformanceMode(value);
+        pairPlayer(track).changeFilterTypePerformanceMode(3);
+        pairPlayer(track).changeCutoffPerformanceMode(value);
     }
 }
 void filterClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endCutoffPerformanceMode();
-        instrumentPlayer[track].endFilterTypePerformanceMode();
+        pairPlayer(track).endCutoffPerformanceMode();
+        pairPlayer(track).endFilterTypePerformanceMode();
     }
 }
 const fxSetup lowPassSetup = { -100, 100, nullptr, 0, mtPerfHighPass, mtPerfBandPass };
@@ -252,14 +259,14 @@ void delaySet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeDelaySendPerformanceMode(value);
+        pairPlayer(track).changeDelaySendPerformanceMode(value);
     }
 }
 void delayClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endDelaySendPerformanceMode();
+        pairPlayer(track).endDelaySendPerformanceMode();
     }
 }
 const fxSetup delaySetup = { -100, 100, nullptr };
@@ -271,14 +278,14 @@ void reverbSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeReverbSendPerformanceMode(value);
+        pairPlayer(track).changeReverbSendPerformanceMode(value);
     }
 }
 void reverbClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endReverbSendPerformanceMode();
+        pairPlayer(track).endReverbSendPerformanceMode();
     }
 }
 const fxSetup reverbSetup = { -100, 100, nullptr };
@@ -294,14 +301,14 @@ void samplePosSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changePositionPerformanceMode(value);
+        pairPlayer(track).changePositionPerformanceMode(value);
     }
 }
 void samplePosClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endPositionPerformanceMode();
+        pairPlayer(track).endPositionPerformanceMode();
     }
 }
 const fxSetup samplePosSetup = { -100, 100, nullptr };
@@ -317,14 +324,14 @@ void sampleEndSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeEndPointPerformanceMode(value);
+        pairPlayer(track).changeEndPointPerformanceMode(value);
     }
 }
 void sampleEndClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endEndPointPerformanceMode();
+        pairPlayer(track).endEndPointPerformanceMode();
     }
 }
 const fxSetup sampleEndSetup = { -100, 100, nullptr };
@@ -605,14 +612,14 @@ void samplePlaybackSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeSamplePlaybackPerformanceMode(value);
+        pairPlayer(track).changeSamplePlaybackPerformanceMode(value);
     }
 }
 void samplePlaybackClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endSamplePlaybackPerformanceMode();
+        pairPlayer(track).endSamplePlaybackPerformanceMode();
     }
 }
 const char samplePlaybackPerfLabels[2][4] = { ">>>", "<<<" };
@@ -630,14 +637,14 @@ void volumeLfoSpeedSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeAmpLfoRatePerformanceMode(value);
+        pairPlayer(track).changeAmpLfoRatePerformanceMode(value);
     }
 }
 void volumeLfoSpeedClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endAmpLfoRatePerformanceMode();
+        pairPlayer(track).endAmpLfoRatePerformanceMode();
     }
 }
 const fxSetup volumeLfoSpeedSetup = { -CONSTRAIN_SPEED_AMP_ENVELOPE,
@@ -656,14 +663,14 @@ void panningLfoSpeedSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changePanningLfoRatePerformanceMode(value);
+        pairPlayer(track).changePanningLfoRatePerformanceMode(value);
     }
 }
 void panningLfoSpeedClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endPanningLfoRatePerformanceMode();
+        pairPlayer(track).endPanningLfoRatePerformanceMode();
     }
 }
 const fxSetup panningLfoSpeedSetup = { -CONSTRAIN_SPEED_OTHER_ENVELOPE,
@@ -682,14 +689,14 @@ void finetuneLfoSpeedSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeFinetuneLfoRatePerformanceMode(value);
+        pairPlayer(track).changeFinetuneLfoRatePerformanceMode(value);
     }
 }
 void finetuneLfoSpeedClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endFinetuneLfoRatePerformanceMode();
+        pairPlayer(track).endFinetuneLfoRatePerformanceMode();
     }
 }
 const fxSetup finetuneLfoSpeedSetup = { -CONSTRAIN_SPEED_OTHER_ENVELOPE,
@@ -708,14 +715,14 @@ void filterLfoSpeedSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changeCutoffLfoRatePerformanceMode(value);
+        pairPlayer(track).changeCutoffLfoRatePerformanceMode(value);
     }
 }
 void filterLfoSpeedClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endCutoffLfoRatePerformanceMode();
+        pairPlayer(track).endCutoffLfoRatePerformanceMode();
     }
 }
 const fxSetup filterLfoSpeedSetup = { -CONSTRAIN_SPEED_OTHER_ENVELOPE,
@@ -734,14 +741,14 @@ void granWtLfoSpeedSet(uint8_t track, int16_t value)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].changePositionLfoRatePerformanceMode(value);
+        pairPlayer(track).changePositionLfoRatePerformanceMode(value);
     }
 }
 void granWtLfoSpeedClear(uint8_t track)
 {
     if (isSampleTrack(track))
     {
-        instrumentPlayer[track].endPositionLfoRatePerformanceMode();
+        pairPlayer(track).endPositionLfoRatePerformanceMode();
     }
 }
 const fxSetup granWtLfoSpeedSetup = { -CONSTRAIN_SPEED_OTHER_ENVELOPE,

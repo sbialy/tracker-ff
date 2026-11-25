@@ -344,6 +344,11 @@ void checkConfig()
         }
     }
 
+    if (mtConfig.midi.programIn > 1)
+    {
+        mtConfig.midi.programIn = 0;
+    }
+
     // VALUES CHECK  --------------------
     if (mtConfig.values.padsLightBack > 31)
         mtConfig.values.padsLightBack = PADS_LIGHT_BACK_DEFAULT;
@@ -537,6 +542,7 @@ void resetConfig()
     {
         mtConfig.midi.trackNotesInChannel[i] = 0;
     }
+    mtConfig.midi.programIn = 0;
 
     // values ----------------------------------------
     mtConfig.values.padsLightBack = PADS_LIGHT_BACK_DEFAULT;

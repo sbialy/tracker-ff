@@ -41,7 +41,9 @@ if [ -z "$PTFX" ]; then
 fi
 for n in $NAMES; do [ -f "$PTFX/se_$n.ptfx" ] || { echo "septfx_sim.sh: SKIP (no $PTFX/se_$n.ptfx)"; exit 0; }; done
 
-JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+JOBS="$(sh "$HERE/../jobs.sh" n)"
+BIN_STOCK="${BIN_STOCK:-${UI_SHOT_BIN:-}}"             # UI_SHOT_BIN: the prebuilt stock flavour, UI_SHOT_BIN_BRIDGE: the BRIDGE=1 one, no make
+BIN_CARD="${BIN_CARD:-${UI_SHOT_BIN_BRIDGE:-}}"
 if [ -z "${BIN_STOCK:-}" ]; then
     BIN_STOCK="$ROOT/build/ui-shot${SAN:+-san}/ui_shot"
     make -s -C "$HERE" -j"$JOBS" ${SAN:+SAN=$SAN} >"$WORK/make_stock.log" 2>&1 || { tail -30 "$WORK/make_stock.log"; exit 2; }

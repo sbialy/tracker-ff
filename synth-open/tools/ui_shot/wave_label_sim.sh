@@ -15,12 +15,12 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 . "$HERE/bridge_env.sh"
 bridge_env "$ROOT" || exit 2
-BIN="$ROOT/build/ui-shot-bridge/ui_shot"
+BIN="${UI_SHOT_BIN:-$ROOT/build/ui-shot-bridge/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (BRIDGE=1 flavour)
 G="$HERE/goldens/waves_curated"; mkdir -p "$G"
 UPD=0; [ "${1:-}" = "--update" ] && UPD=1
 plg="${PLG_DIR:-$ROOT/build/tests/modules}"
 [ -f "$plg/alco.plg" ] || { echo "wave_label_sim.sh: no alco.plg in $plg (set PLG_DIR)" >&2; exit 2; }
-make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" "${BRIDGE_ARGS[@]}" OUT="$(dirname "$BIN")" >"$(dirname "$BIN").make.log" 2>&1 || { tail -30 "$(dirname "$BIN").make.log"; exit 2; }
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" "${BRIDGE_ARGS[@]}" OUT="$(dirname "$BIN")" >"$(dirname "$BIN").make.log" 2>&1 || { tail -30 "$(dirname "$BIN").make.log"; exit 2; }
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/wave_label_sim.XXXXXX")"; trap 'rm -rf "$WORK"' EXIT
 fails=0
 chk() { # name shot: byte equal to the golden

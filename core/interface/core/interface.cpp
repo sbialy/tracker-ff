@@ -23,7 +23,7 @@
 #include "samplePlayback/samplePlayback.h"
 #include "sampleRecorder/sampleRecorder.h"
 #include "songEditor/songEditor.h"
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
 #include "synthPlay/synthPlay.h"
 #endif
 
@@ -31,7 +31,7 @@
 #include "mtConfig.h"
 #include "mtPadBoard.h"
 #include "mtStructs.h"
-#include "mtTest.h"
+#include "mtTestGlue.h"
 
 #include "Platform.h"
 #include "VoiceStreamManager.h"
@@ -39,9 +39,7 @@
 #include "log.h"
 #include "mtHardware.h"
 #include "mtSleep.h"
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
-#endif
+#include "interface_ff.inc"
 
 InputProcessor ip(mtInterfacePotsDef::interfacePotsCount,
                   mtInterfaceButtonsDef::interfaceButtonsCount,
@@ -75,7 +73,7 @@ const hModule Interface::modules[modulesCount] = {
     &sampleRecorder,   // 8
     &performanceMode,  // 9
     &imageViewer,      // 10
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
     &synthPlay, // 11, the Synth play page: no page key, entered with Shift + Perform (trySynthPlayEntry)
 #else
     nullptr,           // 11
@@ -127,13 +125,7 @@ void Interface::begin(Platform* platform, Synth* synth)
     ModuleBase::setTitleBar(&titleBar);
     ModuleBase::setSynth(synth);
 
-    mtTest.setCodecAudio(platform->getCodecAudio());
-    mtTest.setRadio(platform->getRadio());
-    mtTest.setButtons(platform->getButtons());
-    mtTest.setEncoder(platform->getEncoder());
-    mtTest.setTimer(platform->getTimer());
-    mtTest.setBattery(platform->getBattery());
-    mtTest.setFileSystem(platform->getFileSystem());
+    selftestSetup(platform);
 
     ip->unblockAllInputs();
 }
@@ -152,7 +144,7 @@ void Interface::update()
 
     mtPopups.update();
 
-    mtTest.testLoop();
+    selftestLoop();
 
     commonThingsUpdate();
 }
@@ -434,6 +426,9 @@ void Interface::handleFileTransferMode(uint8_t state)
             return;
         }
 
+        // The Capture take file: what is pending goes to the card now, the computer may keep the file and reads it
+        sequencer.captureFlushNow();
+
         activateFileTransferModeScreen();
 
         // Closing the module above may have queued more to save. After this
@@ -449,12 +444,8 @@ void Interface::handleFileTransferMode(uint8_t state)
     else
     {
         LOGE("USB storage mode off");
-#ifdef FEATURE_USB_MSC
-        bool reloadWorkspace = false;
-#endif
-#ifdef FEATURE_PLUG_HOST
-        plug::cardChanged(); // the host may have changed /Plugins/Master: the Inserts page reads every file again
-#endif
+        FF_IF_MSC_RELOAD_DECL();
+        FF_IF_PLUG_CARD_CHANGED(); // the host may have changed /Plugins/Master: the Inserts page reads every file again
 
         // The host may have changed the card, so what the filesystem driver
         // and sample streaming remember about it can be wrong. When the mode
@@ -462,42 +453,18 @@ void Interface::handleFileTransferMode(uint8_t state)
         if (fileSystem->remount())
         {
             voiceStreamManager.rebindAllInstrumentStreamFiles();
-#ifdef FEATURE_USB_MSC
-            // USB drive (decision 3 of ref/usb-mass-storage-feasibility.md): what the computer wrote to /Workspace wins. The
-            // project in RAM was saved when the mode began and could not change since, so it is read back from the card
-            // (a new project when /Workspace no longer holds one, as at start).
-            reloadWorkspace = true;
-#endif
+            FF_IF_MSC_RELOAD_ARM(); // USB drive: what the computer wrote to /Workspace wins, the project is read back below
         }
         voiceStreamManager.setSuspended(false);
         newFileManager.setWorkspaceSaveSuspended(false);
         activateInterface();
-#ifdef FEATURE_USB_MSC
-        if (reloadWorkspace)
-        {
-            // On the File screen, as when a project is opened there: inputs blocked and the progress popup while it loads, then
-            // the pattern editor (cProjectEditor::update clears the end status)
-            switchModuleByButton(onScreenModule, interfaceButtonFile, 0);
-            openStartupProject();
-            ip->blockAllInputs();
-        }
-#endif
+        FF_IF_MSC_RELOAD_RUN();
     }
 
     Usb* usb = mtInterface.getPlatform()->getUsb();
     usb->setClassState(Usb::ClassType::kStorage, state == 1 ? true : false);
     usb->reset();
-#ifdef FEATURE_USB_MSC
-    if (state && !usb->getClassState(Usb::ClassType::kStorage))
-    {
-        // The platform did not lend the card (no card, or the drive is off this session): back out, nothing was lent
-        LOGE("USB storage mode refused");
-        ip->unblockAllInputs();
-        voiceStreamManager.setSuspended(false);
-        newFileManager.setWorkspaceSaveSuspended(false);
-        activateInterface();
-    }
-#endif
+    FF_IF_MSC_REFUSED(usb, state);
 }
 
 bool Interface::setFileTransferMode(bool enable)
@@ -577,94 +544,22 @@ void Interface::deactivateModule(hModule module)
     previousModuleOptions = lastOptions;
 }
 
-#ifdef FEATURE_SYNTH_OPEN
-// Shift + Perform, on every page except the Synth play page itself, the Performance page (Shift + Perform is its track page flip there)
-// and the two that finish work of their own before they let go (the Sample Recorder and the Sample Editor). The press goes to the page as the press of another page key (Pattern, Song on the Pattern page)
-// so the page runs its own checks (a popup, unsaved edits, Performance mode, a busy Song page) and then asks for a switch: the
-// switch lands in switchModuleByButton, which opens the Synth play page instead of the page of that key. A page that does not switch
-// (it refused, or it waits for an answer) leaves the user where they are.
-bool Interface::trySynthPlayEntry()
-{
-    if (operatingMode != mtOperatingModeRun || specialScreenMode != specialScreenModeDisabled || onScreenModule == nullptr ||
-        onScreenModule == &synthPlay || onScreenModule == &performanceMode || onScreenModule == &sampleRecorder ||
-        onScreenModule == &sampleEditor)
-    {
-        return false;
-    }
-    synthPlayEntry = true;
-    synthPlay.entryInstrument = mtProject.values.lastUsedInstrument;
-    ip->processButtonsInput(onScreenModule == &patternEditor ? interfaceButtonSong : interfaceButtonPattern, buttonPress);
-    const bool taken = !synthPlayEntry;
-    synthPlayEntry = false;
-    return taken;
-}
+#include "interface_synthplay.inc"
 
-// Perform on page 2 of Performance mode (the third page of the Perform key): the Synth play page opens straight from the page that asks, without the
-// Pattern key press of trySynthPlayEntry. The caller keeps its own state (Performance mode keeps its FX and track states, see
-// cPerformanceMode::openSynthPlay), a refusal leaves everything as it was
-bool Interface::openSynthPlayFrom(hModule module)
-{
-    if (operatingMode != mtOperatingModeRun || specialScreenMode != specialScreenModeDisabled || onScreenModule != module || module == &synthPlay)
-    {
-        return false;
-    }
-    synthPlay.entryInstrument = mtProject.values.lastUsedInstrument;
-    synthPlayEntry = true;
-    switchModuleByButton(module, interfaceButtonPattern, 0);
-    const bool taken = !synthPlayEntry;
-    synthPlayEntry = false;
-    return taken;
-}
-#endif
-
-#ifdef FEATURE_PARTS
-// Shift + Song: the press goes to the page as a plain Song press, so the page runs its own checks and switches. On the Song screen the
-// view switches to Parts (and back to Patterns), with the Song screen's own refusal while something plays
-bool Interface::tryPartsEntry()
-{
-    if (operatingMode != mtOperatingModeRun || specialScreenMode != specialScreenModeDisabled || onScreenModule == nullptr)
-    {
-        return false;
-    }
-    if (onScreenModule == &songEditor)
-    {
-        if (!songEditor.isBusy) songEditor.partsEnterView(!songEditor.partsView);
-        return true;
-    }
-    ip->processButtonsInput(interfaceButtonSong, buttonPress);
-    if (onScreenModule != &songEditor) return true;   // the page refused (its popup says why), the release is swallowed all the same
-    if (!songEditor.partsView) songEditor.partsEnterView(true);
-    return true;
-}
-#endif
+#include "interface_parts.inc"
 
 void Interface::switchModuleByButton(hModule module, uint8_t button, uint32_t options)
 {
     int8_t index = getButtonIndex(button);
     if (index < 0)
         return;
-#ifdef FEATURE_SYNTH_OPEN
-    if (synthPlayEntry)
-    {
-        synthPlayEntry = false;
-        deactivateModule(module);
-        activateModule(&synthPlay, 0);
-        return;
-    }
-#endif
+    FF_IF_SYNTH_PLAY_ENTRY_OR_RETURN(module);
     if (modules[modulesButtons[index][1]] == module)
         return;
 
     uint32_t localOptions = options > 0 ? options : modulesButtons[index][2];
 
-#ifdef FEATURE_PARTS
-    // Performance mode swaps tracks into the playing pattern, which is a Part image while Parts play (risk R4)
-    if (button == interfaceButtonPerformance && parts::playing())
-    {
-        mtPopups.show(0, "A Part is playing", "stop it to use Performance"); // timed: an info popup would stay up
-        return;
-    }
-#endif
+    FF_IF_PARTS_PERFORMANCE_OR_RETURN(button);
 
     deactivateModule(module);
     activateModule(modules[modulesButtons[index][1]], localOptions);
@@ -809,7 +704,7 @@ void interfaceEnvents(uint8_t event, void* param1, void* param2, void* param3)
         case eventActivateTestingProcedure:
         {
             mtInterface.deactivateModule((hModule)param1);
-            mtTest.runTestingProcedure(mtInterface.ip);
+            selftestStart(mtInterface.ip);
             break;
         }
         case eventSetFileTransferMode:

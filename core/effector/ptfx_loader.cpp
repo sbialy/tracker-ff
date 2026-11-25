@@ -135,7 +135,7 @@ void PtfxLoader::syncInstructionCache([[maybe_unused]] void* addr, [[maybe_unuse
 #endif
 }
 
-bool PtfxLoader::readHeader(const char* filepath, PtfxHeader& outHeader)
+__attribute__((noinline)) bool PtfxLoader::readHeader(const char* filepath, PtfxHeader& outHeader)
 {
     FileSystem* fs = getFileSystem();
     if (!filepath || !fs)

@@ -1,7 +1,7 @@
 #!/bin/bash
 # mtff_sim.sh [BIN]
 #
-# project.mtff (synth-open/plug_mtff.h, plug_host.cpp) on the real UI, file manager and plugin host of this tree (ui_shot, the PLUG_HOST
+# project.mtff (core/FileManager/mtff_codec.h, plug_host.cpp) on the real UI, file manager and plugin host of this tree (ui_shot, the PLUG_HOST
 # configuration) over a card folder on the Mac: the five hooks (open incl. the open the USB console calls, Workspace load, Workspace save,
 # Save / Save As, new project), the stamp against the real project.mt CRC, the Project Settings page rows Strum volume and Macro depth and unknown lines on a rewrite.
 # Host only: no device, no audio, virtual clock. Ends with "RESULT: GREEN" (exit 0) or "RESULT: RED (n failing of m)".
@@ -9,7 +9,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BIN="${1:-$ROOT/build/ui-shot/ui_shot}"
+BIN="${1:-${UI_SHOT_BIN:-$ROOT/build/ui-shot/ui_shot}}"
 [ -x "$BIN" ] || { echo "mtff_sim.sh: no $BIN (ui_shot.sh pattern builds it)" >&2; exit 2; }
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/mtff_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -31,7 +31,8 @@ run() {
 }
 # The header the firmware writes first: "tffproj <format> ff=<version of this tree> build=<the host's build id> cap=<kMtffMax>"
 VER="$(sed -n 's/^SYNTH_OPEN_VER := *//p' "$ROOT/version.mk" | head -1 | cut -d- -f1)"
-HDR="tffproj 1 ff=$VER build=uishot cap=32768"
+CAP="$(sed -n 's/^constexpr int kMtffMax = \([0-9]*\);.*/\1/p' "$ROOT/core/FileManager/mtff_codec.h")"   # kMtffMax of this tree
+HDR="tffproj 1 ff=$VER build=uishot cap=$CAP"
 mtffver() { grep '^mtffver ' "$WORK/poke.out" | tail -1 | cut -d' ' -f2-; }
 # the Project Settings page (File > F7), Strum volume row: strum N moves the list by N steps of 10 (the old File row stepped by 10 and wrapped, the page list does not wrap)
 PAGE='tap File; wait 800; tap F7; wait 800'

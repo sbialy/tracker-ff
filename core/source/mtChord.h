@@ -1,5 +1,5 @@
 #pragma once
-// Chord capture and chord names (tracker-ff). The 68 entries are the MIDI Chord FX table (mtChordDefs.h chordDef, the SDK contract
+// Chord capture and chord names (tracker-ff). The 77 entries are the MIDI Chord FX table (mtChordDefs.h chordDef, the SDK contract
 // synth-open/plug/plug_chord.h): a mask of semitones above the step note, which is the lowest note (the bass).
 #include <stdint.h>
 

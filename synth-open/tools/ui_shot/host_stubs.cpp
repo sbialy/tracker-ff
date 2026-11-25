@@ -98,6 +98,16 @@ void nvmLegacy(bool) {}
 }   // namespace plug
 #endif
 
+// ---- plug::syncCode on the plus and mini sims without BRIDGE=1: plug_host.cpp defines it for the MK66 only (the IMX loader's cache step
+// is plug_imx.cpp's imx::syncCode), the open stack's plug_synth.cpp start() still calls it. The host has no code cache, and with the empty
+// bank above start() never runs. BRIDGE=1 builds take start() from host_synthcheck.cpp and keep their link as it was
+#if defined(PLATFORM_IMX) && !defined(UISHOT_BRIDGE)
+namespace plug
+{
+void syncCode() {}
+}   // namespace plug
+#endif
+
 #if defined(FEATURE_EXT_HOOKS) && !defined(ENABLE_DEV_CONSOLE)
 // EXTHOOKS=1: LOGE is compiled in (core/source/log.h) and goes to a loaded module, as platforms/mk66/source/util.cpp does
 #include <stdarg.h>

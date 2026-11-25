@@ -1,4 +1,5 @@
 #include "mtAudioEngine.h"
+#include "stereoPairs.h"
 #include "fx_auto_mute.h"
 #include "mtConfig.h"
 #include "mtPadBoard.h"
@@ -121,10 +122,7 @@ void setDefaultLimiterRelease();
 void setDefaultLimiterTreshold();
 void setDefaultLimiterSidechain();
 
-#ifdef FEATURE_SEND_DUCK
-// send ducking (the limiter screen's second page): field 0 depth, 1 release, 2 threshold, 4 source
-static void duckEdit(int field, int16_t value, bool toDefault);
-#endif
+#include "fMasterParams_ff.inc" // feature hooks of the Master screens (send ducking, the Master Inserts page)
 
 static void functMiniMiddle(uint8_t state);
 
@@ -154,9 +152,7 @@ static elapsedMillis refreshTimer;
 
 void cMasterParams::update()
 {
-#ifdef FEATURE_PLUG_HOST
-    plugUiUpdate(platform->getTimer()->millis());
-#endif
+    ffMpPlugUpdate(platform);
 
     if (displayType == displayMode::mixer && !keyboardManager.getState())
     {
@@ -178,11 +174,7 @@ void cMasterParams::update()
 
     if ((displayType == displayMode::masterValues) && (isLimiterScreen))
     {
-#ifdef FEATURE_SEND_DUCK
-        if (duckPage)
-            duckMeterHandler();
-        else
-#endif
+        if (!ffMpDuckMeter(this))
             gainReduceHandler();
     }
 
@@ -287,12 +279,23 @@ void cMasterParams::start(uint32_t options)
 
     // drugi bajt to numer podekranu
     uint8_t moduleMode = (options >> 8) & 0xff;
+#if defined(TRACKER_MINI) && defined(FEATURE_PLUG_HOST)
+    // releasing Menu on the Master box starts the module again with option 0: the Inserts page stays up
+    const bool miniInserts = moduleMode == 0 && plugUiActive();
+#endif
     if (moduleMode == 1)
         displayType = displayMode::masterValues;
     else if (moduleMode == 2)
         displayType = displayMode::mixer;
     else if (moduleMode == 3)
         displayType = displayMode::mixerDelayReverb;
+#if defined(TRACKER_MINI) && defined(FEATURE_PLUG_HOST)
+    else if (moduleMode == 4)
+    {   // the Menu popup's Master Inserts mode (interfaceMenuPopup.cpp): the Inserts page on top of the Master values screen
+        displayType = displayMode::masterValues;
+        isDelayScreen = isReverbScreen = isLimiterScreen = isEqualizerScreen = false;
+    }
+#endif
 
     //--------------------------------------------------------------------
     // ustawienie funkcji
@@ -343,6 +346,9 @@ void cMasterParams::start(uint32_t options)
     {
         switchToMixerDelayReverb();
     }
+#if defined(TRACKER_MINI) && defined(FEATURE_PLUG_HOST)
+    if (moduleMode == 4 || miniInserts) plugUiOpen();
+#endif
 
     displayTypeBeforeMasterPress = displayType;
     isDelayScreenBeforeMasterPress = isDelayScreen;
@@ -370,6 +376,9 @@ void cMasterParams::hideControlsUnderMiniMenu()
 
 uint8_t cMasterParams::getCurrentModeIdx()
 {
+#if defined(TRACKER_MINI) && defined(FEATURE_PLUG_HOST)
+    if (plugUiActive()) return 3;   // the Menu popup's Master Inserts mode, the next Master pick wraps to the Master values
+#endif
     return displayType == displayMode::masterValues ? 0
                                                     : (displayType == displayMode::mixer ? 1 : 2);
 }
@@ -530,13 +539,7 @@ static void functEncoder(int16_t value)
         return;
     }
 
-#ifdef FEATURE_PLUG_HOST
-    if (plugUiActive())
-    {
-        plugUiEncoder(value);
-        return;
-    }
-#endif
+    FF_MP_PLUG_OR_RETURN(plugUiEncoder(value));
     if (MP->isDelayScreen)
     {
         switch (MP->selectedPlaceDelay)
@@ -608,13 +611,7 @@ static void functLeft()
         return;
     }
 
-#ifdef FEATURE_PLUG_HOST
-    if (plugUiActive())
-    {
-        plugUiArrow(0);
-        return;
-    }
-#endif
+    FF_MP_PLUG_OR_RETURN(plugUiArrow(0));
     if (MP->isDelayScreen)
     {
         if (MP->selectedPlaceDelay > 0)
@@ -679,13 +676,7 @@ static void functRight()
         return;
     }
 
-#ifdef FEATURE_PLUG_HOST
-    if (plugUiActive())
-    {
-        plugUiArrow(1);
-        return;
-    }
-#endif
+    FF_MP_PLUG_OR_RETURN(plugUiArrow(1));
     if (MP->isDelayScreen)
     {
         if (MP->selectedPlaceDelay < MP->frameData.placesCount - 1)
@@ -790,13 +781,7 @@ static void functUp()
         return;
     }
 
-#ifdef FEATURE_PLUG_HOST
-    if (plugUiActive())
-    {
-        plugUiArrow(2);
-        return;
-    }
-#endif
+    FF_MP_PLUG_OR_RETURN(plugUiArrow(2));
     if (MP->isDelayScreen)
     {
         switch (MP->selectedPlaceDelay)
@@ -901,13 +886,7 @@ static void functDown()
         return;
     }
 
-#ifdef FEATURE_PLUG_HOST
-    if (plugUiActive())
-    {
-        plugUiArrow(3);
-        return;
-    }
-#endif
+    FF_MP_PLUG_OR_RETURN(plugUiArrow(3));
     if (MP->isDelayScreen)
     {
         switch (MP->selectedPlaceDelay)
@@ -1013,13 +992,7 @@ static void functDelete()
         return;
     }
 
-#ifdef FEATURE_PLUG_HOST
-    if (plugUiActive())
-    {
-        plugUiDelete();
-        return;
-    }
-#endif
+    FF_MP_PLUG_OR_RETURN(plugUiDelete());
     if (MP->isDelayScreen)
     {
         switch (MP->selectedPlaceDelay)
@@ -1120,9 +1093,7 @@ static void functSelectVolume(uint8_t state)
 
 static void functSwitchToLimiterScreen()
 {
-#ifdef FEATURE_SEND_DUCK
-    MP->duckPage = false;
-#endif
+    ffMpDuckPageOff(MP);
     MP->switchToLimiterScreen();
 }
 
@@ -1133,22 +1104,16 @@ static void functSwitchToEqualizerScreen()
 
 static void functSelectSaturation()
 {
-#ifdef FEATURE_PLUG_HOST
-    if (plugUiShiftHeld())
-    {   // Shift + Saturation: the Master Inserts page (the two plugin slots and their parameters)
-        plugUiOpen();
-        return;
-    }
-#endif
+    FF_MP_PLUG_SHIFT_SATURATION_OR_RETURN(); // Shift + Saturation: the Master Inserts page
     if (MP->selectedPlace == 5)
     {
 #ifdef FEATURE_PLUG_HOST
         // the list runs on into the master insert plugins (insert 1), then wraps
         plugUiSatSet(plugUiSatPos() < plugUiSatCount() - 1 ? plugUiSatPos() + 1 : (int)SaturationType::kSaturationMin);
 #else
-        if ((int)mtProject.values.saturationType < (int)SaturationType::kSaturationTypeEnd - 1)
+        if (satListPos(mtProject.values.saturationType) < kSatListCount - 1)
         {
-            mtProject.values.saturationType++;
+            mtProject.values.saturationType = satListType(satListPos(mtProject.values.saturationType) + 1);
         }
         else
         {
@@ -1204,13 +1169,7 @@ void cMasterParams::switchScreen()
 {
     selectedPlace = 0;
 
-#ifdef FEATURE_PLUG_HOST
-    if (plugUiActive())
-    {   // the Inserts page is the last stop of the cycle, the next press wraps to the first Master page
-        switchToMaster();
-        return;
-    }
-#endif
+    FF_MP_PLUG_OR_RETURN(switchToMaster()); // the Inserts page is the last stop of the cycle, the next press wraps to the first Master page
 
     if (displayType == displayMode::masterValues)
     {
@@ -1228,14 +1187,7 @@ void cMasterParams::switchScreen()
             switchToEqualizerScreen();
         else
         {
-#ifdef FEATURE_PLUG_HOST
-            if (plugUiInCycle())
-            {   // last stop: the Inserts page, built on top of the Master values screen
-                switchToMaster();
-                plugUiOpen();
-                return;
-            }
-#endif
+            FF_MP_PLUG_CYCLE_INSERTS_OR_RETURN(); // last stop: the Inserts page, built on top of the Master values screen
             switchToMaster();
         }
     }
@@ -1273,9 +1225,7 @@ void cMasterParams::returnToScreen()
 }
 void cMasterParams::switchToMaster()
 {
-#ifdef FEATURE_PLUG_HOST
-    plugUiLeave();
-#endif
+    ffMpPlugLeave();
     ip->clearButtonsRange(interfaceButton0, interfaceButton7);
     ip->clearButton(interfaceButtonShift);
 
@@ -1295,17 +1245,13 @@ void cMasterParams::switchToMaster()
     isReverbScreen = false;
     isLimiterScreen = false;
     isEqualizerScreen = false;
-#ifdef FEATURE_SEND_DUCK
-    duckPage = false;
-#endif
+    ffMpDuckPageOff(this);
 
     showMasterScreen();
 }
 void cMasterParams::switchToMixer()
 {
-#ifdef FEATURE_PLUG_HOST
-    plugUiLeave();
-#endif
+    ffMpPlugLeave();
     ip->clearButtonsRange(interfaceButton0, interfaceButton7);
 
     ip->setButtonObj(interfaceButton0, functSoloMuteTrack);
@@ -1336,9 +1282,7 @@ void cMasterParams::switchToMixer()
 
 void cMasterParams::switchToMixerDelayReverb()
 {
-#ifdef FEATURE_PLUG_HOST
-    plugUiLeave();
-#endif
+    ffMpPlugLeave();
     ip->clearButtonsRange(interfaceButton0, interfaceButton7);
     ip->clearButton(interfaceButtonRec);
 
@@ -1415,9 +1359,7 @@ void cMasterParams::switchToLimiterScreen()
     ip->setButtonObj(interfaceButton1, buttonPress, functSelectLimiterRelease);
     ip->setButtonObj(interfaceButton2, buttonPress, functSelectLimiterThreshold);
     ip->setButtonObj(interfaceButton4, buttonPress, functSelectLimiterSidechain);
-#ifdef FEATURE_SEND_DUCK
-    ip->setButtonObj(interfaceButton5, buttonPress, functToggleDuckPage);
-#endif
+    ffMpDuckPageButton(ip);
     ip->setButtonObj(interfaceButton7, buttonPress, functLimiterCancel);
 
     keyboardManager.deactivateKeyboard();
@@ -1606,19 +1548,7 @@ static void functSelectLimiterThreshold()
 
 static void functSelectLimiterSidechain()
 {
-#ifdef FEATURE_SEND_DUCK
-    if (MP->duckPage)
-    {
-        if (MP->selectedPlaceLimiter == 4)
-            duckEdit(4, engine.getSendDuck().source >= kDuckSourceMax ? -kDuckSourceMax : 1, false); // steps the list, with a wrap
-        else
-        {
-            MP->selectedPlaceLimiter = 4;
-            MP->refreshLimiterFrame();
-        }
-        return;
-    }
-#endif
+    FF_MP_DUCK_SIDECHAIN_OR_RETURN();
     if (MP->selectedPlaceLimiter == 4) // zmienianie pozycji listy przyciskiem pod ekranem
     {
         mtProject.values.limiterSidechain++;
@@ -1640,14 +1570,7 @@ static void functLimiterCancel()
     MP->switchToMaster();
 }
 
-#ifdef FEATURE_SEND_DUCK
-static void functToggleDuckPage()
-{
-    MP->duckPage = !MP->duckPage;
-    MP->selectedPlaceLimiter = 0;
-    MP->switchToLimiterScreen();
-}
-#endif
+#include "fMasterParams_duckpage.inc"
 
 // equalizer
 static void functSelectEqualizerBand(uint8_t n, uint8_t state)
@@ -1914,6 +1837,13 @@ static void functSoloMuteTrack(uint8_t n, uint8_t state)
         return;
     }
 
+    // a linked pair is one strip and its follower's strip is not on screen: the buttons after it are one slot up, the last ones have no strip
+    n = stereopairs::nthVisible(n);
+    if (n > 7)
+    {
+        return;
+    }
+
     if (state == buttonRelease)
     {
         if (MP->editTrackNameMode)
@@ -1928,6 +1858,7 @@ static void functSoloMuteTrack(uint8_t n, uint8_t state)
             return;
         }
 
+        n = (uint8_t)stereopairs::base(n); // a linked pair is one strip: its second button acts on the leader
         if (MP->isSolo)
         {
             if ((uint8_t)MP->soloTrack == n)
@@ -1954,6 +1885,7 @@ static void functSoloMuteTrack(uint8_t n, uint8_t state)
             MP->soloTrack = -1;
         }
 
+        stereopairs::mirror(mtProject.values.trackMute);
         for (uint8_t i = 0; i < 8; i++)
         {
             engine.muteTrack(i, mtProject.values.trackMute[i]);
@@ -2371,13 +2303,7 @@ void changeVolume(int16_t value)
 
 void changeLimiterAttack(int16_t value)
 {
-#ifdef FEATURE_SEND_DUCK
-    if (MP->duckPage)
-    {
-        duckEdit(0, value, false);
-        return;
-    }
-#endif
+    FF_MP_DUCK_EDIT_OR_RETURN(0, value, false);
     value *= LIMITER_ATTACK_MAX / 1000;
 
     if (mtProject.values.limiterAttack + value < LIMITER_ATTACK_MIN)
@@ -2396,13 +2322,7 @@ void changeLimiterAttack(int16_t value)
 
 void changeLimiterRelease(int16_t value)
 {
-#ifdef FEATURE_SEND_DUCK
-    if (MP->duckPage)
-    {
-        duckEdit(1, value, false);
-        return;
-    }
-#endif
+    FF_MP_DUCK_EDIT_OR_RETURN(1, value, false);
     value *= (LIMITER_RELEASE_MAX / 1000);
 
     if (mtProject.values.limiterRelease + value < LIMITER_RELEASE_MIN)
@@ -2421,13 +2341,7 @@ void changeLimiterRelease(int16_t value)
 
 void changeLimiterTreshold(int16_t value)
 {
-#ifdef FEATURE_SEND_DUCK
-    if (MP->duckPage)
-    {
-        duckEdit(2, value, false);
-        return;
-    }
-#endif
+    FF_MP_DUCK_EDIT_OR_RETURN(2, value, false);
     int32_t val =
       value * LIMITER_THRESHOLD_MAX /
       100; // mnoznik jest na tyle duzy ze przy mocnym pokreceniu iloczyn przekracza 16bit
@@ -2455,13 +2369,7 @@ void changeLimiterTreshold(int16_t value)
 
 void changeLimiterSidechain(int16_t value)
 {
-#ifdef FEATURE_SEND_DUCK
-    if (MP->duckPage)
-    {
-        duckEdit(4, value, false);
-        return;
-    }
-#endif
+    FF_MP_DUCK_EDIT_OR_RETURN(4, value, false);
     if (mtProject.values.limiterSidechain + value < LIMITER_SIDECHAIN_MIN)
         mtProject.values.limiterSidechain = LIMITER_SIDECHAIN_MIN;
     else if (mtProject.values.limiterSidechain + value > LIMITER_SIDECHAIN_MAX)
@@ -2476,54 +2384,14 @@ void changeLimiterSidechain(int16_t value)
     MP->showLimiterSidechain();
 }
 
-#ifdef FEATURE_SEND_DUCK
-static void duckEdit(int field, int16_t value, bool toDefault)
-{
-    DuckParams d = engine.getSendDuck();
-    uint8_t* const f[5] = { &d.depth, &d.release, &d.thresh, nullptr, &d.source };
-    const uint8_t dflt[5] = { kDuckDefaults.depth, kDuckDefaults.release, kDuckDefaults.thresh, 0, kDuckDefaults.source };
-    const int hi = field == 4 ? kDuckSourceMax : kDuckPctMax;
-    if (field < 0 || field > 4 || !f[field])
-        return;
-    *f[field] = toDefault ? dflt[field] : (uint8_t)clamp<int>((int)*f[field] + value, 0, hi);
-    plug::duckSet(d); // the engine now, the sidecar at the next save, the project marked changed
-    switch (field)
-    {
-        case 0: MP->showDuckDepth(); break;
-        case 1: MP->showDuckRelease(); break;
-        case 2: MP->showDuckThreshold(); break;
-        default: MP->showDuckSource(); break;
-    }
-}
-
-void cMasterParams::duckMeterHandler()
-{
-    static elapsedMillis meterTimer;
-    if (meterTimer < 60)
-        return;
-    meterTimer = 0;
-    // how far the returns are down now, in percent of full scale
-    const float down = (1.0f - engine.getSendDuckGain()) * 100.0f;
-    const uint8_t v = (uint8_t)clamp<int>((int)(down + 0.5f), 0, 100);
-    if (v != duckMeterValue)
-    {
-        duckMeterValue = v;
-        showDuckMeter();
-        display.synchronizeRefresh();
-    }
-}
-#endif
+#include "fMasterParams_duck.inc"
 
 void changeSaturationType(int16_t value)
 {
-#ifdef FEATURE_PLUG_HOST
-    plugUiSatSet(plugUiSatPos() + value);
-    MP->showSaturationType();
-    return;
-#endif
-    mtProject.values.saturationType = clamp<int>((int)mtProject.values.saturationType + (int)value,
-                                                 (int)SaturationType::kSaturationMin,
-                                                 (int)SaturationType::kSaturationTypeEnd - 1);
+    FF_MP_PLUG_SAT_OR_RETURN(plugUiSatPos() + value);
+    mtProject.values.saturationType = satListType(clamp<int>(satListPos(mtProject.values.saturationType) + (int)value,
+                                                             (int)SaturationType::kSaturationMin,
+                                                             kSatListCount - 1));
 
     engine.setSaturationType((SaturationType)mtProject.values.saturationType);
 
@@ -2584,11 +2452,7 @@ void setDefaultMasterVolume()
 
 void setDefaultSaturationType()
 {
-#ifdef FEATURE_PLUG_HOST
-    plugUiSatSet(SaturationType::kSoftClip);
-    MP->showSaturationType();
-    return;
-#endif
+    FF_MP_PLUG_SAT_OR_RETURN(SaturationType::kSoftClip);
     mtProject.values.saturationType = SaturationType::kSoftClip;
 
     engine.setSaturationType((SaturationType)mtProject.values.saturationType);
@@ -2600,13 +2464,7 @@ void setDefaultSaturationType()
 
 void setDefaultLimiterAttack()
 {
-#ifdef FEATURE_SEND_DUCK
-    if (MP->duckPage)
-    {
-        duckEdit(0, 0, true);
-        return;
-    }
-#endif
+    FF_MP_DUCK_EDIT_OR_RETURN(0, 0, true);
     mtProject.values.limiterAttack = 100;
     engine.setLimiterAttack(mtProject.values.limiterAttack);
 
@@ -2616,13 +2474,7 @@ void setDefaultLimiterAttack()
 }
 void setDefaultLimiterRelease()
 {
-#ifdef FEATURE_SEND_DUCK
-    if (MP->duckPage)
-    {
-        duckEdit(1, 0, true);
-        return;
-    }
-#endif
+    FF_MP_DUCK_EDIT_OR_RETURN(1, 0, true);
     mtProject.values.limiterRelease = 0.512;
 
     engine.setLimiterRelease(mtProject.values.limiterRelease);
@@ -2633,13 +2485,7 @@ void setDefaultLimiterRelease()
 }
 void setDefaultLimiterTreshold()
 {
-#ifdef FEATURE_SEND_DUCK
-    if (MP->duckPage)
-    {
-        duckEdit(2, 0, true);
-        return;
-    }
-#endif
+    FF_MP_DUCK_EDIT_OR_RETURN(2, 0, true);
     mtProject.values.limiterThreshold = LIMITER_THRESHOLD_DEFAULT;
     engine.setLimiterThreshold(mtProject.values.limiterThreshold);
 
@@ -2650,13 +2496,7 @@ void setDefaultLimiterTreshold()
 
 void setDefaultLimiterSidechain()
 {
-#ifdef FEATURE_SEND_DUCK
-    if (MP->duckPage)
-    {
-        duckEdit(4, 0, true);
-        return;
-    }
-#endif
+    FF_MP_DUCK_EDIT_OR_RETURN(4, 0, true);
     mtProject.values.limiterSidechain = LIMITER_SIDECHAIN_DEFAULT;
     engine.setLimiterSidechain(mtProject.values.limiterSidechain);
 
@@ -2901,6 +2741,7 @@ void cMasterParams::setDefaultEqualizerBandAdjust(uint8_t n)
 // Mixer
 void cMasterParams::changeTrackVolume(int16_t val, uint8_t track)
 {
+    track = (uint8_t)stereopairs::base(track); // a linked pair is one strip
     if (mtProject.values.trackVolume[track] + val > TRACK_VOLUME_MAX)
         mtProject.values.trackVolume[track] = TRACK_VOLUME_MAX;
     else if (mtProject.values.trackVolume[track] + val < TRACK_VOLUME_MIN)
@@ -2908,16 +2749,23 @@ void cMasterParams::changeTrackVolume(int16_t val, uint8_t track)
     else
         mtProject.values.trackVolume[track] += val;
 
+    stereopairs::mirror(mtProject.values.trackVolume);
     engine.refreshTrackVolume();
     newFileManager.setProjectStructChanged();
     showTrackVolumeBar(track);
+    if (stereopairs::isLeader(track))
+        showTrackVolumeBar(track + 1);
 }
 void cMasterParams::setDefaultTrackVolume(uint8_t track)
 {
+    track = (uint8_t)stereopairs::base(track);
     mtProject.values.trackVolume[track] = DEFAULT_TRACK_VOLUME;
+    stereopairs::mirror(mtProject.values.trackVolume);
     engine.refreshTrackVolume();
     newFileManager.setProjectStructChanged();
     showTrackVolumeBar(track);
+    if (stereopairs::isLeader(track))
+        showTrackVolumeBar(track + 1);
 }
 
 void cMasterParams::changeReverbVolume(int16_t val)
@@ -3337,8 +3185,12 @@ void changeMixerOnMidiCC(uint8_t cc_idx, uint8_t cc_value)
         return;
 
     uint8_t ccToIdx = cc_idx - MIXER_CC_RANGE_MIN;
+    if (ccToIdx < 8)
+        ccToIdx = (uint8_t)stereopairs::base(ccToIdx); // a linked pair is one strip: the CC of its second track moves the leader
 
     *(indexedMixerValues[ccToIdx]) = ((uint16_t)(cc_value * 100)) / 127;
+    if (ccToIdx < 8)
+        stereopairs::mirror(mtProject.values.trackVolume);
 
     if ((ccToIdx < 8) || (ccToIdx == 10))
         engine.refreshTrackVolume();

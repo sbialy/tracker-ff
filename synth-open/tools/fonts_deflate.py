@@ -16,7 +16,9 @@ they decode to the old bitmaps is synth-open/tools/font_inflate_test.sh (it expa
 import os
 import re
 import sys
-import zlib
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from deflate_best import best_deflate  # noqa: E402
 
 PAIR = re.compile(r"\{\s*(\d+)\s*,\s*(\d+)\s*\}")
 SYM = re.compile(r"const\s+CompressedData\s+(\w+)_compressed\s*\[\s*(\d+)\s*\]")
@@ -28,19 +30,6 @@ def expand_rle(cpp_text):
     if not m or len(pairs) != int(m.group(2)):
         raise SystemExit("array %s: %d pairs found, %s declared" % (m and m.group(1), len(pairs), m and m.group(2)))
     return m.group(1), b"".join(bytes([v]) * c for v, c in pairs)
-
-
-def best_deflate(raw):
-    best = None
-    for level in (9,):
-        for mem in range(1, 10):
-            for strat in (zlib.Z_DEFAULT_STRATEGY, zlib.Z_FILTERED):
-                co = zlib.compressobj(level, zlib.DEFLATED, -15, mem, strat)
-                z = co.compress(raw) + co.flush()
-                if best is None or len(z) < len(best):
-                    best = z
-    assert zlib.decompress(best, -15) == raw
-    return best
 
 
 def header_comments(h_text):

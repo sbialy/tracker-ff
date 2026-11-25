@@ -3,6 +3,8 @@
 #include "ampLogarythmicValues.h"
 #include "dspinst.h"
 #include "mtAudioEngine.h"
+#include "mtSequencer.h"
+#include "mtTuning.h"
 #include "tapeFx.h"
 #include "util_math.h"
 #include <cr_section_macros.h>
@@ -41,12 +43,13 @@ void AudioPlayMemory::initNotesLookup(bool applyClockCorrection)
         kWtPitchMiddleNote[wtFreqIdx] = kWtExpectedFreqMiddleNote / kWtNaturalFreq[wtFreqIdx];
     }
 
+    keyLimit = tuning::isDefault() ? 120 : NOTE_LOOKUP_SIZE;
     const float noteCorrection = applyClockCorrection ? NOTE_CORRECTION_COEFFICIENT : 1.0f;
 
     for (int noteIdx = 0; noteIdx < NOTE_LOOKUP_SIZE; noteIdx++)
     {
-        notes[noteIdx] =
-          powf(2.0f, (noteIdx - kMiddleNoteIdx) / 12.0f) * noteCorrection;
+        // the project tuning (mtTuning.h): rel(k) is k - 60 for the default, so the table of a project without one is what it always was
+        notes[noteIdx] = powf(2.0f, tuning::rel(noteIdx) / 12.0f) * noteCorrection;
 
         for (int wtFreqIdx = 0; wtFreqIdx < kWtSizesCount; wtFreqIdx++)
         {
@@ -139,6 +142,11 @@ AUDIO_CORE_RAM void AudioPlayMemory::update(void)
         return;
     }
 
+    if (repitchTempo != 0.0f)
+    {
+        retuneRepitch();
+    }
+
     audio_block_t* block = nullptr;
     switch (currentPlayMode)
     {
@@ -194,10 +202,13 @@ AUDIO_CORE_FLASH uint8_t AudioPlayMemory::play(uint8_t instrIdx, int8_t note)
     tape.mode = tapefx::kOff; // a new note plays at normal speed, unless its step carries a Tape FX (stackedTape below)
     switch (mtProject.instrument[instrIdx].playMode)
     {
-        case playModeSingleShot: playSingleShot(instrIdx, note); break;
-        case playModeLoopForward: playLoopForward(instrIdx, note); break;
+        case playModeSingleShot:
+        case playModeSingleShotRev: playSingleShot(instrIdx, note); break;
+        case playModeLoopForward:
+        case playModeOscillator: playLoopForward(instrIdx, note); break;
         case playModeLoopBackward: playLoopBackward(instrIdx, note); break;
-        case playModePingpong: playLoopPingpong(instrIdx, note); break;
+        case playModePingpong:
+        case playModePingpongRev: playLoopPingpong(instrIdx, note); break;
         case playModeSlice: playSlice(instrIdx, note); break;
         case playModeBeatSlice: playBeatSlice(instrIdx, note); break;
         case playModeGranular: playGranular(instrIdx, note); break;
@@ -297,6 +308,8 @@ uint8_t AudioPlayMemory::playForPrev(uint8_t instr_idx, int8_t n)
     sliceForcedFlag = 0;
     granularForcedFlag = 0;
     reverseDirectionFlag = 0;
+    instrReverse = 0;
+    repitchTempo = 0.0f;
     constrainsInSamples.pitchSmoothing = 0;
 
     play(instr_idx, n);
@@ -327,6 +340,8 @@ uint8_t AudioPlayMemory::playForPrev(int16_t* addr, uint32_t len, uint8_t /*type
     sliceForcedFlag = 0;
     granularForcedFlag = 0;
     reverseDirectionFlag = 0;
+    instrReverse = 0;
+    repitchTempo = 0.0f;
     constrainsInSamples.pitchSmoothing = 0;
 
     currentPlayMode = playModeSingleShot;
@@ -339,12 +354,12 @@ uint8_t AudioPlayMemory::playForPrev(int16_t* addr, uint32_t len, uint8_t /*type
     {
         voiceStreamManager.notifyNoteOff((uint8_t)voiceIndex);
     }
-    if ((note + currentTune) > (MAX_NOTE - 1))
+    if ((note + currentTune) > (keyLimit - 1))
     {
         if (lastNote > note)
-            currentTune = (MAX_NOTE - 1) - lastNote;
+            currentTune = (keyLimit - 1) - lastNote;
         else
-            currentTune = (MAX_NOTE - 1) - note;
+            currentTune = (keyLimit - 1) - note;
     }
     if ((note + currentTune) < MIN_NOTE)
     {
@@ -450,15 +465,17 @@ uint8_t AudioPlayMemory::playForPrev(int16_t* addr, uint32_t len, uint8_t n, uin
     sliceForcedFlag = 0;
     granularForcedFlag = 0;
     reverseDirectionFlag = 0;
+    instrReverse = 0;
+    repitchTempo = 0.0f;
 
     constrainsInSamples.pitchSmoothing = 0;
 
-    if ((note + currentTune) > (MAX_NOTE - 1))
+    if ((note + currentTune) > (keyLimit - 1))
     {
         if (lastNote > note)
-            currentTune = (MAX_NOTE - 1) - lastNote;
+            currentTune = (keyLimit - 1) - lastNote;
         else
-            currentTune = (MAX_NOTE - 1) - note;
+            currentTune = (keyLimit - 1) - note;
     }
     if ((note + currentTune) < MIN_NOTE)
     {
@@ -651,6 +668,17 @@ void AudioPlayMemory::setGlide(uint16_t value, int8_t currentNote, uint8_t instr
     AudioInterrupts();
 }
 
+// The pitch control Finetune adds to key idx of table t. Without a tuning (and in 12 notes of 1200 cents) a hundredth of the way to the next key (value > 0) or
+// the one below (value < 0), as it always was. In a tuning whose keys are not 100 cents apart (microtuning phase 3, mtTuning.h fineCents) the value is cents
+static float fineShift(int8_t value, const float* t, int idx)
+{
+    if (tuning::fineCents())
+        return t[idx] * (powf(2.0f, float(value) / 1200.0f) - 1.0f);
+    if (value >= 0)
+        return (idx + 1 < AudioPlayMemory::keyLimit) ? value * ((t[idx + 1] - t[idx]) / MAX_INSTRUMENT_FINETUNE) : 0.0f;
+    return (idx - 1 >= MIN_NOTE) ? (-value) * ((t[idx - 1] - t[idx]) / MAX_INSTRUMENT_FINETUNE) : 0.0f;
+}
+
 void AudioPlayMemory::setFineTune(int8_t value, int8_t currentNote)
 {
     if (currentPlayMode == playModeBeatSlice)
@@ -663,38 +691,7 @@ void AudioPlayMemory::setFineTune(int8_t value, int8_t currentNote)
     int8_t tunedNoteIdx = currentNote + currentTune;
 
     localPitchControl -= localFinetunePitchControl;
-
-    if (value >= 0)
-    {
-        bool isNotExceedUpperNoteRange = ((tunedNoteIdx + 1) < MAX_NOTE);
-
-        if (isNotExceedUpperNoteRange)
-        {
-            float maxFinetuneShiftPitch = localNoteTable[tunedNoteIdx + 1];
-            float currentNotePitch = localNoteTable[tunedNoteIdx];
-
-            localFinetunePitchControl =
-              value * ((maxFinetuneShiftPitch - currentNotePitch) / MAX_INSTRUMENT_FINETUNE);
-        }
-        else
-            localFinetunePitchControl = 0;
-    }
-    else
-    {
-        bool isNotExceedLowerNoteRange = ((tunedNoteIdx - 1) >= MIN_NOTE);
-
-        if (isNotExceedLowerNoteRange)
-        {
-            float maxFinetuneShiftPitch = localNoteTable[tunedNoteIdx - 1];
-            float currentNotePitch = localNoteTable[tunedNoteIdx];
-
-            localFinetunePitchControl =
-              (-value) * ((maxFinetuneShiftPitch - currentNotePitch) / MAX_INSTRUMENT_FINETUNE);
-        }
-        else
-            localFinetunePitchControl = 0;
-    }
-
+    localFinetunePitchControl = fineShift(value, localNoteTable, tunedNoteIdx);
     localPitchControl += localFinetunePitchControl;
 
     AudioNoInterrupts();
@@ -748,9 +745,12 @@ std::tuple<uint16_t, uint16_t, uint16_t, uint16_t> AudioPlayMemory::calculateGra
   uint16_t grainLength,
   uint32_t sampleLength)
 {
+    // An empty instrument has no sample to measure the grain against.
     uint16_t granularLength =
-      ((uint32_t)((uint32_t)grainLength * (uint32_t)std::numeric_limits<uint16_t>::max())) /
-      sampleLength;
+      sampleLength > 0
+        ? ((uint32_t)((uint32_t)grainLength * (uint32_t)std::numeric_limits<uint16_t>::max())) /
+            sampleLength
+        : 0;
     int upperZoneLength = granularLength / 2 + (granularLength / 2 - std::min((int)granularPosition,
                                                                               granularLength / 2));
     int lowerZoneLength =
@@ -949,8 +949,8 @@ void AudioPlayMemory::setTune(int8_t value, int8_t currentNote)
 {
     value += mtProject.instrument[currentInstrIdx].tuneResample;
 
-    if ((currentNote + value) > (MAX_NOTE - 1))
-        value = (MAX_NOTE - 1) - currentNote;
+    if ((currentNote + value) > (keyLimit - 1))
+        value = (keyLimit - 1) - currentNote;
     if ((currentNote + value) < MIN_NOTE)
         value = MIN_NOTE - currentNote;
 
@@ -961,8 +961,8 @@ void AudioPlayMemory::setTune(int8_t value, int8_t currentNote)
     int8_t lastNoteAndTuneIdx = currentNote + currentTune;
     if (lastNoteAndTuneIdx < 0)
         lastNoteAndTuneIdx = 0;
-    else if (lastNoteAndTuneIdx >= MAX_NOTE)
-        lastNoteAndTuneIdx = MAX_NOTE;
+    else if (lastNoteAndTuneIdx >= keyLimit)
+        lastNoteAndTuneIdx = keyLimit;
 
     const float* local_notes = (localPlaymode != playModeWavetable) ? notes : wt_notes;
 
@@ -972,9 +972,9 @@ void AudioPlayMemory::setTune(int8_t value, int8_t currentNote)
     pitchControl = localPitchControl;
     currentTune = value;
 
-    if (pitchControl > local_notes[MAX_NOTE - 1])
+    if (pitchControl > local_notes[keyLimit - 1])
     {
-        pitchControl = local_notes[MAX_NOTE - 1];
+        pitchControl = local_notes[keyLimit - 1];
     }
     else if (pitchControl < local_notes[MIN_NOTE])
     {
@@ -1097,11 +1097,11 @@ void AudioPlayMemory::setForcedGranularLen(uint16_t value)
 
 void AudioPlayMemory::setReverse()
 {
-    reverseDirectionFlag = 1;
+    reverseDirectionFlag = 1 ^ instrReverse;
 }
 void AudioPlayMemory::clearReverse()
 {
-    reverseDirectionFlag = 0;
+    reverseDirectionFlag = instrReverse;
 }
 void AudioPlayMemory::setInterpolationEnable(bool value)
 {
@@ -1215,7 +1215,28 @@ void AudioPlayMemory::refreshStartParameters()
 
     currentStartAddress = mtProject.sampleMemory[currentInstrIdx].address[channel];
 
-    currentPlayMode = mtProject.instrument[currentInstrIdx].playMode;
+    // The reverse modes run as their base mode with the direction flag set at note-on (the streamer, the loop point setters
+    // and the update dispatch only ever see the base mode)
+    uint8_t instrMode = mtProject.instrument[currentInstrIdx].playMode;
+    uint8_t modeReverse = 0;
+    if (instrMode == playModeSingleShotRev)
+    {
+        instrMode = playModeSingleShot;
+        modeReverse = 1;
+    }
+    else if (instrMode == playModePingpongRev)
+    {
+        instrMode = playModePingpong;
+        modeReverse = 1;
+    }
+    else if (instrMode == playModeOscillator)
+    {
+        instrMode = playModeLoopForward;
+    }
+    reverseDirectionFlag ^= (modeReverse ^ instrReverse);
+    instrReverse = modeReverse;
+    repitchTempo = 0.0f;
+    currentPlayMode = instrMode;
 
     currentSampleLength = mtProject.instrument[currentInstrIdx].sample.length;
 
@@ -1231,14 +1252,48 @@ void AudioPlayMemory::refreshStartParameters()
     }
 }
 
+// Tempo repitch (Steps on the instrument): the part Start..End of the sample (constrainsInSamples.endPoint frames, read at pitch 1.0 per
+// frame) lasts Steps steps of 15 / tempo seconds each at C5, so the pitch is endPoint * tempo / (Steps * 15 * 44100) times the note pitch.
+// Called by the play functions of the modes that take it once the points are known, 0 steps or a streamed sample leaves the pitch alone
+void AudioPlayMemory::applyRepitch()
+{
+    const strInstrument& instrument = mtProject.instrument[currentInstrIdx];
+    const uint8_t steps = instrument.repitchSteps();
+    const float tempo = sequencer.getCurrentTempo();
+    if (steps == 0 || currentIsStreamed || tempo < 1.0f)
+    {
+        return;
+    }
+    const float ratio = (float)constrainsInSamples.endPoint * tempo / ((float)steps * 15.0f * 44100.0f);
+    pitchControl *= ratio;
+    pitchSmoothingControl *= ratio;
+    pitchControl = clamp(pitchControl, notes[MIN_NOTE], notes[keyLimit - 1]);
+    repitchTempo = tempo;
+}
+
+// A tempo change while a Repitch note sounds: the pitch follows it (one compare per block)
+void AudioPlayMemory::retuneRepitch()
+{
+    const float tempo = sequencer.getCurrentTempo();
+    if (tempo == repitchTempo || tempo < 1.0f)
+    {
+        return;
+    }
+    const float ratio = tempo / repitchTempo;
+    pitchControl *= ratio;
+    pitchSmoothingControl *= ratio;
+    pitchControl = clamp(pitchControl, notes[MIN_NOTE], notes[keyLimit - 1]);
+    repitchTempo = tempo;
+}
+
 void AudioPlayMemory::constrainCurrentTune(uint8_t note)
 {
-    if ((note + currentTune) > (MAX_NOTE - 1))
+    if ((note + currentTune) > (keyLimit - 1))
     {
         if (lastNote > note)
-            currentTune = (MAX_NOTE - 1) - lastNote;
+            currentTune = (keyLimit - 1) - lastNote;
         else
-            currentTune = (MAX_NOTE - 1) - note;
+            currentTune = (keyLimit - 1) - note;
     }
     else if ((note + currentTune) < MIN_NOTE)
     {
@@ -1269,68 +1324,9 @@ void AudioPlayMemory::setStartPitch(uint8_t note)
 }
 void AudioPlayMemory::applyFinetuneOnPitch(uint8_t note)
 {
-    if (currentPlayMode == playModeWavetable)
-    {
-        if (currentFineTune >= 0)
-        {
-            if ((note + currentTune + 1) <= (MAX_NOTE - 1))
-            {
-                float localPitch1 = (float)wt_notes[note + currentTune + 1];
-                float localPitch2 = (float)wt_notes[note + currentTune];
-
-                finetunePitchControl =
-                  currentFineTune * ((localPitch1 - localPitch2) / MAX_INSTRUMENT_FINETUNE);
-            }
-            else
-                finetunePitchControl = 0;
-        }
-        else
-        {
-            if ((note + currentTune - 1) >= MIN_NOTE)
-            {
-                float localPitch1 = (float)wt_notes[note + currentTune - 1];
-                float localPitch2 = (float)wt_notes[note + currentTune];
-
-                finetunePitchControl =
-                  (-currentFineTune) * ((localPitch1 - localPitch2) / MAX_INSTRUMENT_FINETUNE);
-            }
-            else
-                finetunePitchControl = 0;
-        }
-
-        pitchControl += finetunePitchControl;
-    }
-    else
-    {
-        if (currentFineTune >= 0)
-        {
-            if ((note + currentTune + 1) <= (MAX_NOTE - 1))
-            {
-                float localPitch1 = (float)notes[note + currentTune + 1];
-                float localPitch2 = (float)notes[note + currentTune];
-
-                finetunePitchControl =
-                  currentFineTune * ((localPitch1 - localPitch2) / MAX_INSTRUMENT_FINETUNE);
-            }
-            else
-                finetunePitchControl = 0;
-        }
-        else
-        {
-            if ((note + currentTune - 1) >= MIN_NOTE)
-            {
-                float localPitch1 = (float)notes[note + currentTune - 1];
-                float localPitch2 = (float)notes[note + currentTune];
-
-                finetunePitchControl =
-                  (-currentFineTune) * ((localPitch1 - localPitch2) / MAX_INSTRUMENT_FINETUNE);
-            }
-            else
-                finetunePitchControl = 0;
-        }
-
-        pitchControl += finetunePitchControl;
-    }
+    finetunePitchControl =
+      fineShift(currentFineTune, currentPlayMode == playModeWavetable ? wt_notes : notes, note + currentTune);
+    pitchControl += finetunePitchControl;
 }
 void AudioPlayMemory::calculateGlidePitch(uint8_t note)
 {
@@ -1388,7 +1384,7 @@ AUDIO_CORE_FLASH void AudioPlayMemory::setSlidePitch(bool upOrDown, uint8_t dstV
         float localPitch2 = pitchControl;
 
         float maxPitch =
-          (currentPlayMode == playModeWavetable) ? wt_notes[MAX_NOTE - 1] : notes[MAX_NOTE - 1];
+          (currentPlayMode == playModeWavetable) ? wt_notes[keyLimit - 1] : notes[keyLimit - 1];
         clamp(localPitch1, localPitch2, maxPitch);
 
         AudioNoInterrupts();

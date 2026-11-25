@@ -13,7 +13,10 @@
 # their five lines are gone. The plugin has its own frames and is outside this table.
 
 # libs/NewDisplay/tracker.cpp:343 uint16_t rowNumbers[rowCount], rowCount is 8 or 15 (:333, :337) = 30 B, 32 aligned
-32    ^cTracker::tracksNumbers\(\)$
+32    ^cTracker::tracksNumbers\(\)$   optional
+# FW_LTO=ui (the release image) inlines tracksNumbers() into update5(), so the same rowNumbers[] frame is now update5()'s. Optional both ways:
+# the plain build has the first line, the LTO build the second
+32    ^cTracker::update5\(\)$   optional
 # tracker.cpp:940 int textLetersCount[columnsCount], columnsCount is 2 to 8 (:318-326) = 32 B. GCC may have folded it into the static frame of
 # update() (the 6 truly dynamic frames of the study do not list it), the walker counts it anyway
 32    ^cTracker::update\(\)$

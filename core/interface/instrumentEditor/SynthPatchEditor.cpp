@@ -41,6 +41,19 @@ static constexpr int8_t kSectionBitmap[] = {
 };
 static_assert(sizeof(kSectionBitmap) == size_t(polysynth::open::SectionIcon::kFX) + 1, "one icon per SectionIcon");
 #else
+#if defined(PLATFORM_IMX) && defined(FEATURE_PLUG_HOST)
+#include "open_section_icon.h"
+
+// A plugin engine's sections take the icon and grid label of the MK66 table (synth-open/open_section_icon.h) as on the OG: the stock chain
+// below leaves the open sections blank (ALCO "Osc Mix" / "Sub Mix", FM4 "Operator", ...) and has no "Contour" rule ahead of "Filter"
+// (D-Type "Filter Contour" is an envelope). No rule: the section's short name without an icon. Stock lib engines keep the chain.
+static constexpr int8_t kSectionBitmap[] = {
+    kBitmapEnv,  kBitmapFilter, kBitmapGear,   kBitmapLfo,        kBitmapMod,   kBitmapOsc, kBitmapKick,
+    kBitmapTom,  kBitmapSnare,  kBitmapHihat,  kBitmapCymbal,     kBitmapPercussion, kBitmapMixer, kBitmapFX,
+};
+static_assert(sizeof(kSectionBitmap) == size_t(polysynth::open::SectionIcon::kFX) + 1, "one icon per SectionIcon");
+#endif
+
 static const int synthModelListImages[Synth::kSynthTypes.size()] = {
     enDisplayBitmaps::kBitmapACD,  enDisplayBitmaps::kBitmapFAT,  enDisplayBitmaps::kBitmapVAP,
     enDisplayBitmaps::kBitmapWTFM, enDisplayBitmaps::kBitmapPERC, enDisplayBitmaps::kBitmapDIRT,
@@ -59,23 +72,15 @@ static float s_varyUndo[polysynth::open::kMaxParams];
 static int s_varyUndoCount = 0;
 static const polysynth::Patch* s_varyUndoPatch = nullptr;   // the live patch the undo belongs to (Init or an engine change makes another)
 static bool s_varyUndoValid = false;
+#elif defined(FEATURE_SYNTH_PATCHFX)
+// Patch Vary on Tracker+ and Mini (IMX port P12, Synth::varyPatch): F4 varies, Shift + F4 undoes, Shift + encoder sets the amount (Tracker+).
+// The Mini has no encoder and its Shift + Plus / Minus is the master volume: F4 held + Plus / Minus sets the amount and F4 then varies
+// on release only when no amount key was pressed. The amount, generator and undo live in Synth (SDRAM), this byte too.
+#include "cr_section_macros.h"
+__NOINIT(EXTERNAL_RAM) static uint8_t s_varyAmountKeyed; // written at every F4 press before anything reads it
 #endif
 
-#ifdef FEATURE_PLUG_HOST
-// The cycle view of a plugin engine with plug_ext_synth.view (ABI 1.4): a 200 x 50 box at x 184, y 41, right of the model logo (noteLabel,
-// 50..158 x 45..85, same vertical centre) and above the section grid (its first row of icons starts at y 113), inside the left half that
-// the grid and the logo use. The right half keeps the parameter list and the value column untouched. An engine without view: hidden.
-// The view's -127..127 goes to the spectrum control's +-109 steps, its full height for any box height (spectrum.cpp: height / 218 per step).
-// The data (1.2 KB) is in the SDRAM like the sample editor's, the control object is created with the editor's other controls.
-namespace
-{
-constexpr int kViewPoints = 200;
-constexpr uint32_t kViewMs = 50;   // synthViewTick: a new view at most this often (encoder edits, the Patch FX, a wave the engine loaded)
-__NOINIT(EXTERNAL_RAM) strTrackerSpectrum s_viewData;
-__NOINIT(EXTERNAL_RAM) int8_t s_viewNew[kViewPoints];
-bool s_viewShown;
-} // namespace
-#endif
+#include "SynthPatchEditor_view_data.inc"
 
 // FEATURE_PLUG_HOST or not (Tracker+ and Mini build without it)
 namespace
@@ -86,7 +91,7 @@ int macroPickCount(const polysynth::Patch& patch)
 {
     const auto& params = patch.getMetadata().params;
     int n = 0;
-    for (const auto& p : params)
+    for ([[maybe_unused]] const auto& p : params)
     {
 #ifdef FEATURE_SYNTH_OPEN
         if (polysynth::open::waveFileRowHidden(p.displayName.c_str(), p.isEnum, float(p.minValue), float(p.maxValue))) continue;
@@ -132,80 +137,7 @@ int macroPickEntry(const polysynth::Patch& patch, int id)
 }
 } // namespace
 
-#ifdef FEATURE_PLUG_HOST
-namespace
-{
-uint32_t s_viewMs;
-extern "C" volatile uint32_t systick_millis_count;
-} // namespace
-
-void cInstrumentEditor::initSynthView()
-{
-    s_viewData.init(kViewPoints, strTrackerSpectrum::PointsLimit::k200);
-    s_viewData.spectrumType = 1;   // a line through the points with a centre line
-    strControlProperties prop;
-    prop.x = 184;
-    prop.y = 41;
-    prop.w = kViewPoints;
-    prop.h = 50;
-    prop.data = &s_viewData;
-    synthViewControl = display.createControl<cSpectrum>(&prop);
-    synthViewOn = false;
-    s_viewShown = false;
-}
-
-// The current view of the part's engine, drawn when it changed. Hidden when the engine has no view (a built-in engine, a 1.1 plugin)
-void cInstrumentEditor::showSynthView()
-{
-    if (synthViewControl < 0)
-    {
-        return;
-    }
-    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
-    const float* values = nullptr;
-    int count = 0;
-    const polysynth::open::EngineDef* d = polysynth::open::partPatch(part, &values, &count);
-    if (!plug::synthView(d, values, count, s_viewNew, kViewPoints))
-    {
-        if (s_viewShown)
-        {
-            display.setControlHide(synthViewControl);
-            display.synchronizeRefresh();
-        }
-        s_viewShown = false;
-        return;
-    }
-    bool same = s_viewShown;
-    for (int i = 0; i < kViewPoints; i++)
-    {
-        const int8_t v = int8_t(int(s_viewNew[i]) * 109 / 127);
-        const int8_t up = v > 0 ? v : 0, lo = v < 0 ? v : 0;
-        same = same && s_viewData.upperData[i] == up && s_viewData.lowerData[i] == lo;
-        s_viewData.upperData[i] = up;
-        s_viewData.lowerData[i] = lo;
-    }
-    if (same)
-    {
-        return;
-    }
-    display.setControlShow(synthViewControl);
-    display.refreshControl(synthViewControl);
-    display.synchronizeRefresh();
-    s_viewShown = true;
-}
-
-// Main loop (Tracker.cpp, next to synthModelTick): keeps the view of the open patch editor page current
-void synthViewTick()
-{
-    if (!IE->synthViewOn || IE->mode != mtInstEditModeSynthPatchEdit || !mtInterface.isInstrumentParamsScreenActive() ||
-        systick_millis_count - s_viewMs < kViewMs)
-    {
-        return;
-    }
-    s_viewMs = systick_millis_count;
-    IE->showSynthView();
-}
-#endif
+#include "SynthPatchEditor_view_tick.inc"
 
 static void functSynthActionButtons(uint8_t button);
 static void functSynthPatchSaveAsKeyboardActionButtons(uint8_t button);
@@ -231,9 +163,14 @@ static void functSynthSave();
 static void functSynthSaveAs();
 static void functSynthBack();
 static void functSynthInit();
+#ifdef FEATURE_SYNTH_OPEN
 static void functSynthVary();
 static void synthVaryShowAmount();
 static void synthVaryForget();
+#elif defined(FEATURE_SYNTH_PATCHFX)
+static void functSynthVaryKey(uint8_t state);
+static void synthVaryShowAmount();
+#endif
 static void functSynthInitConfirm();
 static void functSynthInitCancel();
 
@@ -344,6 +281,8 @@ void cInstrumentEditor::setSynthPatchEditorScreenFunct()
     ip->setButtonObj(interfaceButton2, buttonPress, functSynthInit);
 #ifdef FEATURE_SYNTH_OPEN
     ip->setButtonObj(interfaceButton3, buttonPress, functSynthVary);
+#elif defined(FEATURE_SYNTH_PATCHFX)
+    ip->setButtonObj(interfaceButton3, functSynthVaryKey);
 #endif
     ip->setButtonObj(interfaceButton7, buttonPress, functSynthBack);
 
@@ -405,6 +344,20 @@ static void functSynthPatchEditEncoder(int16_t value)
     if (IE->buttons->isButtonPressed(interfaceButtonShift))
     {   // Shift + encoder: the amount of the Vary button
         s_varyPercent = clamp(s_varyPercent + (value > 0 ? 5 : -5) * (std::abs(value) > 4 ? 4 : 1), 5, 100);
+        synthVaryShowAmount();
+        return;
+    }
+#elif defined(FEATURE_SYNTH_PATCHFX)
+#ifdef TRACKER_MINI
+    if (IE->buttons->isButtonPressed(interfaceButton3))
+    {   // F4 held + Plus / Minus: the amount of the Vary (Plus1 5 %, Plus10 20 %, the MK66 encoder steps)
+        s_varyAmountKeyed = 1;
+#else
+    if (IE->buttons->isButtonPressed(interfaceButtonShift))
+    {   // Shift + encoder: the amount of the Vary button
+#endif
+        Synth* synth = IE->getSynth();
+        synth->setVaryPercent(synth->getVaryPercent() + (value > 0 ? 5 : -5) * (std::abs(value) > 4 ? 4 : 1));
         synthVaryShowAmount();
         return;
     }
@@ -621,7 +574,7 @@ static void functSynthPatchSaveAsKeyboardConfirm()
     auto result = IE->getSynth()->savePatch(syntPartIdx, IE->keyboardManager.getName());
     mtPopups.show(0, result ? "Patch saved" : "Error saving patch");
 
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
     if (IE->getSynth()->getPatchSlot(syntPartIdx) == 0) // the project stores the name of slot 0 only
 #endif
     {
@@ -804,12 +757,64 @@ static void functSynthVary()
     IE->showSynthPatchMacroParam(true);
     IE->showSynthPatchMacroParamValue(true);
 }
+#elif defined(FEATURE_SYNTH_PATCHFX)
+// The button label of the editor: "Vary" over the amount (the MK66 text)
+static void synthVaryShowAmount()
+{
+    __NOINIT(EXTERNAL_RAM) static char text[8];
+    snprintf(text, sizeof(text), "%d%%", IE->getSynth()->getVaryPercent());
+    display.setControlText2(IE->label[3], text);
+    display.refreshControl(IE->label[3]);
+}
+
+uint32_t cInstrumentEditor::timerMicros()
+{
+    return platform->getTimer()->micros();
+}
+
+// F4: Vary (Tracker+ on press, Mini on release when no amount key was pressed while F4 was held), Shift + F4: undo (the MK66 popups)
+static void functSynthVaryKey(uint8_t state)
+{
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    Synth* synth = IE->getSynth();
+    if (state == buttonPress)
+    {
+        s_varyAmountKeyed = 0;
+    }
+    if (state == buttonPress && IE->buttons->isButtonPressed(interfaceButtonShift))
+    {
+        s_varyAmountKeyed = 1; // the release does not vary
+        mtPopups.show(0, synth->undoVary(part) ? "Vary undone" : "Nothing to undo");
+    }
+#ifdef TRACKER_MINI
+    else if (state == buttonRelease && !s_varyAmountKeyed)
+#else
+    else if (state == buttonPress)
+#endif
+    {
+        synth->varyPatch(part, IE->timerMicros());
+        __NOINIT(EXTERNAL_RAM) static char text[24];
+        snprintf(text, sizeof(text), synth->getVaryPercent() >= 100 ? "Randomized" : "Vary %d%%", synth->getVaryPercent());
+        mtPopups.show(0, text);
+    }
+    else
+    {
+        return;
+    }
+    // every row of the list changed, not only the selected one
+    IE->showSynthPatchSectionParam(true);
+    IE->showSynthPatchSectionParamValue(true);
+    IE->showSynthPatchMacroParam(true);
+    IE->showSynthPatchMacroParamValue(true);
+}
 #endif
 
 static void functSynthInitConfirm()
 {
 #ifdef FEATURE_SYNTH_OPEN
     synthVaryForget();
+#elif defined(FEATURE_SYNTH_PATCHFX)
+    IE->getSynth()->forgetVary();
 #endif
     IE->initCurrentPatch();
     functSynthInitCancel();
@@ -827,6 +832,8 @@ static void functSynthBack()
 {
 #ifdef FEATURE_SYNTH_OPEN
     synthVaryForget();
+#elif defined(FEATURE_SYNTH_PATCHFX)
+    IE->getSynth()->forgetVary();
 #endif
     sequencer.stopManualNotes();
     IE->mode = mtInstEditModeSynth;
@@ -1349,7 +1356,7 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
     display.setControlText(label[0], "Save");
     display.setControlText(label[1], "Save As");
     display.setControlText(label[2], "Init");
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
     display.setControlText(label[3], "Vary");
 #else
     display.setControlText(label[3], "");
@@ -1367,7 +1374,7 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
     display.setControlText2(label[5], "");
     display.setControlText2(label[6], "");
     display.setControlText2(label[7], "");
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
     display.setControlValue(label[3], 1);
     synthVaryShowAmount();
 #endif
@@ -1407,8 +1414,14 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
 #endif
     labelImage.bitmaps[0].bitmapIndex = modelIcon > 0 ? modelIcon : 0;
 #else
-    assert(modelUi < static_cast<int>(Synth::kSynthTypes.size()));
-    labelImage.bitmaps[0].bitmapIndex = synthModelListImages[modelUi];
+    const int modelBuiltin = Synth::typeList().at(modelUi).builtin; // a plugin engine has no stock icon (IMX port P7 H6)
+#if defined(PLATFORM_IMX) && defined(FEATURE_PLUG_HOST)
+    // its card logo (P7, loaded now when it is not in RAM_G), else its name below
+    const int modelIcon = modelBuiltin >= 0 ? synthModelListImages[modelBuiltin] : getSynth()->cardLogoId(modelUi, true);
+    labelImage.bitmaps[0].bitmapIndex = modelIcon > 0 ? modelIcon : 0;
+#else
+    labelImage.bitmaps[0].bitmapIndex = modelBuiltin >= 0 ? synthModelListImages[modelBuiltin] : 0;
+#endif
 #endif
     labelImage.bitmaps[0].xValue = 116;
     labelImage.bitmaps[0].yValue = 49;
@@ -1423,12 +1436,19 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
         display.setControlStyle(noteLabel, controlStyleShow | controlStyleCenterY | controlStyleFont4);
         display.setControlText(noteLabel, model.def->name);
     }
+#elif defined(PLATFORM_IMX) && defined(FEATURE_PLUG_HOST)
+    if (modelIcon < 0)
+    {   // a plugin engine without a logo: its name in place of the icon
+        display.setControlStyle(noteLabel, controlStyleShow | controlStyleCenterY | controlStyleFont4);
+        display.setControlText(noteLabel, Synth::typeList().at(modelUi).name);
+    }
 #endif
     display.setControlValue(noteLabel, 0);
     display.setControlPosition(noteLabel, 50, 45);
     display.setControlSize(noteLabel, 108, 40);
     display.setControlShow(noteLabel);
     display.refreshControl(noteLabel);
+    display.setControlHide(nnaLabel); // the Synth page's New note block is still up when the editor opens from it
 
     display.setControlHide(doubleLabelAutomation);
     display.setControlHide(instrumentSynthCCListControl);
@@ -1459,11 +1479,7 @@ void cInstrumentEditor::showSynthPatchEditorScreen()
     display.setControlPosition(blankSpaceCover[1], (800 / 8) * 7 + 1, -1);
     display.setControlSize(blankSpaceCover[1], (800 / 8) * 1 - 3, 394);
 
-#ifdef FEATURE_PLUG_HOST
-    synthViewOn = true;
-    s_viewShown = false;   // drawn again whatever the data holds
-    showSynthView();
-#endif
+    ffSpeViewShow(this); // the cycle view of a plugin engine
 
     display.synchronizeRefresh();
 }
@@ -1485,6 +1501,7 @@ void cInstrumentEditor::showSaveAsKeyboard()
     display.setControlHide(list3Control);
     display.setControlHide(list4Control);
     display.setControlHide(noteLabel);
+    display.setControlHide(nnaLabel);
     display.setControlHide(frameControl);
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);
@@ -1560,6 +1577,10 @@ void cInstrumentEditor::showSynthPatchSection(bool refreshList)
         int number = 0;
         int envCount = 1;
         int lfoCount = 1;
+#if !defined(FEATURE_SYNTH_OPEN) && defined(PLATFORM_IMX) && defined(FEATURE_PLUG_HOST)
+        const bool plugEngine =
+          Synth::typeList().at(std::max(Synth::storedToUi(mtProject.values.synthPart[syntPartIdx].synthType), 0)).builtin < 0;
+#endif
 
         for (const auto& section : metadata.layoutFlat.sections)
         {
@@ -1585,6 +1606,17 @@ void cInstrumentEditor::showSynthPatchSection(bool refreshList)
                     sectionImgList[idx] = -1;
                 }
 #else
+#if defined(PLATFORM_IMX) && defined(FEATURE_PLUG_HOST)
+                if (plugEngine)
+                {   // a plugin engine's sections as the OG editor draws them (the FEATURE_SYNTH_OPEN branch above)
+                    using polysynth::open::SectionCount;
+                    const auto* rule = polysynth::open::sectionIconRule(sectionName.c_str());
+                    shortName = rule && rule->label ? rule->label : section.shortName.c_str();
+                    number = !rule ? 0 : rule->count == SectionCount::kEnv ? envCount++ : rule->count == SectionCount::kLfo ? lfoCount++ : 0;
+                    sectionImgList[idx] = rule ? kSectionBitmap[int(rule->icon)] : -1;
+                }
+                else
+#endif
                 if (sectionName.find("Amp Envelope") != std::string::npos)
                 {
                     shortName = "Amp Env";
@@ -2290,4 +2322,5 @@ void cInstrumentEditor::showSynthPatchMacroParamValue(bool refreshList)
         return;
     }
 }
+#include "SynthPatchEditor_view_imx.inc"
 #endif

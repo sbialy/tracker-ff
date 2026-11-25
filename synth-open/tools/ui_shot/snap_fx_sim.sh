@@ -18,13 +18,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 SAN="${SAN:-}"
 BUILD="$ROOT/build/ui-shot${SAN:+-san}"
-BIN="$BUILD/ui_shot"
+BIN="${UI_SHOT_BIN:-$BUILD/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (run_tests)
 PNG_DIR="${1:-}"
 [ -n "$PNG_DIR" ] && mkdir -p "$PNG_DIR"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/snap_fx_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$BUILD"
-make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" ${SAN:+SAN=$SAN} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" ${SAN:+SAN=$SAN} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
 
 SN=52; COND=48; CH=4; ROLL=3; CHORD=14; ARP=21; RV=16
 

@@ -9,8 +9,8 @@ AUDIO_CORE_FLASH void AudioPlayMemory::playWavetable(uint8_t instrIdx, int8_t no
 
     if (instrIdx > kSampleInstrumentsCount - 1)
         instrIdx = kSampleInstrumentsCount - 1;
-    if (note > MAX_NOTE)
-        note = MAX_NOTE;
+    if (note > keyLimit)
+        note = keyLimit;
 
     lastInstrIdxInPlay = currentInstrIdxInPlay;
     currentInstrIdxInPlay = instrIdx;
@@ -153,9 +153,9 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateWavetable()
                     if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                     {
                         pitchControl += pitchSmoothingControl;
-                        if (pitchControl > wt_notes[MAX_NOTE - 1])
+                        if (pitchControl > wt_notes[keyLimit - 1])
                         {
-                            pitchControl = wt_notes[MAX_NOTE - 1];
+                            pitchControl = wt_notes[keyLimit - 1];
                             pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                         }
                         else if (pitchControl < wt_notes[MIN_NOTE])

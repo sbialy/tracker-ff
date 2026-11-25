@@ -58,7 +58,7 @@ AudioOutput::AudioOutput()
 
 #ifdef PLATFORM_IMX
     constexpr int kMasterLeftUsbStreamIdx =
-      UsbOutputStream::AudioSource::kMaster * UsbOutputStream::SourceChannel::kChannelsCount;
+      static_cast<int>(UsbOutputStream::AudioSource::kMaster) * static_cast<int>(UsbOutputStream::SourceChannel::kChannelsCount);
     constexpr int kMasterRightUsbStreamIdx = kMasterLeftUsbStreamIdx + 1;
 
     connections.push_back(new AudioConnection(

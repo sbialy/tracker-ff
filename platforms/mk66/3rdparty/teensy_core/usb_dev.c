@@ -185,8 +185,9 @@ volatile uint8_t usb_reboot_timer = 0;
 #ifdef FF_USB_MSC
 // tracker-ff USB_MSC=1, from OpenTracker (PJRC terms): the bulk endpoints 9 and 10 of the USB drive, packets by DMA straight
 // into and out of the buffers the drive queues. Every entry runs in usb_isr() and only while ff_usb_msc_on (the endpoints are
-// disabled and the hook is not set otherwise). Plain SRAM, no DMA section in this linker script (the USB controller reaches
-// all of it, there is no data cache).
+// disabled and the hook is not set otherwise). The CBW/CSW/reply buffers (g_small) are internal SRAM, the 16 KB data ring
+// (g_ring) is __NOINIT(EXTERNAL_RAM) in SDRAM (usbmsc/msc_drive.cpp). No DMA section in this linker script: the USB controller
+// reaches both and there is no data cache.
 #define USB_MSC_DMA_MEM __attribute__((aligned(32)))
 #include "usb_msc_impl.h"
 #endif
@@ -233,6 +234,9 @@ static void usb_setup(void)
 	  case 0x0900: // SET_CONFIGURATION
 		//serial_print("configure\n");
 		usb_configuration = setup.wValue;
+#ifdef FF_USB_AUDIO_TX
+		usb_audio_transmit_setting = 0; // every interface starts on alternate 0 (USB 2.0 9.1.1.5), GET_INTERFACE must say so
+#endif
 		reg = &USB0_ENDPT1;
 		cfg = usb_endpoint_config_table;
 		// clear all BDT entries, free any allocated memory...
@@ -240,6 +244,9 @@ static void usb_setup(void)
 #ifdef FF_USB_AUDIO_TX
 			// the audio BDTs point at static buffers, not usb_malloc() packets (from OpenTracker)
 			if ((i >> 2) == AUDIO_TX_ENDPOINT) continue;
+#endif
+#ifdef FF_USB_AUDIO_RX
+			if ((i >> 2) == FF_AUDIO_FB_ENDPOINT) continue; // points at usb_audio_feedback
 #endif
 #ifdef FF_USB_MSC
 			// the drive's BDTs point into its own buffers (usb_msc_impl.h), never at usb_malloc() packets
@@ -288,6 +295,11 @@ static void usb_setup(void)
 #ifdef FF_USB_AUDIO_TX
 			if (i == AUDIO_TX_ENDPOINT && !ff_usb_audio_on) epconf = 0; // off: endpoint 8 stays disabled, as without the flag
 #endif
+#ifdef FF_USB_AUDIO_RX
+			// the computer -> Tracker interface is served in stereo mode only (ff_usb_audio_in): else no OUT side on 8, no 11
+			if (i == AUDIO_TX_ENDPOINT && !ff_usb_audio_in) epconf &= ~USB_ENDPT_EPRXEN;
+			if (i == FF_AUDIO_FB_ENDPOINT && !ff_usb_audio_in) epconf = 0;
+#endif
 #ifdef FF_USB_MSC
 			if ((i == MSC_TX_ENDPOINT || i == MSC_RX_ENDPOINT) && !ff_usb_msc_on) epconf = 0; // off: 9 and 10 stay disabled
 #endif
@@ -304,6 +316,14 @@ static void usb_setup(void)
 #ifdef FF_USB_MSC
 			if (i == MSC_RX_ENDPOINT) {
 				// armed by the drive (its own buffers), never with usb_malloc() packets
+			} else
+#endif
+#ifdef FF_USB_AUDIO_RX
+			if (i == AUDIO_TX_ENDPOINT) {
+				// FEATURE_USB_AUDIO_IN: the OUT side of endpoint 8 has static buffers, armed by SET_INTERFACE alternate 1
+				table[index(i, RX, EVEN)].desc = 0;
+				table[index(i, RX, ODD)].desc = 0;
+				usb_audio_receive_setting = 0;
 			} else
 #endif
 			if (epconf & USB_ENDPT_EPRXEN) {
@@ -539,6 +559,10 @@ static void usb_setup(void)
 			return;
 		}
 		if (setup.wIndex == FF_AUDIO_INTERFACE+1) {
+			if (setup.wValue > 1) { // alternates 0 and 1 only (USB 2.0 9.4.10: a setting that does not exist is a Request Error)
+				endpoint0_stall();
+				return;
+			}
 			usb_audio_transmit_setting = setup.wValue;
 			if (usb_audio_transmit_setting > 0) {
 				// prime both BDTs with silence, one buffer each (see the token handler)
@@ -553,6 +577,29 @@ static void usb_setup(void)
 					}
 				}
 			}
+#ifdef FF_USB_AUDIO_RX
+		} else if (ff_usb_audio_in && setup.wIndex == FF_AUDIO_INTERFACE+2) {
+			// the stream from the computer: alternate 0 disarms, alternate 1 arms both BDTs, one static buffer each, and both BDTs
+			// of the feedback endpoint (the same 3 bytes, re-armed in place by the token handler)
+			if (setup.wValue > 1) {
+				endpoint0_stall();
+				return;
+			}
+			usb_audio_receive_setting = setup.wValue;
+			for (int odd = 0; odd < 2; odd++) {
+				bdt_t *b = &table[index(AUDIO_TX_ENDPOINT, RX, odd)];
+				bdt_t *f = &table[index(FF_AUDIO_FB_ENDPOINT, TX, odd)];
+				if (setup.wValue) {
+					b->addr = usb_audio_receive_buffer + odd * (FF_AUDIO_RX_SIZE/2);
+					b->desc = (FF_AUDIO_RX_SIZE << 16) | BDT_OWN;
+					f->addr = (void *)&usb_audio_feedback;
+					f->desc = (FF_AUDIO_FB_SIZE << 16) | BDT_OWN;
+				} else {
+					b->desc = 0;
+					f->desc = 0;
+				}
+			}
+#endif
 		} else if (setup.wValue != 0 || setup.wIndex >= FF_IF_COUNT) {
 			endpoint0_stall();
 			return;
@@ -575,6 +622,10 @@ static void usb_setup(void)
 		data = reply_buffer;
 		if (setup.wIndex == FF_AUDIO_INTERFACE+1) {
 			reply_buffer[0] = usb_audio_transmit_setting;
+#ifdef FF_USB_AUDIO_RX
+		} else if (ff_usb_audio_in && setup.wIndex == FF_AUDIO_INTERFACE+2) {
+			reply_buffer[0] = usb_audio_receive_setting;
+#endif
 		} else if (setup.wIndex < FF_IF_COUNT) {
 			reply_buffer[0] = 0;
 		} else {
@@ -972,6 +1023,9 @@ void usb_rx_memory(usb_packet_t *packet)
 #ifdef FF_USB_MSC
 		if (i == MSC_RX_ENDPOINT) { cfg++; continue; } // its BDTs point into the drive's buffers, never usb_malloc() packets
 #endif
+#ifdef FF_USB_AUDIO_RX
+		if (i == AUDIO_TX_ENDPOINT) { cfg++; continue; } // the OUT side has static buffers
+#endif
 		if (*cfg++ & USB_ENDPT_EPRXEN) {
 			if (table[index(i, RX, EVEN)].desc == 0) {
 				table[index(i, RX, EVEN)].addr = packet->buf;
@@ -1173,6 +1227,20 @@ void usb_isr(void)
 				b->desc = (len << 16) | BDT_OWN;
 			} else
 #endif
+#ifdef FF_USB_AUDIO_RX
+			// FEATURE_USB_AUDIO_IN: one packet from the computer, handed to the ring, the BDT armed again in place
+			if ((endpoint == AUDIO_TX_ENDPOINT-1) && !(stat & 0x08)) {
+				usb_audio_receive_callback((const int16_t *)b->addr, (b->desc >> 16) & 0x3FF);
+				b->desc = (FF_AUDIO_RX_SIZE << 16) | BDT_OWN;
+			} else
+			// the feedback went out: the same BDT again, the controller reads the word the last audio block wrote
+			if (endpoint == FF_AUDIO_FB_ENDPOINT-1) {
+				if (usb_audio_receive_setting) {
+					b->addr = (void *)&usb_audio_feedback;
+					b->desc = (FF_AUDIO_FB_SIZE << 16) | BDT_OWN;
+				}
+			} else
+#endif
 #ifdef AUDIO_INTERFACE
 			if ((endpoint == AUDIO_TX_ENDPOINT-1) && (stat & 0x08)) {
 				unsigned int len;
@@ -1295,6 +1363,18 @@ void usb_isr(void)
 		ep0_tx_bdt_bank = 0;
 #ifdef FF_USB_MSC
 		if (ff_usb_msc_on) usb_msc_bus_reset();
+#endif
+#ifdef FF_USB_AUDIO_TX
+		// a bus reset leaves the device unconfigured: the audio interfaces are back on alternate 0 (GET_INTERFACE after the
+		// next SET_CONFIGURATION must not report a stale setting), the OUT side of endpoint 8 is disarmed
+		usb_audio_transmit_setting = 0;
+#ifdef FF_USB_AUDIO_RX
+		usb_audio_receive_setting = 0;
+		table[index(AUDIO_TX_ENDPOINT, RX, EVEN)].desc = 0;
+		table[index(AUDIO_TX_ENDPOINT, RX, ODD)].desc = 0;
+		table[index(FF_AUDIO_FB_ENDPOINT, TX, EVEN)].desc = 0;
+		table[index(FF_AUDIO_FB_ENDPOINT, TX, ODD)].desc = 0;
+#endif
 #endif
 
 		// set up buffers to receive Setup and OUT packets

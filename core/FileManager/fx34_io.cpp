@@ -272,7 +272,9 @@ void after(const char* mtpPath, const fx34::Set* set, uint32_t crc, const Guard&
             return;
     }
     if (!writeAll(sc, s_img, n))
+    {
         LOGEF("FX3/FX4 sidecar not written: %s", sc);
+    }
 }
 
 void copyFile(const char* srcMtp, const char* dstMtp)

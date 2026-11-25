@@ -1,4 +1,4 @@
-// Parts: playback, assembly and bake. See parts.h. The list is stored in project.mtff (synth-open/plug_host.cpp, plug_mtff.h).
+// Parts: playback, assembly and bake. See parts.h. The list is stored in project.mtff (synth-open/plug_host.cpp, mtff_codec.h).
 #ifdef FEATURE_PARTS
 
 #include "parts.h"
@@ -440,7 +440,7 @@ void changed()
         if (s_cur >= s_list.count) s_cur = uint8_t(s_list.count ? s_list.count - 1 : 0);
         if (s_queued >= s_list.count) s_queued = -1;
         s_nextReady = false;
-        s_gen++;
+        s_gen = s_gen + 1;
     }
 }
 
@@ -535,7 +535,7 @@ bool start(int from, bool loop)
         s_passLeft = l.part[from].repeats;
         s_queued = -1;
         s_nextReady = false;
-        s_gen++;
+        s_gen = s_gen + 1;
         s_active = true;
     }
     invalidate(sequencer.getPatternToLoadFromFile());   // the user's pattern, back after the playback
@@ -597,7 +597,7 @@ void queue(int at, bool atPassEnd)
     s_queued = int16_t(at);
     s_queueAtPass = atPassEnd;
     s_nextReady = false;
-    s_gen++;
+    s_gen = s_gen + 1;
 }
 
 bool onPassEnd(bool& swap, bool exporting)
@@ -607,7 +607,7 @@ bool onPassEnd(bool& swap, bool exporting)
     const bool queued = s_queued >= 0;
     if (!(queued && s_queueAtPass) && s_passLeft > 1)
     {   // another pass of the same image: pass counters go on (Chance and the other pass FX count across repeats)
-        s_passLeft--;
+        s_passLeft = s_passLeft - 1;
         return true;
     }
     if (!queued && nextIndex(s_list, s_cur) < 0 && (exporting || !songLoops(s_list)))
@@ -624,7 +624,7 @@ bool onPassEnd(bool& swap, bool exporting)
     s_passLeft = s_list.part[s_cur].repeats ? s_list.part[s_cur].repeats : 1;
     if (s_queued == s_cur) s_queued = -1;
     s_nextReady = false;
-    s_gen++;
+    s_gen = s_gen + 1;
     return !songEnd;
 }
 
@@ -672,6 +672,11 @@ bool patternUsed(uint8_t pattern)
     return false;
 }
 }   // namespace
+
+bool patternTaken(uint8_t pattern)
+{
+    return patternUsed(pattern);
+}
 
 int bake()
 {

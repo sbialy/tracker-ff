@@ -432,7 +432,24 @@ let me know?  http://forum.pjrc.com/forums/4-Suggestions-amp-Bug-Reports
 #define FF_AUDIO_MULTI_CH		11
 #define FF_AUDIO_MULTI_SIZE		990
 #define FF_AUDIO_TX_STRIDE		992
+#ifdef FEATURE_USB_AUDIO_IN
+// tracker-ff FEATURE_USB_AUDIO_IN (poly-stereo-io step 5): the computer plays into the Tracker, a recorder source. A third audio
+// interface (AS OUT, interface FF_AUDIO_INTERFACE+2) whose isochronous OUT endpoint is endpoint 8 again: IN 0x88 and OUT 0x08 are
+// two endpoints, the controller has one ENDPT8 register with both directions enabled and a BDT pair for each. Stereo 16 bit 44.1 kHz,
+// 45 frames x 4 B = 180 B, asynchronous with an explicit feedback endpoint: isochronous IN 0x8B, 3 bytes 10.14 (UAC 1.0 3.7.2.2,
+// USB 2.0 5.12.4.2), endpoint 11 because 9 and 10 belong to the USB drive. Stereo mode only: 8+3 mono leaves the interface out
+// (ff_usb_audio_select), the 990 B IN packet plus the OUT and feedback endpoints pass the full speed periodic budget.
+#undef NUM_INTERFACE
+#define NUM_INTERFACE   		7
+#define FF_USB_AUDIO_RX			1
+#define FF_AUDIO_RX_SIZE		180
+#define FF_AUDIO_FB_ENDPOINT	11
+#define FF_AUDIO_FB_SIZE		3
+#define ENDPOINT8_CONFIG  (ENDPOINT_TRANSMIT_ISOCHRONOUS | ENDPOINT_RECEIVE_ISOCHRONOUS)
+#define ENDPOINT11_CONFIG ENDPOINT_TRANSMIT_ISOCHRONOUS
+#else
 #define ENDPOINT8_CONFIG  ENDPOINT_TRANSMIT_ISOCHRONOUS
+#endif
 #endif
 
 // tracker-ff USB_MSC=1 (-DFEATURE_USB_MSC): a USB mass storage interface (Bulk-Only, SCSI transparent) for the SD card
@@ -452,7 +469,11 @@ let me know?  http://forum.pjrc.com/forums/4-Suggestions-amp-Bug-Reports
 #define NUM_ENDPOINTS         	10
 #undef NUM_INTERFACE
 #ifdef FEATURE_USB_AUDIO
+#ifdef FEATURE_USB_AUDIO_IN
+#define NUM_INTERFACE   		8
+#else
 #define NUM_INTERFACE   		7
+#endif
 #else
 #define NUM_INTERFACE   		5
 #endif
@@ -464,6 +485,11 @@ let me know?  http://forum.pjrc.com/forums/4-Suggestions-amp-Bug-Reports
 #define MSC_RX_SIZE				64
 #define ENDPOINT9_CONFIG  ENDPOINT_TRANSMIT_ONLY
 #define ENDPOINT10_CONFIG ENDPOINT_RECEIVE_ONLY
+#endif
+#ifdef FF_USB_AUDIO_RX
+// the feedback endpoint of the OUT interface is 11 (after the drive's 9 and 10, unused without USB_MSC)
+#undef NUM_ENDPOINTS
+#define NUM_ENDPOINTS         	11
 #endif
 
 

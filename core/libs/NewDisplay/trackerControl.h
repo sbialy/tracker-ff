@@ -61,6 +61,28 @@ struct strTrackerPattern
     bool fxBank34;
 
     uint8_t inactive[kTrackCount];
+    // bit t set = track t is not drawn (the follower of a linked stereo pair): the columns reflow, no gap is left
+    uint16_t hidden;
+    // the real track shown in screen column col, counted from firstVisibleTrack
+    int colTrack(int col) const
+    {
+        int t = firstVisibleTrack;
+        for (;; t++)
+        {
+            while (t < kTrackCount && ((hidden >> t) & 1))
+                t++;
+            if (col-- <= 0 || t >= kTrackCount - 1)
+                return t < kTrackCount ? t : kTrackCount - 1;
+        }
+    }
+    // the screen column of a real track (a hidden track counts as the column of the next visible one)
+    int colOf(int track) const
+    {
+        int c = 0;
+        for (int t = firstVisibleTrack; t < track; t++)
+            c += !((hidden >> t) & 1);
+        return track < firstVisibleTrack ? track - firstVisibleTrack : c;
+    }
     // per-track pattern length (polymeter): bit r set = row r of the track is past the track's own length, drawn dimmed
     uint16_t beyondLength[kTrackCount];
     bool isBeyondLength(int t, int r) const { return (beyondLength[t] >> r) & 1; }
@@ -89,6 +111,7 @@ struct strTrackerPattern
                 track[t].row[r].hidden = 0;
             }
             inactive[t] = 0;
+            hidden = 0;
             beyondLength[t] = 0;
             tracksNames[t] = nullptr;
         }

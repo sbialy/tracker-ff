@@ -1,8 +1,12 @@
 #include "mtSleep.h"
+#if defined(PLATFORM_IMX) && (defined(FEATURE_EXT_IMX) || defined(UISHOT_EXT_IMX))
+#include "ext_imx.h"
+#endif
 #include "FT812.h"
 #include "RestartMode.h"
 #include "TrackerImpl.h"
-#ifdef FEATURE_EXT_HOOKS
+#include "feature_flags.h"
+#ifdef FEATURE_FEATURES
 #include "features.h"
 #endif
 #include <Audio.h>
@@ -79,10 +83,13 @@ void mtSleep::goLowPower()
         restartLeave = false;
     }
 
-#ifdef FEATURE_EXT_HOOKS
+#ifdef FEATURE_FEATURES
     features::flush(); // every changed feature file is written before the power goes (the 1 s debounce would lose it)
 #endif
     restartOnce = false;
+#if defined(EXT_IMX)
+    ext_imx_power_down(); // Tracker+ / Mini: the extension module is never called again (synth-open/ext_imx.cpp)
+#endif
     // the platform restarts instead of going off while the restart mode is on (setRestartOnPowerOff)
     platform->setPowerMode(false);
 }

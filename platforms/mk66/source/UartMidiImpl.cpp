@@ -22,6 +22,8 @@ void UartMidiImpl::setReceiveActions(MidiReceiveActions* receiveActions)
     midiDriver.setHandleContinue(receiveActions->continueMessage);
     midiDriver.setHandleControlChange(receiveActions->controlChange);
     midiDriver.setHandlePitchBend(receiveActions->pitchBend);
+    midiDriver.setHandleProgramChange(receiveActions->programChange);
+    midiDriver.setHandleAfterTouchChannel(receiveActions->channelPressure);
 }
 
 bool UartMidiImpl::isReadAvailable()

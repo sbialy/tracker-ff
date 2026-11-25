@@ -22,8 +22,8 @@ EVID="${1:-}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/scale_snap_sample_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 if [ -z "${BIN:-}" ]; then   # the plain ui_shot of this tree (build/ui-shot, the one run_tests.sh builds), no plugin needed
-    BIN="$ROOT/build/ui-shot${SAN:+-san}/ui_shot"
-    make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" ${SAN:+SAN=$SAN} >"$WORK/make.log" 2>&1 || { tail -30 "$WORK/make.log"; exit 2; }
+    BIN="${UI_SHOT_BIN:-$ROOT/build/ui-shot${SAN:+-san}/ui_shot}"
+    [ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" ${SAN:+SAN=$SAN} >"$WORK/make.log" 2>&1 || { tail -30 "$WORK/make.log"; exit 2; }
 fi
 [ -x "$BIN" ] || { echo "scale_snap_sample_sim.sh: no ui_shot at $BIN" >&2; exit 99; }
 [ -n "$EVID" ] && mkdir -p "$EVID"

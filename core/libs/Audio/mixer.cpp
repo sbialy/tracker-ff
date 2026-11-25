@@ -41,8 +41,7 @@ AUDIO_CORE_RAM void AudioMixerBase::mix(int size,
                                         int32_t* previousMultiplier,
                                         SaturationType saturationType)
 {
-    constexpr int kMaxMixerInputs = 13;
-    audio_block_t* in[kMaxMixerInputs];
+    audio_block_t* in[kMaxInputs]; // size <= kMaxInputs: only AudioMixer<N> calls mix() and it static_asserts N
     int first = -1;
     int contributors = 0;
 
@@ -127,7 +126,7 @@ AUDIO_CORE_RAM void AudioMixerBase::mix(int size,
 template<int mixerSize>
 AUDIO_CORE_RAM void AudioMixer<mixerSize>::update(void)
 {
-    static_assert(mixerSize <= 13, "AudioMixerBase::mix has room for 13 inputs");
+    static_assert(mixerSize <= AudioMixerBase::kMaxInputs, "AudioMixerBase::mix has no room for that many inputs (mixer.h)");
     this->mix(mixerSize, multiplier, previousMultiplier, saturationType);
 }
 #else

@@ -45,6 +45,7 @@ class FileSystem
 
 #ifdef FEATURE_SYNTH_OPEN
     // Open shim only, declared after the destructor so the vtable of the closed library's FileSystem keeps its layout.
+#define POLYSYNTH_FS_PRESENCE 1   // open_fileops.h takes this Presence
 
     /** What the card said about a path: kAbsent only when the card walked the folder and found no such entry, kUnknown for any card error. */
     enum class Presence

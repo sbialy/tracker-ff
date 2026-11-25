@@ -17,12 +17,17 @@
 #include "mtHardware.h"
 #include "util_math.h"
 
+#ifdef FEATURE_USB_AUDIO_IN
+// platforms/mk66/usbaudio/usb_audio_hooks.cpp (the host sim gives a stub, synth-open/tools/ui_shot/host_platform.cpp)
+extern "C" void ffUsbAudioInWant(int on);
+#endif
+
 constexpr uint16_t POP_TIME = 200; // czas po jakim nie ma pykniecia przy zmianie z lineIn na mic
 
 constexpr uint32_t PLAY_REFRESH_US = 5000;
 #include <cr_section_macros.h>
 
-__NOINIT(EXTERNAL_RAM) strTrackerSpectrum cSampleRecorder::spectrum[SAMPLE_CHANNELS];
+__NOINIT(EXTERNAL_RAM) strTrackerSpectrum cSampleRecorder::spectrum[kRecorderChannels];
 
 cSampleRecorder sampleRecorder;
 static cSampleRecorder* SR = &sampleRecorder;
@@ -109,6 +114,21 @@ void turnOffRecorder();
 
 char recordingDirPath[30];
 
+static int calcMaxRadioChannel(float baseFreq, float spacing)
+{
+    if (spacing <= 0.0f)
+    {
+        return 0;
+    }
+
+    return (int)((Radio::kMaxAudioFrequencyMHz - baseFreq) / spacing + 0.001f);
+}
+
+static int calcRadioChannel(float freq, float baseFreq, float spacing)
+{
+    return (int)((freq - baseFreq) / spacing + 0.5f);
+}
+
 void cSampleRecorder::update()
 {
     if (waitForPreRollEnd == true)
@@ -136,7 +156,7 @@ void cSampleRecorder::update()
 
     if (refreshSpectrum)
     {
-        for (int channel = 0; channel < SAMPLE_CHANNELS; channel++)
+        for (int channel = 0; channel < kRecorderChannels; channel++)
         {
             spectrumParams[channel].address =
               recorder.getAddress((AudioInput::InputChannels)channel);
@@ -358,8 +378,25 @@ void cSampleRecorder::start(uint32_t options)
         recorderConfig.radioFreq = radio->getBaseFrequency();
         radioFreqBarVal = 0;
     }
+    else
+    {
+        float radioBottomFreq = radio->getBaseFrequency();
+        float radioSpacing = radio->getSpacing();
+        if (radioSpacing > 0.0f)
+        {
+            int maxChannel = calcMaxRadioChannel(radioBottomFreq, radioSpacing);
+            int channel = clamp<int>(
+              calcRadioChannel(recorderConfig.radioFreq, radioBottomFreq, radioSpacing),
+              0,
+              maxChannel);
+            recorderConfig.radioFreq = radioBottomFreq + (channel * radioSpacing);
+        }
+    }
 
     radio->setFrequency(recorderConfig.radioFreq);
+#ifdef FEATURE_RADIO_STEREO
+    radio->setStereo(recorderConfig.source == sourceTypeRadio && isStereoTake());
+#endif
 #endif
 
     if (currentScreen == screenType::screenTypeConfig)
@@ -407,6 +444,9 @@ void cSampleRecorder::stop()
     {
         engine.forceLineInStreamVolume(LINE_IN_VOLUME_MIN);
     }
+#ifdef FEATURE_USB_AUDIO_IN
+    ffUsbAudioInWant(0); // leaving the recorder: stop filling the ring
+#endif
 #ifdef PLATFORM_IMX
     engine.refreshOutputSourceOutsideTheRecorder();
     engine.forceUsbGainOutsideTheRecorder();
@@ -574,7 +614,7 @@ void cSampleRecorder::refreshGain()
         }
         codec->setMicGain(localMap);
     }
-#ifdef PLATFORM_IMX
+#ifdef SREC_USB_SOURCE
     else if (recorderConfig.source == sourceTypeUsb)
     {
         float resultGain = mapClamped<float>(recorderConfig.gainUsb, 0, 100, 1.0f, 3.98f);
@@ -1540,6 +1580,21 @@ static void functActionMonitor()
     SR->activateLabelsBorder();
 }
 
+#if (defined(FEATURE_STEREO_REC) || defined(FEATURE_RADIO_STEREO)) && !defined(PLATFORM_IMX)
+bool cSampleRecorder::isStereoTake()
+{
+    // Mics stay mono. A stereo take needs the stereo sample mode (linked pairs), otherwise the reload keeps the left channel only.
+#ifdef SREC_USB_SOURCE
+    // the USB source is always stereo, Config > Line in channel only steers the i2s inputs
+    const bool channelStereo = recorderConfig.source == sourceTypeUsb || mtConfig.general.lineInOutType == 0;
+#else
+    const bool channelStereo = mtConfig.general.lineInOutType == 0;
+#endif
+    return recorderConfig.source != sourceTypeMicHG && recorderConfig.source != sourceTypeMicLG && channelStereo &&
+           newFileManager.getSampleMode() == FileManagerOperation::kLeftAndRight;
+}
+#endif
+
 static void functActionRecord()
 {
     SR->recordInProgressFlag = 1;
@@ -1551,10 +1606,14 @@ static void functActionRecord()
 
     Recorder::Config config;
     config.destinationBufferAddress = externalRamSampleMemory;
-    config.destinationBufferSize = SAMPLE_MEMORY_SIZE;
+    config.destinationBufferSize = SAMPLE_POOL_BYTES;
 
 #ifndef PLATFORM_IMX
+#ifdef FEATURE_STEREO_REC
+    config.destinationChannels = SR->isStereoTake() ? 2 : 1;
+#else
     config.destinationChannels = 1;
+#endif
     if (SR->recorderConfig.source == cSampleRecorder::sourceTypeMicHG ||
         SR->recorderConfig.source == cSampleRecorder::sourceTypeMicLG)
     {
@@ -1578,7 +1637,7 @@ static void functActionRecord()
     }
 #endif
 
-#ifdef PLATFORM_IMX
+#ifdef SREC_USB_SOURCE
     config.source = SR->recorderConfig.source == cSampleRecorder::sourceTypeUsb
                       ? Recorder::Config::Source::kUsb
                       : Recorder::Config::Source::kI2s;
@@ -1590,7 +1649,7 @@ static void functActionRecord()
     GP.spectrumResetZoom(0, 0, &SR->zoom);
     SR->spectrumTimerConstrains = 100;
 
-    for (int channel = 0; channel < SAMPLE_CHANNELS; channel++)
+    for (int channel = 0; channel < kRecorderChannels; channel++)
     {
         SR->spectrumParams[channel].address =
           recorder.getAddress((AudioInput::InputChannels)channel);
@@ -1682,7 +1741,7 @@ static void functActionCrop()
         SR->undo[i + 1] = SR->undo[i];
     }
 
-    for (int channel = 0; channel < SAMPLE_CHANNELS; channel++)
+    for (int channel = 0; channel < kRecorderChannels; channel++)
     {
         SR->undo[0].address[channel] = recorder.getAddress((AudioInput::InputChannels)channel);
     }
@@ -1722,8 +1781,11 @@ static void functActionUndo()
     SR->cropCounter--;
     std::vector<int16_t*> addresses;
     addresses.push_back(SR->undo[0].address[0]);
-#ifdef PLATFORM_IMX
-    addresses.push_back(SR->undo[0].address[1]);
+#if defined(PLATFORM_IMX) || defined(FEATURE_STEREO_REC)
+#ifdef FEATURE_STEREO_REC
+    if (SR->isStereoTake())
+#endif
+        addresses.push_back(SR->undo[0].address[1]);
 #endif
     recorder.undo(addresses, SR->undo[0].length);
     SR->startPoint = SR->undo[0].startPoint;
@@ -2340,13 +2402,21 @@ static void functSwitchModule(uint8_t button)
 void cSampleRecorder::calcRadioFreqBarVal()
 {
     float radioBottomFreq = radio->getBaseFrequency();
-    radioFreqBarVal = ((recorderConfig.radioFreq - radioBottomFreq) * 100) /
-                      (Radio::kMaxAudioFrequencyMHz - radioBottomFreq);
+    float radioSpacing = radio->getSpacing();
+    int maxChannel = calcMaxRadioChannel(radioBottomFreq, radioSpacing);
+    float radioTopFreq = (maxChannel > 0) ? (radioBottomFreq + maxChannel * radioSpacing)
+                                          : (float)Radio::kMaxAudioFrequencyMHz;
+    radioFreqBarVal = clamp<int>(
+      (int)(((recorderConfig.radioFreq - radioBottomFreq) * 100.0f) /
+              (radioTopFreq - radioBottomFreq) +
+            0.5f),
+      0,
+      100);
 }
 
 void cSampleRecorder::calcLevelBarVal()
 {
-#ifndef PLATFORM_IMX
+#if !defined(PLATFORM_IMX) && !defined(SREC_USB_SOURCE)
     AudioAnalyzeRMS* recordingRms[AudioInput::InputChannels::kChannelsCount] = {
         engine.getAudioInput()->getRecordingRmsI2s(AudioInput::InputChannels::kLeft),
         engine.getAudioInput()->getRecordingRmsI2s(AudioInput::InputChannels::kRight)
@@ -2424,7 +2494,7 @@ void cSampleRecorder::calcGainBarVal()
     {
         gainBarVal = recorderConfig.gainMicHigh;
     }
-#ifdef PLATFORM_IMX
+#ifdef SREC_USB_SOURCE
     else if (recorderConfig.source == sourceTypeUsb)
     {
         gainBarVal = recorderConfig.gainUsb;
@@ -2438,12 +2508,18 @@ void cSampleRecorder::changeRadioFreqBar(int16_t val)
     {
         float radioBottomFreq = radio->getBaseFrequency();
         float radioSpacing = radio->getSpacing();
-        float newFreq = recorderConfig.radioFreq;
+        if (radioSpacing <= 0.0f)
+        {
+            return;
+        }
 
-        newFreq = clamp(
-          newFreq + (val * radioSpacing), radioBottomFreq, (float)Radio::kMaxAudioFrequencyMHz);
+        int maxChannel = calcMaxRadioChannel(radioBottomFreq, radioSpacing);
+        int currentChannel =
+          calcRadioChannel(recorderConfig.radioFreq, radioBottomFreq, radioSpacing);
+        int newChannel = clamp<int>(currentChannel + val, 0, maxChannel);
+        float newFreq = radioBottomFreq + (newChannel * radioSpacing);
 
-        if (newFreq != recorderConfig.radioFreq)
+        if (newChannel != currentChannel || newFreq != recorderConfig.radioFreq)
         {
             if (radio->setFrequency(newFreq))
             {
@@ -2495,7 +2571,7 @@ void cSampleRecorder::changeGainBar(int16_t val)
         refreshGain();
         mtProject.values.gainMicHigh = sampleRecorder.recorderConfig.gainMicHigh;
     }
-#ifdef PLATFORM_IMX
+#ifdef SREC_USB_SOURCE
     else if (recorderConfig.source == sourceTypeUsb)
     {
         recorderConfig.gainUsb = clamp<int>(recorderConfig.gainUsb + val, 0, 100);
@@ -2652,12 +2728,28 @@ void cSampleRecorder::changeZoom(int16_t value)
     showZoomValue();
 }
 
+uint8_t cSampleRecorder::availableSourceCount()
+{
+#if defined(SREC_USB_SOURCE) && !defined(TRACKER_MINI)
+    // sourceTypeUsb is the last entry here. usbAudioRunningMode() is 1 in 8+3 mono (0 for stereo, the Tracker+ and an image without USB audio)
+    if (TrackerImpl::getInstance()->getPlatform()->usbAudioRunningMode() == 1)
+        return sourceCount - 1;
+#endif
+    return sourceCount;
+}
+
+uint8_t cSampleRecorder::sourceFromProject(uint8_t stored)
+{
+    return stored >= availableSourceCount() ? static_cast<uint8_t>(sourceTypeLineIn) : stored;
+}
+
 void cSampleRecorder::changeSourceSelection(int16_t value, bool rollListOver)
 {
+    const uint8_t count = availableSourceCount();
     if (recorderConfig.source + value < 0)
         recorderConfig.source = 0;
-    else if (recorderConfig.source + value >= sourceCount)
-        recorderConfig.source = (rollListOver ? 0 : sourceCount - 1);
+    else if (recorderConfig.source + value >= count)
+        recorderConfig.source = (rollListOver ? 0 : count - 1);
     else
         recorderConfig.source += value;
 
@@ -2683,7 +2775,7 @@ void cSampleRecorder::changeSourceSelection(int16_t value, bool rollListOver)
 
 void cSampleRecorder::activateAudioInputSource(uint8_t source)
 {
-#ifdef PLATFORM_IMX
+#ifdef SREC_USB_SOURCE
     if (currentScreen == screenTypeConfig && source != sourceTypeUsb)
 #else
     if (currentScreen == screenTypeConfig)
@@ -2714,6 +2806,9 @@ void cSampleRecorder::activateAudioInputSource(uint8_t source)
             // old old //digitalWrite(MINI_MIC_SELECT,LOW);
 #else
             radio->enableLineInput(true);
+#ifdef FEATURE_RADIO_STEREO
+            radio->setStereo(isStereoTake());
+#endif
 #endif
 
             showRadio();
@@ -2738,11 +2833,14 @@ void cSampleRecorder::activateAudioInputSource(uint8_t source)
             changeSourceToMicFlag = 1;
             break;
         }
-#ifdef PLATFORM_IMX
+#ifdef SREC_USB_SOURCE
         case sourceTypeUsb: hideRadio(); break;
 #endif
         default: break;
     }
+#ifdef FEATURE_USB_AUDIO_IN
+    ffUsbAudioInWant(source == sourceTypeUsb ? 1 : 0); // the OUT packets fill the ring only while this source is picked
+#endif
 #ifdef PLATFORM_IMX
     refreshOutputSource();
 #endif
@@ -3054,9 +3152,9 @@ uint16_t cSampleRecorder::calculateStartPointFromRecording()
     static constexpr float timeAverageCoeff = 0.01f;
 
     uint32_t length = recorder.getLength();
-    uint16_t filteredAbs[SAMPLE_CHANNELS] = {};
+    uint16_t filteredAbs[kRecorderChannels] = {};
 
-    uint16_t xpeak[SAMPLE_CHANNELS] = {};
+    uint16_t xpeak[kRecorderChannels] = {};
     float attackCoeff = 1.0f - expf(-2.2f * (1000.0f / (44100.0f * attackMs)));
     uint16_t threshold = powf(10.0f, thresholdDB / 20.0f) * std::numeric_limits<int16_t>::max();
 
@@ -3066,7 +3164,7 @@ uint16_t cSampleRecorder::calculateStartPointFromRecording()
     {
         bool resultIsFound = false;
 
-        for (int channel = 0; channel < SAMPLE_CHANNELS; channel++)
+        for (int channel = 0; channel < kRecorderChannels; channel++)
         {
             int16_t* address = recorder.getAddress((AudioInput::InputChannels)channel);
             uint16_t inputAbs = (address[idx] < 0) ? -address[idx] : address[idx];
@@ -3107,9 +3205,9 @@ uint16_t cSampleRecorder::calculateEndPointFromRecording()
     static constexpr float timeAverageCoeff = 0.01f;
 
     uint32_t length = recorder.getLength();
-    uint16_t filteredAbs[SAMPLE_CHANNELS] = {};
+    uint16_t filteredAbs[kRecorderChannels] = {};
 
-    uint16_t xpeak[SAMPLE_CHANNELS] = {};
+    uint16_t xpeak[kRecorderChannels] = {};
     float attackCoeff = 1.0f - expf(-2.2f * (1000.0f / (44100.0f * attackMs)));
     uint16_t threshold = powf(10.0f, thresholdDB / 20.0f) * std::numeric_limits<int16_t>::max();
 
@@ -3119,7 +3217,7 @@ uint16_t cSampleRecorder::calculateEndPointFromRecording()
     {
         bool resultIsFound = false;
 
-        for (int channel = 0; channel < SAMPLE_CHANNELS; channel++)
+        for (int channel = 0; channel < kRecorderChannels; channel++)
         {
             int16_t* address = recorder.getAddress((AudioInput::InputChannels)channel);
             uint16_t inputAbs = (address[idx] < 0) ? -address[idx] : address[idx];

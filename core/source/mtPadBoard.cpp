@@ -2,6 +2,8 @@
 #include "mtAudioEngine.h"
 #include "mtSequencer.h"
 #include "mtStructs.h"
+#include "mtTuning.h"
+#include "stereoPairs.h"
 #include "util_math.h"
 
 cMtPadBoard mtPadBoard;
@@ -45,7 +47,7 @@ int8_t cMtPadBoard::getEmptyVoice()
 {
     for (uint8_t i = 0; i < voicesCount; i++)
     {
-        if (voices[i] == -1)
+        if (voices[i] == -1 && !stereopairs::isFollower(i)) // the second track of a linked stereo pair plays nothing
             return i;
     }
     return -1;
@@ -142,6 +144,9 @@ void cMtPadBoard::setPadNotes(uint8_t scale, uint8_t noteOffset, uint8_t rootNot
             noteOffset = MAX_NOTE_OFFSET;
         // noteOffset = constrain(noteOffset, MIN_NOTE_OFFSET, MAX_NOTE_OFFSET);
 
+        // a tuning with N notes per period: every key is a pad (no 12 note scale test), up to key 127
+        const bool tunedBoard = tuning::tunedNames();
+        const int maxKey = tunedBoard ? 127 : MAX_NOTE;
         uint16_t tempNote = rootNote; // nuta do podstawiania
         for (int8_t a = 0; a < 48; a++)
         {
@@ -160,13 +165,13 @@ void cMtPadBoard::setPadNotes(uint8_t scale, uint8_t noteOffset, uint8_t rootNot
             }
 
             // czy jest w skali
-            while (!isInScale(tempNote, rootNote, scale))
+            while (!tunedBoard && !isInScale(tempNote, rootNote, scale))
             {
                 tempNote++;
                 // Serial.println("tempnote++");
             }
-            padNotes[a] = clamp<int>(tempNote, MIN_NOTE, MAX_NOTE);
-            if (tempNote < MAX_NOTE)
+            padNotes[a] = clamp<int>(tempNote, MIN_NOTE, maxKey);
+            if (tempNote < maxKey)
                 tempNote++;
         }
         lastNoteOffset = noteOffset;
@@ -191,6 +196,12 @@ uint8_t cMtPadBoard::countPadsWithNote(int8_t note, uint8_t* pads)
     }
 
     return count;
+}
+
+void cMtPadBoard::refreshNotes()
+{
+    lastScale = 255;
+    setPadNotes(mtProject.values.padBoardScale, mtProject.values.padBoardNoteOffset, mtProject.values.padBoardRootNote);
 }
 
 uint8_t cMtPadBoard::getNoteFromPad(int8_t pad, [[maybe_unused]] bool isBeatSlice)

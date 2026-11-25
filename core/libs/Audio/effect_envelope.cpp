@@ -78,6 +78,30 @@ AUDIO_CORE_FLASH void AudioPlayMemory::envelopeSetIsRandom(bool value)
     envelope.isRandom = value;
 }
 
+AUDIO_CORE_FLASH void AudioPlayMemory::envelopeSetPairSeed(uint32_t seed)
+{
+    envelope.randSeed = seed;
+    envelope.randN = 0;
+}
+
+AUDIO_CORE_RAM void AudioPlayMemory::envelopeDrawRandom()
+{
+    if (envelope.randSeed == 0)
+    {
+        utilMathRandom::randomSeed(timer->micros());
+        envelope.mult_hires = utilMathRandom::random(0, 0x3FFFFFFF);
+        return;
+    }
+    // a pair: a hash of the shared seed and the draw number, so the order the two chains update in does not matter
+    uint32_t x = envelope.randSeed + (++envelope.randN) * 0x9E3779B9u;
+    x ^= x >> 16;
+    x *= 0x85EBCA6Bu;
+    x ^= x >> 13;
+    x *= 0xC2B2AE35u;
+    x ^= x >> 16;
+    envelope.mult_hires = (int32_t)(x & 0x3FFFFFFFu);
+}
+
 AUDIO_CORE_FLASH void AudioPlayMemory::envelopeDelay(float milliseconds)
 {
     //	__disable_irq();
@@ -644,8 +668,7 @@ AUDIO_CORE_RAM void AudioPlayMemory::envelopeUpdate(audio_block_t* block)
                     envelopeSwitchPhase(envelopePhaseHold);
                     if (envelope.isRandom)
                     {
-                        utilMathRandom::randomSeed(timer->micros());
-                        envelope.mult_hires = utilMathRandom::random(0, 0x3FFFFFFF);
+                        envelopeDrawRandom();
                     }
                     continue;
                 }
@@ -654,8 +677,7 @@ AUDIO_CORE_RAM void AudioPlayMemory::envelopeUpdate(audio_block_t* block)
                     if (envelope.isRandom)
                     {
                         envelopeSwitchPhase(envelopePhaseHold);
-                        utilMathRandom::randomSeed(timer->micros());
-                        envelope.mult_hires = utilMathRandom::random(0, 0x3FFFFFFF);
+                        envelopeDrawRandom();
                     }
                     else
                         envelopeSwitchPhase(envelopePhaseDecay);

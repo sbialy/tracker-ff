@@ -64,7 +64,7 @@ enum Param : int {
     kVolume,
     // tracker-ff addition (paraphony, not in OpenTracker): appended, so every older patch keeps its values and plays as before
     kChordMode,   // 0 Poly (the engine as it was), 1 Para: the voice sounds the Chord (the note and up to 3 more oscillators)
-    kChord,       // the MIDI Chord FX table (synth-open/plug/plug_chord.h, 68 entries, 0 = the note alone)
+    kChord,       // the MIDI Chord FX table (synth-open/plug/plug_chord.h, 77 entries, 0 = the note alone)
     kStrum,       // Para: -63..63, 2 ms between successive chord notes, + up (the note first), - down (the top first), 0 together
     kParamCount   // 32
 };

@@ -66,6 +66,9 @@ class Si4703
     void init(int resetPin, int sdioPin, int sclkPin, int interruptPin);
     void powerOn(); // call in setup
     void powerOff();
+#ifdef FEATURE_RADIO_STEREO
+    void setStereo(bool stereo); // clears or sets the MONO bit of POWERCFG on a running radio
+#endif
     void seekUp(); // returns the tuned channel or 0
     void seekDown();
     void setVolume(int volume); // 0 to 15
@@ -91,7 +94,7 @@ class Si4703
 
     seek_control_t seek_control;
 
-    void setRegion(radio_region_t region, uint8_t init);
+    void setRegion(radio_region_t region, uint8_t init, bool ignoreErrors = false);
     float freqSpacing_MHz;
     float freqBottomBase_MHz;
 

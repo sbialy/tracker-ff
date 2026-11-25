@@ -398,11 +398,11 @@ void cHorizontalTracker::playHead()
                 return;
             }
 
-            phy1 = phy1 - firstVisibleTrack;
+            phy1 = tracks->colOf(phy1);
             phy1 = posY + stepsNumbersHight + phy1 * trackHight;
             phy1 = phy1 < (posY + stepsNumbersHight) ? posY + stepsNumbersHight : phy1;
 
-            phy2 = phy2 - firstVisibleTrack;
+            phy2 = tracks->colOf(phy2);
             phy2 = posY + stepsNumbersHight + phy2 * trackHight + trackHight;
             phy2 = phy2 > phy2max ? (phy2max) : phy2;
         }
@@ -466,7 +466,7 @@ void cHorizontalTracker::calculateSelection()
             select2_x = tracks->selectEndStep;
         }
 
-        select1_y = select1_y - firstVisibleTrack;
+        select1_y = tracks->colOf(select1_y);
         select1_y = posY + stepsNumbersHight + select1_y * trackHight;
 
         if (select1_y < posY + stepsNumbersHight)
@@ -474,7 +474,7 @@ void cHorizontalTracker::calculateSelection()
             select1_y = posY + stepsNumbersHight;
         }
 
-        select2_y = select2_y - firstVisibleTrack;
+        select2_y = tracks->colOf(select2_y);
         select2_y = posY + stepsNumbersHight + select2_y * trackHight + trackHight;
 
         if (select2_y > posY + stepsNumbersHight + trackHight * visibleTracksCount)
@@ -609,12 +609,12 @@ void cHorizontalTracker::selection()
 
     // aktualnie modyfikowany step
     if (tracks->selectState && tracks->actualTrack >= firstVisibleTrack &&
-        tracks->actualTrack <= firstVisibleTrack + visibleTracksCount)
+        tracks->colOf(tracks->actualTrack) <= visibleTracksCount)
     {
         uint16_t select_x =
           trackHeadWidth + ((tracks->actualStep - tracks->middleVisibleStep) + 5) * stepWidth + 2;
         uint16_t select1_y =
-          posY + stepsNumbersHight + (tracks->actualTrack - firstVisibleTrack) * trackHight;
+          posY + stepsNumbersHight + (tracks->colOf(tracks->actualTrack)) * trackHight;
         uint16_t select2_y = select1_y + trackHight;
         uint16_t select_w = stepWidth - 4;
         uint16_t rect_select_x = select_x + 1;
@@ -770,7 +770,7 @@ void cHorizontalTracker::tracksNames()
 
     for (uint8_t i = 0; i < visibleTracksCount; i++)
     {
-        if (tracks->inactive[firstVisibleTrack + i])
+        if (tracks->inactive[tracks->colTrack(i)])
             API_COLOR(colors[12]);
         else
             API_COLOR(colors[19]);
@@ -799,7 +799,7 @@ void cHorizontalTracker::tracksNames()
     for (uint8_t i = 0; i < visibleTracksCount; i++)
     {
         y = posY + stepsNumbersHight + (i * trackHight) + 10;
-        const char* trackName = tracks->tracksNames[firstVisibleTrack + i];
+        const char* trackName = tracks->tracksNames[tracks->colTrack(i)];
         String2Bitmaps(x, y, &fonts[3], trackName, 7, trackHeadWidth - fonts[3].width);
     }
 
@@ -828,7 +828,7 @@ void cHorizontalTracker::notes()
     int8_t mark_s = (tracks->actualStep - tracks->middleVisibleStep) + actualStepPosition;
     if ((tracks->selectedParam == 0 /*|| tracks->selectedParam == 4*/) && tracks->selectState)
     {
-        mark_t = tracks->actualTrack - firstVisibleTrack;
+        mark_t = tracks->colOf(tracks->actualTrack);
     }
 
     for (uint16_t i = 0; i < visibleStepsCount; i++)
@@ -838,7 +838,7 @@ void cHorizontalTracker::notes()
             int16_t param_x = offset_x + i * stepWidth;
             int16_t param_y = offset_y + j * trackHight;
 
-            char* text = tracks->track[firstVisibleTrack + j].row[i + stepsDataStructOffset].note;
+            char* text = tracks->track[tracks->colTrack(j)].row[i + stepsDataStructOffset].note;
 
             if (selectActive && mark_t >= 0 && param_x > select1_x && param_x < select2_x &&
                 param_y > select1_y && param_y < select2_y)
@@ -847,7 +847,7 @@ void cHorizontalTracker::notes()
                 actualColor = colors[14];
             else
             {
-                if (tracks->inactive[firstVisibleTrack + j])
+                if (tracks->inactive[tracks->colTrack(j)])
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[6];
@@ -885,14 +885,14 @@ void cHorizontalTracker::instruments()
     int8_t mark_s = (tracks->actualStep - tracks->middleVisibleStep) + actualStepPosition;
     if ((tracks->selectedParam == 1 /*|| tracks->selectedParam == 4*/) && tracks->selectState)
     {
-        mark_t = tracks->actualTrack - firstVisibleTrack;
+        mark_t = tracks->colOf(tracks->actualTrack);
     }
 
     for (uint16_t i = 0; i < visibleStepsCount; i++)
     {
         for (uint16_t j = 0; j < visibleTracksCount; j++)
         {
-            uint8_t track = firstVisibleTrack + j;
+            uint8_t track = tracks->colTrack(j);
             int16_t param_x = offset_x + i * stepWidth;
             int16_t param_y = offset_y + j * trackHight;
             // uint8_t midi_channel  =  tracks->track[track].row[j].instr[3];
@@ -949,7 +949,7 @@ void cHorizontalTracker::fxes1()
     int8_t mark_s = (tracks->actualStep - tracks->middleVisibleStep) + actualStepPosition;
     if ((tracks->selectedParam == 2 /*|| tracks->selectedParam == 4*/) && tracks->selectState)
     {
-        mark_t = tracks->actualTrack - firstVisibleTrack;
+        mark_t = tracks->colOf(tracks->actualTrack);
     }
 
     for (uint16_t i = 0; i < visibleStepsCount; i++)
@@ -959,7 +959,7 @@ void cHorizontalTracker::fxes1()
             int16_t param_x = offset_x + i * stepWidth;
             int16_t param_y = offset_y + j * trackHight;
             char* text =
-              &tracks->track[firstVisibleTrack + j].row[i + stepsDataStructOffset].fx[0][0];
+              &tracks->track[tracks->colTrack(j)].row[i + stepsDataStructOffset].fx[0][0];
 
             if (selectActive && mark_t >= 0 && param_x > select1_x && param_x < select2_x &&
                 param_y > select1_y && param_y < select2_y)
@@ -968,7 +968,7 @@ void cHorizontalTracker::fxes1()
                 actualColor = colors[14];
             else
             {
-                if (tracks->inactive[firstVisibleTrack + j])
+                if (tracks->inactive[tracks->colTrack(j)])
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[8];
@@ -1004,7 +1004,7 @@ void cHorizontalTracker::fxes2()
     int8_t mark_s = (tracks->actualStep - tracks->middleVisibleStep) + actualStepPosition;
     if ((tracks->selectedParam == 3 /*|| tracks->selectedParam == 4*/) && tracks->selectState)
     {
-        mark_t = tracks->actualTrack - firstVisibleTrack;
+        mark_t = tracks->colOf(tracks->actualTrack);
     }
 
     for (uint16_t i = 0; i < visibleStepsCount; i++)
@@ -1014,7 +1014,7 @@ void cHorizontalTracker::fxes2()
             int16_t param_x = offset_x + i * stepWidth;
             int16_t param_y = offset_y + j * trackHight;
             char* text =
-              &tracks->track[firstVisibleTrack + j].row[i + stepsDataStructOffset].fx[1][0];
+              &tracks->track[tracks->colTrack(j)].row[i + stepsDataStructOffset].fx[1][0];
 
             if (selectActive && mark_t >= 0 && param_x > select1_x && param_x < select2_x &&
                 param_y > select1_y && param_y < select2_y)
@@ -1023,7 +1023,7 @@ void cHorizontalTracker::fxes2()
                 actualColor = colors[14];
             else
             {
-                if (tracks->inactive[firstVisibleTrack + j])
+                if (tracks->inactive[tracks->colTrack(j)])
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[9];

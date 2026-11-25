@@ -1,0 +1,15 @@
+# IMX round 4: the new play modes. Instrument 1 is a 1 s sine in 1-Shot Rev, track 1 plays it on step 1 of every pass (3.7 s). The setup pokes switch the instrument between the passes to Pingpong Rev, Oscillator and a 1-Shot with Repitch Steps 4. The trace follows the voice (pm = the play mode, play = the voice sounds): each mode starts the voice, the Oscillator voice keeps sounding past the 1 s of the sample (it loops), the Repitch voice lasts less than the plain one. Sample audio is silent in the sim (wav peak 0), so the proof is the voice state of the audio engine
+# Replay: plus_flows.sh mini  (setup pokes in plus_flows.sh, the poke trace UISHOT_TRACE_FFSTATE is the read, poke_ok in plus_flows.sh)
+title: sample play modes 1-Shot Rev, Pingpong Rev, Oscillator, Repitch (Tracker Mini, IMX round 4)
+check: texts
+pause: 80ms
+
+wait 1500ms
+tap Fn1
+wait 3000ms
+tap Play
+wait 27000ms
+shot playmodes-playing
+tap Play
+wait 1500ms
+shot playmodes-stopped

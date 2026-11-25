@@ -1,4 +1,6 @@
 #include "mtCapture.h"
+#include "mtNoteName.h"
+#include "stereoPairs.h"
 #include "tapeFx.h"
 #include "mtChord.h"
 #include "mtPatternGen.h"
@@ -825,7 +827,7 @@ void cPatternEditor::refreshFillType()
 
     if (editParam == EditNote)
     {
-        display.setControlText2(label[4], (char*)&mtNotes[fillData[fillIdx].from][0]);
+        display.setControlText2(label[4], (char*)noteName(fillData[fillIdx].from));
         display.setControlValue(val1PopupBar, (fillData[fillIdx].from * 100) / (127));
 
         if (role)
@@ -842,7 +844,7 @@ void cPatternEditor::refreshFillType()
         else
         {
             display.setControlValue(val2PopupBar, (fillData[fillIdx].to * 100) / (127));
-            display.setControlText2(label[5], (char*)&mtNotes[fillData[fillIdx].to][0]);
+            display.setControlText2(label[5], (char*)noteName(fillData[fillIdx].to));
         }
     }
     else if (editParam == EditInstr)
@@ -937,7 +939,7 @@ void cPatternEditor::refreshFillFrom()
     }
     else if (editParam == EditNote)
     {
-        display.setControlText2(label[4], (char*)&mtNotes[fillData[fillIdx].from][0]);
+        display.setControlText2(label[4], (char*)noteName(fillData[fillIdx].from));
         display.setControlValue(val1PopupBar, (fillData[fillIdx].from * 100) / (127));
     }
     else if (editParam == EditInstr)
@@ -1044,7 +1046,7 @@ void cPatternEditor::refreshFillTo()
 
     if (editParam == EditNote)
     {
-        display.setControlText2(label[5], (char*)&mtNotes[fillData[fillIdx].to][0]);
+        display.setControlText2(label[5], (char*)noteName(fillData[fillIdx].to));
         display.setControlValue(val2PopupBar, (fillData[fillIdx].to * 100) / (127));
         display.refreshControl(label[5]);
     }
@@ -1283,13 +1285,15 @@ void cPatternEditor::showMuteButtons(uint8_t state, bool midiTracks)
             char* bottomText = (char*)"";
             auto colors = display.getTheme().inactiveLabelsColors;
 
-            bool showButton = midiTracks ? i < kMidiTracks : true;
+            // a linked stereo pair is one button "1+2", the follower has none and the buttons after it are one slot up
+            const int tr = midiTracks ? i : stereopairs::nthVisible(i);
+            bool showButton = midiTracks ? i < kMidiTracks : tr < kSampleTracks;
             if (showButton)
             {
                 int mute =
-                  midiTracks ? mtProject.values.midiTrackMute[i] : mtProject.values.trackMute[i];
-                topText =
-                  midiTracks ? mtProject.values.midiTrackNames[i] : mtProject.values.TrackNames[i];
+                  midiTracks ? mtProject.values.midiTrackMute[tr] : mtProject.values.trackMute[tr];
+                topText = midiTracks ? mtProject.values.midiTrackNames[tr]
+                                     : stereopairs::isLeader(tr) ? (char*)stereopairs::label(tr >> 1) : mtProject.values.TrackNames[tr];
                 bottomText = mute ? (char*)"Unmute" : (char*)"Mute";
                 colors = mute ? display.getTheme().inactiveLabelsColors
                               : display.getTheme().activeLabelsColors;
@@ -1320,7 +1324,7 @@ void cPatternEditor::showRecordArmingButtons(uint8_t state, bool midiTracks)
     {
         for (int buttonIdx = 0; buttonIdx < 8; buttonIdx++)
         {
-            int trackIdx = midiTracks ? buttonIdx + 8 : buttonIdx;
+            int trackIdx = midiTracks ? buttonIdx + 8 : stereopairs::nthVisible(buttonIdx);
 
             display.setControlValue(label[buttonIdx], 1);
             display.setControlStyle(label[buttonIdx],
@@ -1333,7 +1337,7 @@ void cPatternEditor::showRecordArmingButtons(uint8_t state, bool midiTracks)
             char* bottomText = (char*)"";
             auto colors = display.getTheme().inactiveLabelsColors;
 
-            bool showButton = midiTracks ? buttonIdx < kMidiTracks : true;
+            bool showButton = midiTracks ? buttonIdx < kMidiTracks : trackIdx < kSampleTracks;
             if (showButton)
             {
                 topText = (char*)"Live REC";
@@ -1676,7 +1680,7 @@ void cPatternEditor::showActionButtonPage3Labels()
 {
     display.setControlText(label[0], "Pattern");
     display.setControlText(label[1], "Track");
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
     display.setControlText(label[2], "Groove");
 #else
     display.setControlText(label[2], "");
@@ -1737,7 +1741,7 @@ void cPatternEditor::showActionButtonPage3Labels()
 
     labelDataMore.dotIndicator.current = 2;
 
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
     showGrooveLabel();
 #endif
     display.synchronizeRefresh();
@@ -1761,7 +1765,7 @@ void cPatternEditor::showFollowChordLabels()
     const int8_t track = trackerPattern.actualTrack;
     followShownTrack = track;
     const bool valid = track >= 0 && track < kAllTracks;
-    const uint8_t mode = valid ? followchord::setting.mode[track] : followchord::kOff;
+    const uint8_t mode = valid ? followchord::setting.mode[track] : static_cast<uint8_t>(followchord::kOff);
     snprintf(followModeText, sizeof(followModeText), "%s", followchord::modeName(mode));
     if (mode == followchord::kOff)
     {
@@ -1920,7 +1924,7 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
             }
 
             uint8_t fxVal_temp = (sequencer.isChanceFamily(stepFx.type) ||
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
                                   stepFx.type == sequencer.fx.FX_TYPE_PATCH_MORPH ||
 #endif
                                   stepFx.type == sequencer.fx.FX_TYPE_MIDI_CHORD)
@@ -2006,14 +2010,20 @@ void cPatternEditor::showActualParamOnBar(bool forceShow)
                 chordName(name, sizeof(name), stepFx.value, st.note >= 0 ? st.note : -1);
                 snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "MIDI Chord: %s", name);
             }
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
             else if (stepFx.type == sequencer.fx.FX_TYPE_PATCH_MORPH)
             {   // "Morph: 40% to slot 3": the slot of a Patch FX in the other FX slot, else the part's Morph target
                 const auto& st = curStep;
                 const fx34::Fx other = fx34::getFx(&st, rank ^ 1);   // the other slot of the pair
                 const int part = st.instrument - SYNTH_INSTRUMENTS_START_IDX;
+#ifdef FEATURE_SYNTH_OPEN
                 const int to = other.type == sequencer.fx.FX_TYPE_PATCH_CHANGE ? other.value
                                                                                 : polysynth::open::patchBankMorphTarget(part);
+#else
+                const int to = other.type == sequencer.fx.FX_TYPE_PATCH_CHANGE ? other.value
+                             : part >= 0 && part < kSynthInstrumentsCount ? synth->getMorphTarget(part) // IMX: the part's target
+                                                                          : Synth::kMorphTarget;
+#endif
                 snprintf(rightTitleBarLabel, sizeof(rightTitleBarLabel), "Morph: %u%% to slot %d", stepFx.value, to);
             }
 #endif

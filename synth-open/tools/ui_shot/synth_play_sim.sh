@@ -17,6 +17,8 @@
 #   P4  CC 123 and CC 120 release every voice and clear the table, CC 121 centres the bend
 #   P5  pitch bend: 2 st default range (+-8192 = +-2 st), Bend column 12 st, DIN bend works the same
 #   P6  exit with notes held, pedal down and the wheel bent: every voice released, bend 0, range 1, table empty, budget 4
+#   PU  the USB cable is pulled with notes held ("usbunplug": the bus lost flag, taken by the real midiUpdate): the USB cells and voices get their note off,
+#       DIN notes stay, a USB pedal goes up (its sustained notes with it), a USB bend goes back to 0, a DIN pedal keeps holding the USB note
 #   P7  the transport: Play does nothing, Rec starts a take (not the song, synth_rec_sim.sh), external Start, Continue, Song Position and Stop are ignored on the page, MIDI clock is let
 #       through, and Start works again after the page (the control that shows the gate is what stops it)
 #   P8  entry with a song playing: the stop confirm (Cancel keeps the song and the page it was on, Stop stops the song and opens the page)
@@ -27,19 +29,22 @@
 #   AB1..AB10 the A/B mode (ref/synth-ab-design.md): Synth B column, 16 voices, never the same part on both sides, the morph (encoder, Shift, CC 11,
 #       equal power gains), the Bank columns (the patch swap with notes held), exit restore, the pooled pair 4+4 ("poke ptype"), the morph by audio
 #       ("poke abstate", the audio dump and ab_audio_check.py)
+#   MP (EXTHOOKS=1, PERSIST_ONLY=1 runs only this) the MPE settings file round trip: mpezone, mperange, mpepress written off their defaults only, read back by a new process
+#   PC2 MIDI Program Change in on the page (Config > MIDI > Program in on): the channel of a side picks that side's Bank slot, the Bank column shows it, the page
+#       Input and Channel filters apply, a program above 15 and an empty slot change nothing. The rows outside the page are midi_pc_sim.sh
 #   P11 a page that must not be left half way: Sample Recorder and Sample Editor do not open the page
-# Ends with "RESULT: GREEN" (exit 0) or "RESULT: RED (n failing)". SAN=address,undefined: the sanitizer build. EXTHOOKS=1 adds P12 (the settings file).
+# Ends with "RESULT: GREEN" (exit 0) or "RESULT: RED (n failing)". SAN=address,undefined: the sanitizer build. EXTHOOKS=1 adds P12, P13 and the MP rows (the settings file, run_tests job synth_play_sim_ext, its mutant P12_MUTANT=1).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 SAN="${SAN:-}"
 EXTHOOKS="${EXTHOOKS:-}"
 BUILD="$ROOT/build/ui-shot${SAN:+-san}${EXTHOOKS:+-ext}"
-BIN="$BUILD/ui_shot"
+BIN="${UI_SHOT_BIN:-$BUILD/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (run_tests)
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/synth_play_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$BUILD"
-make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" ${SAN:+SAN=$SAN} ${EXTHOOKS:+EXTHOOKS=$EXTHOOKS} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" ${SAN:+SAN=$SAN} ${EXTHOOKS:+EXTHOOKS=$EXTHOOKS} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
 
 fails=0; checks=0
 expect() { checks=$((checks+1)); if [ "$2" = "$3" ]; then printf 'ok    %s\n' "$1"; else fails=$((fails+1)); printf 'FAIL  %s\n      expected: %s\n      got:      %s\n' "$1" "$2" "$3"; fi; }
@@ -70,6 +75,38 @@ gates() { voices "$1" "$2" | sed 's/n=[0-9]* \[ *//; s/ *\]//' | tr ' ' '\n' | a
 PV='poke voices'; PS='poke synthplay'; PG='poke govcap'
 ENTER="hold Shift; tap Performance; unhold Shift; wait 300"
 FROMP="tap Pattern; wait 400"
+
+# ===================================================================== MP MPE settings file round trip (EXTHOOKS=1 only, run_tests: PERSIST_ONLY=1)
+# mpezone, mperange and mpepress of /Features/synthplay.cfg (ref/mpe-in-p1.md): written only off their defaults (Lower 15, 48 st, 0 %). Driven with the
+# page's own encoder (Press > Vol is the third item of the Velocity column, MPE zone of Bend, MPE range of Channel), the file the firmware wrote seeds the
+# next process, and what the firmware read back is printed by "poke mpestate". PERSIST_MUTANT=1: the reload sees a file with the MPE lines cut out and the
+# defaults run never goes back to the defaults, rows 3, 4 and 5 must go RED (run_tests asserts it)
+persist_rows() {
+    local row=0
+    # steps to the MPE zone / range / press: select the column, press it on to the third item, turn the encoder
+    local SETP="tap F6; tap F6; tap F6; enc 5; tap F7; tap F7; tap F7; enc -2; tap F8; tap F8; tap F8; enc -3"
+    local BACKP="tap F6; tap F6; tap F6; enc -5; tap F7; tap F7; tap F7; enc 2; tap F8; tap F8; tap F8; enc 3"
+    [ -n "${PERSIST_MUTANT:-}" ] && BACKP="tap F7; tap F7; enc 0"
+    run mp1 "$ENTER; poke mpestate; $SETP; poke mpestate; $FROMP; wait 100; cat Features/synthplay.cfg"
+    expect "MP non default MPE rows: Lower 13 (-2), 45 st (-3), 5 % (+5) on the page" "mpestate zone 15 range 48 press 0 chg 0|mpestate zone 13 range 45 press 5 chg 0" \
+        "$(grep '^mpestate' "$WORK/mp1.poke.out" | tr '\n' '|' | sed 's/|$//')"
+    local f1; f1="$(cat "$WORK/mp1.out")"
+    expect "MP the file written when the page closes has the three keys with those values, after morph" "transpose 0|morph 50|mpezone 13|mperange 45|mpepress 5" \
+        "$(echo "$f1" | awk '/^transpose/ {p=1} p {print}' | tr '\n' '|' | sed 's/|$//')"
+    local seed; seed="$f1"
+    [ -n "${PERSIST_MUTANT:-}" ] && seed="$(echo "$f1" | grep -v '^mpe')"
+    SEED="$seed" run mp2 "$ENTER; poke mpestate"
+    expect "MP a new process reads the file: the three values are back" "mpestate zone 13 range 45 press 5 chg 0" "$(grep '^mpestate' "$WORK/mp2.poke.out")"
+    SEED="$f1" run mp3 "$ENTER; poke mpestate; $BACKP; poke mpestate; $FROMP; wait 100; cat Features/synthplay.cfg"
+    expect "MP the file seeded with the keys reads as 13 45 5, the encoder takes them back to the defaults" "mpestate zone 13 range 45 press 5 chg 0|mpestate zone 15 range 48 press 0 chg 0" \
+        "$(grep '^mpestate' "$WORK/mp3.poke.out" | tr '\n' '|' | sed 's/|$//')"
+    expect "MP defaults write no MPE key (the file is still written: the older keys are there)" "0 keys|morph 50" "$(grep -c '^mpe' "$WORK/mp3.out") keys|$(grep '^morph' "$WORK/mp3.out")"
+}
+if [ -n "${PERSIST_ONLY:-}" ]; then
+    persist_rows
+    if [ "$fails" -eq 0 ]; then echo "RESULT: GREEN ($checks checks)"; exit 0; fi
+    echo "RESULT: RED ($fails failing of $checks)"; exit 1
+fi
 
 # ===================================================================== P1 entry and exit
 run p1 "poke voicecount 0 2; poke voicecount 1 3; poke voicecount 2 1; $PS; $ENTER; $PS; $FROMP; $PS"
@@ -140,6 +177,35 @@ expect "P6 after the exit: bend 0, range 1, project voice counts (1 1 1), budget
   "$(sps p6 2 mode)|$(sps p6 2 part0)|$(sps p6 2 cells)|$(sps p6 2 pedal)"
 run p6b "$ENTER; midiono 1 60 100; $FROMP; wait 300; midiono 1 62 100; wait 40; $PV"
 expect "P6 a USB note after the exit does not reach the part (the page's input is closed, Config > MIDI Notes in is off)" "n=0 [ ]" "$(voices p6b 1 | sed 's/ *$//')"
+
+# ===================================================================== PU the USB cable is pulled (no note off comes)
+run pu1 "$ENTER; midiono 1 60 100; midiono 1 64 100; midiono 1 67 100; wait 40; $PV; $PS; usbunplug; wait 40; $PV; $PS"
+expect "PU the chord held over USB: 3 voices gated, table holds 3" "1:60 1:64 1:67|60:1 64:1 67:1" "$(gates pu1 1)|$(sps pu1 1 cells | sed 's/^cells //')"
+expect "PU the cable pulled: every voice released (gate 0), the table is empty" "0:60 0:64 0:67|cells" "$(gates pu1 2)|$(sps pu1 2 cells)"
+run pu2 "$ENTER; midiono 1 60 100; midiono 1 64 100; dinon 1 72 100; wait 40; usbunplug; wait 40; $PV; $PS; dinoff 1 72; wait 40; $PV; $PS"
+expect "PU a DIN note stays when the USB cable is pulled: USB 60 64 released, DIN 72 still gated and in the table" "0:60 0:64 1:72|cells 72:1" "$(gates pu2 1)|$(sps pu2 1 cells)"
+expect "PU the DIN note off still works afterwards" "0:60 0:64 0:72|cells" "$(gates pu2 2)|$(sps pu2 2 cells)"
+run pu3 "$ENTER; midicc 1 64 127; midiono 1 60 100; midiono 1 64 100; midionoff 1 60; dinon 1 72 100; dinoff 1 72; wait 40; $PV; $PS; usbunplug; wait 40; $PV; $PS; midiono 1 65 100; midionoff 1 65; wait 40; $PV; $PS"
+expect "PU a USB pedal with a held and a sustained USB note and a sustained DIN note: all gated, pedal down" "1:60 1:64 1:72|cells 60:2 64:1 72:2|pedal 1" "$(gates pu3 1)|$(sps pu3 1 cells)|$(sps pu3 1 pedal)"
+expect "PU the cable pulled: the pedal goes up with its notes, all three released, pedal up" "0:60 0:64 0:72|cells|pedal 0" "$(gates pu3 2)|$(sps pu3 2 cells)|$(sps pu3 2 pedal)"
+expect "PU a later note is not held by the pedal that is gone: its note off releases it, the table is empty" "cells|pedal 0" "$(sps pu3 3 cells)|$(sps pu3 3 pedal)"
+run pu4 "$ENTER; dincc 1 64 127; midiono 1 60 100; midionoff 1 64; wait 40; usbunplug; wait 40; $PV; $PS"
+expect "PU a DIN pedal holds the USB note the cable never let go: sustained, the pedal is still down" "1:60|cells 60:2|pedal 1" "$(gates pu4 1)|$(sps pu4 1 cells)|$(sps pu4 1 pedal)"
+run pu5 "$ENTER; midibend 1 4000; wait 40; $PS; usbunplug; wait 40; $PS"
+expect "PU a USB bend wheel is centred when the cable is pulled" "bend 0.977|bend 0.000" "$(sps pu5 1 part0 | awk '{print $3" "$4}')|$(sps pu5 2 part0 | awk '{print $3" "$4}')"
+run pu6 "$ENTER; dinbend 1 4000; midiono 1 60 100; wait 40; usbunplug; wait 40; $PV; $PS"
+expect "PU a DIN bend stays and the USB note goes" "0:60|bend 0.977" "$(gates pu6 1)|$(sps pu6 1 part0 | awk '{print $3" "$4}')"
+# SP-U3 the Capture ring: the page taps every note on, so a pulled cable left a note on without its off in the ring (inaudible). capheld NAME K: the notes
+# still on in the Kth "capring" block (net count of on minus off per note, the numbers are the tapped ones, the Config middle C shifts them)
+capheld() { awk -v b="$2" '/^capring count/ {blk++} blk == b && /^cap / {n[$2] += ($3 == "on") ? 1 : -1} END {for (k in n) if (n[k] > 0) print k}' "$WORK/$1.out" | sort -n | tr '\n' ' ' | sed 's/ $//'; }
+if [ -z "$EXTHOOKS" ]; then   # the ring is read through the Capture tenant of extras.plg in the EXTHOOKS flavour (not loaded here): the tap itself is the same code
+  run pu7 "capture 1; $ENTER; midiono 1 60 100; midiono 1 64 100; midiono 1 67 100; midionoff 1 64; dinon 1 72 100; wait 40; capring; usbunplug; wait 40; capring"
+  B0="$(awk '/^capring count/ {blk++} blk == 1 && /^cap / {print $2; exit}' "$WORK/pu7.out")"
+  expect "PU7 before the pull the ring holds the USB notes 60 and 67 and the DIN note 72 as notes on (shifted by the Config middle C)" "$((B0)) $((B0 + 7)) $((B0 + 12))" "$(capheld pu7 1)"
+  expect "PU7 the cable pulled: the USB notes get their note off in the ring (SP-U3), the held DIN note stays on" "$((B0 + 12))" "$(capheld pu7 2)"
+  offs6() { awk -v b="$2" '/^capring count/ {blk++} blk == b && /^cap / && $3 == "off" && $0 ~ / src 6 / {n++} END {print n + 0}' "$WORK/$1.out"; }
+  expect "PU7 the offs carry the tag of the page's USB note ons (src 6): one played off before the pull, two more after it" "1 3" "$(offs6 pu7 1) $(offs6 pu7 2)"
+fi
 
 # ===================================================================== P7 transport
 run p7 "$ENTER; poke playing; tap Play; wait 300; poke playing; hold Shift; tap Play; unhold Shift; wait 300; poke playing; tap Rec; wait 100; poke playing; midirt start; wait 200; poke playing; midirt continue; wait 200; poke playing; midirt songpos 64; wait 100; poke playing; midirt stop; wait 100; midiclk 3; poke clockpulses; wait 100; poke playing; $PS"
@@ -423,13 +489,37 @@ echo "      tail rms after the note off: sends 0 = $t0, Reverb A 100 = $tr, Dela
 expect "P17 Reverb A 100 makes the tail at least 4 times louder than with the sends at 0 (the sequencer is stopped)" "yes" "$([ "$tr" -ge $((t0 * 4)) ] && echo yes || echo no)"
 expect "P17 Delay A 100 makes the tail at least 4 times louder than with the sends at 0" "yes" "$([ "$td" -ge $((t0 * 4)) ] && echo yes || echo no)"
 
+# ===================================================================== PC: MIDI Program Change in (Config > MIDI > Program in, ref/midi-pc-in.md)
+# The bank slots of SETUPAB: part 0 has 0 1 3, part 1 has 0 2, part 2 none. midipc / dinpc CH PROGRAM inject the program on USB / DIN, "pcin 0|1" is the Config row.
+# The sequencer mode rows (Synth N on channel N, the Config row) are midi_pc_sim.sh. "poke rawvals P" prints the values the part plays now (what the Patch FX writes, the open slot stays the same), splbank K the Bank A / Bank B column texts
+splbank() { grep '^splstate bank' "$WORK/$1.poke.out" | sed -n "$2p" | sed 's/^splstate bank //'; }
+
+# --- PC2 Synth play page: the program on the channel of a side picks that side's slot (Bank column, part values), the page's own Input and Channel filters apply
+run pc2 "$SETUPAB; $ENTER; poke rawvals 0; poke rawvals 1; $PAB; midipc 1 1; $PAB; pcin 1; midipc 1 1; $PAB; poke splstate; poke rawvals 0; midipc 1 2; $PAB; midipc 1 3; $PAB; poke splstate; dinpc 1 0; $PAB; poke rawvals 0; midipc 1 16; dinpc 1 127; $PAB; tap F5; enc 1; wait 50; midipc 2 2; $PAB; poke splstate; poke rawvals 1; midipc 2 1; $PAB; midipc 3 1; $PAB; midipc 1 3; $PAB; poke synthset 0 2; midipc 1 0; $PAB; dinpc 1 0; $PAB; poke synthset 1 5; dinpc 1 3; $PAB; poke synthset 1 0; poke synthset 0 0; pcin 0; midipc 1 3; $PAB; pcin 1; midipc 1 3; $FROMP; wait 300; poke rawvals 0; poke rawvals 1; $PS"
+expect "PC2 the page opens on slot 0 on both banks, Program in Off: a program changes nothing" "banka 0 bankb 0|banka 0" "$(abh pc2 1 | awk '{print $5" "$6" "$7" "$8}')|$(abh pc2 2 | awk '{print $5" "$6}')"
+expect "PC2 Program in On, program 1 on channel 1 (Synth A is Synth 1): Bank A is slot 1, the Bank A column shows it" "banka 1|2 " "$(abh pc2 3 | awk '{print $5" "$6}')|$(splbank pc2 1 | sed 's/^A \(..\).*/\1/')"
+expect "PC2 the part plays slot 1's values (they differ from slot 0's)" "different" "$([ "$(raw pc2 1)" != "$(raw pc2 3)" ] && echo different || echo same)"
+expect "PC2 program 2 (empty slot): Bank A stays on slot 1" "banka 1" "$(abh pc2 4 | awk '{print $5" "$6}')"
+expect "PC2 program 3: Bank A slot 3, the column shows 4" "banka 3|4 " "$(abh pc2 5 | awk '{print $5" "$6}')|$(splbank pc2 2 | sed 's/^A \(..\).*/\1/')"
+expect "PC2 DIN program 0: Bank A slot 0, the values of the open slot are back" "banka 0|same" "$(abh pc2 6 | awk '{print $5" "$6}')|$([ "$(raw pc2 1)" = "$(raw pc2 4)" ] && echo same || echo different)"
+expect "PC2 programs 16 and 127 are dropped" "banka 0" "$(abh pc2 7 | awk '{print $5" "$6}')"
+expect "PC2 B on Synth 2: program 2 on channel 2 is Bank B slot 2, its column shows 3, the part plays other values" "bankb 2|3 |different" "$(abh pc2 8 | awk '{print $7" "$8}')|$(splbank pc2 3 | sed 's/.* B \(..\).*/\1/')|$([ "$(raw pc2 2)" != "$(raw pc2 5)" ] && echo different || echo same)"
+expect "PC2 B: program 1 (no file for slot 1 of part 1): stays on slot 2, channel 3 is not a side: nothing" "bankb 2|banka 0 bankb 2" "$(abh pc2 9 | awk '{print $7" "$8}')|$(abh pc2 10 | awk '{print $5" "$6" "$7" "$8}')"
+expect "PC2 channel 1 program 3 with B on: Bank A slot 3, Bank B stays" "banka 3 bankb 2" "$(abh pc2 11 | awk '{print $5" "$6" "$7" "$8}')"
+expect "PC2 Input DIN: the USB program 0 is ignored, the DIN one is taken" "banka 3|banka 0" "$(abh pc2 12 | awk '{print $5" "$6}')|$(abh pc2 13 | awk '{print $5" "$6}')"
+expect "PC2 page Channel 5: a DIN program on channel 1 is ignored (Bank A stays 0)" "banka 0" "$(abh pc2 14 | awk '{print $5" "$6}')"
+expect "PC2 the row Off while on the page: program 3 changes nothing" "banka 0" "$(abh pc2 15 | awk '{print $5" "$6}')"
+expect "PC2 after the page: both parts are back on their open slot (the values of the start)" "same|same|mode 0 instr 64 budget 4 open 0 confirm 0" "$([ "$(raw pc2 1)" = "$(raw pc2 6)" ] && echo same || echo different)|$([ "$(raw pc2 2)" = "$(raw pc2 7)" ] && echo same || echo different)|$(sps pc2 1 mode)"
+
 # ===================================================================== P12 settings file (EXTHOOKS=1 only)
 if [ -n "$EXTHOOKS" ]; then
-  SEED='synthplay 1\ninput 1\nfixed 90\n' run p12 "$ENTER; tap F7; enc 3; tap F6; enc 2; wait 100; $FROMP; wait 100; cat Features/synthplay.cfg; $ENTER; $PS"
+  # P12_MUTANT=1 (run_tests): the seeded file says fixed 91, so the P12 write-back row must fail
+  SEED="synthplay 1\ninput 1\nfixed ${P12_MUTANT:+91}${P12_MUTANT:-90}\n" run p12 "$ENTER; tap F7; enc 3; tap F6; enc 2; wait 100; $FROMP; wait 100; cat Features/synthplay.cfg; $ENTER; $PS"
   expect "P12 the settings are written when the page closes (Input and Fixed vel as the file had them)" "synthplay 1|input 1|channel 0|voices 8|curve 3|fixed 90|bend 5|mod 1|sustain 1" "$(awk '/^synthplay 1/ {p=1} p {print} /^sustain/ {exit}' "$WORK/p12.out" | tr '\n' '|' | sed 's/|$//')"
   expect "P12 and read again at the next entry (bend range 5 on the part)" "part 0 bend 0.000 range 5.0 voices 8" "$(sps p12 1 part0)"
   run p13 "$PERC1; $ENTER; tap F7; enc 1; wait 100; $FROMP; wait 100; cat Features/synthplay.cfg"
   expect "P13 the file keeps the Voices setting (8) after the page was left on the PERC part (cap 1)" "voices 8" "$(grep '^voices' "$WORK/p13.out")"
+  persist_rows
 fi
 
 if [ "$fails" -eq 0 ]; then echo "RESULT: GREEN ($checks checks)"; exit 0; fi

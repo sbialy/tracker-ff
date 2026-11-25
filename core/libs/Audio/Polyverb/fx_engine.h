@@ -106,7 +106,9 @@ struct DataType<FORMAT_32_BIT>
 
 // size: the ring length of buffer_ in samples, size2: the ring length of buffer2_ (the two line sets need not be equally long, see
 // Wrap()). size must be a multiple of 32: Start() ticks the LFO on write_ptr_ & 30, which the wrap must not move.
-template<size_t size, Format format = FORMAT_12_BIT, size_t size2 = size>
+// size3: an optional third ring (0 = none, no code and no state for it), buffer3_ of the stereo sends: the side input diffusers in
+// the 90 MHz SDRAM, away from the SRAM rings (Wrap() rules as for size2, size3 needs no multiple of 32)
+template<size_t size, Format format = FORMAT_12_BIT, size_t size2 = size, size_t size3 = 0>
 class FxEngine
 {
     static_assert(size % 32 == 0, "the LFO phase follows write_ptr_ & 30, the ring length must keep it");
@@ -134,10 +136,12 @@ class FxEngine
     FxEngine() {}
     ~FxEngine() {}
 
-    void Init(T* buffer, T* buffer2)
+    void Init(T* buffer, T* buffer2, T* buffer3 = nullptr)
     {
         buffer_ = buffer;
         buffer2_ = buffer2;
+        buffer3_ = buffer3;
+        write_ptr3_ = 0;
         //    std::fill(&buffer_[0], &buffer_[size], 0);
         //    std::fill(&buffer2_[0], &buffer2_[size2], 0);
         write_ptr_ = 0;
@@ -150,8 +154,11 @@ class FxEngine
     {
         std::fill(&buffer_[0], &buffer_[size], 0);
         std::fill(&buffer2_[0], &buffer2_[size2], 0);
+        if constexpr (size3 != 0)
+            std::fill(&buffer3_[0], &buffer3_[size3], 0);
         write_ptr_ = 0;
         write_ptr2_ = 0;
+        write_ptr3_ = 0;
     }
 
     struct Empty
@@ -268,6 +275,54 @@ class FxEngine
         inline void Write2(D& d, float scale)
         {
             Write2(d, 0, scale);
+        }
+
+        // ring 3 (size3): the same as ring 2 on buffer3_
+        template<typename D>
+        inline void Write3(D&, int32_t offset, float scale)
+        {
+            STATIC_ASSERT(D::base + D::length <= size3, delay_memory_full);
+            T w = DataType<format>::Compress(accumulator_);
+            if (offset == -1)
+            {
+                buffer3_[Wrap<size3>(write_ptr3_ + D::base + D::length - 1)] = w;
+            }
+            else
+            {
+                buffer3_[Wrap<size3>(write_ptr3_ + D::base + offset)] = w;
+            }
+            accumulator_ *= scale;
+        }
+
+        template<typename D>
+        inline void Write3(D& d, float scale)
+        {
+            Write3(d, 0, scale);
+        }
+
+        template<typename D>
+        inline void WriteAllPass3(D& d, float scale)
+        {
+            Write3(d, 0, scale);
+            accumulator_ += previous_read_;
+        }
+
+        template<typename D>
+        inline void Read3(D&, int32_t offset, float scale)
+        {
+            STATIC_ASSERT(D::base + D::length <= size3, delay_memory_full);
+            T r;
+            if (offset == -1)
+            {
+                r = buffer3_[Wrap<size3>(write_ptr3_ + D::base + D::length - 1)];
+            }
+            else
+            {
+                r = buffer3_[Wrap<size3>(write_ptr3_ + D::base + offset)];
+            }
+            float r_f = DataType<format>::Decompress(r);
+            previous_read_ = r_f;
+            accumulator_ += r_f * scale;
         }
 
         template<typename D>
@@ -417,8 +472,10 @@ class FxEngine
         float lfo_value_[2];
         T* buffer_;
         T* buffer2_;
+        T* buffer3_;
         int32_t write_ptr_;
         int32_t write_ptr2_;
+        int32_t write_ptr3_;
 
         DISALLOW_COPY_AND_ASSIGN(Context);
     };
@@ -440,12 +497,22 @@ class FxEngine
         {
             write_ptr2_ += size2;
         }
+        if constexpr (size3 != 0)
+        {
+            --write_ptr3_;
+            if (write_ptr3_ < 0)
+            {
+                write_ptr3_ += size3;
+            }
+        }
         c->accumulator_ = 0.0f;
         c->previous_read_ = 0.0f;
         c->buffer_ = buffer_;
         c->buffer2_ = buffer2_;
         c->write_ptr_ = write_ptr_;
         c->write_ptr2_ = write_ptr2_;
+        c->buffer3_ = buffer3_;
+        c->write_ptr3_ = write_ptr3_;
         if ((write_ptr_ & 30) == 0)
         {
             // c->lfo_value_[0] = lfo_[0].Next();
@@ -475,6 +542,14 @@ class FxEngine
             {
                 write_ptr2_ += size2;
             }
+            if constexpr (size3 != 0)
+            {
+                --write_ptr3_;
+                if (write_ptr3_ < 0)
+                {
+                    write_ptr3_ += size3;
+                }
+            }
             if ((write_ptr_ & 30) == 0)
             {
                 lfo_[1].Next();
@@ -495,12 +570,22 @@ class FxEngine
         {
             write_ptr2_ += size2;
         }
+        if constexpr (size3 != 0)
+        {
+            --write_ptr3_;
+            if (write_ptr3_ < 0)
+            {
+                write_ptr3_ += size3;
+            }
+        }
         c->accumulator_ = 0.0f;
         c->previous_read_ = 0.0f;
         c->buffer_ = buffer_;
         c->buffer2_ = buffer2_;
         c->write_ptr_ = write_ptr_;
         c->write_ptr2_ = write_ptr2_;
+        c->buffer3_ = buffer3_;
+        c->write_ptr3_ = write_ptr3_;
     }
 
   private:
@@ -511,8 +596,10 @@ class FxEngine
 
     int32_t write_ptr_;
     int32_t write_ptr2_;
+    int32_t write_ptr3_;
     T* buffer_;
     T* buffer2_;
+    T* buffer3_;
     CosineOscillator lfo_[2];
 
     DISALLOW_COPY_AND_ASSIGN(FxEngine);

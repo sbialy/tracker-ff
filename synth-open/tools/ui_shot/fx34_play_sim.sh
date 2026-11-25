@@ -18,13 +18,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 SAN="${SAN:-}"
 BUILD="$ROOT/build/ui-shot${SAN:+-san}"
-BIN="$BUILD/ui_shot"
+BIN="${UI_SHOT_BIN:-$BUILD/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (run_tests)
 PNG_DIR="${1:-}"
 [ -n "$PNG_DIR" ] && mkdir -p "$PNG_DIR"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/fx34_play_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$BUILD"
-make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" ${SAN:+SAN=$SAN} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" ${SAN:+SAN=$SAN} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
 
 PAN=31; DLY=30; CHANCE=4; COND=48; RV=16; CHORD=14; STRUM=47; ARP=21; PATCH=46; MORPH=49; OFF=1; CCA=8
 fails=0; checks=0
@@ -206,7 +206,7 @@ else
     fail "D4 synth part Panning priority" "r3=$v3 r2=$v2 r2+r3=$v23 r1=$v1 r0=$v0"
 fi
 r=$(syn y6 "0 0 0 0" "setfx 0 0 3 $PAN 80")
-expect "D5 the rank 3 value sits in its own source of the part (instrument, Fx1, Fx2, Performance, Fx3 = rank 2, Fx4 = rank 3)" "60.0 [0.0 - - - - 60.0]" "$r"
+expect "D5 the rank 3 value sits in its own source of the part (instrument, Fx1, Fx2, Performance, Fx3 = rank 2, Fx4 = rank 3)" "60.0 [0.0 - - - - 60.0 -]" "$r"
 # Performance mode custom FX (D8): custom play mode 15 puts a Roll (id 3) on every step, in the first empty slot. Ranks 2 and 3 only with the switch
 cf() {   # cf NAME SWITCH f0 f1 -> the 4 slots of the step that sounded
     local o; o=$(run "$1" "$SAMPLE; fx34on $2; setstep 0 1 60 0 $3 $4; poke fx34play custom 0; tap Play; wait 60; poke fx34play slots 0; tap Play")

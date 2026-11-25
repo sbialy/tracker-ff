@@ -14,13 +14,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 SAN="${SAN:-}"
 BUILD="$ROOT/build/ui-shot${SAN:+-san}"
-BIN="$BUILD/ui_shot"
+BIN="${UI_SHOT_BIN:-$BUILD/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (run_tests)
 PNG_DIR="${1:-}"
 [ -n "$PNG_DIR" ] && mkdir -p "$PNG_DIR"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/chord_capture_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$BUILD"
-make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" ${SAN:+SAN=$SAN} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" ${SAN:+SAN=$SAN} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
 
 fails=0; checks=0
 expect() { checks=$((checks+1)); if [ "$2" = "$3" ]; then printf 'ok    %s\n' "$1"; else fails=$((fails+1)); printf 'FAIL  %s\n      expected: %s\n      got:      %s\n' "$1" "$2" "$3"; fi; }
@@ -61,7 +61,7 @@ expect "busy: Chance and Roll stay, the step note is the first note" "step 0 0 n
 
 # 5. a sample instrument step keeps the stock pads (the pad sets the FX value and the cursor moves on every press)
 out=$(run sample "instr 0; setstep 0 0 -1 0 14 0 0 0; tap Rec; tap Fx; padon 47; padoff 47; step 0 0; cursor")
-expect "sample step: pad 47 is the top FX value (stock)" "step 0 0 note -1 instr 0 fx0 14:67 fx1 0:0" "$(sed -n 1p <<<"$out")"
+expect "sample step: pad 47 is the top FX value (76, the last chord)" "step 0 0 note -1 instr 0 fx0 14:76 fx1 0:0" "$(sed -n 1p <<<"$out")"
 expect "sample step: the cursor moved at the press (stock)" "cursor track 0 step 1 param 3 edit 1" "$(sed -n 2p <<<"$out")"
 
 # 6. a MIDI instrument step captures like a synth step
@@ -91,6 +91,16 @@ expect "names on: maj7 inv2 is ^72" "grid 0 3 fx0 [0^72] fx1 [----]" "$(sed -n 4
 expect "names off: maj7 is 47B" "grid 0 0 fx0 [047B] fx1 [u+10]" "$(sed -n 5p <<<"$out")"
 expect "names off: sus2 is 27" "grid 0 1 fx0 [0 27] fx1 [u-10]" "$(sed -n 6p <<<"$out")"
 expect "names off: maj7 inv2 is 459" "grid 0 3 fx0 [0459] fx1 [----]" "$(sed -n 7p <<<"$out")"
+
+# 9b. The appended chords 68..76 (add9 pair, 9th chords, 7b5): grid names on and as interval digits, and a played 7#9 (E G# D G, the
+#     15th semitone) is captured as value 74 and named in the popup
+out=$(run names2 "instr 48; setstep 0 0 48 48 14 68 0 0; setstep 0 1 48 48 14 69 0 0; setstep 0 2 48 48 14 70 0 0; setstep 0 3 48 48 14 71 0 0; setstep 0 4 48 48 14 72 0 0; setstep 0 5 48 48 14 73 0 0; setstep 0 6 48 48 14 74 0 0; setstep 0 7 48 48 14 75 0 0; setstep 0 8 48 48 14 76 0 0; grid 0 0; grid 0 1; grid 0 2; grid 0 3; grid 0 4; grid 0 5; grid 0 6; grid 0 7; grid 0 8; $(shot names-ext-on); chordnames 0; grid 0 6; grid 0 8; chordnames 1")
+expect "names on: 68 is mad, 69 ad9" "grid 0 0 fx0 [0mad] fx1 [----]|grid 0 1 fx0 [0ad9] fx1 [----]" "$(sed -n 1,2p <<<"$out" | paste -sd'|' -)"
+expect "names on: 70..72 are do9, m9, ^9" "grid 0 2 fx0 [0do9] fx1 [----]|grid 0 3 fx0 [0m9 ] fx1 [----]|grid 0 4 fx0 [0^9 ] fx1 [----]" "$(sed -n 3,5p <<<"$out" | paste -sd'|' -)"
+expect "names on: 73..76 are 6/9, 7#9, 7b9, 7b5" "grid 0 5 fx0 [06/9] fx1 [----]|grid 0 6 fx0 [07#9] fx1 [----]|grid 0 7 fx0 [07b9] fx1 [----]|grid 0 8 fx0 [07b5] fx1 [----]" "$(sed -n 6,9p <<<"$out" | paste -sd'|' -)"
+expect "names off: 7#9 is 4AF, 7b5 is 46A" "grid 0 6 fx0 [04AF] fx1 [----]|grid 0 8 fx0 [046A] fx1 [----]" "$(sed -n 10,11p <<<"$out" | paste -sd'|' -)"
+out=$(run cap79 "instr 64; tap Rec; midion 64; midion 68; midion 74; midion 79; $(shot capture-midi-7s9); step 0 0; midioff 64; midioff 68; midioff 74; midioff 79")
+expect "MIDI E G# D G: captured as 7#9 (74), E is the step note" "step 0 0 note 40 instr 64 fx0 14:74 fx1 0:0" "$(sed -n 1p <<<"$out")"
 
 # 10. Strum on a MIDI instrument (USB MIDI out, the audio callback runs): +10 starts the maj7 notes 20.3 ms apart (7 blocks of
 #     2.9 ms for 20 ms), bottom up; 74 (-10) top down; the slots the other way round work the same

@@ -8,4 +8,4 @@
 #include <stdint.h>
 
 constexpr int Roboto_Mono_Light_17_L4_rawSize = 10598;
-extern const uint8_t Roboto_Mono_Light_17_L4_deflated[2653];
+extern const uint8_t Roboto_Mono_Light_17_L4_deflated[2543];

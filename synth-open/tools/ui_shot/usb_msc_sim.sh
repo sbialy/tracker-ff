@@ -4,7 +4,7 @@
 # (plain or SAN). The SD folder plays the card, the script's `put`, `hostcp` and `hostrm` play the computer. host_drive.h has the gate
 # model, hostp::g_driveBackend counts every call that reaches the SD folder while the computer owns the card. Exit 0 when every case passes.
 set -uo pipefail
-U=$1; O=$2; mkdir -p "$O"; rc=0
+U="${UI_SHOT_BIN:-$1}"; O=$2; mkdir -p "$O"; rc=0
 run() {  # name env script: OUT/name/sd is the card, OUT/name/log.txt the output (appended, a case can start the unit again)
   local d=$O/$1; mkdir -p "$d/sd"
   env UISHOT_DRIVE_FLAG=1 $2 timeout 300 "$U" "$d/sd" "$3" >> "$d/log.txt" 2>&1; echo "exit $?" >> "$d/log.txt"

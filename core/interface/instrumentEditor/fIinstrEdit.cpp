@@ -56,6 +56,7 @@ static void functNote(uint8_t value);
 static void functEffectSelectReverb();
 static void functEffectSelectDelay();
 static void functEffectSelectOverdrive();
+static void functEffectSelectRepitch();
 static void functEffectSelectBitDepth();
 static void functOpenInstrumentSynthesizer();
 static void functEffectBack();
@@ -75,6 +76,13 @@ static void onNoteKeyboardHide();
 void cInstrumentEditor::update()
 {
     moduleRefresh = 0;
+#if GUI_TABLES
+    if (mode == mtInstEditModeTable)
+    {
+        moduleRefresh = 1; // the live playhead: update() runs every main loop pass while this page is shown
+        tablePageTick(mtInterface.getPlatform()->getTimer()->millis());
+    }
+#endif
 }
 
 void cInstrumentEditor::start(uint32_t options)
@@ -163,6 +171,9 @@ void cInstrumentEditor::start(uint32_t options)
 #if GUI_SYNTH_AUTO
                     && mode != mtInstEditModeSynthAutomation
 #endif
+#if GUI_TABLES
+                    && mode != mtInstEditModeTable
+#endif
                 )
                 {
                     mode = mtInstEditModeSynth;
@@ -174,7 +185,11 @@ void cInstrumentEditor::start(uint32_t options)
             {
                 mode = mtInstEditModeMidi;
             }
-            else if (mode != mtInstEditModeParams && mode != mtInstEditModeEnv)
+            else if (mode != mtInstEditModeParams && mode != mtInstEditModeEnv
+#if GUI_TABLES
+                     && mode != mtInstEditModeTable
+#endif
+            )
             {
                 mode = mtInstEditModeParams;
             }
@@ -211,6 +226,9 @@ void cInstrumentEditor::start(uint32_t options)
     lightUpPadBoard();
 
     setBaseScreenFunct();
+#if GUI_TABLES
+    display.setControlHide(tableGridControl);
+#endif
 
     switch (mode)
     {
@@ -277,6 +295,14 @@ void cInstrumentEditor::start(uint32_t options)
             break;
         }
 #endif
+#if GUI_TABLES
+        case mtInstEditModeTable:
+        {
+            showTablePage();
+            setTablePageFunct();
+            break;
+        }
+#endif
         default:
         {
             showInstrumentParams();
@@ -324,9 +350,17 @@ uint8_t cInstrumentEditor::getCurrentModeIdx()
 {
 #if GUI_SYNTH_AUTO
     // the mini menu has two entries: Automation counts as the second page, its next entry is the first
-    return (mode == mtInstEditModeEnv || mode == mtInstEditModeSynthMacros || mode == mtInstEditModeSynthAutomation) ? 1 : 0;
+    return (mode == mtInstEditModeEnv || mode == mtInstEditModeSynthMacros || mode == mtInstEditModeSynthAutomation
+#if GUI_TABLES
+            || mode == mtInstEditModeTable
+#endif
+            ) ? 1 : 0;
 #elif GUI_HANDLE_SYNTH
-    return (mode == mtInstEditModeEnv || mode == mtInstEditModeSynthMacros) ? 1 : 0;
+    return (mode == mtInstEditModeEnv || mode == mtInstEditModeSynthMacros
+#if GUI_TABLES
+            || mode == mtInstEditModeTable
+#endif
+            ) ? 1 : 0;
 #else
     return (mode == mtInstEditModeEnv) ? 1 : 0;
 #endif
@@ -442,6 +476,7 @@ void cInstrumentEditor::setEffectScreenFunct()
     ip->setButtonObj(interfaceButton2, buttonPress, functEffectSelectReverb);
     ip->setButtonObj(interfaceButton3, buttonPress, functEffectSelectDelay);
     ip->setButtonObj(interfaceButton4, buttonPress, functOpenInstrumentSynthesizer);
+    ip->setButtonObj(interfaceButton5, buttonPress, functEffectSelectRepitch);
 
     ip->setButtonObj(interfaceButton7, buttonPress, functEffectBack);
 }
@@ -458,6 +493,7 @@ void cInstrumentEditor::changeParamValue(int value, ValueChangeSource source)
             case 1: cInstrumentEditor::changeParamsBitDepth(value); break;
             case 2: cInstrumentEditor::changeParamsReverbSend(value); break;
             case 3: cInstrumentEditor::changeParamsDelaySend(value); break;
+            case 4: cInstrumentEditor::changeParamsRepitch(value); break;
             default: break;
         }
         return;
@@ -972,6 +1008,7 @@ static void functDelete(uint8_t state)
                 case 1: IE->setDefaultBitDepth(); break;
                 case 2: IE->setDefaultReverbSend(); break;
                 case 3: IE->setDefaultDelaySend(); break;
+                case 4: IE->setDefaultRepitch(); break;
             }
 
             return;
@@ -1030,6 +1067,16 @@ static void functSwitchMode()
     {
         IE->mode = mtInstEditModeEnv;
     }
+#if GUI_TABLES
+    else if (IE->mode == mtInstEditModeEnv)
+    {
+        IE->mode = mtInstEditModeTable; // Parameters, Automation, Table
+    }
+    else if (IE->mode == mtInstEditModeTable)
+    {
+        IE->mode = isSynthInstrument(mtProject.values.lastUsedInstrument) ? mtInstEditModeSynth : mtInstEditModeParams;
+    }
+#endif
     else if (IE->mode == mtInstEditModeEnv || IE->mode == mtInstEditModeInstrSynth)
     {
         IE->mode = mtInstEditModeParams;
@@ -1043,7 +1090,9 @@ static void functSwitchMode()
     else if (IE->mode == mtInstEditModeSynthMacros)
     {
 #if GUI_SYNTH_AUTO
-        IE->mode = mtInstEditModeSynthAutomation; // Synth 1/3, Macros 2/3, Automation 3/3
+        IE->mode = mtInstEditModeSynthAutomation; // Synth 1/3, Macros 2/3, Automation 3/3 (+ Table: titles 1/4 to 3/4, gInstrEdit.cpp)
+#elif GUI_TABLES
+        IE->mode = mtInstEditModeTable; // a build without the Automation page: Synth, Macros, Table
 #else
         IE->mode = mtInstEditModeSynth;
 #endif
@@ -1051,7 +1100,11 @@ static void functSwitchMode()
 #if GUI_SYNTH_AUTO
     else if (IE->mode == mtInstEditModeSynthAutomation)
     {
+#if GUI_TABLES
+        IE->mode = mtInstEditModeTable; // Synth, Macros, Automation, Table
+#else
         IE->mode = mtInstEditModeSynth;
+#endif
     }
 #endif
 #endif
@@ -2075,6 +2128,27 @@ void cInstrumentEditor::changeParamsBitDepth(int16_t value)
 
     if (isParamVisible)
         IE->showParamsBitDepth();
+}
+
+void cInstrumentEditor::changeParamsRepitch(int16_t value)
+{
+    // Wavetable, Slice, Beat Slice and Granular do not take it (the top byte is part of the wavetable position there)
+    if (!IE->editorInstrument->takesRepitch())
+        return;
+
+    const int steps = clamp<int>(IE->editorInstrument->repitchSteps() + value, 0, 255);
+    const uint8_t idx = mtProject.values.lastUsedInstrument;
+    // a Repitch note follows the tempo, so a streamed sample comes to RAM first (as picking Wavetable does)
+    if (steps != 0 && idx < kSampleInstrumentsCount && mtProject.sampleMemory[idx].isStreamed &&
+        !newFileManager.promoteStreamedInstrumentToRam(idx))
+        return;
+    IE->editorInstrument->setRepitchSteps((uint8_t)steps);
+
+    newFileManager.setInstrumentStructChanged(mtProject.values.lastUsedInstrument);
+
+    if (mtInterface.isInstrumentParamsScreenActive() && (IE->mode == mtInstrumentEditorMode::mtInstEditModeParams) &&
+        IE->isEffectsWindow)
+        IE->showParamsRepitch();
 }
 
 void changeParamsVelocity(int16_t value)
@@ -3148,6 +3222,12 @@ void cInstrumentEditor::setDefaultValue(uint8_t place)
     }
 }
 
+static void functEffectSelectRepitch()
+{
+    IE->selectedPlaceSends = 4;
+    IE->showSendScreenFrame();
+}
+
 static void functEffectSelectReverb()
 {
     IE->selectedPlaceSends = 2;
@@ -3300,6 +3380,14 @@ void cInstrumentEditor::setDefaultOverdrive()
     }
     newFileManager.setInstrumentStructChanged(mtProject.values.lastUsedInstrument);
     IE->showParamsOverdrive();
+}
+
+void cInstrumentEditor::setDefaultRepitch()
+{
+    if (IE->editorInstrument->takesRepitch())
+        IE->editorInstrument->setRepitchSteps(0);
+    newFileManager.setInstrumentStructChanged(mtProject.values.lastUsedInstrument);
+    IE->showParamsRepitch();
 }
 
 void cInstrumentEditor::setDefaultBitDepth()

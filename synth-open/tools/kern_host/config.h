@@ -8,6 +8,7 @@
 #define DMAMEM
 #define AUDIO_CORE_FLASH
 #define AUDIO_CORE_RAM
+#define AUDIO_CORE_RAM_COLD
 
 // the number of synth parts, as core/config/config.h (a test that builds with -DFEATURE_SYNTH has the 3 part mux)
 #ifdef FEATURE_SYNTH

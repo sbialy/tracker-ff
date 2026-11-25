@@ -6,13 +6,23 @@ MixerAndFxs<voicesCount>::MixerAndFxs()
 
     connections.push_back(new AudioConnection(
       &preFxMixer[FxType::kReverb], 0, &polyverb, (int)MixerAndFxChannelType::kLeft));
+#ifdef FW_STEREO_SENDS
+    // port 1 of the reverb is the side input, not a second copy of the mid
+    connections.push_back(new AudioConnection(&sideMixer[FxType::kReverb], 0, &polyverb, 1));
+    connections.push_back(new AudioConnection(&sideMixer[FxType::kDelay], 0, &shortDelay, 1));
+#else
     connections.push_back(new AudioConnection(
       &preFxMixer[FxType::kReverb], 0, &polyverb, (int)MixerAndFxChannelType::kRight));
+#endif
 
     connections.push_back(new AudioConnection(&preFxMixer[FxType::kDelay], &shortDelay));
 #ifdef AUDIO_NULL_IS_SILENCE
     polyverb.setMuteFeed(&preFxMixer[FxType::kReverb]);
     shortDelay.setMuteFeed(&preFxMixer[FxType::kDelay]);
+#ifdef FW_STEREO_SENDS
+    polyverb.setMuteFeed2(&sideMixer[FxType::kReverb]);
+    shortDelay.setMuteFeed2(&sideMixer[FxType::kDelay]);
+#endif
 #endif
 
     for (int channel = 0; channel < (int)MixerAndFxChannelType::kChannelCount; channel++)

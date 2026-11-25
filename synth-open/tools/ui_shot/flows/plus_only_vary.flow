@@ -1,0 +1,42 @@
+# P12 round 5: Patch Vary on Tracker+ (the MK66 patch editor F4). Instr held + Up x3 picks Synth 1, the Instrument Parameters key opens the
+# Synth screen, F8 the patch editor. Shift + encoder +1 x2 moves the amount from 10 % to 20 % (the label's second line, the trace reads it), F4 varies the patch (popup
+# "Vary 20%"), Shift + F4 takes it back (popup "Vary undone"). plus_flows.sh reads the part afterwards (UISHOT_TRACE_VARY): the amount
+# reaches 20, the values move away and end where they started.
+# Replay: plus_flows.sh plus
+title: Patch Vary on Tracker+ (P12)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Instr
+wait 400ms
+tap Up x3
+wait 300ms
+release Instr
+wait 600ms
+tap Params
+wait 1200ms
+tap F8
+wait 1500ms
+expect text "Edit Patch"
+expect text "Vary"
+press Shift
+wait 300ms
+enc +1
+wait 300ms
+enc +1
+wait 300ms
+release Shift
+wait 400ms
+tap F4
+wait 600ms
+expect text "Vary 20%"
+shot vary
+wait 1500ms
+press Shift
+wait 300ms
+tap F4
+wait 300ms
+release Shift
+wait 600ms
+expect text "Vary undone"

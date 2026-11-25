@@ -6,6 +6,9 @@
 # A SAN build's sanitizer reports fail the case, except the known stock mtWavetableEnvelopes.cpp:206.
 # Exit 0 when every case passes.
 set -uo pipefail
+# The developer view of these screens prints "free heap": the goldens hold the fixed figure of the host heap, not the device heap model
+# (host_heapmodel.cpp, on by default), whose figure moves with every allocation of the image. The model has its own sims.
+export UISHOT_HEAP=host
 U=$1; O=$2; UPD=${3:-}; mkdir -p "$O"; rc=0
 G=$(cd "$(dirname "$0")" && pwd)/goldens/features; mkdir -p "$G"
 NAV='tap Config;wait 800;tap Down 4;wait 300;tap F8;wait 500'   # Config, Features (base row 4), into the list
@@ -29,7 +32,7 @@ end() {  # case: exit 0 and a clean sanitizer log
 }
 cfg() { cat "$O/$1/sd/Features/$2.cfg" 2>/dev/null | tr '\n' ' '; }
 
-# 1 list, card without /.develop (a): none of Restart mode, Developer mode, Demo start and Capture is listed while Off (D8), USB audio is the first row,
+# 1 list, card without /.develop (a): none of Restart mode, Developer mode, Demo start is listed while Off (D8), Capture is listed and on (2.0.0: no /.develop gate), USB audio is the first row,
 #   nothing written by looking
 fresh list
 run list "" "wait 300;tap Config;wait 800;shot S/f1-config.png;tap Down 4;wait 300;tap F8;wait 500;shot S/f2-features.png;features"
@@ -37,10 +40,10 @@ r=0; end list || r=1; for s in f1-config f2-features; do golden list $s || r=1; 
 has list "feature restart on 0 listed 0" || { echo "    Restart mode listed without /.develop while Off"; r=1; }
 has list "feature develop on 0 listed 0" || { echo "    Developer mode listed without /.develop"; r=1; }
 has list "feature demo on 0 listed 0" || { echo "    Demo start listed without /.develop while Off"; r=1; }
-has list "feature capture on 0 listed 0" || { echo "    Capture listed without /.develop while Off"; r=1; }
+has list "feature capture on 1 listed 1 value On" || { echo "    Capture not listed, or not on by default, without /.develop"; r=1; }
 has list "feature usbaudio on 0 listed 1" || { echo "    USB audio not listed"; r=1; }
 [ -e "$O/list/sd/Features" ] && { echo "    /Features written by a start that changed nothing"; r=1; }
-verdict list $r "no /.develop, Restart mode Off: Restart mode, Developer mode, Demo start and Capture not listed, USB audio first, no /Features written"
+verdict list $r "no /.develop, Restart mode Off: Restart mode, Developer mode and Demo start not listed, Capture listed and On, USB audio first, no /Features written"
 
 # 1b (b) with /.develop both rows are listed, Restart mode first, its page opens (Off)
 fresh listdev; : > "$O/listdev/sd/.develop"
@@ -49,9 +52,9 @@ r=0; end listdev || r=1; for s in f2d-features-develop f3-restart-off; do golden
 has listdev "feature restart on 0 listed 1 value Off" || { echo "    Restart mode not listed with /.develop"; r=1; }
 has listdev "feature develop on 0 listed 1" || { echo "    Developer mode not listed with /.develop"; r=1; }
 has listdev "feature demo on 0 listed 1" || { echo "    Demo start not listed with /.develop"; r=1; }
-has listdev "feature capture on 0 listed 1" || { echo "    Capture not listed with /.develop"; r=1; }
+has listdev "feature capture on 1 listed 1" || { echo "    Capture not listed, or not on by default, with /.develop"; r=1; }
 [ -e "$O/listdev/sd/Features" ] && { echo "    /Features written by a start that changed nothing"; r=1; }
-verdict listdev $r "/.develop: Restart mode, Developer mode, Demo start and Capture listed, Restart mode page off, no /Features written"
+verdict listdev $r "/.develop: Restart mode, Developer mode, Demo start and Capture all listed, Restart mode page off, no /Features written"
 
 # 1c (c) no /.develop but Restart mode On in its file: still listed (so it can be switched off), Developer mode still hidden. The page opens from the
 #    first row and State Off through it is written and keeps the row for the rest of the session
@@ -66,14 +69,15 @@ run liston "" "features"   # the next start on the same card: Off now, the row i
 has liston "feature restart on 0 listed 0" || { echo "    Restart mode Off listed again after a start without /.develop"; r=1; }
 verdict liston $r "no /.develop, Restart mode On: still listed, switched Off through its page, gone from the list at the next start"
 
-# 1d no /.develop but Demo start and Capture On in their files: both still listed (so they can be switched off), Restart mode and Developer mode hidden
+# 1d no /.develop but Demo start and Capture On in their files: Demo start still listed (so it can be switched off), Capture listed too
+#    (2.0.0: Capture is not behind /.develop), Restart mode and Developer mode hidden
 fresh liston2; mkdir -p "$O/liston2/sd/Features"; printf 'feature 1\non 1\n' > "$O/liston2/sd/Features/demo.cfg"; printf 'feature 1\non 1\n' > "$O/liston2/sd/Features/capture.cfg"
 run liston2 "" "features"
 r=0; end liston2 || r=1
 has liston2 "feature demo on 1 listed 1" || { echo "    Demo start On is not listed without /.develop"; r=1; }
-has liston2 "feature capture on 1 listed 1" || { echo "    Capture On is not listed without /.develop"; r=1; }
+has liston2 "feature capture on 1 listed 1" || { echo "    Capture not listed without /.develop"; r=1; }
 has liston2 "feature restart on 0 listed 0" || { echo "    Restart mode listed without /.develop"; r=1; }
-verdict liston2 $r "no /.develop, Demo start and Capture On: still listed"
+verdict liston2 $r "no /.develop, Demo start On: still listed, Capture On in its file: listed and On"
 
 # 2 Restart mode on through the page: the params appear, the file is written after the debounce, values persist across a start
 fresh restart; : > "$O/restart/sd/.develop"   # Restart mode is listed only with /.develop (or while On): the first row of the list
@@ -185,18 +189,50 @@ run chordnm "" "setstep 0 0 48 64 14 24 0 0;grid 0 0;features"   # the next star
 has chordnm "feature chordnm on 0 listed 1 value Off" && has chordnm "grid 0 0 fx0 \[047B\]" || { echo "    off not kept: $(grep -E '^grid|chordnm' "$O/chordnm/log.txt" | tail -2 | tr '\n' ' ')"; r=1; }
 verdict chordnm $r "Chord names: on by default (^7), Off through the page (digits 47B), chordnm.cfg on 0 kept across a start"
 
-# Capture (off by default, no file until the row is touched): the page switches it on and sets the Idle time (20 -> 28), the pattern editor button 3 then captures a
-# played note into the copy buffer (capture_sim.sh has the rules), capture.cfg says on 1 idle 28, and the next start on the same card has both without the page
-fresh capture; : > "$O/capture/sd/.develop"   # Capture is listed only with /.develop (or while On): Restart mode and Developer mode are two rows before the others
-run capture "" "features;$NAV;tap Down 8;wait 300;tap F8;wait 500;tap F8;wait 300;tap Down;wait 200;tap F8;wait 600;tap Down;wait 300;tap F8;wait 300;enc 5;wait 300;tap F8;wait 600;features;tap Pattern;wait 300;instr 64;audio 1;tap Play;wait 300;midion 60 100 100;midioff 60 0 200;tap F4;wait 100;capbuf 0 3;wait 1500;capind;features"
+# Capture (ref/capture-move-redesign.md D1, 2.0.0: on by default on every card, NOT behind /.develop, no parameter): button 3 of the pattern editor
+# writes a played note into the pattern with no Features file (capture_sim.sh has the rules). capture.cfg of the current version with on 0
+# (the kill switch) turns it off and keeps it off, a file of an older version loses its on line (features.cpp version rule): on again.
+# The take logic is the Capture tenant of extras.plg in this build (EXTHOOKS=1, FEATURE_CAPTURE_MODULE): the card gets the host stand-in of
+# tools/modit/make_host_module.py. Without the file the square stays hidden and button 3 shows the extras.plg popup, the ring still fills
+# None of these cards carries /.develop.
+MH="$G/../../../modit/make_host_module.py"
+CAPRUN="features;tap Pattern;wait 300;instr 64;audio 1;tap Play;wait 300;midion 60 100 100;midioff 60 0 200;tap F4;wait 100;step 0 0;wait 1500;capind"
+fresh capture; mkdir -p "$O/capture/sd/Plugins/Ext"; python3 -I "$MH" "$O/capture/sd/Plugins/Ext/extras.plg" >/dev/null
+run capture "" "$CAPRUN"
 r=0; end capture || r=1
-has capture "feature capture on 0 listed 1 value Off" && has capture "feature capture on 1 listed 1 value On" || { echo "    default not off, or the page did not switch it on"; r=1; }
-has capture "capbuf 0 3 note 36 instr 64" || { echo "    button 3 did not capture: $(grep -E '^capbuf' "$O/capture/log.txt" | tail -1)"; r=1; }
-[ "$(cfg capture capture)" = "feature 1 id capture version 1 on 1 idle 28 " ] || { echo "    capture.cfg: $(cfg capture capture)"; r=1; }   # the Idle time picker (enc 5 from 20 = 28) is applied and written
-has capture "capind state [0-9] draws [0-9]+ idle 28 " || { echo "    the Idle time picker did not reach the feature: $(grep -E '^capind' "$O/capture/log.txt" | tail -1)"; r=1; }
-run capture "" "features;tap Pattern;wait 300;instr 64;audio 1;tap Play;wait 300;midion 60 100 100;midioff 60 0 200;tap F4;wait 100;capbuf 0 3;capind"   # the next start on the same card
-has capture "feature capture on 1 listed 1 value On" && has capture "capbuf 0 3 note 36 instr 64" && has capture "capind state [0-9] draws [0-9]+ idle 28 " || { echo "    on not kept across a start: $(grep -E '^capbuf|capture' "$O/capture/log.txt" | tail -2 | tr '\n' ' ')"; r=1; }
-verdict capture $r "Capture: off by default, On through the page captures with button 3, capture.cfg on 1 kept across a start"
+[ ! -e "$O/capture/sd/.develop" ] || { echo "    the card has /.develop"; r=1; }
+has capture "feature capture on 1 listed 1 value On" || { echo "    not on by default without /.develop"; r=1; }
+has capture "step 0 0 note 36 instr 64" || { echo "    button 3 did not capture: $(grep -E '^step ' "$O/capture/log.txt" | tail -1)"; r=1; }
+[ -e "$O/capture/sd/Features/capture.cfg" ] && { echo "    capture.cfg written by a start that changed nothing"; r=1; }
+# the current version with on 0 is the kill switch and stays off
+fresh captureoff; mkdir -p "$O/captureoff/sd/Features" "$O/captureoff/sd/Plugins/Ext"; python3 -I "$MH" "$O/captureoff/sd/Plugins/Ext/extras.plg" >/dev/null
+printf 'feature 1\nid capture\nversion 3\non 0\n' > "$O/captureoff/sd/Features/capture.cfg"
+run captureoff "" "features;tap Pattern;wait 300;instr 64;audio 1;tap Play;wait 300;midion 60 100 100;midioff 60 0 200;tap F4;wait 100;step 0 0;capind"
+end captureoff || r=1
+has captureoff "feature capture on 0 listed 1 value Off" && has captureoff "step 0 0 note -1 " && has captureoff "capind state 0 " || { echo "    the kill switch did not turn it off: $(grep -E '^step |^capind|capture' "$O/captureoff/log.txt" | tail -3 | tr '\n' ' ')"; r=1; }
+# a file of an older version (1: the old opt-in, 2: the build that was listed with /.develop only) loses its on line: Capture is on
+for v in 1 2; do
+  fresh capturev$v; mkdir -p "$O/capturev$v/sd/Features" "$O/capturev$v/sd/Plugins/Ext"; python3 -I "$MH" "$O/capturev$v/sd/Plugins/Ext/extras.plg" >/dev/null
+  printf 'feature 1\nid capture\nversion %s\non 0\nidle 20\n' "$v" > "$O/capturev$v/sd/Features/capture.cfg"
+  run capturev$v "" "features;tap Pattern;wait 300;instr 64;audio 1;tap Play;wait 300;midion 60 100 100;midioff 60 0 200;tap F4;wait 100;step 0 0"
+  end capturev$v || r=1
+  has capturev$v "feature capture on 1 listed 1 value On" && has capturev$v "step 0 0 note 36 instr 64" || { echo "    version $v capture.cfg with on 0 kept Capture off: $(grep -E '^step |feature capture' "$O/capturev$v/log.txt" | tr '\n' ' ')"; r=1; }
+done
+# off through the page writes version 3 on 0 and the next start keeps it off (a user who turns it off stays off)
+fresh capturetog; mkdir -p "$O/capturetog/sd/Features"; printf 'feature 1\nid capture\nversion 2\non 0\n' > "$O/capturetog/sd/Features/capture.cfg"
+run capturetog "" "features;$NAV;tap Down 5;wait 300;tap F8;wait 500;tap F8;wait 300;tap Up;wait 200;tap F8;wait 600;wait 1500;features"
+end capturetog || r=1
+has capturetog "feature capture on 0 listed 1 value Off" || { echo "    the page did not switch Capture off: $(grep -E 'feature ' "$O/capturetog/log.txt" | tail -3 | tr '\n' ' ')"; r=1; }
+[ "$(cfg capturetog capture)" = "feature 1 id capture version 3 on 0 " ] || { echo "    capture.cfg: $(cfg capturetog capture)"; r=1; }
+run capturetog "" "features;tap Pattern;wait 300;instr 64;audio 1;tap Play;wait 300;midion 60 100 100;midioff 60 0 200;tap F4;wait 100;step 0 0;capind"
+has capturetog "feature capture on 0 listed 1 value Off" && has capturetog "step 0 0 note -1 " || { echo "    off not kept across a start: $(grep -E '^step |feature capture' "$O/capturetog/log.txt" | tr '\n' ' ')"; r=1; }
+# no extras.plg: the square stays hidden, nothing is captured, the press names Capture and extras.plg (the take logic is the module)
+fresh capturenomod
+run capturenomod "" "tap Pattern;wait 300;instr 64;audio 1;tap Play;wait 300;midion 60 100 100;midioff 60 0 200;wait 6000;capind;tap F4;wait 100;shot S/cap-nomod-press.png;step 0 0;capind"
+end capturenomod || r=1
+golden capturenomod cap-nomod-press || r=1
+[ "$(grep -cE '^capind state 0 draws 0 take [0-9] ring [0-9]+ seq 2' "$O/capturenomod/log.txt")" = 2 ] && has capturenomod "step 0 0 note -1 " || { echo "    no extras.plg: $(grep -E '^step |^capind' "$O/capturenomod/log.txt" | tr '\n' ' ')"; r=1; }
+verdict capture $r "Capture without /.develop: on by default and captures (extras.plg), version 3 on 0 stays off (also after a toggle through the page and a start), version 1 and 2 files with on 0 are on, no extras.plg: hidden, nothing captured, the press names Capture and extras.plg"
 
 echo "RESULT: $([ $rc = 0 ] && echo GREEN || echo RED)$([ "$UPD" = --update ] && echo ' (goldens written)')"
 exit $rc

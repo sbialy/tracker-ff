@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
 """Check that an extension module file (core/include/ext_abi.h, pack_ext.py output) is bound to one firmware image.
 
-    check_ext.py MODULE.plg IMAGE.ptf [--slot 0x70d80000]
+    check_ext.py MODULE.plg IMAGE.ptf [--slot 0x70d80000] [--rel]
+
+--rel: the module is extras.plg, the bundle of the release card modules: its text, data and bss must also fit the release region
+(ext_abi.h EXT_REL_BYTES), the console slot's limit does not apply to it.
 
 The same sum the firmware computes before it runs the module (ext_module.cpp imageCrc): the CRC-32 of the flash [0, end) the bootloader
 programs from the .ptf, 0xFF where the .ptf has no data, end = the highest address of the .ptf. It must be the image id in the module
 header (reserved[0]), and the module's own CRC, kind, rebase table and slot address must hold. Exit 0 when it matches, 1 and the reason
 when not. A module is only good for the exact image it was packed with: the tail pad relink of `make original` changes the id, so build
 the module after the final image (synth-open/modit/build_modit.sh does) and check it again in the package step."""
+import os
+import re
 import struct
 import sys
 import zlib
+
+ABI_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "core", "include", "ext_abi.h")
+
+
+def rel_bytes():
+    m = re.search(r"#define EXT_REL_BYTES \(?([0-9]+)u?(?: \* ([0-9]+)u)?\)?", open(ABI_H).read())
+    return int(m.group(1)) * (int(m.group(2)) if m.group(2) else 1)
 
 
 def flash_of(path):
@@ -46,6 +58,7 @@ def flash_of(path):
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    rel = "--rel" in sys.argv
     slot = None
     if "--slot" in sys.argv:
         slot = int(sys.argv[sys.argv.index("--slot") + 1], 0)
@@ -63,6 +76,19 @@ def main():
         print("%s: file CRC mismatch (damaged)" % args[0]); return 1
     if hsize + image_size != len(plg):
         print("%s: size %d, header says %d" % (args[0], len(plg), hsize + image_size)); return 1
+    if rel and ram > rel_bytes():
+        print("%s needs %d B (text, data, bss), the release region has %d B (ext_abi.h EXT_REL_BYTES)" % (args[0], ram, rel_bytes())); return 1
+    if rel:   # the sub-slot table after the manifest (ext_abi.h ext_rel_table_t, pack_ext.py), what synth-open/ext_loader.h checkRelTable requires
+        if hsize != 64 + 96 + 56:
+            print("%s: no sub-slot table (header %d B, want %d): a round 1 extras.plg, the image refuses it" % (args[0], hsize, 64 + 96 + 56)); return 1
+        tmagic, tver, tcount, tregion, tused = struct.unpack_from("<IHHII", plg, 160)
+        subs = [struct.unpack_from("<II", plg, 176 + 8 * i) for i in range(tcount if tcount <= 8 else 0)]
+        end, ok = 0, tmagic == 0x54524558 and tver == 2 and tcount == 5 and tregion == rel_bytes()
+        for at, n in subs:
+            ok = ok and at == end and at % 1024 == 0 and n % 1024 == 0
+            end = at + n
+        if not (ok and end == tused <= tregion and ram <= tused):
+            print("%s: bad sub-slot table (magic %08x version %d count %d region %d used %d, sub-slots %s)" % (args[0], tmagic, tver, tcount, tregion, tused, subs)); return 1
     flash = flash_of(args[1])
     want = zlib.crc32(flash) & 0xFFFFFFFF
     if want != image_id:

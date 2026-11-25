@@ -17,11 +17,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 SAN="${SAN:-}"
 BUILD="$ROOT/build/ui-shot${SAN:+-san}"
-BIN="$BUILD/ui_shot"
+BIN="${UI_SHOT_BIN:-$BUILD/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (run_tests)
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/strum_recog_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$BUILD"
-make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" ${SAN:+SAN=$SAN} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" ${SAN:+SAN=$SAN} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
 
 fails=0; checks=0
 expect() { checks=$((checks+1)); if [ "$2" = "$3" ]; then printf 'ok    %s\n' "$1"; else fails=$((fails+1)); printf 'FAIL  %s\n      expected: %s\n      got:      %s\n' "$1" "$2" "$3"; fi; }
@@ -37,10 +37,10 @@ onsets() { awk '{n[NR]=$3; t[NR]=$NF} END{printf "%s +%.1f|%s +%.1f|%s", n[1], t
 JOIN="recopt 0; instr 64; arm 2; audio 1; tap Play; wait 200; hold Rec; tap Play; unhold Rec; wait 300"
 JOINM="recopt 0; instr 48; arm 2; audio 1; tap Play; wait 200; hold Rec; tap Play; unhold Rec; wait 300"
 REL="wait 400; midioff 60; midioff 64; midioff 67; midioff 71; wait 300; tap Play; wait 300; step 2 6; step 2 7"
-# Capture (Config > Features > Capture on): the notes go to the ring and the under-screen button 3 (tap F4) puts the last pass into the copy buffer, step 3
+# Capture (Config > Features > Capture on): the notes go to the ring and the under-screen button 3 (tap F4) writes the take into the pattern, the first note on step 0
 CAP="capture 1; instr 64; audio 1; tap Play; wait 300"
 OFFS="midioff 60 0 20; midioff 64 0 20; midioff 67 0 20; midioff 71 0 200"
-BUF="wait 300; tap F4; wait 100; capbuf 0 3"
+BUF="wait 300; tap F4; wait 100; step 0 0"
 
 # 1. record join: a chord pressed together is a chord and no roll (10 ms gaps, under the dead zone), the first step and the next one
 out=$(run jsame "$JOIN; midion 60 100 10; midion 64 100 10; midion 67; $REL")
@@ -88,28 +88,28 @@ out=$(run jplaydown "$JOINM; midion 67 100 40; midion 64 100 40; midion 60; wait
 expect "MIDI instrument: maj + Strum -20 recorded" "step 2 6 note 36 instr 48 fx0 14:5 fx1 47:84" "$(grep '^step' <<<"$out")"
 expect "playback of the rolled-down chord: G E C, 40.6 ms apart" "67 +40.6|64 +40.6|60" "$(grep '^midi on' <<<"$out" | onsets)"
 
-# 7. Capture: the same rules at the commit of the copy buffer (the pattern is not touched)
+# 7. Capture: the same rules at the press (the take is written into the pattern)
 out=$(run csame "$CAP; midion 60 100 10; midion 64 100 10; midion 67 100 100; $OFFS; $BUF")
-expect "capture: C E G together (10 ms gaps) is maj and no Strum" "capbuf 0 3 note 36 instr 64 fx0 14:5 fx1 0:0 vol -1 micro -1" "$out"
+expect "capture: C E G together (10 ms gaps) is maj and no Strum" "step 0 0 note 36 instr 64 fx0 14:5 fx1 0:0" "$out"
 out=$(run cup "$CAP; midion 60 100 40; midion 64 100 40; midion 67 100 100; $OFFS; $BUF")
-expect "capture: C E G rolled up, 40 ms gaps: maj + Strum +20" "capbuf 0 3 note 36 instr 64 fx0 14:5 fx1 47:20 vol -1 micro -1" "$out"
+expect "capture: C E G rolled up, 40 ms gaps: maj + Strum +20" "step 0 0 note 36 instr 64 fx0 14:5 fx1 47:20" "$out"
 out=$(run cdown "$CAP; midion 67 100 40; midion 64 100 40; midion 60 100 100; $OFFS; $BUF")
-expect "capture: G E C rolled down, 40 ms gaps: maj + Strum -20 (value 84)" "capbuf 0 3 note 36 instr 64 fx0 14:5 fx1 47:84 vol -1 micro -1" "$out"
+expect "capture: G E C rolled down, 40 ms gaps: maj + Strum -20 (value 84)" "step 0 0 note 36 instr 64 fx0 14:5 fx1 47:84" "$out"
 out=$(run cfour "$CAP; midion 60 100 30; midion 64 100 30; midion 67 100 30; midion 71 100 100; $OFFS; $BUF")
-expect "capture: C E G B rolled up, 30 ms gaps: maj7 + Strum +15" "capbuf 0 3 note 36 instr 64 fx0 14:24 fx1 47:15 vol -1 micro -1" "$out"
+expect "capture: C E G B rolled up, 30 ms gaps: maj7 + Strum +15" "step 0 0 note 36 instr 64 fx0 14:24 fx1 47:15" "$out"
 out=$(run cfourdown "$CAP; midion 71 100 30; midion 67 100 30; midion 64 100 30; midion 60 100 100; $OFFS; $BUF")
-expect "capture: B G E C rolled down, 30 ms gaps: maj7 + Strum -15 (value 79)" "capbuf 0 3 note 36 instr 64 fx0 14:24 fx1 47:79 vol -1 micro -1" "$out"
+expect "capture: B G E C rolled down, 30 ms gaps: maj7 + Strum -15 (value 79)" "step 0 0 note 36 instr 64 fx0 14:24 fx1 47:79" "$out"
 out=$(run cslow "$CAP; midion 60 100 90; midion 64 100 90; midion 67 100 100; $OFFS; $BUF")
-expect "capture: 90 ms gaps, near the window: Strum +46 (the mean of the block times)" "capbuf 0 3 note 36 instr 64 fx0 14:5 fx1 47:46 vol -1 micro -1" "$out"
+expect "capture: 90 ms gaps, near the window: Strum +46 (the mean of the block times)" "step 0 0 note 36 instr 64 fx0 14:5 fx1 47:46" "$out"
 out=$(run cnochord "$CAP; midion 60 100 40; midion 61 100 40; midion 62 100 100; midioff 60 0 20; midioff 61 0 20; midioff 62 0 200; $BUF")
-expect "capture: no chord, the first note alone and no Strum" "capbuf 0 3 note 36 instr 64 fx0 0:0 fx1 0:0 vol -1 micro -1" "$out"
+expect "capture: no chord, the first note alone and no Strum" "step 0 0 note 36 instr 64 fx0 0:0 fx1 0:0" "$out"
 out=$(run csingle "$CAP; midion 60 100 300; midioff 60 0 200; $BUF")
-expect "capture: one note, no chord and no Strum" "capbuf 0 3 note 36 instr 64 fx0 0:0 fx1 0:0 vol -1 micro -1" "$out"
-# the pattern step holds two other FX: the buffer is its own block, the chord and its Strum are written there, the pattern keeps its effects
-out=$(run cbusy "capture 1; instr 64; setstep 0 3 -1 0 4 50 3 2; audio 1; tap Play; wait 300; midion 60 100 40; midion 64 100 40; midion 67 100 100; $OFFS; $BUF; step 0 3")
-expect "capture: the buffer holds chord + Strum, the pattern step keeps its two FX" "capbuf 0 3 note 36 instr 64 fx0 14:5 fx1 47:20 vol -1 micro -1|step 0 3 note -1 instr 0 fx0 4:50 fx1 3:2" "$(paste -sd'|' - <<<"$out")"
+expect "capture: one note, no chord and no Strum" "step 0 0 note 36 instr 64 fx0 0:0 fx1 0:0" "$out"
+# the pattern step holds two other FX: no free slot for the chord and its Strum, the first note alone is written and the effects stay
+out=$(run cbusy "capture 1; instr 64; setstep 0 0 -1 0 4 50 3 2; audio 1; tap Play; wait 300; midion 60 100 40; midion 64 100 40; midion 67 100 100; $OFFS; $BUF")
+expect "capture: no free FX slot, the first note alone and the step keeps its two FX" "step 0 0 note 36 instr 64 fx0 4:50 fx1 3:2" "$(paste -sd'|' - <<<"$out")"
 # sample instruments take no chord FX (one note per track), so no Strum either
-out=$(run csample "capture 1; instr 0; audio 1; tap Play; wait 300; midion 60 100 40; midion 64 100 40; midion 67 100 100; $OFFS; wait 300; tap F4; wait 100; capbuf 0 3; capbuf 1 3; capbuf 2 3")
+out=$(run csample "capture 1; instr 0; audio 1; tap Play; wait 300; midion 60 100 40; midion 64 100 40; midion 67 100 100; $OFFS; wait 300; tap F4; wait 100; step 0 0; step 1 0; step 2 0")
 expect "capture: a chord on sample instruments has no Chord FX and no Strum" "0" "$(grep -c 'fx[01] \(14\|47\):' <<<"$out")"
 
 new=$(cat "$WORK"/*.err 2>/dev/null | grep "SUMMARY" | grep -v "mtWavetableEnvelopes.cpp:206" | sort | uniq -c)

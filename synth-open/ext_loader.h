@@ -26,7 +26,7 @@
 namespace ext
 {
 constexpr const char* kPath = "/Plugins/Ext/module.plg";
-constexpr const char* kModitPath = "/Plugins/Ext/modit.plg";   // MOD and IT import, IT export: loaded on first use, never at boot
+constexpr const char* kExtrasPath = "/Plugins/Ext/extras.plg";   // the release modules (MOD/IT, ...): loaded on first use, never at boot
 constexpr const char* kMarker = "/Plugins/Ext/.loading";   // written before the entry, removed after kMarkerMs of clean running
 constexpr const char* kStatus = "/Plugins/Ext/status.txt";
 constexpr const char* kCrash = "/Plugins/Ext/crash.txt";    // written on the boot that finds the marker, replaced each time
@@ -72,8 +72,26 @@ struct Slot
     uint32_t loadBytes;  // EXT_LOAD_BYTES on the device: the tail after it is the module's reset surviving area
     uintptr_t run;       // the address the module must be linked for (the device: mem)
     uint32_t resetReason = 0;   // RCM_SRS1 << 8 | RCM_SRS0 of this start (the device), what ended the boot before it
-    const char* path = kPath;   // the module file (modit.plg is loaded by the same rules from kModitPath)
+    const char* path = kPath;   // the module file (extras.plg is loaded by the same rules from kExtrasPath into the release region)
+    ext_rel_table_t* table = nullptr;   // extras.plg: its sub-slot table (after the manifest) is required, checked and copied here
 };
+
+// The sub-slot table of extras.plg (ext_abi.h ext_rel_table_t) against the file's header and the region it is loaded into: this version,
+// every tenant at an EXT_SUB_ALIGN boundary in order without overlap, the first at 0, text, data and bss inside used_bytes, used_bytes
+// inside the region. False refuses the file.
+inline bool checkRelTable(const ext_rel_table_t& t, const plug_file_header& h, uint32_t regionBytes)
+{
+    if (t.magic != EXT_REL_TABLE_MAGIC || t.version != EXT_REL_TABLE_VERSION || t.count != EXT_SUB_COUNT || t.region_bytes != regionBytes)
+        return false;
+    uint32_t end = 0;
+    for (uint32_t i = 0; i < EXT_SUB_COUNT; i++)
+    {
+        const ext_sub_t& u = t.sub[i];
+        if (u.at % EXT_SUB_ALIGN || u.at != end || u.bytes % EXT_SUB_ALIGN || u.bytes > regionBytes - u.at) return false;
+        end = u.at + u.bytes;
+    }
+    return end == t.used_bytes && end <= regionBytes && h.image_size + h.bss_size <= end;
+}
 
 // The fault record a module keeps in the slot tail (ext_abi.h EXT_FAULT_*), 4 aligned anywhere in it. Its index, or -1.
 inline uint32_t tailWord(const uint8_t* tail, uint32_t i)
@@ -140,6 +158,9 @@ template <class Fs, class ImageCrc> Status load(Fs& fs, const Slot& s, ImageCrc 
         st = Status::kLayout;
     else if (h.reserved[1] != uint32_t(s.run))
         st = Status::kOtherBase;
+    // extras.plg: the sub-slot table sits right after the 96 B manifest and ends the header part (a round 1 file has none: not this ABI)
+    constexpr uint32_t kTableAt = sizeof(h) + 96;
+    if (st == Status::kLoaded && s.table && h.header_size != kTableAt + sizeof(ext_rel_table_t)) st = Status::kHeader;
     uint32_t crc = 0;
     for (uint32_t done = sizeof(h); st == Status::kLoaded && done < h.header_size;)
     {
@@ -147,8 +168,13 @@ template <class Fs, class ImageCrc> Status load(Fs& fs, const Slot& s, ImageCrc 
         const uint32_t n = h.header_size - done > sizeof(m) ? sizeof(m) : h.header_size - done;
         if (!fs.read(m, n)) st = Status::kRead;
         crc = plug::crc32(crc, m, n);
+        if (s.table)
+            for (uint32_t i = 0; i < n; i++)
+                if (done + i >= kTableAt && done + i < kTableAt + sizeof(ext_rel_table_t))
+                    reinterpret_cast<uint8_t*>(s.table)[done + i - kTableAt] = m[i];
         done += n;
     }
+    if (st == Status::kLoaded && s.table && !checkRelTable(*s.table, h, s.loadBytes)) st = Status::kLayout;
     if (st == Status::kLoaded && !fs.read(s.mem, h.image_size)) st = Status::kRead;
     fs.close();
     if (st != Status::kLoaded) return st;
@@ -199,27 +225,37 @@ Status boot(Fs& fs, bool develop, const Slot& s, ImageCrc imageCrc, Enter enter,
     return st;
 }
 
-// MOD/IT (modit.plg): the same file rules, a second file, one use at a time of the one slot.
-//   The slot belongs to the console module (module.plg) while that is loaded or about to load (the key window of the develop boot).
-//   Then nothing is read and modit.plg is busy. Otherwise the slot holds nothing that matters (no module, a refused or damaged
-//   file, a crash report already written, the recovery console's reply), so modit.plg is loaded over it. Only the load part is
-//   written, the tail is the console module's reset surviving area and stays as it was.
-//   While modit.plg is loaded the recovery console (ext_recovery.h) answers from the slot tail, not from its first bytes (below).
+// The release modules (extras.plg): the same file rules, a second file, a second SDRAM region of its own (ext_abi.h EXT_REL_BYTES, image symbol
+//   s_extRel). The console module's slot is never touched, so both are loaded at the same time in any order (the console at the end of the
+//   key window of a develop boot, extras.plg on the first use of one of its tenants). Every tenant sits at the sub-slot the file's own table
+//   names (ext_abi.h ext_rel_table_t, checked by checkRelTable), the bundle is one load, one file CRC and one image id check for all of them. The recovery console keeps the first bytes of the console slot.
 enum class ModitState : uint8_t
 {
     kReady,        // loaded, the hook is set
-    kBusy,         // the console module owns the slot
-    kMissing,      // no /Plugins/Ext/modit.plg
+    kMissing,      // no /Plugins/Ext/extras.plg
     kOtherImage,   // built for another firmware image
     kDamaged,      // anything else: not a module, damaged, too big, linked elsewhere, the entry refused
 };
 
-inline bool slotBusy(Status console, bool consolePending) { return console == Status::kLoaded || consolePending; }
-
-// where the recovery console may write its reply (ext_recovery.h, kReplyBytes): the slot start while nothing is loaded, the slot tail
-// (2 KB, never written by the loader) once modit.plg sits in the load part
+// where the recovery console may write its reply (ext_recovery.h, kReplyBytes): the console slot start, idle while no console module runs
 constexpr uint32_t kRecoveryReplyBytes = 320;
-inline uint32_t recoveryReplyOffset(bool moditLoaded) { return moditLoaded ? EXT_LOAD_BYTES : 0; }
+
+// A module's hooks into the image's table, field by field: a null field keeps what an earlier module set, so the console module and
+// extras.plg never wipe each other's pointers. struct_size stays the image's.
+inline void mergeHooks(ext_hooks_t& dst, const ext_hooks_t& src)
+{
+    if (src.update) dst.update = src.update;
+    if (src.usbSof) dst.usbSof = src.usbSof;
+    if (src.usbLineCoding) dst.usbLineCoding = src.usbLineCoding;
+    if (src.spinExpired) dst.spinExpired = src.spinExpired;
+    if (src.coprocReset) dst.coprocReset = src.coprocReset;
+    if (src.log) dst.log = src.log;
+    if (src.logv) dst.logv = src.logv;
+    if (src.modit) dst.modit = src.modit;
+    if (src.capture) dst.capture = src.capture;
+    if (src.theme) dst.theme = src.theme;
+    if (src.selftest) dst.selftest = src.selftest;
+}
 
 inline ModitState moditStateOf(Status st)
 {
@@ -237,10 +273,9 @@ inline const char* moditLine1(ModitState s)
 {
     switch (s)
     {
-    case ModitState::kBusy: return "Developer console is on";
     case ModitState::kMissing: return "MOD/IT module missing";
-    case ModitState::kOtherImage: return "modit.plg is for another firmware";
-    case ModitState::kDamaged: return "modit.plg is damaged";
+    case ModitState::kOtherImage: return "extras.plg is for another firmware";
+    case ModitState::kDamaged: return "extras.plg is damaged";
     default: return "";
     }
 }
@@ -248,23 +283,22 @@ inline const char* moditLine2(ModitState s)
 {
     switch (s)
     {
-    case ModitState::kBusy: return "Hold Shift at power on for MOD/IT";
-    case ModitState::kMissing: return "Copy modit.plg to Plugins/Ext";
+    case ModitState::kMissing: return "Copy extras.plg to Plugins/Ext";
     case ModitState::kOtherImage: return "Copy the one of this release";
     case ModitState::kDamaged: return "Copy it from the release again";
     default: return "";
     }
 }
 
-// Load /Plugins/Ext/modit.plg on the first use. console / consolePending: the state of the console module (ext_module.cpp). enter(h) calls
-// the entry and returns true when it filled the modit hook. No crash marker (never loaded at boot: a crash costs one reset, the next
-// use tries again), no status file.
+// Load /Plugins/Ext/extras.plg into the release region on the first use of a tenant. s is the region (path set here). enter(h) calls the
+// entry and returns true when it filled the hook of the tenant asked for. No crash marker (never loaded at boot: a crash costs one reset,
+// the next use tries again), no status file.
 template <class Fs, class ImageCrc, class Enter>
-ModitState moditLoad(Fs& fs, const Slot& s, Status console, bool consolePending, ImageCrc imageCrc, Enter enter)
+ModitState extrasLoad(Fs& fs, const Slot& s, ImageCrc imageCrc, Enter enter, ext_rel_table_t* table)
 {
-    if (slotBusy(console, consolePending)) return ModitState::kBusy;
     Slot m = s;
-    m.path = kModitPath;
+    m.path = kExtrasPath;
+    m.table = table;
     plug_file_header h;
     const Status st = load(fs, m, imageCrc, h);
     if (st != Status::kLoaded) return moditStateOf(st);

@@ -3,6 +3,6 @@
 #include <stdint.h>
 
 constexpr uint32_t kRandomNameWord1TabSize = 8087;   // the table as text: _word_word_..._, with its end
-extern const uint8_t randomNameWord1TabDeflated[4090];
+extern const uint8_t randomNameWord1TabDeflated[3953];
 constexpr uint32_t kRandomNameWord2TabSize = 6598;   // the table as text: _word_word_..._, with its end
-extern const uint8_t randomNameWord2TabDeflated[3384];
+extern const uint8_t randomNameWord2TabDeflated[3267];

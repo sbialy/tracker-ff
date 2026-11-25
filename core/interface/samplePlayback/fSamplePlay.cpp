@@ -184,6 +184,12 @@ void cSamplePlayback::start(uint32_t options)
 
     loadedInstrumentType = mtSampleTypeWaveFile;
 
+    if (mtProject.values.lastUsedInstrument >= kSampleInstrumentsCount ||
+        mtProject.values.lastUsedInstrument != displayedInstrument)
+    {
+        clearDisplayedTrack();
+    }
+
     //--------------------------------------------------------------------
     if (mtProject.values.lastUsedInstrument < kSampleInstrumentsCount)
     {
@@ -336,6 +342,7 @@ void cSamplePlayback::stop()
         mtPopups.toggleNoteKeyboardPopup();
     }
 
+    clearDisplayedTrack();
     sequencer.stopManualNotes();
     sequencer.setMidiInVoiceMode(Sequencer::midiInVoiceMode_default);
     moduleRefresh = 0;
@@ -486,6 +493,17 @@ void cSamplePlayback::refreshLiveParams()
         return;
     }
 
+    if (mtProject.values.lastUsedInstrument >= kSampleInstrumentsCount ||
+        mtProject.values.lastUsedInstrument != displayedInstrument)
+    {
+        clearDisplayedTrack();
+        if (mtPopups.getStepPopupState() == stepPopupNone)
+        {
+            refreshSpectrumProgress = 1;
+        }
+        return;
+    }
+
     calcPlayProgressValue();
 
     refreshGranularAutomation();
@@ -564,6 +582,26 @@ void cSamplePlayback::cancelPopups()
     }
 }
 
+void cSamplePlayback::clearDisplayedTrack()
+{
+    if (displayedTrack != kNoTrack)
+    {
+        instrumentPlayer[displayedTrack].clearTrackIsDisplayed();
+        instrumentPlayer[displayedTrack].clearEndDisplayTrackFlag();
+        displayedTrack = kNoTrack;
+    }
+
+    displayedInstrument = kNoInstrument;
+    playProgressValue = 0;
+    playProgressInSpectrum = 0;
+    refreshSpectrumProgress = 0;
+
+    if (progressCursor >= 0)
+    {
+        display.setControlValue(progressCursor, 0);
+    }
+}
+
 void cSamplePlayback::onEndTrackDisplay()
 {
     instrumentPlayer[displayedTrack].clearTrackIsDisplayed();
@@ -595,23 +633,37 @@ void cSamplePlayback::onEndTrackDisplay()
     }
 
     displayedTrack = kNoTrack;
+    displayedInstrument = kNoInstrument;
 }
 
 void cSamplePlayback::noteOnHandle(uint8_t channel, uint8_t note, uint8_t velocity, int16_t source)
 {
     sequencer.handleNoteOn(channel, note, velocity, source);
 
+    if (mtProject.values.lastUsedInstrument >= kSampleInstrumentsCount)
+    {
+        return;
+    }
+
+    if (displayedTrack != kNoTrack && displayedInstrument != mtProject.values.lastUsedInstrument)
+    {
+        clearDisplayedTrack();
+    }
+
     if (displayedTrack == engine.getLastUsedVoice())
     {
         instrumentPlayer[displayedTrack].setTrackIsDisplayed();
         instrumentPlayer[displayedTrack].clearEndDisplayTrackFlag();
+        displayedInstrument = mtProject.values.lastUsedInstrument;
         // akcja ustawia sie w audio engine - sequencer jej nie clearuje a tu tak - wiec seq gasi
         // progres a druga nuta na tym samym vocie z pada/midi nie
     }
-    else if (displayedTrack == -1)
+    else if (displayedTrack == kNoTrack)
     {
         displayedTrack = engine.getLastUsedVoice();
         instrumentPlayer[displayedTrack].setTrackIsDisplayed();
+        instrumentPlayer[displayedTrack].clearEndDisplayTrackFlag();
+        displayedInstrument = mtProject.values.lastUsedInstrument;
     }
 }
 
@@ -861,7 +913,7 @@ static void functButton2(uint8_t state)
             SP->selectedPlace = 2;
         }
     }
-    else if (SP->editorInstrument->playMode == playModeSingleShot)
+    else if (isSingleShotMode(SP->editorInstrument->playMode))
     {
         return;
     }
@@ -965,7 +1017,7 @@ static void functButton3(uint8_t state)
     {
         return;
     }
-    else if (SP->editorInstrument->playMode == playModeSingleShot)
+    else if (isSingleShotMode(SP->editorInstrument->playMode))
     {
         return;
     }
@@ -1324,7 +1376,7 @@ static void functLeft()
         }
         case 3:
         {
-            if (SP->editorInstrument->playMode == playModeSingleShot)
+            if (isSingleShotMode(SP->editorInstrument->playMode))
             {
                 functButton1(UINT8_MAX);
             }
@@ -1340,7 +1392,7 @@ static void functLeft()
         }
         case 4:
         {
-            if (SP->editorInstrument->playMode == playModeSingleShot)
+            if (isSingleShotMode(SP->editorInstrument->playMode))
             {
                 functButton1(UINT8_MAX);
             }
@@ -1441,7 +1493,7 @@ static void functRight()
         }
         case 1:
         {
-            if (SP->editorInstrument->playMode == playModeSingleShot)
+            if (isSingleShotMode(SP->editorInstrument->playMode))
             {
                 functButton4(UINT8_MAX);
             }
@@ -1462,7 +1514,7 @@ static void functRight()
         }
         case 2:
         {
-            if (SP->editorInstrument->playMode == playModeSingleShot)
+            if (isSingleShotMode(SP->editorInstrument->playMode))
             {
                 functButton4(UINT8_MAX);
             }
@@ -1809,7 +1861,7 @@ static void changePlayModeSelection(int16_t value)
     else
         SP->editorInstrument->playMode += value;
 
-    if (!isPlayModeStreamable(SP->editorInstrument->playMode) &&
+    if (!isInstrumentStreamable(*SP->editorInstrument) &&
         mtProject.values.lastUsedInstrument < kSampleInstrumentsCount &&
         mtProject.sampleMemory[mtProject.values.lastUsedInstrument].isStreamed)
     {
@@ -1836,6 +1888,7 @@ static void changePlayModeSelection(int16_t value)
 
     if (SP->editorInstrument->playMode == playModeWavetable)
     {
+        SP->editorInstrument->setRepitchSteps(0); // the top byte of the wavetable position is the Repitch Steps of the sample modes
         if (SP->editorInstrument->sample.type == 0)
             SP->refreshSpectrum = 1;
         SP->editorInstrument->sample.type = 1;
@@ -1847,6 +1900,12 @@ static void changePlayModeSelection(int16_t value)
         //*******************************wavetable window size moze byc tylko potęgą 2
         // Jezeli length nie jest potega 2 trzeba go zrownac do najwiekszej mozliwej potegi 2
         uint16_t localMask = 2048;
+        // A size above the largest window, as a damaged or foreign instrument file can
+        // hold, may have no bit that the mask reaches, and the loop below would not end.
+        if (SP->editorInstrument->sample.wavetable_window_size > localMask)
+        {
+            SP->editorInstrument->sample.wavetable_window_size = localMask;
+        }
         while (!(SP->editorInstrument->sample.wavetable_window_size & localMask))
         {
             if ((SP->editorInstrument->sample.wavetable_window_size == 0))
@@ -1873,11 +1932,12 @@ static void changePlayModeSelection(int16_t value)
         SP->loadedInstrumentType = SP->editorInstrument->sample.type;
     }
 
-    if (((SP->editorInstrument->playMode == playModeSingleShot) && (value < 0)) ||
+    if ((isSingleShotMode(SP->editorInstrument->playMode) &&
+         ((value < 0) || (SP->editorInstrument->playMode == playModeSingleShotRev))) ||
         ((SP->editorInstrument->playMode == playModeSlice) && (value > 0)))
     {
         SP->hideLoopPoints();
-        if (SP->editorInstrument->playMode == playModeSingleShot)
+        if (isSingleShotMode(SP->editorInstrument->playMode))
             SP->refreshPoints = 1;
     }
     else
@@ -1955,7 +2015,7 @@ static void modStartPoint(int16_t value)
         SP->editorInstrument->startPoint = SP->editorInstrument->endPoint - 2;
     }
 
-    if ((SP->editorInstrument->playMode != playModeSingleShot) &&
+    if ((!isSingleShotMode(SP->editorInstrument->playMode)) &&
         (SP->editorInstrument->playMode != playModeWavetable))
     {
         if (SP->editorInstrument->startPoint >= SP->editorInstrument->loopPoint1)
@@ -2024,7 +2084,7 @@ static void modEndPoint(int16_t value)
         SP->editorInstrument->endPoint = SP->editorInstrument->startPoint + 2;
     }
 
-    if (SP->editorInstrument->playMode != playModeSingleShot)
+    if (!isSingleShotMode(SP->editorInstrument->playMode))
     {
         if (SP->editorInstrument->endPoint < SP->editorInstrument->loopPoint2)
         {
@@ -2147,7 +2207,7 @@ static void modLoopPoint2(int16_t value)
 
 void cSamplePlayback::processWavetableCursor(uint32_t position)
 {
-    wtPosition.position = position;
+    wtPosition.position = position & strInstrument::kRepitchWindowMask;
     wtPosition.window = SP->editorInstrument->sample.wavetable_window_size;
     wtPosition.positionMax = SP->editorInstrument->sample.wavetableWindowNumber;
 
@@ -2715,7 +2775,7 @@ void cSamplePlayback::setDefaultStartPoint()
     uint16_t dif;
     editorInstrument->startPoint = defaultInstrumentParams.startPoint;
 
-    if ((editorInstrument->playMode != playModeSingleShot) &&
+    if ((!isSingleShotMode(editorInstrument->playMode)) &&
         (editorInstrument->playMode != playModeWavetable))
     {
         if (editorInstrument->startPoint >= editorInstrument->loopPoint1)
@@ -2827,7 +2887,7 @@ void cSamplePlayback::setDefaultEndPoint()
 
     SP->editorInstrument->endPoint = defaultInstrumentParams.endPoint;
 
-    if (SP->editorInstrument->playMode != playModeSingleShot)
+    if (!isSingleShotMode(SP->editorInstrument->playMode))
     {
         if (SP->editorInstrument->endPoint < SP->editorInstrument->loopPoint2)
         {

@@ -3,9 +3,7 @@
 #endif
 #include "WorkspaceProjectLoad.h"
 #include "mtFollowChord.h"
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
-#endif
+#include "ff_hooks.h"
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
@@ -154,8 +152,12 @@ void WorkspaceProjectLoad::loadProjectFromWorkspaceInit()
     // jezeli np ladowany jest starsza wersja pliku i struktura jest modyfikwoana
     newFileManager.clearChangeFlags();
     fx34io::projectClosing(); // the 4 FX switch of the last project does not carry over: project.mtff turns it on again below
-#ifdef FEATURE_PLUG_HOST
-    plug::projectClosing(); // so does the macro depth mode: a patch the load adds is no patch of the last project
+    ffHookProjectClosing(); // so does the macro depth mode: a patch the load adds is no patch of the last project
+
+#if defined(FEATURE_PROJECT_STORE) && !defined(PLATFORM_IMX)
+    // project.mtff is read once more here, before any instrument loads: a project with a linked stereo pair loads the right channel of its
+    // stereo .pti files too (stereoPairs.h). No file, no key: left only, as before
+    newFileManager.setStereoSampleMode(ffProjectPairsPreload(cWorkspacePath) != 0);
 #endif
 
     currentInstrument = 0;
@@ -185,6 +187,13 @@ void WorkspaceProjectLoad::loadProjectFromWorkspaceFinish()
     newFileManager.getPatternsMetadata()->loadPatternsMetadata();
 
 #if FILEMANAGER_HANDLE_SYNTH == 1
+    // updateToSettings() hands the voice count from the project file to the synth as it is,
+    // and loadProjectValues() below validates the synth settings only after that.
+    for (int part = 0; part < kSynthParts; part++)
+    {
+        newFileManager.getSynth()->validateSynthPartSettings(part,
+                                                             mtProject.values.synthPart[part]);
+    }
     newFileManager.getSynth()->updateToSettings(mtProject.values, true);
     for (int part = 0; part < kSynthParts; part++)
     {
@@ -201,9 +210,7 @@ void WorkspaceProjectLoad::loadProjectFromWorkspaceFinish()
 #ifdef FEATURE_PARTS
     parts::projectLoaded(cWorkspacePath); // an empty Parts list: the Song screen plays the playlist, as stock (project.mtff fills it below)
 #endif
-#ifdef FEATURE_PLUG_HOST
-    plug::projectLoaded(cWorkspacePath); // the master insert plugins of plugins.txt and every setting of project.mtff (none without one, as stock)
-#endif
+    ffHookProjectLoaded(cWorkspacePath, false); // every setting of project.mtff and the master insert plugins of plugins.txt (none without one, as stock)
 
     if (newFileManager.needImportModFileAfterNewProject())
     {
@@ -300,7 +307,7 @@ void WorkspaceProjectLoad::loadProjectFileFromWorkspace()
 //=================================================================================================
 //=================================================================================================
 // return value: true = success, false = fail
-bool WorkspaceProjectLoad::loadInstrStruct(int idx, uint32_t& instrumentFileDataOffsetOut)
+__attribute__((noinline)) bool WorkspaceProjectLoad::loadInstrStruct(int idx, uint32_t& instrumentFileDataOffsetOut)
 {
     if (idx >= kSampleInstrumentsCount)
     {
@@ -351,7 +358,7 @@ bool WorkspaceProjectLoad::loadInstrStruct(int idx, uint32_t& instrumentFileData
 
 //=================================================================================================
 //=================================================================================================
-uint32_t WorkspaceProjectLoad::calcWorkspaceInstrumentsSize()
+__attribute__((noinline)) uint32_t WorkspaceProjectLoad::calcWorkspaceInstrumentsSize()
 {
     char currentPatch[PATCH_SIZE];
     volatile int pathSize = sizeof(currentPatch);

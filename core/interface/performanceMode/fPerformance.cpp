@@ -1,4 +1,5 @@
 #include "core/interface.h"
+#include "stereoPairs.h"
 #include "core/interfaceMenuPopup.h"
 #include "core/interfacePopups.h"
 #include "fileManager.h"
@@ -283,7 +284,7 @@ void cPerformanceMode::turnOffAtEndOfPattern()
     sequencer.setOnPatternOrSelectionEnd(cbkTurnOffPerformanceMode);
 }
 
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
 // Opens the Synth play page and keeps Performance mode as it is, the way a switch to the Params page does (the FX rows, the track states and
 // the pattern swaps stay, dontClearPerformanceMode is read by the next start). A refusal (a popup, the page is not on screen) undoes the flag
 bool cPerformanceMode::openSynthPlay()
@@ -712,7 +713,7 @@ static void functSwitchModule(uint8_t button)
 
 static void functSwitchTracksPage()
 {
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
     // The third page of the Perform key: Perform on page 2 (tracks 9 to 16) opens the Synth play page (A/B), Perform there comes back to page 1.
     // Shift + Perform keeps flipping the two track pages with the mute buttons, as before
     if (PM->tracksPage && !PM->buttons->isButtonPressed(interfaceButtonShift) && PM->openSynthPlay())
@@ -762,7 +763,9 @@ static void functActionButton(uint8_t button, uint8_t state)
         {
             if (isSampleTrack(track))
             {
+                track = stereopairs::base(track); // a linked pair mutes as one
                 mtProject.values.trackMute[track] = !mtProject.values.trackMute[track];
+                stereopairs::mirror(mtProject.values.trackMute);
                 engine.muteTrack(track, mtProject.values.trackMute[track]);
             }
             else

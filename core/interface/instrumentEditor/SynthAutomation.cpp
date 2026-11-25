@@ -1,8 +1,10 @@
-// Synth Automation 3/3: 4 slots per patch, each Off, an LFO or an envelope on one engine parameter or user macro (synth-open/open_mod.h).
+// Synth Automation 3/4 (3/3 without the Table page): 4 slots per patch, each Off, an LFO or an envelope on one engine parameter or user macro (synth-open/open_mod.h).
 // The sample automation page's look and controls with its wide destination column split in two: column 0 the slot, column 1 the
 // destination, columns 2-7 as the sample page (Type, then Attack Decay Sustain Release Amount, or Shape Speed Amount). Every edit goes
 // through Synth::setModSlot (audio interrupts off, patch dirty, never the project structure). Fixed buffers only: on the MK66 operator new
 // returns null on a short heap.
+// Tracker+ and Mini (no open synth stack): the same page on the stock synth parts, its slots live in core/AudioEngine/partAuto.h (one set per
+// part, not per patch file) and drive the part destinations only (Pan, Gain, Reverb send, Delay send), the slot run writes partauto::set/clear.
 #include "instrumentEditor/instrumentEditor.h"
 #if GUI_SYNTH_AUTO
 
@@ -12,12 +14,19 @@
 #include "util_math.h"
 
 #include <cr_section_macros.h>
+#include "noinit_check.h"
+#include <new>
 #include <cstdio>
 #include <cstring>
 #include <type_traits>
 
+#ifdef FEATURE_SYNTH_OPEN
 using polysynth::open::EngineDef;
+#else
+#include "partAuto.h"
+#endif
 using polysynth::open::kModPickMacro;
+using polysynth::open::kModPickPart;
 using polysynth::open::kModSlots;
 using polysynth::open::ModKind;
 using polysynth::open::ModSlot;
@@ -35,15 +44,22 @@ namespace
 constexpr int kAutoNameLen = 24;
 struct AutoLists
 {
+#ifdef FEATURE_SYNTH_OPEN
     int16_t pick[polysynth::open::kModPickMax + 1];
     char* pickNames[polysynth::open::kModPickMax + 1];
+#else
+    int16_t pick[polysynth::open::kModParts + 1];   // the part destinations only
+    char* pickNames[polysynth::open::kModParts + 1];
+#endif
     int16_t pickCount;
+#ifdef FEATURE_SYNTH_OPEN
     char macroNames[polysynth::open::kModMacros][kAutoNameLen];
+#endif
     char slotNames[kModSlots][kAutoNameLen];
     char* slotPtrs[kModSlots];
     char unresolved[kAutoNameLen];
 };
-static_assert(std::is_trivially_default_constructible_v<AutoLists>, "EXTERNAL_RAM: no static constructor may touch the SDRAM");
+NOINIT_PLAIN(AutoLists);
 __NOINIT(EXTERNAL_RAM) AutoLists gAuto;
 } // namespace
 
@@ -77,6 +93,7 @@ static int autoPart()
     return instrumentIdxToSynthIdx(mtProject.values.lastUsedInstrument);
 }
 
+#ifdef FEATURE_SYNTH_OPEN
 // The part's engine, nullptr when it is missing (a plugin not attached): the page shows the slots but edits nothing, the files of a
 // missing engine are never rewritten
 static const EngineDef* autoEngine()
@@ -94,6 +111,86 @@ static void autoWrite(const ModSlot& m)
 {
     IE->getSynth()->setModSlot(autoPart(), IE->autoSlot, m);
 }
+#define AUTO_EDITABLE_OR_RETURN()                                                                                                          \
+    const EngineDef* def = autoEngine();                                                                                                   \
+    if (!def)                                                                                                                              \
+    {                                                                                                                                      \
+        return;                                                                                                                            \
+    }
+#define AUTO_SET_DEST(m, code) polysynth::open::modSetDest(*def, m, code)
+#else
+static const char* const kAutoPartNames[polysynth::open::kModParts] = { "Part Pan", "Part Gain", "Part Reverb", "Part Delay" };
+
+// slot k of part p as the page's ModSlot (a part destination, its picker code is kModPickPart + dest)
+static ModSlot autoSlotOf(int p, int k)
+{
+    const partauto::Slot& r = partauto::slot(p, k);
+    ModSlot m;
+    m.type = r.type;
+    m.kind = ModKind::kPart;
+    m.shape = r.shape;
+    m.speed = r.speed;
+    m.index = r.dest;
+    m.dest = r.dest;
+    m.amount = r.amount;
+    m.sustain = r.sustain;
+    m.attack = r.attack;
+    m.decay = r.decay;
+    m.release = r.release;
+    if (r.dest >= 0 && r.dest < polysynth::open::kModParts)
+    {
+        snprintf(m.name, sizeof(m.name), "%s", kAutoPartNames[r.dest]);
+    }
+    return m;
+}
+
+static const ModSlot& autoCur()
+{
+    // the page's copy of the shown slot. ModSlot has default member initialisers, so it cannot be a __NOINIT(EXTERNAL_RAM) object (GCC 10.3
+    // refuses the non-zero initial values in the NOLOAD section): raw bytes, the copy is built in place on every call (trivially copyable)
+    alignas(ModSlot) __NOINIT(EXTERNAL_RAM) static unsigned char buf[sizeof(ModSlot)];
+    static_assert(std::is_trivially_copyable_v<ModSlot> && std::is_trivially_destructible_v<ModSlot>, "autoCur: rebuilt in place on every call");
+    return *new (buf) ModSlot(autoSlotOf(autoPart(), IE->autoSlot));
+}
+
+static void autoWrite(const ModSlot& m)
+{
+    partauto::Slot r = {};
+    r.type = m.type;
+    r.kind = ModKind::kPart;
+    r.shape = m.shape;
+    r.speed = m.speed;
+    r.dest = (m.kind == ModKind::kPart && m.dest >= 0 && m.dest < polysynth::open::kModParts) ? m.dest : int16_t(-1);
+    r.amount = m.amount;
+    r.sustain = m.sustain;
+    r.attack = m.attack;
+    r.decay = m.decay;
+    r.release = m.release;
+    partauto::setSlot(autoPart(), IE->autoSlot, r);
+}
+
+// a picker code (kModPickPart + n) into the slot
+static void autoSetDest(ModSlot& m, int code)
+{
+    const int n = code - kModPickPart;
+    if (n >= 0 && n < polysynth::open::kModParts)
+    {
+        m.kind = ModKind::kPart;
+        m.index = int16_t(n);
+        m.dest = int16_t(n);
+        snprintf(m.name, sizeof(m.name), "%s", kAutoPartNames[n]);
+    }
+}
+#define AUTO_EDITABLE_OR_RETURN()
+#define AUTO_SET_DEST(m, code) autoSetDest(m, code)
+
+// the Params key (fIinstrEdit.cpp): the open synth closes pages 2 and 3 of a Missing part. The stock parts' pages hold no engine data (the
+// part destinations stay editable), nothing to close
+bool synthPartMissingPopup(int)
+{
+    return false;
+}
+#endif
 
 void cInstrumentEditor::setSynthAutomationScreenFunct()
 {
@@ -296,11 +393,7 @@ void cInstrumentEditor::changeSynthAutomation(int place, int16_t delta, ValueCha
         return;
     }
 
-    const EngineDef* def = autoEngine();
-    if (!def)
-    {
-        return;
-    }
+    AUTO_EDITABLE_OR_RETURN()
     ModSlot m = autoCur();
     const ModType wasType = m.type;
     switch (place)
@@ -312,7 +405,7 @@ void cInstrumentEditor::changeSynthAutomation(int place, int16_t delta, ValueCha
             {
                 return; // the unresolved entry stays as it is
             }
-            polysynth::open::modSetDest(*def, m, gAuto.pick[pos]);
+            AUTO_SET_DEST(m, gAuto.pick[pos]);
             break;
         }
         case kPlaceType:
@@ -320,7 +413,7 @@ void cInstrumentEditor::changeSynthAutomation(int place, int16_t delta, ValueCha
             if (m.type != ModType::kOff && m.dest < 0 && !m.name[0] && gAuto.pickCount > 0)
             {
                 // no destination yet: the first of the list (a wave like param, or Macro 1)
-                polysynth::open::modSetDest(*def, m, gAuto.pick[autoPickPos()]);
+                AUTO_SET_DEST(m, gAuto.pick[autoPickPos()]);
             }
             break;
         case kPlaceAttack:
@@ -379,8 +472,8 @@ void cInstrumentEditor::changeSynthAutomation(int place, int16_t delta, ValueCha
 
 void cInstrumentEditor::setDefaultSynthAutomation(int place)
 {
-    const EngineDef* def = autoEngine();
-    if (!def || place == kPlaceSlot)
+    AUTO_EDITABLE_OR_RETURN()
+    if (place == kPlaceSlot)
     {
         return;
     }
@@ -393,7 +486,7 @@ void cInstrumentEditor::setDefaultSynthAutomation(int place)
             const int first = (gAuto.pickCount > 0 && gAuto.pick[0] < 0) ? 1 : 0;
             if (first < gAuto.pickCount)
             {
-                polysynth::open::modSetDest(*def, m, gAuto.pick[first]);
+                AUTO_SET_DEST(m, gAuto.pick[first]);
             }
             break;
         }
@@ -424,6 +517,31 @@ void cInstrumentEditor::setDefaultSynthAutomation(int place)
 // ------------------------------------------------------------------------------------------ GUI
 
 // The picker of the part's engine and the slot lines. Names point into flash (param names), the macro buffers or the "? name" buffer.
+#ifndef FEATURE_SYNTH_OPEN
+void cInstrumentEditor::buildSynthAutomationLists()
+{
+    const int part = autoPart();
+    for (int n = 0; n < polysynth::open::kModParts; n++)
+    {
+        gAuto.pick[n] = int16_t(kModPickPart + n);
+        gAuto.pickNames[n] = const_cast<char*>(kAutoPartNames[n]);
+    }
+    gAuto.pickCount = polysynth::open::kModParts;
+    for (int k = 0; k < kModSlots; k++)
+    {
+        const ModSlot sk = autoSlotOf(part, k);
+        if (sk.type == ModType::kOff)
+        {
+            snprintf(gAuto.slotNames[k], sizeof(gAuto.slotNames[k]), "%d Off", k + 1);
+        }
+        else
+        {
+            snprintf(gAuto.slotNames[k], sizeof(gAuto.slotNames[k]), "%d %s", k + 1, sk.dest >= 0 ? kAutoPartNames[sk.dest] : "?");
+        }
+        gAuto.slotPtrs[k] = gAuto.slotNames[k];
+    }
+}
+#else
 void cInstrumentEditor::buildSynthAutomationLists()
 {
     const int part = autoPart();
@@ -441,7 +559,7 @@ void cInstrumentEditor::buildSynthAutomationLists()
     for (int i = off; i < off + n; i++)
     {
         const int code = gAuto.pick[i];
-        if (code >= kModPickMacro)
+        if (code >= kModPickMacro && code < kModPickPart)
         {
             const int mi = code - kModPickMacro;
             snprintf(gAuto.macroNames[mi], sizeof(gAuto.macroNames[mi]), "M%d %s", mi + 1, s->modDestName(part, code));
@@ -469,6 +587,10 @@ void cInstrumentEditor::buildSynthAutomationLists()
         {
             snprintf(gAuto.slotNames[k], sizeof(gAuto.slotNames[k]), "%d M%d", k + 1, sk.dest + 1);
         }
+        else if (sk.kind == ModKind::kPart)
+        {
+            snprintf(gAuto.slotNames[k], sizeof(gAuto.slotNames[k]), "%d %s", k + 1, s->modDestName(part, kModPickPart + sk.dest));
+        }
         else
         {
             snprintf(gAuto.slotNames[k], sizeof(gAuto.slotNames[k]), "%d %s", k + 1, s->modDestName(part, sk.dest));
@@ -476,10 +598,16 @@ void cInstrumentEditor::buildSynthAutomationLists()
         gAuto.slotPtrs[k] = gAuto.slotNames[k];
     }
 }
+#endif
 
+#ifdef FEATURE_SYNTH_OPEN
 // The section short name of a param (the Synth page's section), "Macro" for a macro destination
 static const char* autoSectionOf(const EngineDef* def, int code)
 {
+    if (code >= kModPickPart)
+    {
+        return "Part";
+    }
     if (code >= kModPickMacro)
     {
         return "Macro";
@@ -501,6 +629,7 @@ static const char* autoSectionOf(const EngineDef* def, int code)
     }
     return "";
 }
+#endif
 
 static void autoBarColors(int col, bool on)
 {
@@ -555,7 +684,11 @@ void cInstrumentEditor::showSynthAutomationColumns()
     list2Data.data = gAuto.pickNames;
     display.setControlData(list2Control, &list2Data);
     display.setControlValue(list2Control, pos);
+#ifdef FEATURE_SYNTH_OPEN
     display.setControlText2(label[1], gAuto.pick[pos] < 0 ? "?" : autoSectionOf(getSynth()->getModEngine(autoPart()), gAuto.pick[pos]));
+#else
+    display.setControlText2(label[1], "Part");
+#endif
 
     // column 2: the type
     autoTypeList.start = int16_t(m.type);
@@ -690,6 +823,7 @@ void cInstrumentEditor::showSynthAutomationScreen()
     display.setControlHide(instrumentSynthCCListControl);
     display.setControlHide(instrumentListControl);
     display.setControlHide(noteLabel);
+    display.setControlHide(nnaLabel);
     display.setControlHide(paramsListControl);
     display.setControlHide(modelListControl);
     display.setControlHide(imgGridControl);

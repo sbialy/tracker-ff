@@ -90,6 +90,12 @@ AudioInputStream* AudioInput::getUsbStream()
     return &usbStream;
 }
 
+void AudioInput::setInBuffers(void* i2sData, void* usbData)
+{
+    i2sStream.setInBuffer(i2sData);
+    usbStream.setInBuffer(usbData);
+}
+
 AudioAnalyzeRMS* AudioInput::getStreamRmsI2s(InputChannels channel)
 {
     return &streamRms[channel];

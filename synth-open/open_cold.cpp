@@ -1182,12 +1182,14 @@ void OpenPatch::cfgFromData(const PatchData& d, SlotCfg& out) const
             }
         }
     }
+    ModSlot res[kModSlots];
     for (int i = 0; i < kModSlots; i++)
     {
         const ModSlot c = resolveMod(d.mod[i]);
+        res[i] = c;
         out.mod[i] = { c.type, c.kind, c.shape, c.speed, c.dest, c.amount, c.sustain, c.attack, c.decay, c.release };
     }
-    out.modOn = modAnyOn(d.mod) ? 1 : 0;
+    modFlags(res, out.modOn, out.partOn);
     out.macroScale = d.macroMode == kMacroModeScale ? 1 : 0;
 }
 
@@ -1223,7 +1225,7 @@ void OpenPatch::buildCfg(SlotCfg& out) const
         const ModSlot& c = mod[s];
         out.mod[s] = { c.type, c.kind, c.shape, c.speed, c.dest, c.amount, c.sustain, c.attack, c.decay, c.release };
     }
-    out.modOn = modAnyOn(mod) ? 1 : 0;
+    modFlags(mod, out.modOn, out.partOn);
     out.macroScale = macroScaleMode ? 1 : 0;
 }
 
@@ -1275,6 +1277,11 @@ const char* modDestName(const Patch& p, int code)
     if (code >= kModPickMacro && code < kModPickMacro + kModMacros)
     {
         return op.getMetadata().macros[code - kModPickMacro].displayName.c_str();
+    }
+    if (code >= kModPickPart && code < kModPickPart + kModParts)
+    {
+        static const char* const kPartNames[kModParts] = { "Part Pan", "Part Gain", "Part Reverb", "Part Delay" };
+        return kPartNames[code - kModPickPart];
     }
     const EngineDef* d = op.getDef();
     return d && code >= 0 && code < d->paramCount && d->params[code].name ? d->params[code].name : "";

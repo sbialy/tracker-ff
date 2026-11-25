@@ -6,6 +6,8 @@ using namespace mtAudioEngineConstans;
 
 AUDIO_CORE_RAM void playerEngine::update()
 {
+    if (pairLeader != nullptr)
+        return; // follower of a linked stereo pair: its chain is the leader's channel 1, the leader's update drives it
     if (isBlockedInstrument[currentInstrument_idx])
         return;
     //**************HANDLE UPDATE END RELEASE
@@ -323,7 +325,10 @@ inline void playerEngine::handleUpdateRefreshVolume()
         uint8_t volume = getMostSignificantVolume();
         float localAmount = getMostSignificantAmount();
 
-        modVolume(ampLogValues[volume] * localAmount);
+        float gain = ampLogValues[volume] * localAmount;
+        if (tableVol != 100)
+            gain *= float(tableVol) * 0.01f; // a table row's V (only when a table changed it: the stock product stays bit exact)
+        modVolume(gain);
     }
 }
 inline void playerEngine::handleUpdateRefreshPanning()
@@ -738,9 +743,11 @@ inline void playerEngine::handleUpdateRefreshAmpLFO()
                 bool isRandom = (curAmpLoop == 1) &&
                   (mtProject.instrument[currentInstrument_idx].lfo[envAmp].shape == lfoShapeRandom);
 
+                const uint32_t ampPairSeed = (isRandom && pairFollower != nullptr) ? (timer->micros() | 1u) : 0u;
                 for (int channel = 0; channel < (int)playMemPtr.size(); channel++)
                 {
                     playMemPtr[channel]->envelopeSetIsRandom(isRandom);
+                    playMemPtr[channel]->envelopeSetPairSeed(ampPairSeed);
                 }
             }
             else

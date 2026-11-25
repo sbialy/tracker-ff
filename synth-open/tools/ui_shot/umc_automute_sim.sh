@@ -22,7 +22,8 @@ OUT="${OUT:-$ROOT/build/ui-shot-ext}"
 SHOTS="${SHOTS:-}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/umc_automute_sim.XXXXXX")"
 trap 'rm -rf "${WORK:?}"' EXIT
-make -s -C "$HERE" EXTHOOKS=1 OUT="$OUT" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" >"$OUT.make.log" 2>&1 || { tail -30 "$OUT.make.log"; exit 2; }
+BIN="${UI_SHOT_BIN:-$OUT/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (EXTHOOKS=1 flavour)
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" EXTHOOKS=1 OUT="$OUT" -j"$(sh "$HERE/../jobs.sh" n)" >"$OUT.make.log" 2>&1 || { tail -30 "$OUT.make.log"; exit 2; }
 [ -n "$SHOTS" ] && mkdir -p "$SHOTS"
 SH="${SHOTS:-$WORK}"
 
@@ -36,7 +37,7 @@ run() {
     local sd="${WORK:?}/$name.sd"
     mkdir -p "$sd/Features"
     printf "$CFGHEAD$3" > "$sd/Features/usbaudio.cfg"
-    env $2 UISHOT_POKE="$WORK/$name.poke" ASAN_OPTIONS=detect_leaks=0 timeout 300 "$OUT/ui_shot" "$sd" "$4" > "$WORK/$name.txt" 2> "$WORK/$name.err"
+    env $2 UISHOT_POKE="$WORK/$name.poke" ASAN_OPTIONS=detect_leaks=0 timeout 300 "$BIN" "$sd" "$4" > "$WORK/$name.txt" 2> "$WORK/$name.err"
     echo "exit $?" >> "$WORK/$name.txt"
     grep -q "^exit 0" "$WORK/$name.txt" || bad "$name: ui_shot did not exit 0 ($(tail -2 "$WORK/$name.txt" | tr '\n' ' '))"
 }

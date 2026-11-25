@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # skipback_sim.sh UI_SHOT OUTDIR
-# Skip-back (Config > Features > Skip-back) on the Mac, EXTHOOKS=1 ui_shot: the switch on the page, a synth part playing through the real
+# Skip-back (Config > Features > Skip-back) on the Mac, EXTHOOKS=1 SKIPBACK=1 ui_shot (the release leaves Skip-back out): the switch on the page, a synth part playing through the real
 # audio callback, Shift + Sample Rec, and the saved WAV compared sample for sample with what the callback rendered up to the press
 # (UISHOT_AUDIO_DUMP + audiomark, skipback_check.py). Also: off = stock (the shortcut opens the Sample Recorder, nothing on the card),
 # Stereo 2 s through the page, the number goes on across a start, Sample Rec alone still opens its page.
 # Exit 0 when every case passes, the last line is "RESULT: GREEN" or "RESULT: RED (n failing)".
 set -uo pipefail
-U=$1; O=$2; mkdir -p "$O"; bad=0
+U="${UI_SHOT_BIN:-$1}"; O=$2; mkdir -p "$O"; bad=0
 HERE=$(cd "$(dirname "$0")" && pwd)
 CHK="python3 -I $HERE/skipback_check.py"
 NAV='tap Config;wait 800;tap Down 4;wait 300;tap F8;wait 500'   # Config, Features, into the list

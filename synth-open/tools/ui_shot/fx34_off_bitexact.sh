@@ -14,10 +14,10 @@ REF="${1:-release-1.4.0-int}"
 WT="$ROOT/build/fx34-bitexact-base"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/fx34_off_bitexact.XXXXXX")"
 trap 'rm -rf "$WORK"; git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1' EXIT
-make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" >"$WORK/make-new.log" 2>&1 || { tail -20 "$WORK/make-new.log"; exit 2; }
+make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" >"$WORK/make-new.log" 2>&1 || { tail -20 "$WORK/make-new.log"; exit 2; }
 git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1; rm -rf "$WT"
 git -C "$ROOT" worktree add -q --detach "$WT" "$REF" || exit 2
-make -s -C "$WT/synth-open/tools/ui_shot" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" >"$WORK/make-base.log" 2>&1 || { tail -20 "$WORK/make-base.log"; exit 2; }
+make -s -C "$WT/synth-open/tools/ui_shot" -j"$(sh "$HERE/../jobs.sh" n)" >"$WORK/make-base.log" 2>&1 || { tail -20 "$WORK/make-base.log"; exit 2; }
 
 PAN=31; DLY=30; REV=32; LP=27; HP=28; TUNE=40; GLIDE=19; VOL=18; ROLL=3; RV=16; COND=48; CHORD=14; STRUM=47; ARP=21
 S="sampletone 0; sampletone 1; instr 0; audio 1; seed 5"

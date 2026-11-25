@@ -26,6 +26,9 @@ KINDS = {"master": 1, "send": 2, "track": 3, "synth": 4, "offline": 5}
 ROLES = {"insert": 0, "reverb": 1, "delay": 2}
 MANIFEST_SIZE = 96
 CPU_FLAGS = ["-mcpu=cortex-m4", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv4-sp-d16"]
+# --cpu: the header cpu id and the code flags. cm4f (default) runs on the MK66 and on the IMX M7 (same ARMv7E-M ISA, fpv4 is a subset
+# of fpv5), cm7 is an M7 tuned build only the IMX host accepts (ref/ff-imx-port-plan.md R2.1c, plug_index.h hostCpuOk).
+CPUS = {"cm4f": (1, CPU_FLAGS), "cm7": (2, ["-mcpu=cortex-m7", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv5-sp-d16"])}
 
 # Relocation types ld resolves to PC-relative values (position independent after a flat copy).
 PC_RELATIVE = {
@@ -126,6 +129,7 @@ def main():
     ap.add_argument("--entry", default="plug_entry", help="entry symbol (plug_entry_dirt for the firmware object)")
     ap.add_argument("--licence", default="MIT", help="SPDX id for the manifest")
     ap.add_argument("--role", default="insert", choices=ROLES)
+    ap.add_argument("--cpu", default="cm4f", choices=CPUS, help="cm4f (default, both platforms) or cm7 (Tracker+ / Mini only)")
     ap.add_argument("--synth", help="STORED,PATCH_ENGINE,TYPE_ID of a synth engine (decimal or 0x hex) into the manifest, so a "
                     "host lists the engine before it is installed (plug_abi.h PLUG_SYNTH_MANIFEST)")
     ap.add_argument("--logo", help="a .plgi logo record to append as a trailer (synth engines, plug_logo.h)")
@@ -158,7 +162,7 @@ def main():
             for pat, o in a.src_opt:   # per source flags: --src-opt ff_dirt_ctl.cpp=-Os (same flags as the firmware object)
                 if os.path.basename(src) == pat:
                     opt = o
-            cmd = [tc + ("g++" if cxx else "gcc")] + CPU_FLAGS + opt.split() + [
+            cmd = [tc + ("g++" if cxx else "gcc")] + CPUS[a.cpu][1] + opt.split() + [
                 "-ffunction-sections", "-fdata-sections", "-ffreestanding", "-fno-common", "-fvisibility=hidden",
                 "-Wall", "-Wextra", "-I" + HERE] + ["-I" + i for i in a.inc]
             if cxx:
@@ -174,7 +178,7 @@ def main():
                 sys.exit("%s has static constructors: not allowed in a plugin (use init())" % src)
             objs.append(obj)
         elf = os.path.join(tmp, "plugin.elf")
-        libgcc = run([tc + "gcc"] + CPU_FLAGS + ["-print-libgcc-file-name"]).strip()
+        libgcc = run([tc + "gcc"] + CPUS[a.cpu][1] + ["-print-libgcc-file-name"]).strip()
         defsym = [] if a.entry == "plug_entry" else ["--defsym=plug_entry=" + a.entry]
         # binutils 2.39+ warns about the RWX segment (the plugin is one RWX blob by design, plug.ld). Older ld (10.3) has no such flag
         ld_help = subprocess.run([tc + "ld", "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
@@ -230,7 +234,7 @@ def main():
         payload = manifest + image + b"".join(struct.pack("<I", o) for o in table)
         assert not logo or 64 + len(payload) == logo_off
         maj, mi, pa = (int(x) for x in a.version.split("."))
-        hdr = struct.pack("<IHBBBBHIIIIIIIIIII8x", 0x31474C50, 64 + MANIFEST_SIZE, 1, 0, KINDS[a.kind], 1, 0, fnv1a(a.id),
+        hdr = struct.pack("<IHBBBBHIIIIIIIIIII8x", 0x31474C50, 64 + MANIFEST_SIZE, 1, 0, KINDS[a.kind], CPUS[a.cpu][0], 0, fnv1a(a.id),
                           (maj << 16) | (mi << 8) | pa, 1, image_end, bss_end - image_end, len(table),
                           syms["plug_entry"], a.ram, a.cycles, zlib.crc32(payload) & 0xFFFFFFFF, syms["__rw_start"])
         assert len(hdr) == 64

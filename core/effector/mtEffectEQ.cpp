@@ -63,7 +63,7 @@ bool mtEffectEQ::startProcess()
 {
     length = confirmed[0].selection.length;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         channelParams[channel].srcAddr = confirmed[channel].selection.addr;
         channelParams[channel].dstAddr = processed[channel].selection.addr;
@@ -71,7 +71,7 @@ bool mtEffectEQ::startProcess()
 
     processedSamples = 0;
     state = true;
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         initContext(&channelParams[channel].ctxLow, freqLow, bwLow, levelLow);
         initContext(&channelParams[channel].ctxMid, freqMid, bwMid, levelMid);
@@ -122,7 +122,7 @@ int32_t mtEffectEQ::processBlock()
     uint32_t toProcess = length - processedSamples;
     uint32_t blockLength = std::min<uint32_t>(toProcess, UPDATE_BLOCK_LENGTH);
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         for (uint16_t i = 0; i < blockLength; i++)
         {
@@ -158,7 +158,7 @@ int32_t mtEffectEQ::processBlock()
 
     if (!state)
     {
-        for (int channel = 0; channel < kChannels; channel++)
+        for (int channel = 0; channel < nChannels(); channel++)
         {
             processed[channel].selection.length = processedSamples;
             processed[channel].area.length =

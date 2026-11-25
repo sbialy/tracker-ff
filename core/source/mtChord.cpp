@@ -10,7 +10,7 @@
 
 namespace
 {
-constexpr bool sameTables()
+[[maybe_unused]] constexpr bool sameTables()
 {
     for (int i = 0; i < PLUG_CHORD_COUNT; i++)
     {
@@ -21,8 +21,12 @@ constexpr bool sameTables()
     }
     return sizeof(chordDef) / sizeof(chordDef[0]) == PLUG_CHORD_COUNT;
 }
-static_assert(sameTables(), "mtChordDefs.h chordDef and plug_chord.h (the SDK contract) must hold the same 68 masks in the same order");
+static_assert(sameTables(), "mtChordDefs.h chordDef and plug_chord.h (the SDK contract) must hold the same 77 masks in the same order");
 static_assert(MAX_CHORD + 1 == PLUG_CHORD_COUNT, "MAX_CHORD");
+
+// The approximate pass (step 2) only knows the first 68 entries: the entries 68..76 (add9, 9ths, 7b5) are reached by their exact voicing
+// (step 1, the 9th as the 14th semitone above the bass). A close voiced D above C E G keeps its old result (~maj), see chord_match_test.
+constexpr uint8_t kApproxEntries = 68;
 
 uint8_t pop16(uint16_t v)
 {
@@ -62,7 +66,7 @@ ChordMatch chordMatch(const uint8_t* notes, uint8_t n, uint8_t maxCost)
         lo = notes[i] < lo ? notes[i] : lo;
     }
     r.bass = lo;
-    uint16_t m15 = 0; // exact bass relative mask, valid while the span is at most 14
+    uint16_t m15 = 0; // exact bass relative mask, valid while the span is below CHORD_FOR_MAX
     uint16_t m12 = 0; // pitch classes above the bass
     bool wide = false;
     for (uint8_t i = 0; i < n; i++)
@@ -94,7 +98,7 @@ ChordMatch chordMatch(const uint8_t* notes, uint8_t n, uint8_t maxCost)
     // 2. folded to one octave above the bass, the nearest entry by a weighted distance. Ties go to the lower index (root position
     // before the inversions), except that an exact pitch class match wins its tie.
     uint8_t best = 255, bi = 0;
-    for (uint8_t i = 0; i <= MAX_CHORD; i++)
+    for (uint8_t i = 0; i < kApproxEntries; i++)
     {
         const uint16_t e12 = fold12(chordDef[i]);
         const uint16_t extra = m12 & uint16_t(~e12); // played, not in the entry (dropped)

@@ -1,0 +1,44 @@
+# P9 (ref/ff-imx-port-plan.md): Config > Features on the Tracker+ and Mini sims, which have no extension module. The page lists Chord names, Play stop
+# lock and MIDI remote (no restart mode, developer mode, USB audio or Demo start: those need the MK66 image). Play stop lock is switched on (Enter, Enter on
+# State, encoder, Apply). The Play behaviour under the lock is plus_only_playlock.flow (the Mini maps Play to another key, P8: its lock is proven
+# by plus_remote_sim.sh R2 with the key ids). The MIDI remote page is opened. The MIDI note and CC injection is plus_remote_sim.sh (a flow has no MIDI input).
+# Replay: bun replay.ts synth-open/tools/ui_shot/flows/plus_only_features.flow --target sim --model plus --offline --ui <ui_shot> (plus_flows.sh)
+title: Features page and Play stop lock on Tracker+ (P9)
+check: texts
+pause: 90ms
+
+use boot-to-pattern
+use goto-config
+use open-config-group group="Features"
+use seek-row text="Chord names"
+use expect-text text="Chord names"
+shot features-list
+tap Down
+wait 300ms
+use expect-text text="Play stop lock"
+tap Down
+wait 300ms
+use expect-text text="MIDI remote"
+tap F8
+wait 500ms
+tap F8
+wait 500ms
+use expect-text text="On: notes on one MIDI channel"
+shot midi-remote-page
+tap F7
+wait 500ms
+tap F7
+wait 500ms
+tap Up
+wait 300ms
+use expect-text text="Play stop lock"
+tap F8
+wait 500ms
+tap F8
+wait 500ms
+use expect-text text="On: Play does not stop a running song"
+enc +1
+wait 600ms
+tap F8
+wait 1500ms
+# ends on the poke read (plus_flows.sh poke_ok, UISHOT_TRACE_FEATURES): Play stop lock went on

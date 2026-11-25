@@ -36,7 +36,7 @@ JOBS=${JOBS:-6}
 [ -f "$AXF" ] || { echo "no release axf $AXF (make original-release first)"; exit 2; }
 "$PY" -c 'import unicorn, numpy, capstone' || { echo "PY=$PY needs unicorn 2.1.4, numpy and capstone"; exit 2; }
 mkdir -p "$OUT"
-mk=(make -C "$HERE" -j8 BRIDGE=1 UNICORN_DIR="$UNICORN_DIR" OUT="$BIN_DIR" BRIDGE_AXF="$AXF" TOOLCHAIN="$TOOLCHAIN" PY="$PY")
+mk=(make -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" BRIDGE=1 UNICORN_DIR="$UNICORN_DIR" OUT="$BIN_DIR" BRIDGE_AXF="$AXF" TOOLCHAIN="$TOOLCHAIN" PY="$PY")
 fail=0
 step() {   # $1 name, then the command: its log is OUT/<name>.log, a non zero exit marks the run RED
   local n=$1; shift

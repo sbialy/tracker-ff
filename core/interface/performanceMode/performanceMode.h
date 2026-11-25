@@ -4,6 +4,7 @@
 #include "core/modulesBase.h"
 
 #include "mtStructs.h"
+#include "stereoPairs.h"
 
 #include "mtAudioEngine.h"
 
@@ -69,7 +70,8 @@ class cPerformanceMode : public ModuleBase
 
     uint8_t getTrackForButton(uint8_t button) const
     {
-        return button + (tracksPage ? kSampleTracks : 0);
+        // a linked stereo pair is one button: the follower's button is not there and the buttons after it move up
+        return tracksPage ? button + kSampleTracks : stereopairs::nthVisible(button);
     }
 
     bool isButtonActiveOnCurrentPage(uint8_t button) const
@@ -86,7 +88,7 @@ class cPerformanceMode : public ModuleBase
     bool turnOff();
     void turnOffAtEndOfPattern();
     bool canPerformanceModeContinueAfterSwitchingTo(uint8_t button);
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
     bool openSynthPlay(); // Perform on page 2: the Synth play page, Performance mode stays on
 #endif
 

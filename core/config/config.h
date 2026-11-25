@@ -8,6 +8,14 @@
 #define AUDIO_CORE_FLASH  __attribute__((section(".audio_flash_functions"), used))
 #define AUDIO_CORE_RAM    __attribute__((section(".audio_ram_functions"), used))
 #define OCRAM_BSS_SECTION __attribute__((section(".bss.$RAM3"), used))
+// Cold code that the audio path calls rarely (events, idle paths). The MK66 linker script gives no RAM placement to AUDIO_CORE_RAM (the tag
+// marks the hot set for audio_hot_set.py), so there it is the same attribute. The IMX linker script puts .audio_ram_functions into SRAM_ITC
+// (1:1 zero wait state RAM), so on PLATFORM_IMX the cold code stays in flash. The IMX core objects include THIS file, not the platform one
+#ifdef PLATFORM_IMX
+#define AUDIO_CORE_RAM_COLD
+#else
+#define AUDIO_CORE_RAM_COLD AUDIO_CORE_RAM
+#endif
 // Cold audio engine code (graph construction, setup, UI side setters): -Os in the trimmed image (FW_TRIM, GCC), the realtime functions
 // (AUDIO_CORE_RAM / AUDIO_CORE_FLASH and everything they call) keep the command line -O2. synth-open/tools/audio_hot_set.py picks and proves it.
 #if defined(FW_TRIM) && defined(__GNUC__) && !defined(__clang__)

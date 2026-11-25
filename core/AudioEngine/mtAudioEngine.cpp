@@ -1,14 +1,17 @@
 #include "mtAudioEngine.h"
 #include "Platform.h"
 #include "VoiceStreamManager.h"
+#include "stereoPairs.h"
 #ifdef FEATURE_SYNTH
 #include "PolySynth/sdk/SynthVoiceSDK.h"
 #endif
 #include "SynthVoice.h"
 #include "UsbMultiTap.h"
 #include "fx_auto_mute.h"
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
 #include "Synth.h"
+#include "open_load.h"
+#include "partAuto.h"
 #endif
 #include "ampLogarythmicValues.h"
 #include "cr_section_macros.h"
@@ -22,6 +25,8 @@
 #include <Recorder.h>
 #include <new>
 #include <stdlib.h>
+
+#include "mtAudioEngine_ff.inc"
 
 static constexpr int kSdStreamBufferSize = (256 + 64) * 1024;
 extern uint8_t externalRamScratchBuff[];
@@ -191,10 +196,9 @@ AUDIO_COLD_OS audioEngine::audioEngine()
 
     prePolyverbMixer = mixerAndFxs.getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb);
     preDelayMixer = mixerAndFxs.getPreFxMixer(MixerAndFxs<kVoices>::FxType::kDelay);
+    FF_AE_SIDE_MIXERS_INIT();
 
-#ifdef FEATURE_SEND_DUCK
-    connectSendDuck();
-#endif
+    FF_AE_SEND_DUCK_CONNECT();
 }
 
 AUDIO_COLD_OS void audioEngine::beginDelay()
@@ -235,9 +239,7 @@ AUDIO_COLD_OS void audioEngine::init(Platform* platform, [[maybe_unused]] Synth*
     AudioFilterStateVariable::initCutoffLookup();
 #ifdef FEATURE_SYNTH
     synthVoice.init(synth);
-#ifdef FEATURE_SYNTH_OPEN
-    patchBankSynth = synth;
-#endif
+    FF_AE_PATCH_BANK_SYNTH(synth);
 #endif
 
     for (int i = 0; i < 8; i++)
@@ -288,9 +290,7 @@ AUDIO_COLD_OS void audioEngine::init(Platform* platform, [[maybe_unused]] Synth*
     limiter[AudioOutput::OutputChannels::kRight]->begin();
 
     setLimiterSidechain(mtProject.values.limiterSidechain);
-#ifdef FEATURE_SEND_DUCK
-    sendDuck.set(DuckParams{ 0, 0, 0, 0 }); // off until a project load says otherwise (takes the stream out of the update list)
-#endif
+    FF_AE_SEND_DUCK_OFF(); // off until a project load says otherwise (takes the stream out of the update list)
 
     testWaveform.begin(0.0, 1000, WAVEFORM_SQUARE);
 
@@ -383,9 +383,10 @@ AUDIO_CORE_RAM void audioEngine::updateInputAudioBuffers(void* i2sData,
 {
     (void)length;
 
+#if defined(PLATFORM_IMX) || defined(FEATURE_USB_AUDIO_IN)
+    input.setInBuffers(i2sData, usbData);
+#else
     input.getI2sStream()->setInBuffer(i2sData);
-#ifdef PLATFORM_IMX
-    input.getUsbStream()->setInBuffer(usbData);
 #endif
 }
 
@@ -409,6 +410,7 @@ AUDIO_COLD_OS void audioEngine::connectVoiceToMixer(AudioVoice* voice, MixerAndF
                           0,
                           mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kDelay),
                           idx));
+    FF_AE_SIDE_CONNECT_VOICE(voice, idx); // stereo sends: the same filter output into the side mixers
 }
 #else
 AUDIO_COLD_OS void audioEngine::connectVoiceToMixer(AudioVoice* voice, MixerAndFxs<kVoices>* mixerAndFxs, int idx)
@@ -477,6 +479,8 @@ AUDIO_COLD_OS void audioEngine::connectInputToMixer(AudioInput* input, MixerAndF
                           0,
                           mixerAndFxs->getPreFxMixer(MixerAndFxs<kVoices>::FxType::kReverb),
                           kRightInputMixerChannel));
+
+    FF_AE_SIDE_CONNECT_INPUT(input);
 
 #ifdef AUDIO_NULL_IS_SILENCE
     // the gates feed exactly these two mixer inputs each: with both muted a gate only tracks its state (effect_dynamics.h)
@@ -1100,6 +1104,7 @@ void audioEngine::refreshLineInStreamDelaySend()
 
     preDelayMixer->gain(8, gain);
     preDelayMixer->gain(9, gain);
+    FF_AE_SIDE_LINEIN(sideDelayMixer, gain);
 }
 
 void audioEngine::refreshLineInStreamReverbSend()
@@ -1129,6 +1134,7 @@ void audioEngine::refreshLineInStreamReverbSend()
 
     prePolyverbMixer->gain(8, gain);
     prePolyverbMixer->gain(9, gain);
+    FF_AE_SIDE_LINEIN(sidePolyverbMixer, gain);
 }
 
 void audioEngine::disableLineInImpact()
@@ -1139,6 +1145,7 @@ void audioEngine::disableLineInImpact()
     preDelayMixer->gain(9, AMP_MUTED);
     prePolyverbMixer->gain(8, AMP_MUTED);
     prePolyverbMixer->gain(9, AMP_MUTED);
+    FF_AE_SIDE_LINEIN_MUTE();
 }
 void audioEngine::enableLineInImpact()
 {
@@ -1251,58 +1258,7 @@ void audioEngine::setLimiterSidechain(uint8_t sidechain)
 }
 #ifdef FEATURE_SYNTH
 
-#ifdef FEATURE_SEND_DUCK
-// The detector's inputs are the limiter sidechain mux's (index = list position - 1): the amplifier of each track (the same tap the
-// mux has), line in L and R, the post fader left channel of each synth part (the one the meters show). The returns it pulls down
-// are inputs 1 (delay) and 2 (reverb) of the tracks and sends mixers.
-void audioEngine::connectSendDuck()
-{
-    static_assert(MixerAndFxs<kVoices>::TrackAndFxsChannels::kDelayChannel == 1 &&
-                    MixerAndFxs<kVoices>::TrackAndFxsChannels::kReverbChannel == 2,
-                  "the return inputs of the tracks and sends mixer");
-    static_assert(MUX_SIZE == 10 + kSynthParts, "sendDuck takes the inputs of the limiter sidechain mux");
-#ifdef PLATFORM_IMX
-#error "send ducking is wired for the original Tracker (MK66) only"
-#endif
-    for (int voiceIdx = 0; voiceIdx < kVoices; voiceIdx++)
-    {
-        connections.push_back(
-          new AudioConnection(instrumentPlayer[voiceIdx].getAudioVoice()->getAmplifier(), 0, &sendDuck, voiceIdx));
-    }
-    constexpr int kLeftInputChannel = 8;
-    constexpr int kRightInputChannel = 9;
-    connections.push_back(new AudioConnection(
-      input.getStereoToMono(), AudioInput::InputChannels::kLeft, &sendDuck, kLeftInputChannel));
-    connections.push_back(new AudioConnection(
-      input.getStereoToMono(), AudioInput::InputChannels::kRight, &sendDuck, kRightInputChannel));
-    for (int part = 0; part < kSynthParts; part++)
-    {
-        connections.push_back(new AudioConnection(synthVoice.getPolySynth(),
-                                                  SynthVoice::kPostFaderLeftChannelOffset + part,
-                                                  &sendDuck,
-                                                  10 + part));
-    }
-    sendDuck.setTargets(tracksAndFxsMixer[(int)MixerAndFxChannelType::kLeft],
-                        tracksAndFxsMixer[(int)MixerAndFxChannelType::kRight],
-                        MixerAndFxs<kVoices>::TrackAndFxsChannels::kDelayChannel,
-                        MixerAndFxs<kVoices>::TrackAndFxsChannels::kReverbChannel);
-}
-
-void audioEngine::setSendDuck(const DuckParams& params)
-{
-    sendDuck.set(params);
-}
-
-const DuckParams& audioEngine::getSendDuck() const
-{
-    return sendDuck.params();
-}
-
-float audioEngine::getSendDuckGain() const
-{
-    return sendDuck.lastGain();
-}
-#endif
+#include "mtAudioEngine_duck.inc"
 
 AUDIO_CORE_RAM bool audioEngine::isSynthFx(uint8_t fx_id)
 {
@@ -1358,25 +1314,7 @@ AUDIO_CORE_RAM void audioEngine::seqSynthFx(uint8_t fx_id,
     setSynthParam(fxIdToSynthParam[fx_id], synthIdx, value, fxNumberToSynthValuesSource[fx_n]);
 }
 
-#ifdef FEATURE_SYNTH_OPEN
-// Audio callback (Sequencer::tick): synth patch change FX, bank slot -> part values. Ignored without a synth or a slot.
-AUDIO_CORE_RAM void audioEngine::seqPatchChange(uint8_t slot, uint8_t synthIdx)
-{
-    if (patchBankSynth != nullptr)
-    {
-        patchBankSynth->applyPatchBankSlot(synthIdx, slot);
-    }
-}
-
-// Audio callback: Morph FX, blend of the open slot and `slot` (-1: the part's Morph target) by amount 0..100
-AUDIO_CORE_RAM void audioEngine::seqPatchMorph(int8_t slot, uint8_t amount, uint8_t synthIdx)
-{
-    if (patchBankSynth != nullptr)
-    {
-        patchBankSynth->applyPatchMorph(synthIdx, slot, amount);
-    }
-}
-#endif
+#include "mtAudioEngine_patchfx.inc"
 
 AUDIO_CORE_RAM void audioEngine::endSynthFx(uint8_t fx_id, uint8_t fx_n, uint8_t synthIdx)
 {
@@ -1514,8 +1452,9 @@ AUDIO_CORE_RAM void audioEngine::setSynthGain(int synthIdx, float value)
     synthVoice.getPolySynth()->setGain(synthIdx, value);
     if (mtProject.values.sendsMode == sendsModePostFader)
     {
-        refreshSynthParam(SynthParam::kReverbSend);
-        refreshSynthParam(SynthParam::kDelaySend);
+        // this part's sends follow its gain (another part's sends do not, and the gain of a part with automation moves every block)
+        isSynthParamDirty[synthIdx][(int)SynthParam::kReverbSend] = true;
+        isSynthParamDirty[synthIdx][(int)SynthParam::kDelaySend] = true;
     }
 }
 
@@ -1528,10 +1467,13 @@ AUDIO_CORE_RAM void audioEngine::setSynthMacro(int synthIdx, int macroIdx, float
     sendCC(ccIdx, value, synthIdx + 1, true);
 }
 
+#include "mtAudioEngine_partauto.inc"
+
 AUDIO_CORE_RAM void audioEngine::updateSynthParams()
 {
     for (int synthIdx = 0; synthIdx < kSynthParts; synthIdx++)
     {
+        FF_AE_PART_AUTO(synthIdx);
         if (isSynthParamDirty[synthIdx].none())
         {
             continue;
@@ -1615,6 +1557,11 @@ float audioEngine::calculateParamValue(int synthIdx, SynthParam param)
     if (synthParamSource[SynthValuesSource::kPerformance].has_value())
     {
         result = result + synthParamSource[SynthValuesSource::kPerformance].value();
+    }
+
+    if (synthParamSource[SynthValuesSource::kAuto].has_value())
+    {
+        result = result + synthParamSource[SynthValuesSource::kAuto].value();
     }
 
     assert(synthParamsBoundaries[SynthParam::kSynthParamsCount - 1].max !=
@@ -2001,6 +1948,16 @@ AUDIO_CORE_RAM void playerEngine ::modPanning(int16_t value)
         gainL = 1.0;
     }
 #ifndef PLATFORM_IMX
+    if (pairLeader != nullptr)
+        return; // follower of a pair: the leader's panning sets both chains
+    if (monoToStereoRPtr != nullptr)
+    {   // pair: the L chain to the left bus, the R chain to the right bus, one balance knob (today's law, centre = unity on both sides)
+        monoToStereoPtr->gain(gainL, MonoToStereo::Channel::left);
+        monoToStereoPtr->gain(0.0f, MonoToStereo::Channel::right);
+        monoToStereoRPtr->gain(0.0f, MonoToStereo::Channel::left);
+        monoToStereoRPtr->gain(gainR, MonoToStereo::Channel::right);
+        return;
+    }
     monoToStereoPtr->gain(gainL, MonoToStereo::Channel::left);
     monoToStereoPtr->gain(gainR, MonoToStereo::Channel::right);
 #else
@@ -2011,6 +1968,8 @@ AUDIO_CORE_RAM void playerEngine ::modPanning(int16_t value)
 
 AUDIO_CORE_RAM void playerEngine::modVolume(float value)
 {
+    if (pairLeader != nullptr)
+        return; // follower of a pair: the leader's volume drives both chains
     float gain = mtProject.values.dryMixMute
                    ? AMP_MUTED
                    : value * mixAmpLogValues[mtProject.values.trackVolume[nChannel]] *
@@ -2110,8 +2069,38 @@ AUDIO_CORE_RAM void playerEngine ::modTune(int8_t value)
     }
 }
 
+// The send of this track into a pre fx mixer (the MK66 mixers are mono sums). A pair sends the sum of its two chains at half gain each (the IMX
+// law), so a stereo pair sends what a mono track with the same send value does. The follower's input is wired to its own filter already
+AUDIO_CORE_RAM void playerEngine::setPairSend(AudioMixer<MixerAndFxs<audioEngine::kVoices>::kSendsInputsCount>* mixer, float gain)
+{
+    if (pairLeader != nullptr)
+        return; // follower of a pair: the leader sets both inputs
+#ifdef FW_STEREO_SENDS
+    SendMixer* const side = mixer == prePolyverbMixer ? sidePolyverbMixer : sideDelayMixer;
+#endif
+    if (pairFollower != nullptr)
+    {
+        mixer->gain(nChannel, gain * 0.5f);
+        mixer->gain(pairFollower->nChannel, gain * 0.5f);
+#ifdef FW_STEREO_SENDS
+        // side = (L - R) / 2: left chain at +gain/2, right chain at -gain/2
+        side->gain(nChannel, gain * 0.5f);
+        side->gain(pairFollower->nChannel, gain * -0.5f);
+#endif
+    }
+    else
+    {
+        mixer->gain(nChannel, gain);
+#ifdef FW_STEREO_SENDS
+        side->gain(nChannel, 0.0f);
+#endif
+    }
+}
+
 AUDIO_CORE_RAM void playerEngine ::modDelaySend(uint8_t value)
 {
+    if (pairLeader != nullptr)
+        return;
 #ifdef PLATFORM_IMX
     static constexpr int kInputsChannels = 2;
 #endif
@@ -2122,7 +2111,7 @@ AUDIO_CORE_RAM void playerEngine ::modDelaySend(uint8_t value)
                        ? AMP_MUTED
                        : sendsAmpLogValues[value] * mixAmpLogValues[mtProject.values.delayVolume];
 #ifndef PLATFORM_IMX
-        preDelayMixer->gain(nChannel, gain);
+        setPairSend(preDelayMixer, gain);
 #else
         preDelayMixer->gain(nChannel, gain / 2.0f);
         preDelayMixer->gain(nChannel + audioEngine::kVoices + kInputsChannels, gain / 2.0f);
@@ -2139,7 +2128,7 @@ AUDIO_CORE_RAM void playerEngine ::modDelaySend(uint8_t value)
 
         float gain = isMute ? AMP_MUTED : gainFromDelay * gainFromVolume;
 #ifndef PLATFORM_IMX
-        preDelayMixer->gain(nChannel, gain);
+        setPairSend(preDelayMixer, gain);
 #else
         preDelayMixer->gain(nChannel, gain / 2.0f);
         preDelayMixer->gain(nChannel + audioEngine::kVoices + kInputsChannels, gain / 2.0f);
@@ -2148,6 +2137,8 @@ AUDIO_CORE_RAM void playerEngine ::modDelaySend(uint8_t value)
 }
 AUDIO_CORE_RAM void playerEngine ::modReverbSend(uint8_t value)
 {
+    if (pairLeader != nullptr)
+        return;
 #ifdef PLATFORM_IMX
     static constexpr int kInputsChannels = 2;
 #endif
@@ -2157,7 +2148,7 @@ AUDIO_CORE_RAM void playerEngine ::modReverbSend(uint8_t value)
                        ? AMP_MUTED
                        : sendsAmpLogValues[value] * mixAmpLogValues[mtProject.values.reverbVolume];
 #ifndef PLATFORM_IMX
-        prePolyverbMixer->gain(nChannel, gain);
+        setPairSend(prePolyverbMixer, gain);
 #else
         prePolyverbMixer->gain(nChannel, gain / 2.0f);
         prePolyverbMixer->gain(nChannel + audioEngine::kVoices + kInputsChannels, gain / 2.0f);
@@ -2174,7 +2165,7 @@ AUDIO_CORE_RAM void playerEngine ::modReverbSend(uint8_t value)
 
         float gain = isMute ? AMP_MUTED : gainFromReverb * gainFromVolume;
 #ifndef PLATFORM_IMX
-        prePolyverbMixer->gain(nChannel, gain);
+        setPairSend(prePolyverbMixer, gain);
 #else
         prePolyverbMixer->gain(nChannel, gain / 2.0f);
         prePolyverbMixer->gain(nChannel + audioEngine::kVoices + kInputsChannels, gain / 2.0f);
@@ -2205,7 +2196,7 @@ void playerEngine::modSeqPoints(uint32_t sp, uint32_t ep, uint8_t fx_n)
     //	if(sp != NOT_MOD_POINTS )
     // trackControlParameter[(int)controlType::sequencerMode][(int)parameterList::startPoint] = 1;
 
-    if (mtProject.instrument[currentInstrument_idx].playMode != playModeSingleShot)
+    if (!isSingleShotMode(mtProject.instrument[currentInstrument_idx].playMode))
     {
         if (startPoint < SAMPLE_POINT_POS_MIN)
             startPoint = SAMPLE_POINT_POS_MIN;
@@ -2390,19 +2381,24 @@ uint8_t playerEngine ::noteOnWithoutInstrument(std::vector<int16_t*> addr,
     engine.setLimiterThreshold(LIMITER_THRESHOLD_MAX);
     engine.setLimiterSidechain(LIMITER_SIDECHAIN_DEFAULT);
 
-    assert(playMemPtr.size() <= addr.size());
+    // A linked stereo pair's leader has two chains, the callers (sample editor and recorder preview) pass one address on the MK66: the second chain
+    // plays the same data (what the assert only checked, and NDEBUG removes)
+    if (addr.empty())
+        return 0;
+    const int lastAddr = (int)addr.size() - 1;
 
     for (int channel = 0; channel < (int)playMemPtr.size(); channel++)
     {
+        int16_t* const a = addr[channel < lastAddr ? channel : lastAddr];
         playMemPtr[channel]->envelopeSetIsRandom(false);
 
         if (note == 255)
         {
-            playMemPtr[channel]->envelopeNoteOnForPrev(addr[channel], len, type);
+            playMemPtr[channel]->envelopeNoteOnForPrev(a, len, type);
         }
         else
         {
-            playMemPtr[channel]->envelopeNoteOnForPrev(addr[channel], len, note, type);
+            playMemPtr[channel]->envelopeNoteOnForPrev(a, len, note, type);
         }
     }
 
@@ -2898,4 +2894,109 @@ void playerEngine::setPassEnvelope(uint8_t state)
         playMemPtr[channel]->envelopeSetPassFlag(state);
     }
     envelopePassFlag = state;
+}
+
+//=================================================================================================
+// Linked stereo track pairs (core/source/stereoPairs.h)
+#ifndef PLATFORM_IMX
+AUDIO_COLD_OS void playerEngine::linkChain(playerEngine* follower)
+{
+    if (follower == nullptr || pairFollower != nullptr || follower->pairLeader != nullptr || timer == nullptr)
+        return;
+    AudioNoInterrupts();
+    noteOffCut();
+    follower->noteOffCut();
+    voiceStreamManager.dropVoiceRing(nChannel);   // the follower's ring holds the R channel of the leader from now on
+    voiceStreamManager.dropVoiceRing(follower->nChannel);
+    // the follower's chain becomes channel 1 of this voice: R data (address[1]), start, end and loops copied from chain 0
+    AudioPlayMemory* pm = follower->audioVoice.getMemoryPlayer();
+    pm->init(timer, 1, nChannel);
+    pm->envelopeReleaseNoteOn(RELEASE_NOTE_ON_VAL);
+    pm->setSamplePointsSource(playMemPtr[0]);
+    playMemPtr.push_back(pm);
+    filterPtr.push_back(follower->audioVoice.getFilter());
+    bitDepthPtr.push_back(follower->audioVoice.getBitDepth());
+    ampPtr.push_back(follower->audioVoice.getAmplifier());
+    rmsPtr.push_back(follower->audioVoice.getRMS());
+    monoToStereoRPtr = follower->audioVoice.getMonoToStereo();
+    pairFollower = follower;
+    follower->pairLeader = this;
+    // the L chain to the left bus only, the R chain to the right bus only, centre pan, and the send of both at half gain
+    monoToStereoPtr->gain(1.0f, MonoToStereo::Channel::left);
+    monoToStereoPtr->gain(0.0f, MonoToStereo::Channel::right);
+    monoToStereoRPtr->gain(0.0f, MonoToStereo::Channel::left);
+    monoToStereoRPtr->gain(1.0f, MonoToStereo::Channel::right);
+    preDelayMixer->gain(nChannel, 0.0f);
+    preDelayMixer->gain(follower->nChannel, 0.0f);
+    prePolyverbMixer->gain(nChannel, 0.0f);
+    prePolyverbMixer->gain(follower->nChannel, 0.0f);
+    FF_AE_SIDE_PAIR_ZERO(nChannel, follower);
+    setRefreshBit(VOLUME_MASK | PANNING_MASK);
+    AudioInterrupts();
+}
+
+AUDIO_COLD_OS void playerEngine::unlinkChain()
+{
+    if (pairFollower == nullptr)
+        return;
+    AudioNoInterrupts();
+    playerEngine* follower = pairFollower;
+    noteOffCut();
+    voiceStreamManager.dropVoiceRing(nChannel);   // the follower's ring is its own again
+    voiceStreamManager.dropVoiceRing(follower->nChannel);
+    // the follower's chain is its own again: channel 0, its own voice index, its own gains (the next note on of the track sets the rest)
+    AudioPlayMemory* pm = playMemPtr[1];
+    pm->setSamplePointsSource(nullptr);
+    pm->init(timer, 0, follower->nChannel);
+    playMemPtr.pop_back();
+    filterPtr.pop_back();
+    bitDepthPtr.pop_back();
+    ampPtr.pop_back();
+    rmsPtr.pop_back();
+    monoToStereoPtr->gain(1.0f, MonoToStereo::Channel::left);
+    monoToStereoPtr->gain(1.0f, MonoToStereo::Channel::right);
+    monoToStereoRPtr->gain(1.0f, MonoToStereo::Channel::left);
+    monoToStereoRPtr->gain(1.0f, MonoToStereo::Channel::right);
+    monoToStereoRPtr = nullptr;
+    preDelayMixer->gain(follower->nChannel, 0.0f);
+    prePolyverbMixer->gain(follower->nChannel, 0.0f);
+    FF_AE_SIDE_PAIR_ZERO(nChannel, follower);
+    follower->pairLeader = nullptr;
+    pairFollower = nullptr;
+    setRefreshBit(VOLUME_MASK | PANNING_MASK);
+    follower->setRefreshBit(VOLUME_MASK | PANNING_MASK);
+    AudioInterrupts();
+}
+#else
+void playerEngine::linkChain(playerEngine*) {}
+void playerEngine::unlinkChain() {}
+#endif
+
+AUDIO_COLD_OS void audioEngine::setStereoPairs(uint8_t mask)
+{
+#ifndef PLATFORM_IMX
+    mask &= uint8_t((1u << stereopairs::kPairs) - 1u);
+    for (int k = 0; k < stereopairs::kPairs; k++)
+    {
+        playerEngine& leader = instrumentPlayer[2 * k];
+        const bool want = ((mask >> k) & 1u) != 0;
+        if (want && leader.pairFollower == nullptr)
+            leader.linkChain(&instrumentPlayer[2 * k + 1]);
+        else if (!want && leader.pairFollower != nullptr)
+            leader.unlinkChain();
+    }
+    uint8_t now = 0;
+    for (int k = 0; k < stereopairs::kPairs; k++)
+        now |= uint8_t((instrumentPlayer[2 * k].pairFollower != nullptr ? 1u : 0u) << k);
+    stereopairs::g_mask = now;
+#ifdef FW_STEREO_SENDS
+    delay->setStereoIn(now != 0);
+    refreshLineInStreamDelaySend(); // the line in side sends follow "a pair is linked"
+    refreshLineInStreamReverbSend();
+#endif
+    stereopairs::mirror(mtProject.values.trackMute);   // a pair is one strip: the second track shows and keeps what the leader has
+    stereopairs::mirror(mtProject.values.trackVolume);
+#else
+    (void)mask;
+#endif
 }

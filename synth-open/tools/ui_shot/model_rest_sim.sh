@@ -21,7 +21,7 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 bridge_env "$ROOT" || exit 2
 CHIP_PLG_DIR="${CHIP_PLG_DIR:-$ROOT/build/chip-plugin}"
 BUILD="$ROOT/build/ui-shot-bridge"
-BIN="$BUILD/ui_shot"
+BIN="${UI_SHOT_BIN:-$BUILD/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (BRIDGE=1 flavour)
 PNG_DIR="${1:-}"
 [ -n "$PNG_DIR" ] && mkdir -p "$PNG_DIR"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/model_rest_sim.XXXXXX")"
@@ -32,7 +32,7 @@ if [ -z "$plg" ]; then for d in "$ROOT/build/cpu-adopt" "$ROOT/build/plugin-synt
 [ -f "$plg/ju6.plg" ] || { echo "model_rest_sim.sh: no plugins (set PLG_DIR to a folder with ju6.plg ...)" >&2; exit 2; }
 [ -f "$CHIP_PLG_DIR/chip.plg" ] || { echo "model_rest_sim.sh: no chip.plg (set CHIP_PLG_DIR)" >&2; exit 2; }
 mkdir -p "$BUILD"
-make -s -C "$HERE" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" "${BRIDGE_ARGS[@]}" OUT="$BUILD" >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" "${BRIDGE_ARGS[@]}" OUT="$BUILD" >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 2; }
 
 fails=0; checks=0
 pass() { checks=$((checks+1)); printf 'ok    %s\n' "$1"; }

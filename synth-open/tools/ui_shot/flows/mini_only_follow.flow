@@ -1,0 +1,27 @@
+# P4: Follow chord on Tracker+ and Mini. Pattern screen, page 3 (F8 twice): F4 is the follow mode of the track under the cursor, F5 its chord track.
+# F4 four times steps the mode Off -> Snap -> Transp -> Tr+Snap -> Off (P8: the flow ends on that mode trace).
+# Mini (P8): the sim boots on the Pattern screen (no Pattern key on the Mini), the page keys are the same F keys.
+title: Follow chord on the Mini (P8)
+check: texts
+pause: 80ms
+
+wait 1500ms
+tap F8
+wait 400ms
+tap F8
+wait 800ms
+expect text "Follow"
+shot follow-off
+tap F4
+wait 600ms
+shot follow-snap
+tap F4
+wait 600ms
+shot follow-transp
+expect text "Chord"
+tap F4
+wait 600ms
+tap F4
+wait 600ms
+shot follow-off-again
+# ends on the poke read (plus_flows.sh poke_ok, UISHOT_TRACE_FOLLOW): the cursor track went Snap, Transp, Tr+Snap, Off

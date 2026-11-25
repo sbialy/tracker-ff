@@ -78,20 +78,45 @@ jobs:
       - name: Check the plugin modules against the public identity (verify-external)
         run: engines/ci_external.sh
 
-      # Quality gates, release flavour (make original-release: USB_AUDIO=1 and -DFEATURE_EXT_HOOKS, the recipe of the README and of every device round) of the original on the pinned 10.3 compiler. The synth-open objects build with -Werror, so a new
-      # warning there fails this build. The stack ratchet reads the -fstack-usage files against synth-open/tools/stack_baseline_gcc10.txt: a new
-      # frame of 512 B or more, a new VLA, a grown frame or an audio chain frame over the hard cap fails. Changes nothing in the image.
-      # OUT_DIR moves only what the gate copies out (its release .ptf, BUILD.txt, the build log), the .su files, map and axf the ratchet reads stay
-      # in core/build-* and platforms/mk66/build*. Without it the gate image lands in build/ and the upload of build/*.ptf below ships it
-      # as PolyendTracker_FF_<A.B.C>.ptf, a release-looking name for a gate-only image on the pinned 10.3 compiler.
-      - name: Build the release original with -Werror and run the stack ratchet
-        run: make stack-ratchet-release OUT_DIR="$PWD/build/gate" BUILD_TAG="$(git rev-parse --short=7 HEAD)"
+      # The shipped MK66 image is built with GCC 12.3 (Arm GNU Toolchain 12.3.rel1), so the frame ratchet (synth-open/tools/stack_ratchet.py) runs on it:
+      # a new frame of 512 B or more, a new VLA, a grown frame or an audio chain frame over the hard cap against synth-open/tools/stack_baseline_gcc12.txt
+      # fails the build. The release flavour builds here with the 12.3 compiler and no second compiler step may reuse its objects (make does not track the
+      # compiler), so the build dirs of that flavour are wiped right after. OUT_DIR=build/gate12 keeps the gate image out of the build/*.ptf upload glob.
+      - name: Cache Arm GNU Toolchain 12.3.rel1
+        id: cache-toolchain-12
+        uses: actions/cache@v4
+        with:
+          path: agt/12.3.rel1
+          key: arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-eabi
+
+      - name: Install Arm GNU Toolchain 12.3.rel1
+        if: steps.cache-toolchain-12.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget xz-utils make python3
+          wget -q https://developer.arm.com/-/media/Files/downloads/gnu/12.3.rel1/binrel/arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-eabi.tar.xz
+          mkdir -p agt/12.3.rel1
+          tar -xJf arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-eabi.tar.xz -C agt/12.3.rel1 --strip-components=1
+          rm arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-eabi.tar.xz
+
+      - name: Stack ratchet on GCC 12.3 (the shipped compiler)
+        run: make stack-ratchet-release TOOLCHAIN="$PWD/agt/12.3.rel1/bin/arm-none-eabi-" OUT_DIR="$PWD/build/gate12" BUILD_TAG="$(git rev-parse --short=7 HEAD)"
+
+      - name: Wipe the 12.3 release objects before the 10.3 build
+        run: rm -rf core/build-MK66-ORIGINAL-SYNTHOPEN-* platforms/mk66/build-trim
 
       # Static worst case stack gate (synth-open/tools/stack/stack_margin.py): main loop + audio chain + every nested interrupt against the real stack
       # room of the linked release image, in both USB modes, floor 512 B. Fails too when the interrupt census (stack_isr_levels.txt), the dynamic frame
       # bounds (stack_vla_bounds.txt) or the STACK_MARGIN check no longer match the image. The plugin depths are the committed 1.3.0 values
-      # (stack_plugin_depths.txt, the plugin ELFs are not in this repository). Reuses the objects of the step above, changes nothing in the image.
-      - name: Static worst case stack gate
+      # (stack_plugin_depths.txt, the plugin ELFs are not in this repository).
+      # It builds the release flavour (make original-release: USB_AUDIO=1 and -DFEATURE_EXT_HOOKS, the recipe of the README and of every device round)
+      # of the original on the pinned 10.3 compiler, the second compiler: the synth-open objects build with -Werror, so a new warning there (also the
+      # C++20 -Wvolatile hits only 10.3 reports) fails this build. There is no 10.3 stack ratchet: the shipped image is built with GCC 12.3 and the
+      # frame ratchet runs on 12.3 in the step above. Changes nothing in the image.
+      # OUT_DIR moves only what the gate copies out (its release .ptf, BUILD.txt, the build log), the .su files, map and axf the gate reads stay
+      # in core/build-* and platforms/mk66/build*. Without it the gate image lands in build/ and the upload of build/*.ptf below ships it
+      # as PolyendTracker_FF_<A.B.C>.ptf, a release-looking name for a gate-only image on the pinned 10.3 compiler.
+      - name: Build the release original with -Werror and run the static worst case stack gate
         run: make stack-margin-release OUT_DIR="$PWD/build/gate" BUILD_TAG="$(git rev-parse --short=7 HEAD)"
 
       # Lint delta: array-bounds, null-dereference, overflow and file manager / plugin host -Wconversion warnings, and a short list of cppcheck
@@ -122,7 +147,7 @@ jobs:
           POSTFIX_ARGS=()
           if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
             SHORT_SHA=$(git rev-parse --short=7 HEAD)
-            POSTFIX_ARGS=("PLUS_POSTFIX=CE_${SHORT_SHA}" "MINI_POSTFIX=CE_${SHORT_SHA}")
+            POSTFIX_ARGS=("PLUS_POSTFIX=FF_${SHORT_SHA}" "MINI_POSTFIX=FF_${SHORT_SHA}")
           fi
           make plus mini "${POSTFIX_ARGS[@]}" 2>&1 | tee -a build_output.log
 

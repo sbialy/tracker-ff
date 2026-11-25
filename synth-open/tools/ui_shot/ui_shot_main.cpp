@@ -23,6 +23,8 @@
 //   stepv T S          print the volume and micro-move of a step: "stepv T S vol V move M" (-1 = not set)
 //   cursor             print the pattern editor cursor: "cursor track T step S param P edit E"
 //   scale ROOT SCALE   set the project Notes scale and Root note (root 24 = C, scale 0 chromatic, 1 minor, 2 major)
+//   midirows           print the rows Config > MIDI lists (linked pairs hide the follower's Track N in channel row)
+//   snapzero 0|1       the project snap to zero crossing setting (stereo_fx_sweep.sh renders with it off)
 //   snap [T M]         print the scale snap mode of every track, or set track T (-1: all) to mode M (0 Off 1 Nearest 2 Down 3 Up)
 //   shot FILE.png      write the screen
 //   dump               print the model's statistics
@@ -51,8 +53,14 @@
 //          Play Copy Insert Up Delete Rec Shift Left Down Right
 #include "host_platform.h"
 #include "tapeFx.h"
+#include "stereoPairs.h"
+#include "VoiceStreamManager.h"
+#include "mtAudioEngine.h"
 #include "mtAudioExport.h"
 #include "mtFollowChord.h"
+#include "mtNoteName.h"
+#include "mtTuneScale.h"
+#include "play_memory.h"
 
 #include "Tracker.h"
 #include "core/interface.h"
@@ -63,10 +71,22 @@
 #include "ext_hooks.h"
 #endif
 #include "mtSleep.h"
+#include "ThemeManager.h"
+#include "Themes.h"
+#include "mtTestGlue.h"
+#include "mtTest.h"
 #include "mtMidi.h"
+#include "host_imxmidi.h"
 #include "mtSequencer.h"
 #include "fx34.h"
+#if defined(FEATURE_PLUG_HOST)   // ff_config.h FEATURE_TABLES (Table lite)
+#include "tables.h"
+#endif
 #include "patternEditor/patternEditor.h"
+#include "ff_host_seam.h"
+#include "configEditor/configMenu.h"
+#include "configEditor/configMenuActions.h"
+extern cMenuGroup menuMidi;   // configMenu.cpp, for midirows
 #if __has_include("RestartMode.h")
 #include "RestartMode.h"
 #endif
@@ -81,7 +101,9 @@
 #endif
 #endif
 #include "synthPlayRec.h"
+#include <deque>
 #include <fstream>
+#include <vector>
 
 extern Sequencer::strPattern copyPastePattern;   // mtSequencer_patternEdit.cpp: the stock Copy/Paste buffer
 
@@ -107,9 +129,11 @@ extern Sequencer::strPattern copyPastePattern;   // mtSequencer_patternEdit.cpp:
 #include <map>
 #include <signal.h>
 #include <unistd.h>
+#include <iomanip>
 #include <sstream>
 #include <stdio.h>
 #include <stdlib.h>
+#include <chrono>
 #include <string>
 #include <sys/stat.h>
 
@@ -122,6 +146,7 @@ bool hostPlugRenderCommand(const std::string& c, std::istringstream& is);   // h
 extern "C" void hostPokeRun(const char* line); // host_poke.cpp
 bool hostFx34StoreCommand(const std::string& line, bool* ok); // host_poke_fx34_store.cpp
 extern "C" void hostTapAttach(int track);        // host_poke_fx.cpp: "audiostat tap N"
+extern "C" void hostTapAttachAmp(int track);     // host_poke_fx.cpp: "audiostat tapamp N"
 extern "C" void hostTapClear();
 extern "C" size_t hostTapCount();
 extern "C" void hostTapGet(size_t i, float* rms, int* zc);
@@ -130,6 +155,15 @@ extern "C" void hostTapGet(size_t i, float* rms, int* zc);
 // the time stamp of the "midilog" lines (host_platform.cpp).
 double g_audioUs = 0;
 bool g_midiLog = false;
+bool g_usbBusLost = false;   // host_platform.cpp's HUsbMidi::takeBusLost reads it
+extern std::deque<int> g_usbQueue;   // host_platform.cpp: the fake USB MIDI queue of "usbq"
+extern std::vector<int> g_usbReadLog;
+extern uint32_t g_usbReadCostUs, g_usbExtraUs;
+extern uint32_t g_pulseCostUs, g_pulseBaseTicks;
+extern uint32_t hostSeqTimerTicks();   // host_poke.cpp (timerTicks is private to the sequencer)
+extern volatile uint32_t midiUsbDeferredBlocks;   // core/source/mtMidi.cpp
+extern Sequencer::strPattern songTrackCopy[2]; // fileManagerSong.cpp: the scratch "patfile" reads into
+
 namespace
 {
 bool g_audio = false;
@@ -139,8 +173,23 @@ double g_audioAcc = 0;
 bool g_stat = false;
 struct BlockStat { float rms; int zc; };
 std::vector<BlockStat> g_blocks;
+// "audiostat lrdump": the same per side (the stereo pair proofs): rms and zero crossings of the left and the right bus
+struct BlockLr { float rmsL, rmsR; int zcL, zcR; };
+std::vector<BlockLr> g_blocksLr;
 void statBlock(const int16_t* l, const int16_t* r)
 {
+    {
+        double sl = 0.0, sr = 0.0;
+        int zl = 0, zr = 0;
+        for (int i = 0; i < 128; i++)
+        {
+            sl += double(l[i]) * double(l[i]);
+            sr += double(r[i]) * double(r[i]);
+            if (i > 0 && ((l[i - 1] < 0) != (l[i] < 0))) zl++;
+            if (i > 0 && ((r[i - 1] < 0) != (r[i] < 0))) zr++;
+        }
+        g_blocksLr.push_back({float(std::sqrt(sl / 128.0)), float(std::sqrt(sr / 128.0)), zl, zr});
+    }
     double sum = 0.0;
     int zc = 0, prev = 0;
     for (int i = 0; i < 128; i++)
@@ -194,6 +243,9 @@ void run(uint32_t ms)
         for (g_audioAcc += 5000.0; g_audioAcc >= 2901.33; g_audioAcc -= 2901.33)
         {
             t->updateAudioBuffers(l, r, 128);
+#ifdef UISHOT_PLUS
+            uishotImxMidiPump();   // the USB host reads what the real driver queued for MIDI out ("midilog" lines)
+#endif
             if (g_stat) statBlock(l, r);
             if (g_wav)
             {
@@ -223,9 +275,34 @@ int buttonId(const std::string& n)
         {"SampleEdit", 15}, {"SampleRec", 16}, {"Song", 17}, {"Note", 18}, {"Instr", 19}, {"Vol", 20}, {"Fx", 21}, {"Pattern", 22},
         {"Play", 23}, {"Copy", 24}, {"Insert", 25}, {"Up", 26}, {"Delete", 27}, {"Rec", 28}, {"Shift", 29}, {"Left", 30},
         {"Down", 31}, {"Right", 32},
+        // Tracker Mini only (PLATFORM=IMX PRODUCT=MINI, interfaceDefs.h interfaceButton33..42): the centre key, Menu, Fn1..Fn4, master volume ++ + - --
+        {"Mid", 33}, {"Menu", 34}, {"Fn1", 35}, {"Fn2", 36}, {"Fn3", 37}, {"Fn4", 38}, {"Plus10", 39}, {"Plus1", 40}, {"Minus1", 41}, {"Minus10", 42},
     };
     auto it = m.find(n);
     return it == m.end() ? -1 : it->second;
+}
+
+// ---- the interrupt race (midi_isr_race_sim.sh). The preempt points of core/include/ff_host_seam.h: at a pattern view redraw of the main loop
+// the "audio interrupt" fires, which runs what midiUpdate runs there (a DIN note on and off through the handlers of mtMidi.cpp). A redraw
+// that starts while the interrupt runs is a redraw the interrupt cut into the main loop's: counted, the row wants none.
+static int g_raceArm;         // interrupts still to fire at the next preempt point
+static bool g_raceInIsr;      // the interrupt runs
+static int g_raceFired, g_raceReentered;
+extern "C" void uishotPreempt(int point)
+{
+    if (point != FF_PREEMPT_PATTERN_REFRESH) return;
+    if (g_raceInIsr)
+    {
+        g_raceReentered++;
+        return;
+    }
+    if (!g_raceArm) return;
+    g_raceArm--;
+    g_raceFired++;
+    g_raceInIsr = true;
+    handleJackNoteOn(1, 60, 100);
+    handleJackNoteOff(1, 60, 0);
+    g_raceInIsr = false;
 }
 
 bool command(const std::string& line)
@@ -289,6 +366,21 @@ bool command(const std::string& line)
         run(60);
         return true;
     }
+    if (c == "trackch")
+    {   // trackch TRACK CH: Config > MIDI, the track listens to its own channel (0: off), notes in from USB and jack (capture_sim.sh section 13)
+        int t = 0, ch = 0;
+        is >> t >> ch;
+        mtConfig.midi.notesInMode = notesIn_usb_and_jack;
+        if (t >= 0 && t < kSampleTracks) mtConfig.midi.trackNotesInChannel[t] = uint8_t(ch);
+        return true;
+    }
+    if (c == "notesin")
+    {   // notesin MODE: Config > MIDI > Notes in (0 off, the stock enum)
+        int m = 0;
+        is >> m;
+        mtConfig.midi.notesInMode = decltype(mtConfig.midi.notesInMode)(m);
+        return true;
+    }
     if (c == "midicc")
     {   // midicc CH NUMBER VALUE: a USB control change
         int ch = 1, n = 0, v = 0;
@@ -297,8 +389,71 @@ bool command(const std::string& line)
         run(60);
         return true;
     }
+    if (c == "midipc" || c == "dinpc")
+    {   // midipc CH PROGRAM / dinpc CH PROGRAM: a MIDI Program Change on USB / on DIN (Config > MIDI > Program in stays as "pcin" set it)
+        int ch = 1, p = 0;
+        is >> ch >> p;
+        if (c == "midipc") handleUsbProgramChange(uint8_t(ch), uint8_t(p));
+        else handleJackProgramChange(uint8_t(ch), uint8_t(p));
+        run(20);
+        return true;
+    }
+    if (c == "pcin")
+    {   // pcin 0|1: Config > MIDI > Program in (the value the menu row writes)
+        int v = 0;
+        is >> v;
+        mtConfig.midi.programIn = uint8_t(v);
+        return true;
+    }
+    if (c == "mpeout")
+    {   // mpeout N: Project Settings > MPE out (0 Off, 1..15 member channels), through the row's own action: the zone and its configuration messages
+        int v = 0;
+        is >> v;
+        projMpeOut = uint8_t(v);
+        setProjMpeOut();
+        return true;
+    }
     // The Synth play page's inputs (synth_play_sim.sh), as the handlers of mtMidi.cpp get them from the MIDI libraries. Unlike midion they leave
     // the Config > MIDI settings alone: the page has its own Input and Channel
+    if (c == "usbmidi" || c == "dinmidi")
+    {   // usbmidi S D1 [D2] / dinmidi S D1 [D2]: ONE RAW MIDI MESSAGE (status byte and data bytes, decimal or 0x..) as the USB host / a DIN cable
+        // sends it. The same script runs on the original Tracker, the Tracker+ and the Mini. PLATFORM=IMX: the bytes go BELOW the real driver
+        // (host_imxmidi.cpp: a USB MIDI event packet into usb_midi.c, a byte into the MidiUart ring), so UsbMidiImpl::read / the Arduino MIDI
+        // library parse and dispatch them (pitch bend, channel pressure, 1 based channel, running status). The original has no such driver in
+        // the sim: a plain decoder of the message hands it to the mtMidi.cpp handlers the MK66 drivers call. Not a note on the Config: like midiono
+        uint8_t m[3] = {0, 0, 0};
+        int n = 0, v = 0;
+        while (n < 3 && (is >> std::setbase(0) >> v)) m[n++] = uint8_t(v);
+        if (n == 0 || m[0] < 0x80) return false;
+#ifdef UISHOT_PLUS
+        if (c == "usbmidi") uishotImxUsbIn(m, n);
+        else uishotImxDinIn(m, n);
+#else
+        const bool usb = c == "usbmidi";
+        const uint8_t ch = uint8_t((m[0] & 15) + 1);
+        switch (m[0] & 0xF0)
+        {
+            case 0x80: if (usb) handleUsbNoteOff(ch, m[1], 0); else handleJackNoteOff(ch, m[1], 0); break;
+            case 0x90:
+                if (m[2] == 0) { if (usb) handleUsbNoteOff(ch, m[1], 0); else handleJackNoteOff(ch, m[1], 0); }
+                else if (usb) handleUsbNoteOn(ch, m[1], m[2]);
+                else handleJackNoteOn(ch, m[1], m[2]);
+                break;
+            case 0xB0: if (usb) handleUSBControlChange(ch, m[1], m[2]); else handleJackControlChange(ch, m[1], m[2]); break;
+            case 0xC0: if (usb) handleUsbProgramChange(ch, m[1]); else handleJackProgramChange(ch, m[1]); break;
+            case 0xD0: if (usb) handleUsbChannelPressure(ch, m[1]); else handleJackChannelPressure(ch, m[1]); break;
+            case 0xE0:
+            {
+                const int bend = int((m[1] & 0x7f) | ((m[2] & 0x7f) << 7)) - 8192;
+                if (usb) handleUsbPitchBend(ch, bend); else handleJackPitchBend(ch, bend);
+                break;
+            }
+            default: break;
+        }
+#endif
+        run(20);
+        return true;
+    }
     if (c == "midibend" || c == "dinbend")
     {   // midibend CH VALUE / dinbend CH VALUE: pitch bend -8192..8191 on USB / on DIN
         int ch = 1, v = 0;
@@ -306,6 +461,68 @@ bool command(const std::string& line)
         if (c == "midibend") handleUsbPitchBend(uint8_t(ch), v);
         else handleJackPitchBend(uint8_t(ch), v);
         run(20);
+        return true;
+    }
+    if (c == "midipress" || c == "dinpress")
+    {   // midipress CH VALUE / dinpress CH VALUE: channel pressure (0xD0) 0..127 on USB / on DIN (the MPE pressure, synth_mpe_sim.sh)
+        int ch = 1, v = 0;
+        is >> ch >> v;
+        if (c == "midipress") handleUsbChannelPressure(uint8_t(ch), uint8_t(v));
+        else handleJackChannelPressure(uint8_t(ch), uint8_t(v));
+        run(20);
+        return true;
+    }
+    if (c == "mpeburst")
+    {   // mpeburst SECONDS RATE FIRST LAST: RATE MPE expression events per second for SECONDS (bend, pressure and slide in turn, round the member channels
+        // FIRST..LAST), each handled by the same USB handlers the driver calls, then 5 ms of the main loop and audio per step. Prints the events sent and
+        // the host time the handlers took (informational: the audio block of the unit is another machine)
+        int sec = 2, rate = 1500, first = 2, last = 6;
+        is >> sec >> rate >> first >> last;
+        const int span = last - first + 1;
+        uint32_t seed = 12345u;
+        long sent = 0;
+        int lastBend[17] = {}, lastPress[17] = {};
+        double handlerNs = 0, worstNs = 0;
+        for (int step = 0; step < sec * 200; step++)   // run() moves the clock in steps of 5 ms (1 or 2 audio blocks): the events of a step arrive together
+        {
+            const int n = (step + 1) * rate / 200 - step * rate / 200;
+            for (int k = 0; k < n; k++)
+            {
+                seed = seed * 1664525u + 1013904223u;
+                const uint8_t ch = uint8_t(first + int(seed >> 24) % span);
+                const int kind = int(sent % 3);
+                const int r = int((seed >> 8) & 0x3FFF);
+                const auto t0 = std::chrono::steady_clock::now();
+                if (kind == 0) { handleUsbPitchBend(ch, r - 8192); lastBend[ch] = r - 8192; }
+                else if (kind == 1) { handleUsbChannelPressure(ch, uint8_t(r & 0x7F)); lastPress[ch] = r & 0x7F; }
+                else handleUSBControlChange(ch, 74, uint8_t(r & 0x7F));
+                const double ns = double(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+                handlerNs += ns;
+                worstNs = ns > worstNs ? ns : worstNs;
+                sent++;
+            }
+            run(5);
+        }
+        printf("mpeburst sent %ld events in %d s, handler mean %.0f ns worst %.0f ns\n", sent, sec, handlerNs / double(sent ? sent : 1), worstNs);
+        for (int ch = first; ch <= last; ch++)   // the last value sent on each channel, what the voices must hold when no event was lost
+            printf("mpeburst last ch %d bend %d press %d\n", ch, lastBend[ch], lastPress[ch]);
+        return true;
+    }
+    if (c == "midirace")
+    {   // midirace N: N interrupts, each at a pattern view redraw of the main loop (the MIDI input takes notes on both inputs, omni)
+        int n = 1;
+        is >> n;
+        mtConfig.midi.notesInMode = notesIn_usb_and_jack;
+        mtConfig.midi.notesInChannel = 0;
+        g_raceArm = n;
+        g_raceFired = g_raceReentered = 0;
+        for (int i = 0; i < 4 * n && g_raceArm; i++)
+        {
+            patternEditor.refreshPatternFromOutsideModule();   // a main loop redraw (as a key or the sequencer asks for one)
+            run(20);
+        }
+        run(40);
+        printf("midirace fired=%d reentered=%d\n", g_raceFired, g_raceReentered);
         return true;
     }
     if (c == "dinon" || c == "dinoff" || c == "dincc")
@@ -324,6 +541,53 @@ bool command(const std::string& line)
         is >> ch >> n >> v;
         if (c == "midiono") handleUsbNoteOn(uint8_t(ch), uint8_t(n), uint8_t(v));
         else handleUsbNoteOff(uint8_t(ch), uint8_t(n), 0);
+        return true;
+    }
+    if (c == "usbunplug")
+    {   // usbunplug: the USB cable is pulled, no note off comes. The bus lost flag is set and the real midiUpdate of the audio interrupt takes it
+        g_usbBusLost = true;
+        midiUpdate();
+        return true;
+    }
+    if (c == "usbq")
+    {   // usbq N COST_US: N fake USB MIDI events (numbered on from the last) join the receive queue, each read costs COST_US on the fake micros clock
+        int n = 1, cost = 0;
+        is >> n >> cost;
+        g_usbReadCostUs = uint32_t(cost);
+        static int nextId = 1;
+        for (int i = 0; i < n; i++) g_usbQueue.push_back(nextId++);
+        return true;
+    }
+    if (c == "usbdrain")
+    {   // usbdrain K: K audio blocks worth of midiUpdate on the real code, one line per block, then the order of everything read
+        int k = 1;
+        is >> k;
+        for (int i = 0; i < k; i++)
+        {
+            g_usbExtraUs = 0;
+            const size_t before = g_usbReadLog.size();
+            midiUpdate();
+            printf("usbdrain block %d handled %zu left %zu spent %u\n", i, g_usbReadLog.size() - before, g_usbQueue.size(), g_usbExtraUs);
+        }
+        bool inOrder = true;
+        for (size_t i = 0; i < g_usbReadLog.size(); i++) inOrder = inOrder && g_usbReadLog[i] == int(i) + 1;
+        printf("usbdrain total %zu in_order %d deferred %u\n", g_usbReadLog.size(), int(inOrder), (unsigned)midiUsbDeferredBlocks);
+        return true;
+    }
+    if (c == "clockcost")
+    {   // clockcost US: every external clock pulse the sequencer plays (96 nano ticks) costs US on the fake micros clock, 0 turns it off (midi_isr_cap_sim.sh)
+        int us = 0;
+        is >> us;
+        g_pulseBaseTicks = hostSeqTimerTicks();
+        g_pulseCostUs = uint32_t(us);
+        return true;
+    }
+    if (c == "audioblocks")
+    {   // audioblocks K: K audio blocks of 128 frames with no main loop pass (the audio interrupt only), then "poke clockstate" reads the sequencer
+        int k = 1;
+        is >> k;
+        static int16_t l[256], r[256];
+        for (int i = 0; i < k; i++) Tracker::getInstance()->updateAudioBuffers(l, r, 128);
         return true;
     }
     if (c == "midiclk")
@@ -533,6 +797,14 @@ bool command(const std::string& line)
         fflush(stdout);
         return true;
     }
+    if (c == "view")
+    {   // the pattern editor columns (linked stereo pairs hide the follower): first visible track, the hidden mask, the label of tracks 0-3, the selection
+        const auto& tp = cPatternEditor::trackerPattern;
+        printf("view mask %d lead0 %d first %d hidden 0x%x names %s %s %s %s sel %d %d..%d\n", int(stereopairs::g_mask), int(stereopairs::isLeader(0)), tp.firstVisibleTrack, unsigned(tp.hidden), tp.tracksNames[0], tp.tracksNames[1],
+               tp.tracksNames[2], tp.tracksNames[3], tp.selectState, tp.selectStartTrack, tp.selectEndTrack);
+        fflush(stdout);
+        return true;
+    }
     if (c == "shot")
     {
         is >> a;
@@ -542,6 +814,47 @@ bool command(const std::string& line)
     }
     if (c == "dirty") { newFileManager.setActualPatternStructChanged(); newFileManager.setProjectStructChanged(); run(40); return true; }   // the Workspace autosave picks the pattern up
     if (c == "recopt") { int n = 0; is >> n; mtConfig.general.recOptions = uint8_t(n); return true; }   // Config > General > Recording options
+    if (c == "theme")
+    {   // "theme N": Config > Theme row N (0 to 2 built in, 3 on the card's /Themes/*.json) through ThemeManager::applyTheme. Prints the result, the
+        // theme in use, the background colour and a checksum of themeCustom (what the JSON parser wrote), and whether extras.plg's theme hook is set
+        int n = 0;
+        is >> n;
+        const bool ok = ThemeManager::applyTheme(uint8_t(n));
+        uint32_t sum = 0;
+        const uint8_t* b = reinterpret_cast<const uint8_t*>(&themeCustom);
+        for (size_t i = 0; i < sizeof(themeCustom); i++) sum = sum * 31u + b[i];
+        printf("theme %d ok %d current %d count %d bg %06lx custom %08lx hook %s\n", n, int(ok), int(ThemeManager::getCurrentThemeIndex()),
+               int(ThemeManager::getThemeCount()), static_cast<unsigned long>(themeCustom.backgroundColor & 0xFFFFFF), static_cast<unsigned long>(sum),
+#ifdef FEATURE_THEME_MODULE
+               ext_hooks.theme ? "set" : "null"
+#else
+               "resident"
+#endif
+        );
+        fflush(stdout);
+        return true;
+    }
+    if (c == "selftest")
+    {   // the factory test's start code on the Config screen (fConfigEdit.cpp functPads): the pads through the image's glue, then the event's start
+        bool started = false;
+        for (uint8_t pad : startCode)
+            if (selftestCombo(pad, false) && selftestReady())
+            {
+                selftestStart(mtInterface.ip);
+                started = true;
+                break;
+            }
+        run(300);
+        printf("selftest started %d status %d phase %d hook %s\n", int(started), mtTest.getMainStatus(), mtTest.getTestPhase(),
+#ifdef FEATURE_SELFTEST_MODULE
+               ext_hooks.selftest ? "set" : "null"
+#else
+               "resident"
+#endif
+        );
+        fflush(stdout);
+        return true;
+    }
     if (c == "seed")
     {   // seeded random takes: "seed" prints the project's random seed, "seed N" sets it (0 Off), "seed reroll" is the Reroll seed row
         std::string v;
@@ -566,6 +879,15 @@ bool command(const std::string& line)
         for (int i = 0; ok && i < 6000 && (newFileManager.getStatus() != fmIdle || newFileManager.getCurrentOperation() != fmNoOperation); i++) run(5);
         run(200);
         printf("%s %s status %d\n", c.c_str(), ok ? "ok" : "refused", int(newFileManager.getStatus()));
+        fflush(stdout);
+        return true;
+    }
+    if (c == "wsave")
+    {   // the Workspace autosave of the Project screen (WorkspaceProjectSave.cpp): project.mt of the open project written now. The device does it after
+        // an import (the unit's project.mt then holds the imported play order), the host import scripts end before it (modit_seeded_sim.sh)
+        newFileManager.saveProjectFileToWorkspace();
+        run(200);
+        printf("wsave done\n");
         fflush(stdout);
         return true;
     }
@@ -662,7 +984,14 @@ bool command(const std::string& line)
     {
         is >> a;
         if (a == "tap") { int t = 0; is >> t; hostTapAttach(t); }
-        else if (a == "1") { g_blocks.clear(); hostTapClear(); g_stat = true; }
+        else if (a == "tapamp") { int t = 0; is >> t; hostTapAttachAmp(t); }
+        else if (a == "1") { g_blocks.clear(); g_blocksLr.clear(); hostTapClear(); g_stat = true; }
+        else if (a == "lrdump")
+        {
+            printf("audiostat blocks %zu\n", g_blocksLr.size());
+            for (size_t i = 0; i < g_blocksLr.size(); i++) printf("lr %zu rmsl %.1f rmsr %.1f zcl %d zcr %d\n", i, g_blocksLr[i].rmsL, g_blocksLr[i].rmsR, g_blocksLr[i].zcL, g_blocksLr[i].zcR);
+            fflush(stdout);
+        }
         else if (a == "0") g_stat = false;
         else if (a == "dump")
         {
@@ -725,20 +1054,102 @@ bool command(const std::string& line)
         {
             CaptureEvent e;
             if (!captureRingGet(uint16_t(back), &e)) continue;
-            printf("cap %d %s v%d pos %d ustep %d instr %d pat %d flags %d t %u\n", e.note, (e.vel & kCapOn) ? "on" : "off", e.vel & 0x7F, e.pos, e.uStep,
-                   e.instrument, e.pattern, e.flags, unsigned(e.tUs));
+            printf("cap %d %s v%d pos %d ustep %d instr %d pat %d flags %d src %d dest %d t %u\n", e.note, (e.vel & kCapOn) ? "on" : "off", e.vel & 0x7F, e.pos,
+                   e.uStep, e.instrument, e.pattern, e.flags, e.src & 7, (e.src >> 3) & 15, unsigned(e.tUs));
         }
         fflush(stdout);
         return true;
     }
     if (c == "capclear") { captureRingClear(); return true; }
-    if (c == "capind")
-    {   // the Capture indicator of the title bar: the state it is drawn in (0 hidden, 1 empty, 2 stale, 3 ready), how often it was redrawn, whether it is shown, the ring count
-        printf("capind state %d draws %d idle %d ring %d\n", int(titleBar.captureStateDrawn()), int(titleBar.captureDraws()), int(captureIdleSec), int(captureRingCount()));
+    if (c == "capgen")
+    {   // "capgen COUNT PER_TICK": COUNT events straight into the ring through the real tap (USB source), PER_TICK of them, then 60 ms of run time (one
+        // indicator tick). Event i: note 24 + (i / 2 * 5) % 60, on when i is even, the off of the same note when odd. The take file tests (capture_sim.sh section 16) need
+        // more events than a script of midion lines can hold
+        int count = 0, per = 100;
+        is >> count >> per;
+        if (per < 1) per = 1;
+        for (int i = 0, k = 0; i < count; i++)
+        {
+            sequencer.captureTap(uint8_t(24 + (i / 2 * 5) % 60), 100, (i & 1) == 0, kCapSrcUsb);
+            if (++k == per) { k = 0; run(60); }
+        }
+        run(60);
+        return true;
+    }
+    if (c == "capfile")
+    {   // the Capture take file writer's counters (capfile::Stat): state (0 idle, 1 creating, 2 ready, 3 failed), flushes, sectors, skips, events written, lost,
+        // pending, file take id, headers, create steps, errors
+        printf("capfile");
+        const char* const names[] = {"state", "flushes", "sectors", "skips", "written", "lost", "pending", "take", "headers", "created", "errors"};
+        for (uint32_t k = 0; k < capfile::kStatCount; k++) printf(" %s %u", names[k], unsigned(Sequencer::captureOp(CAPTURE_OP_FILE + k)));
+        printf("\n");
         fflush(stdout);
         return true;
     }
-    if (c == "capidle") { int n = 20; is >> n; captureIdleSec = uint8_t(n); return true; }   // Config > Features > Capture > Idle time, seconds
+    if (c == "capflush")
+    {   // the flush before the card is lent (what handleFileTransferMode calls): 1 when nothing is left
+        printf("capflush %u\n", unsigned(Sequencer::captureOp(CAPTURE_OP_FLUSHNOW)));
+        fflush(stdout);
+        return true;
+    }
+    if (c == "capread")
+    {   // the take file as the reader sees it: "capread" the header and the extent line, "capread all" also one line per event (note, on|off, velocity, seq, take, pos, time)
+        std::string all;
+        is >> all;
+        capfile::TakeInfo ti;
+        if (!capfile::readOpen(&ti)) { printf("capread none\n"); fflush(stdout); return true; }
+        printf("capread take %d lost %u/%d bpm100 %u hash %08x start %u span %u valid %u newest %u oldest %u\n", int(ti.take), unsigned(ti.lost), int(ti.lostFlag), unsigned(ti.bpm100),
+               unsigned(ti.nameHash), unsigned(ti.startUs), unsigned(ti.span), unsigned(ti.valid), unsigned(ti.newest), unsigned(ti.oldest));
+        if (all == "all")
+        {
+            static CaptureEvent buf[64];
+            for (uint32_t from = 0; from < ti.span;)
+            {
+                const uint32_t n = capfile::readEvents(ti, from, buf, 64);
+                if (!n) break;
+                for (uint32_t i = 0; i < n; i++)
+                    printf("capev %u %d %s v%d seq %u take %d pos %d t %u\n", unsigned(from + i), int(buf[i].note), (buf[i].vel & kCapOn) ? "on" : "off", buf[i].vel & 0x7F, unsigned(buf[i].seq),
+                           int(buf[i].take), int(buf[i].pos), unsigned(buf[i].tUs));
+                from += n;
+            }
+        }
+        fflush(stdout);
+        return true;
+    }
+    if (c == "fspool")
+    {   // the device's SdFile pool as the host models it: slots in use now, the most in use at once, opens refused for want of a slot
+        printf("fspool used %d peak %d refused %d held%s\n", hostp::g_filePoolUsed, hostp::g_filePoolPeak, hostp::g_filePoolRefused, hostp::filePoolHeldPaths().c_str());
+        fflush(stdout);
+        return true;
+    }
+    if (c == "fsbusy") { int n = 0; is >> n; hostp::g_asyncBusy = n; return true; }   // isAsyncReadBusy() true: a sample stream reads the card
+    if (c == "fmstatus") { int n = 0; is >> n; newFileManager.setStatus(uint8_t(n)); return true; }   // the file manager's status (fileManagerStatus), 0 = idle
+    if (c == "ftmode")
+    {   // the USB storage mode on or off without the UI (Interface::setFileTransferMode): the Capture take file is flushed before the card is lent
+        std::string onoff;
+        is >> onoff;
+        const bool r = mtInterface.setFileTransferMode(onoff == "on");
+        run(40);
+        printf("ftmode %s: %d\n", onoff.c_str(), int(r));
+        fflush(stdout);
+        return true;
+    }
+    if (c == "spillpace")
+    {   // the spill's pacing of file writes (mtSequencer_capture.cpp): "spillpace 1" counts every pass as a slow one, plain "spillpace" prints the count
+        int n = -1;
+        is >> n;
+        if (n >= 0) { capspill::paceAlways = n != 0; capspill::pacedPasses = 0; }
+        else { printf("spillpace %u\n", unsigned(capspill::pacedPasses)); fflush(stdout); }
+        return true;
+    }
+    if (c == "capind")
+    {   // the Capture indicator of the title bar: the state it is drawn in (0 hidden, 1 empty, 2 stale, 3 ready, 4 past the gap), how often it was
+        // redrawn, the take id (0: none yet), the events of the take in the ring, the events ever written
+        printf("capind state %d draws %d take %d ring %d seq %u\n", int(titleBar.captureStateDrawn()), int(titleBar.captureDraws()),
+               int(Sequencer::captureOp(CAPTURE_OP_TAKE)), int(captureRingCount()), unsigned(captureRingSeq()));
+        fflush(stdout);
+        return true;
+    }
     if (c == "chordnames") { int n = 1; is >> n; chordShortNamesOn = n != 0; patternEditor.refreshPattern(); run(40); return true; }
     if (c == "grid")
     {   // the FX cells of a step as the pattern grid draws them: the type letter and the 3 character value (fPatternEdit.cpp)
@@ -759,6 +1170,53 @@ bool command(const std::string& line)
         fflush(stdout);
         return true;
     }
+    if (c == "tune")
+    {   // the project tuning (Project Settings > Tuning, core/source/mtTuning.h): "tune" prints it, "tune N [PERIOD_MC [ROOT [HZ_E4]]]" sets it as the rows
+        // do (period in 1e-3 cent, Hz in 1e-4 Hz, the missing ones stay) and fills the sample tables and the pads again, "tune reset" is the default,
+        // "tune name K" prints the screen name of key K, "tune off K" the synth offset of key K in semitones, "tune rate K" the sample rate ratio of key K
+        std::string w;
+        is >> w;
+        if (w == "name" || w == "off" || w == "rate")
+        {
+            int k = 0;
+            is >> k;
+            if (w == "name") printf("tune name %d %s\n", k, noteName(k));
+            else if (w == "off") printf("tune off %d %.6f\n", k, double(tuning::synthOffset(k)));
+            else printf("tune rate %d %.9g\n", k, double(AudioPlayMemory::notes[k]));
+            fflush(stdout);
+            return true;
+        }
+        if (w == "names")
+        {   // "tune names": the Note names row (0 degrees, 1 ups and downs), whether N has ups and downs names, whether they show now
+            printf("tune names %d ok %d active %d\n", int(tuning::cfg.names), int(tuning::cfg.udOk), int(tuning::udActive()));
+            fflush(stdout);
+            return true;
+        }
+        if (w == "scale")
+        {   // "tune scale msg": the reason of the last refused file, "tune scale": the Scala state, "tune scale file F NAME N PERIOD_MC D1 D2 ..." (F 1 = a Scala tuning, the degrees in 1e-3 cent)
+            std::string sub;
+            is >> sub;
+            if (sub == "msg") { printf("tune scale msg %s\n", tunescale::message()); fflush(stdout); return true; }
+            printf("tune scale file %d name %s n %d period %u deg", int(tuning::cfg.file), tuning::cfg.file ? tuning::fileName : "-", int(tuning::cfg.n), unsigned(tuning::cfg.periodMc));
+            if (tuning::cfg.file)
+                for (int i = 1; i < tuning::cfg.n; i++) printf(" %u", unsigned(tuning::degMc[i]));
+            printf("\n");
+            fflush(stdout);
+            return true;
+        }
+        if (w == "reset") { tuning::reset(); tuningChanged(); }
+        else if (!w.empty())
+        {
+            unsigned long p = tuning::cfg.periodMc, h = tuning::cfg.hzE4;
+            int root = tuning::cfg.root;
+            is >> p >> root >> h;
+            tuning::set(atoi(w.c_str()), uint32_t(p), root, uint32_t(h));
+            tuningChanged();
+        }
+        printf("tune n %d period %u root %d hz %u\n", int(tuning::cfg.n), unsigned(tuning::cfg.periodMc), int(tuning::cfg.root), unsigned(tuning::cfg.hzE4));
+        fflush(stdout);
+        return true;
+    }
     if (c == "scale")
     {   // the project's Notes scale and Root note (Config > Project Settings), as the two list items leave them
         int root = 24, sc = 0;
@@ -767,6 +1225,7 @@ bool command(const std::string& line)
         mtProject.values.padBoardScale = uint8_t(sc);
         return true;
     }
+#ifdef FEATURE_FF_CORE   // Scale snap and Snap FX are FF core features (project.mtff)
     if (c == "snap")
     {   // "snap": print the scale snap mode of every track, "snap T M": set track T (-1: all) to mode M (Project Settings > Scale snap)
         int t = -2, m = 0;
@@ -781,6 +1240,74 @@ bool command(const std::string& line)
         else
             for (int k = 0; k < kScaleSnapTracks; k++)
                 if (t < 0 || k == t) scaleSnapMode[k] = uint8_t(m);
+        return true;
+    }
+#if defined(FEATURE_PLUG_HOST)   // ff_config.h FEATURE_TABLES: the table pokes
+    if (c == "table")
+    {   // tables (core/source/tables.h): "table N TIC LOOP LEN" the header of table N (1..16), "table row N R NOTE VOL FXTYPE FXVAL" one row
+        // (NOTE -128 empty, VOL 255 empty), "table bind INSTR N" (instrument index from 0, N 0 none), "table run" prints every track's runner,
+        // "table dump N" / "table dump bind I" print a table / a binding, "table fxok ID" whether a row takes that FX
+        std::string w;
+        is >> w;
+        if (w == "row")
+        {
+            int n = 1, r = 0, note = -128, vol = 255, ft = 0, fv = 0;
+            is >> n >> r >> note >> vol >> ft >> fv;
+            tables::pool().table[n - 1].row[r] = tables::rowSanitize(tables::Row{int8_t(note), uint8_t(vol), uint8_t(ft), uint8_t(fv)});
+        }
+        else if (w == "bind")
+        {
+            int i = 0, n = 0;
+            is >> i >> n;
+            tables::pool().bind[i] = uint8_t(n);
+        }
+        else if (w == "dump")
+        {   // "table dump N": tabledump N TIC LOOP LEN then the 16 rows as 8 hex digits (N V FXTYPE FXVAL), "table dump bind I": tablebind I N
+            std::string x;
+            is >> x;
+            if (x == "bind")
+            {
+                int i = 0;
+                is >> i;
+                printf("tablebind %d %d\n", i, i >= 0 && i < tables::kInstruments ? int(tables::pool().bind[i]) : -1);
+            }
+            else
+            {
+                const int n = atoi(x.c_str());
+                if (n < 1 || n > tables::kTables) return false;
+                const tables::Table& t = tables::pool().table[n - 1];
+                printf("tabledump %d %d %d %d", n, int(t.tic), int(t.loop), int(t.len));
+                for (const tables::Row& r : t.row)
+                    printf(" %02x%02x%02x%02x", unsigned(uint8_t(r.note)), unsigned(r.vol), unsigned(r.fxType), unsigned(r.fxVal));
+                printf("\n");
+            }
+            fflush(stdout);
+        }
+        else if (w == "fxok")
+        {   // "table fxok ID": tablefxok ID 0|1, whether a table row takes that FX type (tables::rowFxAllowed, None excluded)
+            int id = 0;
+            is >> id;
+            printf("tablefxok %d %d\n", id, id > 0 && id < 256 && id != int(Sequencer::strFxConsts::FX_TYPE_OFF) && tables::rowFxAllowed(uint8_t(id)) ? 1 : 0);
+            fflush(stdout);
+        }
+        else if (w == "run")
+        {
+            printf("tablerun mask %04x", unsigned(tables::g_runMask));
+            for (int t = 0; t < 16; t++)
+                printf(" %d:%d/%d", t, int(tables::run(t).table), int(tables::run(t).row));
+            printf("\n");
+            fflush(stdout);
+        }
+        else
+        {
+            const int n = atoi(w.c_str());
+            int tic = tables::kTicDefault, loop = 1, len = tables::kRows;
+            is >> tic >> loop >> len;
+            tables::Table& tb = tables::pool().table[n - 1];
+            tb.tic = tables::clampTic(uint32_t(tic));
+            tb.loop = uint8_t(loop ? 1 : 0);
+            tb.len = uint8_t(len < 1 ? 1 : len > tables::kRows ? tables::kRows : len);
+        }
         return true;
     }
     if (c == "snapfx")
@@ -801,6 +1328,8 @@ bool command(const std::string& line)
         fflush(stdout);
         return true;
     }
+#endif   // FEATURE_TABLES
+#endif
     if (c == "instr")
     {   // what the Instr button and the encoder do in the pattern screen: the instrument the Params screen shows (64..66 are the synth parts)
         int n = 0;
@@ -891,6 +1420,142 @@ bool command(const std::string& line)
     if (c == "usbstream") { int n = 0; is >> n; hostp::g_usbAudioStreaming = n; return true; } // 1: the computer records now
     if (c == "usbmode") { printf("usb audio mode running %d eeprom %d\n", hostp::g_usbAudioRunningMode, hostp::g_usbAudioMode); return true; }
     if (c == "usbmc") { std::string rest; std::getline(is, rest); hostUsbMcCommand(rest); return true; }
+    if (c == "editflags")
+    {   // editflags: "editflags stereoedit 0|1": the build has FEATURE_STEREO_EDIT (stereo_pairs_sim.sh section 11, stereo_edit_sim.sh)
+#if defined(FEATURE_STEREO_EDIT) && !defined(PLATFORM_IMX)
+        printf("editflags stereoedit 1\n");
+#else
+        printf("editflags stereoedit 0\n");
+#endif
+        fflush(stdout);
+        return true;
+    }
+    if (c == "pair")
+    {   // pair MASK: link the stereo track pairs (bit k = tracks 2k+1 and 2k+2, core/source/stereoPairs.h), what project.mtff does at a load. 0 unlinks all
+        int m = 0;
+        std::string smode;
+        is >> m >> smode;   // a 2nd word "mode": also the file manager's stereo sample mode, as a project load with a pair key sets it (stereo_edit_sim.sh)
+        engine.setStereoPairs(uint8_t(m));
+        if (smode == "mode") newFileManager.setStereoSampleMode(m != 0);
+        printf("pair mask %d\n", int(stereopairs::g_mask));
+        fflush(stdout);
+        return true;
+    }
+    if (c == "midirows")
+    {   // midirows: the rows Config > MIDI lists now (the "Track N in channel" row of a follower of a linked pair is not one of them)
+        printf("midirows %d:", int(menuMidi.getCount()));
+        for (int i = 0; i < int(menuMidi.getCount()); i++) printf(" [%s]", menuMidi.getNames()[i]);
+        printf("\n");
+        fflush(stdout);
+        return true;
+    }
+    if (c == "delayparams")
+    {   // delayparams BYTE: audioEngine::setDelayParams (bit 7 ping pong, bit 6 sync, low 6 bits the rate) and FB: the delay feedback percent (stereo_sends_sim.sh)
+        int v = 0, fb = -1;
+        is >> v >> fb;
+        mtProject.values.delayParams = uint8_t(v); // the project value is applied again by the UI, so it is the one to set
+        engine.setDelayParams(uint8_t(v));
+        if (fb >= 0) { mtProject.values.delayFeedback = uint8_t(fb); engine.setDelayFeedback(uint8_t(fb)); }
+        return true;
+    }
+    if (c == "reverbpre")
+    {   // reverbpre PERMILLE: the reverb predelay (0..1000), audioEngine::setReverbPredelay (stereo_sends_sim.sh: the stereo input needs predelay 0)
+        int v = 0;
+        is >> v;
+        engine.setReverbPredelay(float(v) / 1000.0f);
+        return true;
+    }
+    if (c == "vsmiss")
+    {   // vsmiss [reset]: the stream miss counters of the voice stream manager (samples played as 0 for lack of ring data), left and right channel
+        std::string a;
+        is >> a;
+        if (a == "reset") voiceStreamManager.resetMissCount();
+        else { printf("vsmiss %u %u\n", voiceStreamManager.getMissCount(0), voiceStreamManager.getMissCount(1)); fflush(stdout); }
+        return true;
+    }
+    if (c == "playmode")
+    {   // playmode N MODE: instrument N gets the play mode (0 one shot, 1 loop forward, 2 backward, 3 pingpong, 4 slice, 5 beat slice, 6 wavetable, 7 granular), the loop points
+        // inside the first second (loop modes) and 4 slices (slice modes): the play mode sweep of stereo_fx_sweep.sh, after sampletonehz / samplestereo
+        int n = 0, m = 0;
+        is >> n >> m;
+        auto& in = mtProject.instrument[n];
+        in.playMode = uint8_t(m);
+        if (m >= playModeLoopForward && m <= playModePingpong)
+        {
+            in.loopPoint1 = 2000;
+            in.loopPoint2 = 12000;
+        }
+        if (m == playModeSlice || m == playModeBeatSlice)
+        {
+            in.sliceNumber = 4;
+            in.slices[0] = 0;
+            in.slices[1] = 16000;
+            in.slices[2] = 32000;
+            in.slices[3] = 48000;
+        }
+        return true;
+    }
+    if (c == "amprandom")
+    {   // amprandom N SPEED: instrument N gets the amp envelope driven by a random LFO (loop 1, shape random), the draws of both chains of a pair are compared by the proof
+        int n = 0, speed = 40;
+        is >> n >> speed;
+        auto& in = mtProject.instrument[n];
+        in.envelope[envAmp].enable = 1;
+        in.envelope[envAmp].loop = 1;
+        in.lfo[envAmp].shape = lfoShapeRandom;
+        in.lfo[envAmp].speed = uint8_t(speed);
+        return true;
+    }
+    if (c == "snapzero")
+    {   // snapzero 0|1: the project's snap to zero crossing setting (Project Settings, on by default): the sweep renders with it off for an exact comparison of two different tones
+        int on = 1;
+        is >> on;
+        mtProject.values.isSnapToZeroEnabled = uint8_t(on != 0);
+        engine.setSnapToZeroEnable(on != 0);
+        return true;
+    }
+    if (c == "samplestereo")
+    {   // samplestereo N HZL HZR AMP: instrument N (0-based) becomes a 4 s STEREO sample (planar like a .pti: the left block, then the right block, address[1] = address[0] + length),
+        // single shot, no file. sampletonehz is the mono one
+        int n = 0, hzl = 441, hzr = 882, amp = 6000;
+        std::string save, strm;
+        int ampr = -1;   // "ampr=N" anywhere after AMP: the right block gets its own level (a stereo sample whose R differs from L in level only, the same zero crossings)
+        is >> n >> hzl >> hzr >> amp;
+        for (std::string w; is >> w;)
+        {
+            if (w.rfind("ampr=", 0) == 0) ampr = atoi(w.c_str() + 5);
+            else if (save.empty()) save = w;
+            else strm = w;
+        }
+        if (ampr < 0) ampr = amp;   // a 6th word "stream": the instrument is flagged to stream (the loader streams a file over 32,768 frames)   // a 5th word "save": the instrument is marked changed, the next project save writes its .pti (both channels) to the Workspace
+        static int16_t st[2 * 44100 * 4];
+        for (size_t i = 0; i < 44100 * 4; i++)
+        {
+            st[i] = int16_t(double(amp) * std::sin(6.283185307179586 * double(hzl) * double(i) / 44100.0));
+            st[44100 * 4 + i] = int16_t(double(ampr) * std::sin(6.283185307179586 * double(hzr) * double(i) / 44100.0));
+        }
+        auto& in = mtProject.instrument[n];
+        in = defaultInstrumentParams;
+        in.isActive = 1;
+        in.sample.address = st;
+        in.sample.length = 44100 * 4;
+        in.playMode = playModeSingleShot;
+        in.startPoint = 0;
+        in.endPoint = MAX_16BIT;
+        in.volume = 100;
+        mtProject.sampleMemory[n].address[0] = st;
+        mtProject.sampleMemory[n].address[1] = st + 44100 * 4;
+        mtProject.sampleMemory[n].isStreamed = false;
+        mtProject.sampleMemory[n].isStereo = true;
+        if (strm == "stream")
+            in.setStreamPreferred(true);
+        if (save == "save")
+        {
+            newFileManager.setInstrumentStructChanged(uint8_t(n));
+            newFileManager.setInstrumentSampleChanged(uint8_t(n));
+        }
+        return true;
+    }
     if (c == "sampletonehz")
     {   // sampletonehz N HZ AMP (not "sampletone": that one is the Tape FX proof's, 441 Hz, instrument 0 only): instrument N (0-based) becomes a 4 s sine in the sample memory, single shot, no file (the 8+3 tap proof)
         int n = 0, hz = 441, amp = 6000;
@@ -910,6 +1575,58 @@ bool command(const std::string& line)
         mtProject.sampleMemory[n].address[0] = tone;
         mtProject.sampleMemory[n].address[1] = tone;
         mtProject.sampleMemory[n].isStreamed = false;
+        return true;
+    }
+    if (c == "samplecres")
+    {   // samplecres N FRAMES HZ RISE [RHZ]: instrument N (0-based) becomes FRAMES frames of a 12000 peak sine at HZ (44100 base), RISE 1: its level rises linearly from 0 to the peak (a crescendo reads back as a decrescendo), single shot, no file. RHZ > 0: a stereo sample whose right channel is a sine at RHZ at 6000 peak (m8_modes_sim.sh)
+        int n = 0, rise = 0;
+        unsigned frames = 44100;
+        double hz = 441.0, rhz = 0.0;
+        is >> n >> frames >> hz >> rise >> rhz;
+        static int16_t cres[44100 * 4];
+        static int16_t cresR[44100 * 4];
+        if (frames > 44100 * 4) frames = 44100 * 4;
+        for (unsigned i = 0; i < frames; i++)
+        {
+            const double env = rise ? double(i) / double(frames) : 1.0;
+            cres[i] = int16_t(12000.0 * env * std::sin(6.283185307179586 * hz * double(i) / 44100.0));
+            cresR[i] = int16_t(6000.0 * env * std::sin(6.283185307179586 * rhz * double(i) / 44100.0));
+        }
+        auto& in = mtProject.instrument[n];
+        in = defaultInstrumentParams;
+        in.envelope[envAmp].enable = 0;   // no amp envelope: the sample plays at its own level to its end, a looped one until the gate closes
+        in.isActive = 1;
+        in.sample.address = cres;
+        in.sample.length = frames;
+        in.playMode = playModeSingleShot;
+        in.startPoint = 0;
+        in.endPoint = MAX_16BIT;
+        in.volume = 100;
+        mtProject.sampleMemory[n].address[0] = cres;
+        mtProject.sampleMemory[n].address[1] = rhz > 0.0 ? cresR : cres;
+        mtProject.sampleMemory[n].isStreamed = false;
+        mtProject.sampleMemory[n].isStereo = rhz > 0.0;
+        return true;
+    }
+    if (c == "instrmode")
+    {   // instrmode N MODE [sp=V] [ep=V] [lp1=V] [lp2=V] [steps=V]: the play mode (the enum value) of instrument N and optionally its points (0..65535 of the sample) and the Repitch Steps (high byte of wavetableCurrentWindow)
+        int n = 0, mode = 0;
+        is >> n >> mode;
+        auto& in = mtProject.instrument[n];
+        in.playMode = uint8_t(mode);
+        std::string kv;
+        while (is >> kv)
+        {
+            const size_t eq = kv.find('=');
+            if (eq == std::string::npos) continue;
+            const std::string k = kv.substr(0, eq);
+            const int v = atoi(kv.c_str() + eq + 1);
+            if (k == "sp") in.startPoint = uint16_t(v);
+            else if (k == "ep") in.endPoint = uint16_t(v);
+            else if (k == "lp1") in.loopPoint1 = uint16_t(v);
+            else if (k == "lp2") in.loopPoint2 = uint16_t(v);
+            else if (k == "steps") in.wavetableCurrentWindow = (in.wavetableCurrentWindow & 0x00FFFFFFu) | (uint32_t(v) << 24);
+        }
         return true;
     }
     if (c == "samplekick")
@@ -989,12 +1706,17 @@ bool command(const std::string& line)
         printf("instrinfo %d active %d name %s length %u offset %lld ram %u stream %d\n", n, int(in.isActive), in.sample.file_name, in.sample.length,
                in.isActive ? (long long)((const uint8_t*)in.sample.address - (const uint8_t*)externalRamSampleMemory) : -1LL,
                mtProject.sampleMemory[n].ramFrames, int(mtProject.sampleMemory[n].isStreamed));
+        printf("instrinfo %d stereo %d rightIsLeft %d\n", n, int(mtProject.sampleMemory[n].isStereo), int(mtProject.sampleMemory[n].address[1] == mtProject.sampleMemory[n].address[0]));
         fflush(stdout);
         return true;
     }
     if (c == "recstate")
     {   // recstate: the take of the Synth play page REC: "recstate S frames F cap C" (0 idle, 1 recording, 2 full)
+#ifdef FEATURE_SYNTH_REC
         printf("recstate %d frames %u cap %u\n", int(synthplayrec::state()), synthplayrec::frames(), synthplayrec::capacity());
+#else   // PLATFORM=IMX: the Tracker+ core has no Synth play REC (synthPlayRec.h)
+        printf("recstate none\n");
+#endif
         fflush(stdout);
         return true;
     }
@@ -1063,6 +1785,32 @@ bool command(const std::string& line)
         newFileManager.setProjectStructChanged();
         return true;
     }
+    if (c == "songlist")
+    {   // the song: the slot that plays and every slot up to the first empty one (the Capture spill)
+        printf("songlist pos %d", int(mtProject.song.playlistPos));
+        for (int k = 0; k < SONG_MAX && mtProject.song.playlist[k]; k++) printf(" %d", int(mtProject.song.playlist[k]));
+        printf("\n");
+        fflush(stdout);
+        return true;
+    }
+    if (c == "patfile")
+    {   // patfile N T: the Workspace file of pattern N, its pattern bits (sample:MIDI) and the note steps of track T ("none": no file)
+        int n = 1, t = 0;
+        is >> n >> t;
+        Sequencer::strPattern* p = &songTrackCopy[0];
+        const bool ok = newFileManager.readWorkspacePatternTo(uint8_t(n), p);
+        printf("patfile %d %d bits %d:%d", n, t, int(mtProject.values.allPatternsBitmask[n - 1]), int(mtProject.values.allPatternsBitmaskMidi[n - 1]));
+        if (!ok) printf(" none");
+        else
+        {
+            printf(" len %d", int(p->track[t].length) + 1);
+            for (int k = 0; k <= p->track[t].length; k++)
+                if (p->track[t].step[k].note != Sequencer::STEP_NOTE_EMPTY) printf(" %d:%d", k, int(p->track[t].step[k].note));
+        }
+        printf("\n");
+        fflush(stdout);
+        return true;
+    }
     if (c == "projsave" || c == "projopen")
     {   // the file manager calls of the Project screen's Save As and Open, run until the file manager is idle again
         // (features-140: the one handler of idea-followchord and parts, follow_chord_sim reads this line too)
@@ -1117,7 +1865,7 @@ bool command(const std::string& line)
     if (c == "dlstat")
     {   // display list budget: words of the last frame and the largest so far, bytes per control slot (last update / largest)
         const EveModel::Stats& st = hostp::eve().stats;
-        printf("dlstat frame %u max %u overflow %u songplayer %d partstable %d table %u\n", st.frameWords, st.frameWordsMax, st.dlOverflow, int(songEditor.songPlayerControl), int(songEditor.partsTableControl), songEditor.partsTableControl >= 0 ? st.slotBytes[songEditor.partsTableControl] / 4 : 0u);
+        printf("dlstat frame %u max %u overflow %u songplayer %d partstable %d table %u fifo %u list %u\n", st.frameWords, st.frameWordsMax, st.dlOverflow, int(songEditor.songPlayerControl), int(songEditor.partsTableControl), songEditor.partsTableControl >= 0 ? st.slotBytes[songEditor.partsTableControl] / 4 : 0u, st.cmdFifoOverflow, st.cmdListWordsMax);
         for (int i = 0; i < 80; i++)
             if (st.slotBytesMax[i]) printf("dlslot %d bytes %u max %u\n", i, st.slotBytes[i], st.slotBytesMax[i]);
         fflush(stdout);
@@ -1171,6 +1919,15 @@ bool command(const std::string& line)
         parts::changed();
         if (songEditor.partsView) songEditor.partsReadList();
         run(40);
+        return true;
+    }
+#endif
+#ifdef FEATURE_PARTS
+    if (c == "songsel")
+    {   // the Song screen's selection: position, first track, tracks, and the hidden mask of the grid (linked stereo pairs)
+        const auto& sel = songEditor.songPlayerData.selection;
+        printf("songsel pos %d track %d len %d active %d hidden 0x%x\n", int(sel.startSongPosition), int(sel.startTrack), int(sel.trackSelectionLength), int(sel.isActive), unsigned(songEditor.songPlayerData.hidden));
+        fflush(stdout);
         return true;
     }
 #endif

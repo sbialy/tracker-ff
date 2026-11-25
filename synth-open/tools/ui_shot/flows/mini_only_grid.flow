@@ -1,0 +1,30 @@
+# P7 polish 2: every section tile of a plugin engine's patch editor grid has an icon and a label on the Mini (SynthPatchEditor.cpp: the
+# sections the stock chain misses take the MK66 rule of synth-open/open_section_icon.h). The card holds pluck.plg and alco.plg (plus_flows.sh
+# stages the logos card). Synth 1 steps to ALCO as in mini_only_logos.flow, F8 opens the patch editor on its section grid. plus_flows.sh reads
+# the tiles afterwards (UISHOT_TRACE_SYNTHGRID, the synthgrid line): ten tiles, Combine and Sub among them, none without a label or an icon.
+# Replay: plus_flows.sh mini
+title: Plugin engine section grid on the Mini (P7 polish 2)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Instr
+wait 400ms
+tap Up x3
+wait 300ms
+release Instr
+wait 600ms
+press Menu
+wait 400ms
+tap Right
+wait 300ms
+release Menu
+wait 1500ms
+expect text "Synth 1"
+tap Down x5
+wait 1500ms
+expect text "ALCO"
+tap F8
+wait 1500ms
+expect text "Edit Patch"
+shot grid-editor

@@ -1,0 +1,15 @@
+# IMX round 4: send ducking. Synth 1 plays C4 on three steps, the send ducking follows Synth 1 (source 11) at 80 % depth (a sample voice is silent in the sim: the wav of a sample instrument set up by the poke stays 0, so the source is a synth part). The trace carries the lowest duck gain the engine reached (dgmin, 1000 = never ducked) and the parameters
+# Replay: plus_flows.sh mini  (setup pokes in plus_flows.sh, the poke trace UISHOT_TRACE_FFSTATE is the read, poke_ok in plus_flows.sh)
+title: send ducking (Tracker Mini, IMX round 4)
+check: texts
+pause: 80ms
+
+wait 1500ms
+tap Fn1
+wait 3000ms
+tap Play
+wait 7000ms
+shot duck-playing
+tap Play
+wait 1500ms
+shot duck-stopped

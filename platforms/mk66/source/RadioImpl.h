@@ -19,6 +19,9 @@ class RadioImpl : public Radio
     virtual bool isinitialized() override;
     virtual void clearRDS() override;
     virtual void setRegion(Region region) override;
+#ifdef FEATURE_RADIO_STEREO
+    virtual void setStereo(bool stereo) override;
+#endif
     virtual bool isRegionChanged() override;
     virtual char* getStationName() override;
 

@@ -15,7 +15,7 @@
 // RAM_G slot when it is wanted: the list images of the first 32 listed engines at the end of plug::boot, the ones around the picker's
 // selection when it moves (synthLogoPrefetch), the editor image when the patch editor opens (synthLogoBitmap). Least recently used
 // slots are reused, so the number of engines is not limited by RAM_G.
-#ifdef FEATURE_PLUG_HOST
+#if defined(FEATURE_PLUG_HOST) && defined(FEATURE_SYNTH_OPEN)   // the FlexNVM engine host, MK66 only (IMX: inserts alone, P6)
 
 #include "plug_host.h"
 #include "log.h"
@@ -343,8 +343,9 @@ bool checkSynth(const plug_ext_synth* x, uintptr_t t, uint32_t tn, uintptr_t rw,
 
 
 // PLUG_EXT_CHORD (ABI 1.2): the answer of an engine that checkSynth passed. Inside its text or rw, both indices in range and
-// different, the Chord parameter an enum or an integer of exactly PLUG_CHORD_COUNT values, Chord Mode an enum or integer from 0 with
-// at least Poly and Para. Anything else and the engine plays every chord the stock way (one note-on per chord note).
+// different, the Chord parameter an enum or an integer of PLUG_CHORD_COUNT_V1 to PLUG_CHORD_COUNT values, Chord Mode an enum or integer from 0 with
+// at least Poly and Para. An engine of an older table is accepted too, any Chord enum from PLUG_CHORD_COUNT_V1 (68) values up to PLUG_CHORD_COUNT: a chord value past its enum is then
+// played by the host as plain notes (ChordParams::last). Anything else and the engine plays every chord the stock way (one note-on per chord note).
 bool checkChord(const plug_ext_chord* c, const plug_ext_synth* x, uintptr_t t, uint32_t tn, uintptr_t rw, uint32_t rwn)
 {
     // the strum tail is optional: an ABI 1.2 engine built before it answers 12 B
@@ -353,7 +354,8 @@ bool checkChord(const plug_ext_chord* c, const plug_ext_synth* x, uintptr_t t, u
     if (c->param_index >= np || c->mode_param >= np || c->param_index == c->mode_param) return false;
     const plug_synth_param& ch = x->params[c->param_index];
     const plug_synth_param& md = x->params[c->mode_param];
-    const bool chOk = (ch.fmt == PLUG_FMT_ENUM || ch.fmt == PLUG_FMT_INT) && ch.min == 0.0f && ch.max == float(PLUG_CHORD_COUNT - 1);
+    const bool chOk = (ch.fmt == PLUG_FMT_ENUM || ch.fmt == PLUG_FMT_INT) && ch.min == 0.0f &&
+                      ch.max >= float(PLUG_CHORD_COUNT_V1 - 1) && ch.max <= float(PLUG_CHORD_COUNT - 1) && ch.max == float(int(ch.max));
     const bool mdOk = (md.fmt == PLUG_FMT_ENUM || md.fmt == PLUG_FMT_INT || md.fmt == PLUG_FMT_ON_OFF) && md.min == 0.0f && md.max >= 1.0f;
     return chOk && mdOk;
 }
@@ -1020,7 +1022,11 @@ polysynth::open::ChordParams chordOfDef(const EngineDef* d)
 {
     const int k = libOfDef(d);
     if (k < 0 || !def(k).inst) return polysynth::open::ChordParams{};
-    return polysynth::open::ChordParams{s_lib[k].chord, s_lib[k].mode, s_lib[k].strum};
+    // the last value of its Chord enum (67 for an engine of the 68 entry table), read off the parameter table start() checked: start()
+    // itself stays as it was (host_synthcheck_test.cc finds its query calls by their instructions)
+    const int ci = s_lib[k].chord;
+    const uint8_t last = ci >= 0 && ci < def(k).paramCount ? uint8_t(def(k).params[ci].max) : uint8_t(255);
+    return polysynth::open::ChordParams{s_lib[k].chord, s_lib[k].mode, s_lib[k].strum, last};
 }
 
 // The slot of k's image (main loop, may read the card), -1 none
@@ -1116,4 +1122,4 @@ polysynth::open::ChordParams polysynth::open::plugChordParams(const polysynth::o
     return plug::chordOfDef(d);
 }
 
-#endif   // FEATURE_PLUG_HOST
+#endif   // FEATURE_PLUG_HOST && FEATURE_SYNTH_OPEN

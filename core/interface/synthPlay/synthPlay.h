@@ -1,7 +1,7 @@
 #ifndef INTERFACE_SYNTHPLAY_H_
 #define INTERFACE_SYNTHPLAY_H_
 
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
 
 #include "core/modulesBase.h"
 
@@ -27,6 +27,7 @@ class cSynthPlay : public ModuleBase
     void selectColumn(int column);
     void pressColumn(int column);
     void changeValue(int delta);
+    void programIn(int side, uint8_t program);   // MIDI Program Change (the router's hook): side 0 A, 1 B, the slot of that side's part
     void panic();
     void padNote(uint8_t pad, bool down);
     void confirmStop();
@@ -36,7 +37,10 @@ class cSynthPlay : public ModuleBase
     bool isOpen() const { return entered; }
     bool isConfirming() const { return confirming; }
     int column() const { return selected; }
+    const char* columnText(int column) const;   // the value text a column last showed, the host sim reads it
     int subItem(int column) const { return sub[column]; }   // which item of the column shows (0 the first), the host sim reads it
+    Synth* partSynth() const { return synth; }                // the page's part calls outside the class (fSynthPlay.cpp namespace part)
+    int voicesOf(int part) const;                             // the voices the page gave the part (0: not a part of the page)
 
   private:
     void enter();

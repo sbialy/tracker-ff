@@ -45,11 +45,35 @@ OUT=${TMPDIR:-/tmp}/synth_smoke_$$
 ARCH=${SMOKE_ARCH:-x86_64}
 ARCH_DEFS=""
 [ "$ARCH" = x86_64 ] || ARCH_DEFS="-DTINY_OPTIONAL_x64"
-clang++ -arch "$ARCH" -std=c++20 -O1 "-D_GLIBCXX_THROW_OR_ABORT(x)=__builtin_abort()" \
-  -I "$ROOT/synth/include" -I "$ROOT/util/include" -I "$ROOT/util/3rdparty" -I "$ROOT/synth-open" -I "$ROOT/synth-open/ot" -I "$ROOT/core/synth" -I "$ROOT/core/config" \
-  -DFEATURE_SYNTH -DFEATURE_SYNTH_OPEN -DOPEN_HOST_TEST "-DSMOKE_FIXTURES=\"$ROOT/synth-open/tools/fixtures\"" ${TRIM:+-DFW_TRIM} ${PLUGENG:+-DSMOKE_PLUGIN_ENGINE} ${SMOKE_EXTRA:-} ${CHIP_PLUGIN_SRC:+-DSMOKE_CHIP_PLUGIN "-DCHIP_PLUGIN_SRC=\"$CHIP_PLUGIN_SRC\""} $ARCH_DEFS $DEFS \
-  "$ROOT/synth-open/tools/host_smoke_test.cpp" "$ROOT/synth-open/open_synth.cpp" "$ROOT/synth-open/open_cold.cpp" \
-  "$ROOT/synth-open/open_patchio.cpp" "$ROOT/synth-open/stub_fmt.cpp" $SRCS_ABS "$ROOT/synth-open/ot/audio/governor.cpp" "$ROOT/synth-open/ot/audio/cpu_meter.cpp" \
-  -o "$OUT"
+# One -c compile per source (ccache when it is installed: CCACHE_DISABLE=1 turns it off), then the link. Same flags and same sources as the one
+# line compile and link this replaces, so the binary is the same. -DSMOKE_FIXTURES / -DCHIP_PLUGIN_SRC carry a tree path: only the two files that use them get them,
+# so the other objects hit the cache from every worktree
+CCX=""
+if command -v ccache > /dev/null 2>&1; then
+  CCX=ccache
+  export CCACHE_BASEDIR="${CCACHE_BASEDIR:-$ROOT}" CCACHE_NOHASHDIR="${CCACHE_NOHASHDIR:-1}"
+fi
+OBJD=$OUT.obj
+rm -rf "$OBJD"; mkdir -p "$OBJD"
+export SMOKE_CCX="$CCX" SMOKE_ARCH_=$ARCH SMOKE_ROOT="$ROOT" SMOKE_OBJD="$OBJD"
+export SMOKE_COMMON="-std=c++20 -O1 -I $ROOT/synth/include -I $ROOT/util/include -I $ROOT/util/3rdparty -I $ROOT/synth-open -I $ROOT/synth-open/ot -I $ROOT/core/synth -I $ROOT/core/config -DFEATURE_SYNTH -DFEATURE_SYNTH_OPEN -DOPEN_HOST_TEST ${TRIM:+-DFW_TRIM} ${SMOKE_EXTRA:-} $ARCH_DEFS $DEFS"
+export SMOKE_TEST_ONLY="${PLUGENG:+-DSMOKE_PLUGIN_ENGINE} ${CHIP_PLUGIN_SRC:+-DSMOKE_CHIP_PLUGIN}"
+export SMOKE_FIXT="$ROOT/synth-open/tools/fixtures" SMOKE_CHIPSRC="${CHIP_PLUGIN_SRC:-}"
+n=0; OBJS=""; PAIRS=""
+for f in "$ROOT/synth-open/tools/host_smoke_test.cpp" "$ROOT/synth-open/open_synth.cpp" "$ROOT/synth-open/open_cold.cpp" \
+  "$ROOT/synth-open/open_patchio.cpp" "$ROOT/synth-open/stub_fmt.cpp" $SRCS_ABS "$ROOT/synth-open/ot/audio/governor.cpp" "$ROOT/synth-open/ot/audio/cpu_meter.cpp"; do
+  n=$((n+1)); OBJS="$OBJS $OBJD/$n.o"; PAIRS="$PAIRS$f $OBJD/$n.o
+"
+done
+printf '%s' "$PAIRS" | xargs -L1 -P "${SMOKE_JOBS:-$(sh "$ROOT/synth-open/tools/jobs.sh" n 4)}" sh -c '
+  f=$0; o=$1; x=""
+  case $f in
+    */host_smoke_test.cpp) x="$SMOKE_TEST_ONLY -DSMOKE_FIXTURES=\"$SMOKE_FIXT\"" ;;
+    */chip_smoke_engine.cpp) [ -z "$SMOKE_CHIPSRC" ] || x="-DCHIP_PLUGIN_SRC=\"$SMOKE_CHIPSRC\"" ;;
+  esac
+  $SMOKE_CCX clang++ -arch "$SMOKE_ARCH_" "-D_GLIBCXX_THROW_OR_ABORT(x)=__builtin_abort()" $SMOKE_COMMON $x -c "$f" -o "$o"
+'
+clang++ -arch "$ARCH" $OBJS -o "$OUT"
+rm -rf "$OBJD"
 "$OUT"
 rm -f "$OUT"

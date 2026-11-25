@@ -14,61 +14,6 @@ ext = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(out), '
 EXTERNAL = {'synth-open/plug/fx_dirt_plug.cpp': 'fx_dirt_plug.cpp'}
 DIRT_STUB = ('// stub: fx_dirt_plug.cpp of tracker-effects-os was not available (ui_shot.sh fetches it), Dirt fails to load on the pages\n'
              '#include "plug_abi.h"\nextern "C" const plug_desc* plug_entry_dirt(const plug_host*, uint32_t) { return nullptr; }\n')
-HOST_VOICES = '''
-namespace polysynth::open { int hostVoices(int part, char* buf, unsigned n); }
-// ui_shot only (gen_overlay.py): the voices of part `part` that are on, "cap C n=N [slot:gate:note:id:fade ...]", -1 for no such part
-int polysynth::open::hostVoices(int part, char* buf, unsigned n)
-{
-    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
-    if (!i)
-        return -1;
-    int at = 0, cnt = 0;
-    char list[200] = {};
-    int k = 0;
-    for (const Voice& v : i->voiceSpan())
-    {
-        if (v.on && at < 170)
-        {
-            at += snprintf(list + at, sizeof(list) - at, " %d:%d:%d:%d:%d", k, int(v.v.gate), int(v.v.note), int(v.id), int(v.v.fading));
-            cnt++;
-        }
-        k++;
-    }
-    return snprintf(buf, n, "n=%d [%s ]", cnt, list);
-}
-namespace polysynth::open { int hostPart(int part, float* bend, float* range, int* voiceCount); }
-// ui_shot only (synth_play_sim.sh): the live pitch bend (semitones), the bend range and the Voices of part `part`, -1 for no such part
-int polysynth::open::hostPart(int part, float* bend, float* range, int* voiceCount)
-{
-    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
-    if (!i)
-        return -1;
-    *bend = i->testBend();
-    *range = i->testBendRange();
-    *voiceCount = i->getVoiceCount();
-    return 0;
-}
-namespace polysynth::open { int hostGain(int part, float* gain, float* voiceGain); }
-// ui_shot only (synth_play_sim.sh A/B rows, "poke abstate"): the morph factor of part `part` and the gain of its first voice that is on (-1: none)
-int polysynth::open::hostGain(int part, float* gain, float* voiceGain)
-{
-    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
-    if (!i)
-        return -1;
-    *gain = i->testGain();
-    *voiceGain = i->testVoiceGain();
-    return 0;
-}
-namespace polysynth::open { int hostCapSim(int part, int maxVoices); }
-// ui_shot only (synth_play_sim.sh P14, "poke capsim"): part `part` runs on a copy of its engine definition that declares `maxVoices` voices,
-// what a plugin engine with max_voices 4 is (the real tables are read only), -1 for no such part
-int polysynth::open::hostCapSim(int part, int maxVoices)
-{
-    static EngineDef copy[3];
-    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
-    return i && part >= 0 && part < 3 && i->testCap(copy[part], maxVoices) ? 0 : -1;
-}
-'''
 APPLY_HOLD = '''#include <stdint.h>
 #include <stdlib.h>
 extern "C" volatile uint32_t systick_millis_count;   // host_stubs.cpp: the firmware's systick, it follows the virtual clock
@@ -133,6 +78,10 @@ HEADERS = {
     'synth-open/ot/fastrun.h': [SECTION],
     'synth-open/plug/plug_abi.h': [SECTION],
 }
+# UISHOT_PLUS=1 (PLATFORM=IMX, the Tracker+ simulator): the Mac console (--serve, key and pad injection, shot) plugs into the same devhooks
+# as on the original. On the unit Tracker+ has Polyend's own console there, the hooks are empty. Host tooling only, no firmware behaviour
+if os.environ.get('UISHOT_PLUS') == '1':
+    HEADERS['core/include/devhooks.h'] = [(re.compile(r'!defined\(PLATFORM_IMX\)'), '(!defined(PLATFORM_IMX) || defined(UISHOT_PLUS))')]
 for p, rules in HEADERS.items():
     wr('inc', os.path.basename(p), edit(rd(p), rules, p))
 
@@ -203,13 +152,11 @@ SOURCES = {
     'core/interface/sampleRecorder/fSampleRec.cpp': [(re.compile(r'case SR->'), 'case cSampleRecorder::')],
     'core/libs/Audio/effect_polyverb.cpp': [SECTION],
     # plug_host.cpp: the section attribute, plus what only the K66 can do. The core registers (LMEM cache control, DWT cycle counter, system
-    # MPU) point at a plain variable, the cache and barrier instructions go, and the descriptor of a loaded plugin comes from the plugin's
+    # MPU) and the barriers are the ffhw seam of the source (synth-open/ff_seams.h), the cache busy wait goes, and the descriptor of a loaded plugin comes from the plugin's
     # native build (host_twins.cpp, the same source as the .plg) instead of from running its Thumb code
     'synth-open/plug_host.cpp': [SECTION,
-        (re.compile(r'reinterpret_cast<volatile uint32_t\*>\((?:0xE0001004|0x4000D000|0xE0082000)\)'), 'uishot_fake_reg()'),
-        (re.compile(r'asm volatile\("[a-z]+ 0xf" ::: "memory"\);'), ';'),
         (re.compile(r'while \(\*pcccr & 0x80000000u\) \{\}'), ';'),
-        (re.compile(r'(#include "plug_host.h")'), '\\1\nextern "C" volatile uint32_t* uishot_fake_reg();\nextern "C" const plug_desc* uishot_twin(uint32_t uid, const plug_host* host);'),
+        (re.compile(r'(#include "plug_host.h")'), '\\1\nextern "C" const plug_desc* uishot_twin(uint32_t uid, const plug_host* host);'),
         (re.compile(r'const plug_desc\* d = entry\(&s_host, \(PLUG_ABI_MAJOR << 16\) \| PLUG_ABI_MINOR\);'), 'const plug_desc* d = uishot_twin(h.uid, &s_host); (void)entry;'),
         (re.compile(r'e = checkDesc\(d, pl.textRun, rwOff, wantKind\);'), 'e = d->kind == wantKind ? kOk : kDesc;'),
         # PLUG_EXT_TEMPO of the native twin: its pointers are 64 bit host code (no Thumb bit, no image range)
@@ -217,10 +164,7 @@ SOURCES = {
          'out.tempo = d->kind == PLUG_KIND_MASTER_INSERT && d->query ? static_cast<const plug_ext_tempo*>(d->query(PLUG_EXT_TEMPO)) : nullptr;'),
         (re.compile(r'out\.tail = tailExt\(d, pl\.textRun, rwOff\);'),
          'out.tail = d->kind == PLUG_KIND_MASTER_INSERT && d->query ? static_cast<const plug_ext_tail*>(d->query(PLUG_EXT_TAIL)) : nullptr;')],
-    # plug_insert.cpp: the insert node runs on the host when the script says "audio 1" (plug_tempo_sim.sh): the DWT cycle counter is a plain variable
-    'synth-open/plug_insert.cpp': [
-        (re.compile(r'reinterpret_cast<volatile uint32_t\*>\(0xE0001004\)'), 'uishot_fake_reg()'),
-        (re.compile(r'(#include "plug_host.h")'), '\\1\nextern "C" volatile uint32_t* uishot_fake_reg();')],
+    # plug_insert.cpp needs no edit: the DWT cycle counter of the insert node (plug_tempo_sim.sh, "audio 1") is the ffhw seam (synth-open/ff_seams.h)
     'synth-open/open_cold.cpp': [SECTION],
     # newlib's strchr returns char*, libc++'s overloads return const char* for a const char* argument
     'core/AudioEngine/mtAudioEngine.cpp': [(re.compile(r'\(\(uint32_t\)this - \(uint32_t\)instrumentPlayer\)'), '((uint32_t)(uintptr_t)this - (uint32_t)(uintptr_t)instrumentPlayer)')],
@@ -239,20 +183,7 @@ SOURCES = {
          'const uint8_t* at(uint32_t off) { static uint8_t erased[kBankBytes]; static const bool once = (memset(erased, 0xFF, sizeof(erased)), true); (void)once; return erased + off; }')],
     # same-directory quote include of plug_abi.h would pick the original: a copy, found through GEN/inc
     'synth-open/plug/fx_dirt_plug.cpp': [],
-    # the three test accessors of host_smoke_test.cpp (OpenInstrument::testParams/testModOut, OpenSynth::instrumentAt, open::testParams/testModOut): they
-    # only read, the stress test (the console, host_stress.cpp) reads the engine's block params and the automation outputs through them. Not
-    # OPEN_HOST_TEST itself, that also removes the audio lock of the patch code
-    'synth-open/open_synth.cpp': [
-        (re.compile(r'#ifdef OPEN_HOST_TEST\n(const ot::audio::SynthParams\* open::testParams)'),
-         'namespace open { const ot::audio::SynthParams* testParams(int part); float testModOut(int part, int slot); bool testVoice(int part, int slot, bool& gate, int& note, int& id); }\n#ifdef OPEN_HOST_TEST\n\\1'),
-        (re.compile(r'#ifdef OPEN_HOST_TEST'), '#if 1 /* ui_shot: read only test accessors */'),
-        # `poke voices` (host_poke.cpp, synth_nna_sim.sh): the voices of a part as text, appended at the end of the file (it reads the Voice record
-        # of the anonymous namespace)
-        (re.compile(r'\Z'), HOST_VOICES),
-        # `poke renderhash` (host_poke.cpp): a hash of every block the shim renders for a part, the bit exact reference of synth_nna_sim.sh
-        (re.compile(r'\A'), 'extern "C" void uishotHashBlock(int part, const float* l, const float* r);\n'),
-        # a mono engine (EngineDef::monoOut) leaves R alone: its R is the L it always equalled, so the hashes recorded before L1 stay valid
-        (re.compile(r'(inst->render\(l, r, busyKnown\);)'), r'\1\n            uishotHashBlock(instrumentId, l, mono ? l : r);')],
+    # open_synth.cpp needs no edit: its test accessors, `poke voices` and the render hash are seams of the source (UI_SHOT_HOST, ff_seams.h)
     # ptfx_loader.cpp: the host cannot run the Thumb code of a .ptfx (the plain build keeps the effects built in, the BRIDGE=1 build below
     # runs the card files): the instruction cache sync (K66 registers) is dropped
     'core/effector/ptfx_loader.cpp': [
@@ -271,16 +202,8 @@ SOURCES = {
         (re.compile(r'\A'), APPLY_HOLD),
         (re.compile(r'^        currentEffect->update\(\);$', re.M), '        if (!uishotApplyHold(applyingInProgress, selectedEffectListIdx)) currentEffect->update();')],
     'core/libs/NewDisplay/textBox.cpp': [(re.compile(r'char\* (enter_pos|space_pos) = strchr'), r'const char* \1 = strchr')],
-    # ext_module.cpp (FEATURE_EXT_HOOKS): the host runs the loader rules of modit.plg (header, layout, run address, file CRC, image id) and then binds the native
-    # MOD/IT. The two values the rules compare with are those of the release image the file is bound to: the image id (CRC of the flash the .ptf programs) and the
-    # run address of the image's extension slot. A build that knows the release passes them (UISHOT_MODIT_ID, UISHOT_MODIT_RUN, emu-release.sh reads them from the
-    # release's modit.plg and checks that file against the release .ptf), so the card's real modit.plg is the file that passes. Without them the host keeps its
-    # stand-in values (image id 0, run 0x70D88000: tools/modit/make_host_module.py writes a file for those)
-    'synth-open/ext_module.cpp': [
-        (re.compile(r'uint32_t imageCrc\(\) \{ return 0; \}'),
-         '#ifndef UISHOT_MODIT_ID\n#define UISHOT_MODIT_ID 0u\n#endif\nuint32_t imageCrc() { return UISHOT_MODIT_ID; }'),
-        (re.compile(r'constexpr uintptr_t kModitHostRun = 0x70D88000u;'),
-         '#ifndef UISHOT_MODIT_RUN\n#define UISHOT_MODIT_RUN 0x70D88000u\n#endif\nconstexpr uintptr_t kModitHostRun = UISHOT_MODIT_RUN;')],
+    # ext_module.cpp needs no edit: the release image id and slot address the host's modit.plg rules compare with are UISHOT_MODIT_ID / UISHOT_MODIT_RUN
+    # of the source's host branch (the Makefile passes them with MODIT_ID / MODIT_RUN)
 }
 # BRIDGE=1 (UISHOT_BRIDGE=1 from the Makefile, emu parity plan T2): plug_host.cpp loads the REAL insert .plg bytes and runs them under
 # libunicorn (host_ucbridge.cpp) instead of the native twins. The SRAM_L insert slot and the insert arenas are the guest windows at the
@@ -289,11 +212,9 @@ SOURCES = {
 # firmware as host mirrors with thunks. hostAlloc, hostCycles and hostQuery stay native: the image's s_host traps to them. Without
 # BRIDGE=1 these rules are not applied and the overlay is byte for byte what it was.
 BRIDGE_PLUG_HOST = [SECTION,
-    (re.compile(r'reinterpret_cast<volatile uint32_t\*>\((?:0xE0001004|0x4000D000|0xE0082000)\)'), 'uishot_fake_reg()'),
-    (re.compile(r'asm volatile\("[a-z]+ 0xf" ::: "memory"\);'), ';'),
     # syncCode is the unit's cache invalidation after code was written: every Unicorn lane drops its translated blocks
     (re.compile(r'while \(\*pcccr & 0x80000000u\) \{\}'), 'ucb::codeChanged();'),
-    (re.compile(r'(#include "plug_host.h")'), '\\1\n#include "host_ucbridge.h"\nextern "C" volatile uint32_t* uishot_fake_reg();'),
+    (re.compile(r'(#include "plug_host.h")'), '\\1\n#include "host_ucbridge.h"'),
     # the slot and the arenas at their device addresses (the axf's symbols), so the guest sees what the firmware writes
     (re.compile(r'__attribute__\(\(.*\)\) uint8_t s_slot\[kSlotBytes\];'),
      'uint8_t (&s_slot)[kSlotBytes] = *reinterpret_cast<uint8_t (*)[kSlotBytes]>(ucb::symWindow("plug::(anonymous namespace)::s_slot", kSlotBytes));'),
@@ -315,7 +236,14 @@ BRIDGE_PLUG_HOST = [SECTION,
      'const uint32_t gd = ucb::entry(uint32_t(pl.textRun + h.entry_offset));   // plug_entry(&s_host, ABI), image s_host\n    (void)entry;\n    const plug_desc* d = gd ? ucb::mirrorDesc(gd) : nullptr;'),
     (re.compile(r'e = checkDesc\(d, pl\.textRun, rwOff, wantKind\);'), 'e = static_cast<Err>(ucb::checkDesc(gd, uint32_t(pl.textRun), rwOff, wantKind));'),
     (re.compile(r'out\.tempo = tempoExt\(d, pl\.textRun, rwOff\);'), 'out.tempo = ucb::mirrorTempo(ucb::tempoExt(gd, uint32_t(pl.textRun), rwOff));'),
-    (re.compile(r'out\.tail = tailExt\(d, pl\.textRun, rwOff\);'), 'out.tail = ucb::mirrorTail(ucb::tailExt(gd, uint32_t(pl.textRun), rwOff));')]
+    (re.compile(r'out\.tail = tailExt\(d, pl\.textRun, rwOff\);'), 'out.tail = ucb::mirrorTail(ucb::tailExt(gd, uint32_t(pl.textRun), rwOff));'),
+    # PLATFORM_IMX (plus and mini sims, IMX port P6 round 4): plug::imx::insertSlot() is the insert slot inside the bridge's IMX SDRAM window
+    # (ucb::kImxSdram, host_imxplug_test.cc does the same), so slotAddr() is the guest address the loader rebases for and the guest fetches
+    # the bytes the host placed. The rate the image sees is the guest image's s_host (ucb::entry): dirt.plg bakes kFs, so no effect on Dirt
+    (re.compile(r'(const bool s_ucbServices = \(ucb::setServices)'),
+     '#ifdef PLATFORM_IMX\nconst bool s_ucbImxSlots = (imx::simSlots(ucb::g2h(ucb::kImxSdram, kImxCodeSlotsBytes), ucb::kImxSdram), true);\n#endif\n\\1'),
+    # the IMX cache steps after a load: every Unicorn lane drops its translated blocks (a reload puts new code at the same guest address)
+    (re.compile(r'(    imx::syncCode\(pl\.textDst, h\.image_size \+ h\.bss_size\);)'), '\\1\n    ucb::codeChanged();')]
 # BRIDGE=1, plug_synth.cpp (emu parity plan T5): the synth engine plugins of the card install and attach through the firmware's own path.
 # synthEnsure -> loadEngine -> bankInstall writes the FlexNVM bank through nvmErase/nvmProgram (host_nvm.cpp: a model on the bridge's
 # window at 0x10000000 instead of the plain build's stubs that refuse every command) and reads it back through that window, s_pool (rw
@@ -388,8 +316,7 @@ BRIDGE_PLUG_SYNTH = [
 # Unicorn instance on one thread, the parts' lanes stay free. The plugin_host.cpp rules (T2) already put the insert text in the SRAM_L slot
 # at its device address, so there is no twin to unhook here: with BRIDGE=1 plug::load never asks uishot_twin().
 BRIDGE_PLUG_INSERT = [
-    (re.compile(r'reinterpret_cast<volatile uint32_t\*>\(0xE0001004\)'), 'uishot_fake_reg()'),
-    (re.compile(r'(#include "plug_host.h")'), '\\1\n#include "host_ucbridge.h"\nextern "C" volatile uint32_t* uishot_fake_reg();'),
+    (re.compile(r'(#include "plug_host.h")'), '\\1\n#include "host_ucbridge.h"'),
     (re.compile(r'(void AudioEffectPlug::update\(void\)\n\{\n)'), '\\1    ucb::LaneScope ucbLane(ucb::kInsert);   // the insert chain\'s Unicorn instance\n')]
 # ptfx_loader.cpp: the 128 KB code buffer and the 640 KB scratch are the guest window of externalRamScratchBuff at its device address (the
 # release axf's symbol), the file is read into it by the real loader code, syncInstructionCache is the bridge's translation flush, and the three

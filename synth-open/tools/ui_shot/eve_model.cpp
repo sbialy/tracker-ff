@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <zlib.h>
 
@@ -63,6 +64,36 @@ void EveModel::readDataRAMG(uint8_t* d, uint32_t n, uint32_t src)
 {
     if (src + n > kRamG) { memset(d, 0, n); return; }
     memcpy(d, &ramg_[src], n);
+}
+
+// Device limit: the MK66 writes a list in one SPI burst at RAM_CMD + offset, the address wraps inside the 4 KB ring and REG_CMD_WRITE
+// moves by (bytes mod 4096), so a list of more than 1,023 words overwrites its own start and the coprocessor runs only the last
+// (words mod 1024) slots of the ring. Counted as a model error. UISHOT_CMDFIFO=off runs the whole list (still an error)
+void EveModel::endCoProList()
+{
+    HostFaultSuspend keep;
+    static const bool off = getenv("UISHOT_CMDFIFO") && !strcmp(getenv("UISHOT_CMDFIFO"), "off");
+    const size_t start = listStart_ <= in_.size() ? listStart_ : in_.size();
+    const size_t n = in_.size() - start;
+    if (n > stats.cmdListWordsMax) stats.cmdListWordsMax = uint32_t(n);
+    if (n > 1023)
+    {
+        stats.cmdFifoOverflow++;
+        errors_++;   // a model error: ui_shot exits 1, so every sim is a gate for it
+        char b[96];
+        snprintf(b, sizeof b, "command list of %zu bytes over the 4,092 B FIFO\n", n * 4);
+        log_ += b;
+        if (!off)
+        {
+            const size_t keepWords = n % 1024;
+            std::vector<uint32_t> ring(keepWords);
+            for (size_t i = 0; i < keepWords; i++) ring[i] = in_[start + i + 1024 * ((n - 1 - i) / 1024)];
+            in_.resize(start);
+            in_.insert(in_.end(), ring.begin(), ring.end());
+        }
+    }
+    listStart_ = in_.size();
+    run();
 }
 
 void EveModel::WriteData32(uint32_t w)
@@ -170,6 +201,10 @@ void EveModel::exec(uint32_t id)
         case CMD_DLSTART: dl_.clear(); break;
         case CMD_SWAP:
             if (dl_.empty() || dl_.back() != 0) emit(0);
+            if (const char* dp = getenv("UISHOT_EVE_DL"))
+            {   // debug: every frame's display list as hex words appended to the file (one frame header line, one word per line)
+                if (FILE* f = fopen(dp, "a")) { fprintf(f, "# frame %zu words\n", dl_.size()); for (uint32_t w : dl_) fprintf(f, "%08x\n", w); fclose(f); }
+            }
             stats.frameWords = uint32_t(dl_.size());
             if (stats.frameWords > stats.frameWordsMax) stats.frameWordsMax = stats.frameWords;
             render();
@@ -193,10 +228,16 @@ void EveModel::exec(uint32_t id)
         case CMD_ROTATE:
         {
             const double ang = double(int32_t(A())) * 2.0 * M_PI / 65536.0;
-            const double c = cos(ang), s = sin(ang);
+            double c = cos(ang);
+            const double s = sin(ang);
+            // measured on a unit (Song headers, 270 degrees): the chip's cosine of a quarter turn is not 0 but one 16.16 unit above it, so the translated matrix
+            // comes out a hair low (C 15.996 instead of 16, F -1/256 after SETMATRIX floors it) and the bitmap lands one pixel up and one left of the exact maths
+            if (fabs(c) < 1e-6) c = 1.0 / 65536.0;
             const double a0 = m_[0], b0 = m_[1], d0 = m_[3], e0 = m_[4];
-            m_[0] = int32_t(lround(a0 * c + b0 * s)); m_[1] = int32_t(lround(-a0 * s + b0 * c));
-            m_[3] = int32_t(lround(d0 * c + e0 * s)); m_[4] = int32_t(lround(-d0 * s + e0 * c));
+            // the matrix maps screen to bitmap and the angle turns the bitmap clockwise on screen, so the factor is [cos sin; -sin cos] (measured on a unit:
+            // the Song column headers, a 270 degree turn, read from the bottom up)
+            m_[0] = int32_t(lround(a0 * c - b0 * s)); m_[1] = int32_t(lround(a0 * s + b0 * c));
+            m_[3] = int32_t(lround(d0 * c - e0 * s)); m_[4] = int32_t(lround(d0 * s + e0 * c));
             break;
         }
         case CMD_SETMATRIX:
@@ -428,7 +469,9 @@ void EveModel::rect(float x0, float y0, float x1, float y1, float rad)
     if (y1 < y0) std::swap(y0, y1);
     const int bx0 = std::max(0, int(floorf(x0 - rad - 1))), bx1 = std::min(kW - 1, int(ceilf(x1 + rad + 1)));
     const int by0 = std::max(0, int(floorf(y0 - rad - 1))), by1 = std::min(kH - 1, int(ceilf(y1 + rad + 1)));
-    const float al = g_.color[3] / 255.0f;
+    // measured on a unit (bench c03, c04, c09, c21: the soft button bar, LINE_WIDTH 8, colour 10 comes out as 5 over the whole bar, LINE_WIDTH 16 and 24 as 10): a
+    // rect with an explicit LINE_WIDTH between 2 and 15 draws at LINE_WIDTH/16 of its alpha, also inside the box
+    const float al = (g_.color[3] / 255.0f) * ((g_.lineWidth >= 2 && g_.lineWidth < 16) ? g_.lineWidth / 16.0f : 1.0f);
     for (int y = by0; y <= by1; y++)
         for (int x = bx0; x <= bx1; x++)
         {
@@ -452,7 +495,19 @@ void EveModel::capsule(float x0, float y0, float x1, float y1, float rad)
             float t = l2 > 0 ? (cx * vx + cy * vy) / l2 : 0;
             t = clamp01(t);
             const float dx = cx - t * vx, dy = cy - t * vy;
-            const float cov = clamp01(0.5f + rad - sqrtf(dx * dx + dy * dy));
+            const float dist = sqrtf(dx * dx + dy * dy);
+            float cov;
+            if (rad >= 1.0f) cov = clamp01(0.5f + rad - dist);
+            else
+            {
+                // thin lines (LINE_WIDTH 8 and below, the header rule and most separators): the chip's profile is not a box. Measured on a unit (bench c22, header rule
+                // LINE_WIDTH 8 at the pixel centre, ZERO destination factor): 0.56 on the centre pixel and 0.11 on both neighbours, a 16 wide line gives 1.0 and 0.5. Between
+                // them a tent of peak p and half support r2, both linear in the half width, below 0.5 the peak shrinks with it
+                const float rr = std::max(rad, 0.5f);
+                const float p = rad < 0.5f ? 1.12f * rad : 0.56f + (rr - 0.5f) * 0.88f;
+                const float r2 = 1.256f + (rr - 0.5f) * 1.488f;
+                cov = p * clamp01(1.0f - dist / r2);
+            }
             if (cov > 0) blend(x, y, g_.color[0], g_.color[1], g_.color[2], cov * al);
         }
 }
@@ -515,6 +570,17 @@ void EveModel::bitmapAt(int ox, int oy, int handle, int cell)
     // transform: a b c / d e f, 8.8 (c f 16.8). The 1.15 form (p bit) is not emitted by the firmware.
     const float A = b.xf[0] / (b.p[0] ? 32768.0f : 256.0f), B = b.xf[1] / (b.p[1] ? 32768.0f : 256.0f), C = b.xf[2] / 256.0f;
     const float D = b.xf[3] / (b.p[2] ? 32768.0f : 256.0f), E = b.xf[4] / (b.p[3] ? 32768.0f : 256.0f), F = b.xf[5] / 256.0f;
+    // pixels in one source row (stride bytes). A source column past it is transparent on the chip: the Song column headers draw 8 px wide L4 glyphs
+    // (stride 4) in a 16 x 16 BITMAP_SIZE box turned by 270 degrees and the unit shows no second copy of the glyph, the model read the next row there
+    int rowPx;
+    switch (b.format)
+    {
+        case fL1: rowPx = int(b.stride) * 8; break;
+        case fL2: rowPx = int(b.stride) * 4; break;
+        case fL4: rowPx = int(b.stride) * 2; break;
+        case fL8: case fRGB332: case fARGB2: case fPALETTED: rowPx = int(b.stride); break;
+        default: rowPx = int(b.stride) / 2; break;
+    }
     const float al = g_.color[3] / 255.0f;
     for (uint32_t dy = 0; dy < b.bheight; dy++)
         for (uint32_t dx = 0; dx < b.width; dx++)
@@ -522,7 +588,7 @@ void EveModel::bitmapAt(int ox, int oy, int handle, int cell)
             const float fx = A * dx + B * dy + C, fy = D * dx + E * dy + F;
             int sxp = int(floorf(fx)), syp = int(floorf(fy));
             float t[4] = {0, 0, 0, 0};
-            bool inside = sxp >= 0 && syp >= 0 && sxp < int(b.width) && syp < int(b.bheight) && sxp < int(b.stride * 8) ;
+            bool inside = sxp >= 0 && syp >= 0 && sxp < int(b.width) && syp < int(b.bheight) && sxp < rowPx;
             if (b.wrapx == 1 && b.width) sxp = ((sxp % int(b.width)) + int(b.width)) % int(b.width), inside = syp >= 0 && syp < int(b.bheight);
             if (!inside) continue;
             if (syp >= int(b.height)) continue;
@@ -543,7 +609,10 @@ void EveModel::vertex(int x, int y)
     // vertex coordinates are in 1/(1<<vfrac) pixel after the translate
     const float scale = 1.0f / float(1 << g_.vfrac);
     const float fx = (x + g_.vtx) * scale, fy = (y + g_.vty) * scale;
-    const float lr = std::max(g_.lineWidth / 16.0f - 0.5f, 0.5f);
+    // a line vertex is the CENTRE of a pixel on the chip (measured on a unit, bench c04: a LINE_WIDTH 16 line at x=0 is 255 in pixel 0 and 46 % in pixel 1, two lines 2 px apart
+    // give 128 255 191 255 128), and LINE_WIDTH is the half width in 1/16 px (coverage 50 % at that distance). RECTS use the same centre and radius rule below
+    const float lr = std::max(g_.lineWidth / 16.0f, 0.5f);
+    const float lo = 0.5f;   // +0.5 px: an integer vertex is the pixel centre
     switch (g_.prim)
     {
         case kBitmaps: bitmapAt(int(floorf(fx)), int(floorf(fy)), g_.handle, g_.cell); break;
@@ -552,20 +621,22 @@ void EveModel::vertex(int x, int y)
             verts_.push_back({x, y});
             if (verts_.size() == 2)
             {
-                capsule((verts_[0].first + g_.vtx) * scale, (verts_[0].second + g_.vty) * scale, fx, fy, lr);
+                capsule((verts_[0].first + g_.vtx) * scale + lo, (verts_[0].second + g_.vty) * scale + lo, fx + lo, fy + lo, lr);
                 verts_.clear();
             }
             break;
         case kLineStrip:
-            if (!verts_.empty()) capsule((verts_.back().first + g_.vtx) * scale, (verts_.back().second + g_.vty) * scale, fx, fy, lr);
+            if (!verts_.empty()) capsule((verts_.back().first + g_.vtx) * scale + lo, (verts_.back().second + g_.vty) * scale + lo, fx + lo, fy + lo, lr);
             verts_.push_back({x, y});
             break;
         case kRects:
             verts_.push_back({x, y});
             if (verts_.size() == 2)
             {
-                // the OpenTracker note on the device: the area within LINE_WIDTH/2 of the vertex box, rounded beyond 1 px
-                rect((verts_[0].first + g_.vtx) * scale, (verts_[0].second + g_.vty) * scale, fx, fy, g_.lineWidth <= 16 ? 0.5f : lr);
+                // measured on a unit (bench c09, the white Volume bar and the slider rules): RECTS vertices are pixel centres too and the box grows by
+                // LINE_WIDTH/16 on every side, so a LINE_WIDTH 16 rect spans x0 - 0.5 .. x1 + 1.5 (the old rule stopped at x1 + 0.5, one pixel short on the right
+                // and bottom) and a degenerate one (y0 = y1) is the 122 255 122 rule the unit draws
+                rect((verts_[0].first + g_.vtx) * scale + lo, (verts_[0].second + g_.vty) * scale + lo, fx + lo, fy + lo, lr);
                 verts_.clear();
             }
             break;
@@ -608,11 +679,13 @@ void EveModel::doDlWord(uint32_t w)
         case 14: g_.lineWidth = int(w & 0xFFF); break;
         case 15: g_.clearColor[3] = uint8_t(w); break;
         case 16: g_.color[3] = uint8_t(w); break;
-        case 21: { Bitmap& b = bmp_[g_.handle & 31]; b.p[0] = (w >> 16) & 1; b.xf[0] = b.p[0] ? sx(w, 16) : sx(w, 17); if (b.p[0]) b.xf[0] = sx(w, 16); break; }
-        case 22: { Bitmap& b = bmp_[g_.handle & 31]; b.p[1] = (w >> 16) & 1; b.xf[1] = sx(w, 17); break; }
+        // BITMAP_TRANSFORM_A..E: bit 17 is the format flag p (0 = 8.8, 1 = 1.15), the signed value is the 17 bits below it. Bit 16 is the SIGN of the
+        // value, the model once took it for p, so every negative coefficient (the -256 of the 270 degree rotation of the vertical Song and Performance labels) was read as 1.15 and divided by 128
+        case 21: { Bitmap& b = bmp_[g_.handle & 31]; b.p[0] = (w >> 17) & 1; b.xf[0] = sx(w, 17); break; }
+        case 22: { Bitmap& b = bmp_[g_.handle & 31]; b.p[1] = (w >> 17) & 1; b.xf[1] = sx(w, 17); break; }
         case 23: bmp_[g_.handle & 31].xf[2] = sx(w, 24); break;
-        case 24: { Bitmap& b = bmp_[g_.handle & 31]; b.p[2] = (w >> 16) & 1; b.xf[3] = sx(w, 17); break; }
-        case 25: { Bitmap& b = bmp_[g_.handle & 31]; b.p[3] = (w >> 16) & 1; b.xf[4] = sx(w, 17); break; }
+        case 24: { Bitmap& b = bmp_[g_.handle & 31]; b.p[2] = (w >> 17) & 1; b.xf[3] = sx(w, 17); break; }
+        case 25: { Bitmap& b = bmp_[g_.handle & 31]; b.p[3] = (w >> 17) & 1; b.xf[4] = sx(w, 17); break; }
         case 26: bmp_[g_.handle & 31].xf[5] = sx(w, 24); break;
         case 27: g_.scX = int((w >> 11) & 2047); g_.scY = int(w & 2047); break;
         case 28: g_.scW = int((w >> 12) & 4095); g_.scH = int(w & 4095); break;

@@ -53,7 +53,7 @@ void Interface::buttonChange(uint8_t n, uint8_t value)
     }
 #endif
 
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
     // Shift + Perform opens the Synth play page from every page except the Performance page (there Shift + Perform is the stock flip of
     // the two track pages with the mute buttons) and the pages that finish work of their own (see trySynthPlayEntry). The Perform press
     // of each page is a plain page switch, none tests Shift. The key release after the press is swallowed, the page then sees none of it.

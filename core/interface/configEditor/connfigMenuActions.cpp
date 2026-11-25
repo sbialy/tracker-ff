@@ -8,7 +8,14 @@
 
 #include "mtAudioEngine.h"
 #include "mtPadBoard.h"
+#include "mtNoteName.h"
+#include "mtTuneScale.h"
+#include "mtMidi.h"
 #include "mtSequencer.h"
+#include "stereoPairs.h"
+#ifdef FEATURE_PARTS
+#include "parts.h"
+#endif
 
 #include "Platform.h"
 #include "configEditor/configMenuActions.h"
@@ -18,8 +25,8 @@
 #include "core/interface.h"
 #include "core/interfacePopups.h"
 
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
+#ifdef FEATURE_FF_CORE
+#include "plug_host.h"   // project.mtff settings through the plugin host's wrappers (projectSidecar.h, PLUG_HOST is on with FF_CORE)
 #include "fx34_io.h"
 #endif
 
@@ -163,18 +170,123 @@ void rerollRandomSeedAction()
     configEditor.refreshConfigMenu(); // the Random seed row shows the new seed
 }
 
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
 // The Project Settings page (the File screen entry opens it): the three rows that are not a plain variable keep a copy here, read back
 // from the project every time the page opens and after every change (a refused change shows what the project holds)
 uint8_t projFxSlots;      // 0 Off, 1 On
 uint8_t projMacroMode;    // 0 per patch, 1 Add, 2 Scale
 uint8_t projStrumVolume;  // tens of percent, 0..10
+uint8_t projMpeOut;       // MPE out member channels, 0 Off .. 15
+#ifndef PLATFORM_IMX
+uint8_t projPair[4];       // linked stereo pairs 1+2 3+4 5+6 7+8, 0 Mono, 1 Stereo
+#endif
+uint8_t projTuneNames;   // Note names: 0 Degrees, 1 Ups+downs (tuning::cfg.names)
+uint8_t projTuneFile;   // Scale file: 0 EDO, 1.. the files of /Tunings (mtTuneScale.h)
+uint8_t projTuneN = 11, projTunePeriod, projTuneRoot = 60, projTuneHz;   // Tuning: notes per period, period preset, 1/1 key, 1/1 Hz preset
+// the fine rows: the period in 1e-3 cent as 100 cents, cents, 0.01 cent and 0.001 cent digits, the 1/1 Hz in 1e-4 Hz as 100 Hz, Hz, 0.01 Hz and
+// 0.0001 Hz digits (a list holds at most 256 positions, so a value is edited as a few rows). Nothing of these is stored: they edit the same four
+// project.mtff keys as the presets (tune.period, tune.hz), which are written only when the value differs from the default
+uint8_t projPerH, projPerC, projPerD, projPerM, projHzH, projHzU, projHzD, projHzE;
+static uint8_t lastPeriodPreset = 7, lastHzPreset = 8;   // the preset rows as the page showed them: a changed one wins over the digit rows
+static constexpr uint32_t kTunePeriods[7] = { 1200000, 1901955, 701955, 2400000, 1586314, 1205000, 1210000 };   // 1e-3 cent, the last of the list is Custom
+static constexpr uint32_t kTuneHz[8] = { 2616256, 2640000, 2560000, 2568687, 2200000, 4320000, 4400000, 4420000 };   // 1e-4 Hz
 
 void projectPageSync()
 {
     projFxSlots = fx34::enabled() ? 1 : 0;
     projMacroMode = uint8_t(plug::macroMode());
     projStrumVolume = uint8_t((plug::strumRampDepth() + 5) / 10);
+    projMpeOut = mpeOutMembers();
+#ifndef PLATFORM_IMX
+    for (int k = 0; k < 4; ++k) projPair[k] = stereopairs::pairLinked(k) ? 1 : 0;
+#endif
+    projTuneN = uint8_t(tuning::cfg.n - 1);   // the list shows 1..128 (stored 0..127 with the shown offset of 1, a list starts on its stored value)
+    projTuneRoot = tuning::cfg.root;
+    projTuneFile = uint8_t(tunescale::position());
+    projTuneNames = tuning::cfg.names;
+    projTunePeriod = 7;   // Custom unless a preset
+    for (uint8_t i = 0; i < 7; ++i)
+        if (kTunePeriods[i] == tuning::cfg.periodMc) projTunePeriod = i;
+    projTuneHz = 8;
+    for (uint8_t i = 0; i < 8; ++i)
+        if (kTuneHz[i] == tuning::cfg.hzE4) projTuneHz = i;
+    lastPeriodPreset = projTunePeriod;
+    lastHzPreset = projTuneHz;
+    const uint32_t p = tuning::cfg.periodMc, h = tuning::cfg.hzE4;
+    projPerH = uint8_t(p / 100000);
+    projPerC = uint8_t(p / 1000 % 100);
+    projPerD = uint8_t(p / 10 % 100);
+    projPerM = uint8_t(p % 10);
+    projHzH = uint8_t(h / 1000000);
+    projHzU = uint8_t(h / 10000 % 100);
+    projHzD = uint8_t(h / 100 % 100);
+    projHzE = uint8_t(h % 100);
+}
+
+// Tuning (project.mtff tune.*, mtTuning.h): the sample pitch tables are filled again, so not while the sequencer plays (a sounding voice would
+// jump). A preset row that changed sets its preset, otherwise the digit rows are the value (a Custom period or Hz stays what the project holds
+// until a digit row moves it). tuning::set clamps a value outside the range (period 10..4800 cents, Hz 8..4000) and the page shows the result
+void setProjTune()
+{
+    if (sequencer.isPlay())
+    {
+        mtPopups.showInfoPopup("Tuning", "stop the playback first");
+    }
+    else
+    {
+        uint32_t period = uint32_t(projPerH) * 100000 + uint32_t(projPerC) * 1000 + uint32_t(projPerD) * 10 + projPerM;
+        uint32_t hz = uint32_t(projHzH) * 1000000 + uint32_t(projHzU) * 10000 + uint32_t(projHzD) * 100 + projHzE;
+        if (projTunePeriod != lastPeriodPreset && projTunePeriod < 7) period = kTunePeriods[projTunePeriod];
+        if (projTuneHz != lastHzPreset && projTuneHz < 8) hz = kTuneHz[projTuneHz];
+        // a Scala tuning keeps its degrees only while its note count and period stand: a change of either one is equal steps again
+        if (tuning::cfg.file && (projTuneN + 1 != tuning::cfg.n || period != tuning::cfg.periodMc)) tunescale::off();
+        tuning::set(projTuneN + 1, period, projTuneRoot, hz);
+        tuningChanged();
+        newFileManager.setProjectStructChanged();
+    }
+    projectPageSync();
+    configEditor.refreshConfigMenu();
+}
+
+// Scale file (project.mtff tune.file and tune.cents): a .scl of /Tunings becomes the tuning, the reason of a refusal is a popup. Position 0 is N equal steps
+void setProjTuneFile()
+{
+    if (sequencer.isPlay())
+    {
+        mtPopups.showInfoPopup("Tuning", "stop the playback first");
+    }
+    else if (projTuneFile == 0)
+    {
+        if (tuning::cfg.file)
+        {
+            tunescale::off();
+            newFileManager.setProjectStructChanged();
+        }
+    }
+    else if (projTuneFile <= tunescale::files())
+    {
+        if (tunescale::load(tunescale::list()[projTuneFile]))
+            newFileManager.setProjectStructChanged();
+        else
+            mtPopups.showInfoPopup("Scale file", tunescale::message());
+    }
+    projectPageSync();
+    configEditor.refreshConfigMenu();
+}
+
+// Note names (project.mtff tune.names): no pitch changes, so it works while the sequencer plays. Ups+downs for a tuning that has no such names is refused
+void setProjTuneNames()
+{
+    if (projTuneNames && !(tuning::cfg.udOk && !tuning::cfg.file && tuning::cfg.periodMc == tuning::kDefPeriodMc))
+        mtPopups.showInfoPopup("Note names", "no ups and downs here");
+    else if (projTuneNames != tuning::cfg.names)
+    {
+        tuning::cfg.names = projTuneNames;
+        newFileManager.setProjectStructChanged();
+        mtPadBoard.refreshNotes();
+    }
+    projectPageSync();
+    configEditor.refreshConfigMenu();
 }
 
 // 4 FX Slots (project.mtff fx.slots, fx34.h): not while the sequencer plays (the sets are rebuilt). Off keeps the FX3 and FX4 files on the
@@ -206,6 +318,77 @@ void setProjFxSlots()
         }
     }
     projectPageSync();
+}
+
+#ifndef PLATFORM_IMX
+// Stereo pairs (project.mtff track.N.pair, stereoPairs.h): a linked pair plays one stereo voice. Not while the sequencer plays (the
+// engine cuts both tracks). The first link of a project reloads the samples, the right channel of a stereo .pti loads only then
+void setProjPair()
+{
+    uint8_t mask = 0;
+    for (int k = 0; k < 4; ++k) mask |= uint8_t((projPair[k] ? 1 : 0) << k);
+    if (mask != stereopairs::g_mask)
+    {
+        if (sequencer.isPlay())
+        {
+            mtPopups.showInfoPopup("Stereo pairs", "stop the playback first");
+        }
+        else
+        {
+            const bool wasStereo = stereopairs::g_mask != 0;
+            const uint8_t oldMask = stereopairs::g_mask;
+            engine.setStereoPairs(mask);
+            midiMenuSync();
+            // a fresh link hides the follower track: tell once when it holds notes or FX in the open pattern, in any pattern of the song playlist
+            // or in any pattern a Part uses (the UI shows it when the reload popup is gone). The open pattern is read from memory, the others from
+            // the per pattern track bitmask the project keeps (it counts a step with only an FX too, so only a note in the open pattern proves
+            // "notes", every other hit says "notes or FX")
+            for (int k = 0; k < stereopairs::kPairs && !stereopairs::g_linkNotice; ++k)
+            {
+                if (!((mask >> k) & 1) || ((oldMask >> k) & 1)) continue;
+                const int ftrack = 2 * k + 1;
+                auto& tr = sequencer.getActualPattern()->track[ftrack];
+                bool hasNote = false;
+                bool has = false;
+                for (int st = 0; st <= tr.length && !hasNote; ++st)
+                {
+                    if (!tr.step[st].isNoteEmpty()) hasNote = true;
+                    else if (tr.step[st].hasAnyFx()) has = true;
+                }
+                auto inBitmask = [&](int pat)   // 1 based pattern number
+                {
+                    return pat > 0 && pat <= PATTERN_INDEX_MAX && ((mtProject.values.allPatternsBitmask[pat - 1] >> ftrack) & 1);
+                };
+                for (int pos = 0; pos < SONG_MAX && !hasNote && !has && mtProject.song.playlist[pos]; ++pos)
+                    has = inBitmask(mtProject.song.playlist[pos]);
+#ifdef FEATURE_PARTS
+                {
+                    const parts::List& pl = parts::list();
+                    for (int i = 0; i < int(pl.count) && i < parts::kMax && !hasNote && !has; ++i)
+                        has = inBitmask(pl.part[i].src[ftrack]);
+                }
+#endif
+                if (hasNote || has)
+                {
+                    stereopairs::g_linkNotice = uint8_t(ftrack + 1);
+                    stereopairs::g_linkNoticeFx = !hasNote;
+                }
+            }
+            newFileManager.setStereoSampleMode(mask != 0);
+            if (!wasStereo && mask != 0) newFileManager.reloadSamplesFromWorkspace();
+            newFileManager.setProjectStructChanged();
+        }
+    }
+    projectPageSync();
+    configEditor.refreshConfigMenu();
+}
+#endif
+
+// MPE out (project.mtff mpe.out): the notes that sound are let go, the zone configuration goes out a few messages per audio block
+void setProjMpeOut()
+{
+    mpeOutSet(projMpeOut);
+    newFileManager.setProjectStructChanged();
 }
 
 void setProjMacroMode()

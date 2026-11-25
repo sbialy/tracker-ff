@@ -1,0 +1,40 @@
+# P4: the 4 FX switch on Tracker+ and Mini. Project Settings, 4 FX Slots On, back to the Pattern screen: the step grid has FX3 and FX4 columns, a
+# step takes an FX3 and an FX4 (the fx34 sets are core code). The list moves by `tap Down` on both (the Mini has no encoder), expect peek fxslots reads the switch.
+# Mini (P8): the sim boots on the Pattern screen, no File or Pattern key: Menu box 6 (Down, Right x2) opens File, back to Pattern
+# from the File box is Up, Left x2 (box 0).
+title: 4 FX flip on the Mini (P8)
+check: texts
+pause: 80ms
+
+wait 1500ms
+shot fx-before
+expect peek fxslots 2
+press Menu
+wait 400ms
+tap Down
+wait 200ms
+tap Right x2
+wait 300ms
+release Menu
+wait 1000ms
+tap F7
+wait 1000ms
+expect text "4 FX Slots"
+tap F8
+wait 600ms
+tap Down
+wait 600ms
+tap F8
+wait 3000ms
+tap F7
+wait 800ms
+press Menu
+wait 400ms
+tap Up
+wait 200ms
+tap Left x2
+wait 300ms
+release Menu
+wait 1000ms
+shot fx-after
+expect peek fxslots 4

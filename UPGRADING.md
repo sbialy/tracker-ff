@@ -1,13 +1,34 @@
-# Upgrading to tracker-ff 1.4.0
+# Upgrading to tracker-ff 2.0.0
 
-This guide is for the original Polyend Tracker (MK66) when you come from tracker-ff 1.3.0 or 1.3.1. If you come from 1.2.0 or 1.1.0, read "From 1.2.0 or 1.1.0" at the end first and then the sections for 1.3.x. A fresh install needs only the "Flash" section of the README of the repository.
+This guide is for the original Polyend Tracker (MK66) when you come from tracker-ff 1.4.0. The Tracker+ and the Tracker Mini are covered at the end of "From 1.4.0 to 2.0.0". The sections after "Before you start" describe the steps for 1.4.0, they are the same for 2.0.0. If you come from 1.3.x, 1.2.0 or 1.1.0, read "From 1.3.0 or 1.3.1" and "From 1.2.0 or 1.1.0" as well. A fresh install needs only the "Flash" section of the README of the repository.
 
-The steps are always the same: back up, unzip the zip onto the card, flash, check. 1.4.0 has new files that the image needs, so use the zip and do not flash the `.ptf` alone (see "Flashing the image without the zip").
+The steps are always the same: back up, unzip the zip onto the card, flash, check. 2.0.0 has new files that the image needs, so use the zip and do not flash the `.ptf` alone.
+
+## From 1.4.0 to 2.0.0
+
+Projects, patches and the plugin format of 1.4.0 work in 2.0.0 as they are, you need no conversion. One card file changes name and the zip brings the new one:
+
+| File | What to do |
+|---|---|
+| `Plugins/Ext/extras.plg` | **New and required for MOD and IT.** It replaces `Plugins/Ext/modit.plg` of 1.4.0 and does the same job (MOD import, IT import and MOD/IT export load from it on first use). On the original Tracker it also carries the custom theme loader (`/Themes/*.json`, without the file a custom theme falls back to Original), the factory self test and the take logic of Capture (on by default, without the file button 3 of the pattern editor names `extras.plg` and nothing is captured). The Tracker+ and the Tracker Mini have these in their image and need no card file. It belongs to the exact image of 2.0.0, so take it from the zip of 2.0.0. `modit.plg` is no longer read, you can delete it. |
+| `PolyendTracker_FF_2.0.0.ptf` | The image. Flash it from Config > Firmware > Firmware update as before. |
+
+Where the text below says `modit.plg`, read `extras.plg` for 2.0.0. Without `extras.plg` (or with the file of another release) the MOD and IT import and export keys show a popup that names `extras.plg` and nothing else changes.
+
+What is new in a project:
+
+- The settings of the new features (Tuning, Stereo pairs, Tables, the New note action, part destinations of Synth Automation) are stored in the project files and the patch files only when they differ from the default. A project that sets none of them is written as 1.4.0 wrote it. A project of 1.4.0 opens in 2.0.0 with every new setting at its default.
+- A project that uses these settings plays on firmware 1.4.0 without them. The new chord values play as plain notes there.
+- Tuning: copy your `.scl` files to a `Tunings` folder at the top of the card (the zip brings five examples there), then pick one in Project Settings > Tuning > Scale file. A project stores a copy of the scale in `project.mtff`, so it still plays when it is opened on a card without the file. A project that does not use a tuning is stored exactly as before. Firmware 1.4.0 does not know the Tuning lines (`tune.n`, `tune.file`, `tune.cents`, `tune.names` and the others): it ignores them, keeps them when it saves the project and plays the project in 12 notes. In a tuned project Finetune changes meaning (cents, it was a hundredth of a key), so a project made with Finetune values in a tuning other than 12 notes sounds different after the update.
+- The MIDI Chord FX table has 77 chords. A synth plugin engine built for an older firmware keeps its own chord list.
+- MPE out: the `MPE out` row of Project Settings is stored as `mpe.out` in `project.mtff` only when it is on. Older builds keep the line and play the project with the plain MIDI out.
+
+The Tracker+ and the Tracker Mini run the same source from 2.0.0. They take the project features of the original Tracker that do not need its hardware. What the release adds on the original Tracker (stereo track pairs, USB audio 8+3, its own USB drive mode and the new note action) is not part of them. They have stereo recording and editing, USB audio and the USB drive from Polyend's firmware. The contents of `extras.plg` are linked into their image, so they need no card file for it. The CHANGELOG lists the details. Their synth parts keep the stock engines, and the image also reads the plugin synth engines from `/Plugins/Synth` on the card and loads one when a part picks it (the `chip.plg` file is not used there, the stock CHIP engine plays). Flash their image the same way (Config > Firmware > Firmware update). Copy the `Tunings/` folder of the zip to the card for the example scales. Their image also reads the master insert plugins from `Plugins/Master` and the synth engines from `Plugins/Synth` (not `chip.plg`), so those folders of the zip work there too. The other card files of the zip, among them `extras.plg`, are made for the original Tracker.
 
 ## Before you start
 
 1. Put the SD card in your computer and copy the whole card to a folder on the computer. At least `Projects/`, `Patches/`, `Plugins/`, `Effects/` and `Workspace/` should be in the copy. A project saved by 1.4.0 opens on 1.3.x (see "Going back to 1.3.x"), but a copy costs nothing.
-2. Download `PolyendTracker_FF_1.4.0.zip` from the release page of the tag `tracker-ff-v1.4.0`. Check it with the `SHA256SUMS` asset. The zip is the whole release. The firmware image is inside it as `Firmware/PolyendTracker_FF_1.4.0.ptf`.
+2. Download `PolyendTracker_FF_2.0.0.zip` from the release page of the tag `tracker-ff-v2.0.0`. Check it with the `SHA256SUMS` asset. The zip is the whole release. The firmware image is inside it as `Firmware/PolyendTracker_FF_2.0.0.ptf`.
 3. Unzip it. The folders in it (`Firmware/`, `Plugins/`, `Effects/`) are laid out like the card, so you can unzip straight onto the card root and let the computer replace the files that are there. The documents are under `tracker-ff/`. `tracker-ff/SHA256SUMS` lists every file with its path from the card root. From the card root, `shasum -a 256 -c tracker-ff/SHA256SUMS` checks the copy.
 
 ## From 1.3.0 or 1.3.1
@@ -18,7 +39,7 @@ Projects, `.patch` files and the plugin format of 1.3.x work in 1.4.0 as they ar
 
 | File | What to do |
 |---|---|
-| `Firmware/PolyendTracker_FF_1.4.0.ptf` | New. The unzip puts it in `/Firmware/`. Leave the `.ptf` of your old version there as your way back (the firmware update menu lists both). |
+| `Firmware/PolyendTracker_FF_2.0.0.ptf` | New. The unzip puts it in `/Firmware/`. Leave the `.ptf` of your old version there as your way back (the firmware update menu lists both). |
 | `Plugins/Ext/modit.plg` | **New and required for MOD and IT.** MOD import, IT import and MOD/IT export are no longer in the image. They load from this file on first use. The file belongs to the exact image of this release, so always take it from the same zip. Without it or with the file of another release the import and export keys show a short popup and do nothing. |
 | `Effects/se_amplifier.ptfx`, `se_overdrive.ptfx`, `se_delay.ptfx`, `se_bitcrusher.ptfx`, `se_chorus.ptfx`, `se_flanger.ptfx`, `se_equalizer.ptfx`, `se_limiter.ptfx`, `se_compressor.ptfx` | **New and required for the nine Sample Editor effects.** Amplifier, Overdrive, Delay, Bitcrusher, Chorus, Flanger, Equalizer, Limiter and Compressor moved out of the image. Without a file the row reads `Missing: <name>` and the effect cannot be applied. They render what the old built in ones rendered. |
 | `Plugins/Synth/alco.plg` and `alco.plgi` | New. ALCO, a synth plugin with two oscillators, a sub, 20 algorithms and a wave mode that reads single cycle waves from `/Waves`. |
@@ -28,9 +49,9 @@ Projects, `.patch` files and the plugin format of 1.3.x work in 1.4.0 as they ar
 ### Flash
 
 1. Unzip the zip onto the card root as in "Before you start".
-2. Put the card in the Tracker. Open **Config > Firmware > Firmware update**, pick `PolyendTracker_FF_1.4.0.ptf` and confirm.
+2. Put the card in the Tracker. Open **Config > Firmware > Firmware update**, pick `PolyendTracker_FF_2.0.0.ptf` and confirm.
 3. Wait until the Tracker restarts by itself. Do not switch it off while it flashes.
-4. Open **Config**. **Info > About** says `tracker-ff 1.4.0`.
+4. Open **Config > Firmware**. The version reads `2.0.0 tracker-ff`.
 
 ### Flashing the image without the zip
 

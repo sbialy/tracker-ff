@@ -4,7 +4,7 @@
 frame	1768	static	synth-open/ot/audio/engines/perc.cpp	virtual bool ot::audio::perc::{anonymous}::PercEngine::render(ot::audio::SynthVoice&, const ot::audio::SynthParams&, float, float, float*, float*)
 frame	1336	static	synth-open/ot/audio/engines/fat.cpp	virtual bool ot::audio::fat::{anonymous}::FatEngine::render(ot::audio::SynthVoice&, const ot::audio::SynthParams&, float, float, float*, float*)
 frame	1312	dynamic	core/FileManager/fileManagerExportToMod.cpp	void cFileManager::exportItFile_InitHeader()
-frame	1144	static	synth-open/open_synth.cpp	void polysynth::{anonymous}::OpenInstrument::render(float*, float*, bool)
+frame	1152	static	synth-open/open_synth.cpp	void polysynth::{anonymous}::OpenInstrument::render(float*, float*, bool)
 frame	1104	static	core/FileManager/ProjectSave.cpp	bool ProjectSave::copyInstruments(int, uint8_t&)
 frame	1008	static	synth-open/ot/audio/engines/wtfm.cpp	virtual bool ot::audio::wtfm::{anonymous}::WtfmEngine::render(ot::audio::SynthVoice&, const ot::audio::SynthParams&, float, float, float*, float*)
 frame	952	static	synth-open/ot/audio/engines/vap.cpp	virtual bool ot::audio::vap::{anonymous}::VapEngine::render(ot::audio::SynthVoice&, const ot::audio::SynthParams&, float, float, float*, float*)

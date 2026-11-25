@@ -6,6 +6,7 @@
 #include "eve_model.h"
 
 #include <map>
+#include <set>
 #include <string>
 
 // host_usbmc.cpp: the 8+3 mono sink (Platform::usbAudioMultiSink) and its checks, the "usbmc" command
@@ -51,6 +52,13 @@ extern int g_guardArmed, g_guardKicks; // power-off stall guard (Platform::setPo
 // MK66 power model (host_platform.cpp): EEPROM start state byte, MCU resets (all, and those that hit a unit that was off)
 extern int g_startState;
 extern int g_returnMirror;     // EEPROM byte 8: Power return Start of the restart mode feature (checkPowerState keeps the 1)
+// The device's SdFile pool (FileSystemImpl.cpp, FF_FS_LOCK = 24 slots): openFile takes a slot when the caller has no handle yet, only closeFile
+// with deleteOnClose (the default) gives it back, so closeFile(h, false) of a handle the caller does not keep leaks it until the next boot.
+// "fspool" prints the counters. UI_SHOT_FILE_POOL=N changes the limit (0: no limit), default 24
+extern int g_filePoolUsed, g_filePoolPeak, g_filePoolRefused;
+extern std::set<const void*> g_filePoolHeld;   // the HFile of every slot in use
+std::string filePoolHeldPaths();                // their paths, space separated
+extern int g_asyncBusy;       // "fsbusy 1": isAsyncReadBusy() answers true (a sample stream reads the card), for the Capture take file tests
 extern int g_usbAudioFlag;     // EEPROM byte 9: the USB audio boot flag, read by usb_init at every MCU start
 extern int g_usbAudioRunning;  // what usb_init picked at the last start
 extern int g_usbAudioStreaming; // the computer records the stream now (usbstream N)

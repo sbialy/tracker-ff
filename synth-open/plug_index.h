@@ -43,10 +43,22 @@ inline uint32_t crc32(uint32_t c, const uint8_t* p, uint32_t n)
     return ~c;
 }
 
+// The cpu ids this host runs (ref/ff-imx-port-plan.md R2.1c): CM4F everywhere (the M7 runs ARMv7E-M fpv4 code), CM7 only on the
+// IMX host (Tracker+ / Mini). One .plg (CM4F) serves both platforms, CM7 is for M7 tuned builds.
+#ifdef PLATFORM_IMX
+constexpr bool kHostRunsCm7 = true;
+#else
+constexpr bool kHostRunsCm7 = false;
+#endif
+inline bool hostCpuOk(uint32_t cpu)
+{
+    return cpu == PLUG_CPU_CM4F || (kHostRunsCm7 && cpu == PLUG_CPU_CM7);
+}
+
 inline Err checkHeader(const plug_file_header& h, uint32_t wantKind)
 {
     if (h.magic != PLUG_MAGIC || h.header_size < sizeof(h)) return kHeader;
-    if (h.abi_major != PLUG_ABI_MAJOR || h.min_host > PLUG_HOST_LEVEL || h.cpu != PLUG_CPU_CM4F || h.kind != wantKind ||
+    if (h.abi_major != PLUG_ABI_MAJOR || h.min_host > PLUG_HOST_LEVEL || !hostCpuOk(h.cpu) || h.kind != wantKind ||
         (h.flags & PLUG_F_S16))
         return kAbi;
     // the CRC does not cover these 64 bytes: bound every size before any sum (no wrap with a damaged file)

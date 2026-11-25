@@ -19,6 +19,7 @@
 #include "open_bankcopy.h"
 #include "open_patchdata.h"
 #include "open_patch.h"
+#include "SynthVaryRule.h"   // the IMX Vary rule (core/synth), checked against open::patchVary
 #include "PolySynth/FileSystem.h"
 #include <map>
 #include <set>
@@ -293,6 +294,56 @@ int main() {
 #ifdef SMOKE_PLUGIN_ENGINE
     varyCheck(0x81, "plugin");
 #endif
+    // Tracker+ / Mini (P12): the IMX Synth::varyPatch runs core/synth/SynthVaryRule.h per param. Over the same parameter list it draws the
+    // same values as the MK66 open::patchVary for the same seed: per engine two fresh patches, a chain of Vary rounds with the patch
+    // editor's seed step (s_varyRng), every value bit for bit and the generator state equal after every round
+    auto varyParity = [&](int typeId, const char* name) {
+      auto pa = std::shared_ptr<Patch>(store->createPatch(typeId));
+      auto pb = std::shared_ptr<Patch>(store->createPatch(typeId));
+      const open::EngineDef* vd = static_cast<open::OpenPatch*>(pa.get())->getDef();
+      const int n = open::patchParamCount(*pa);
+      bool ok = vd && n > 0;
+      float prev[open::kMaxParams];
+      uint32_t sa = 0, sb = 0;
+      int rounds = 0, sets = 0;
+      const int pcts[] = { 10, 60, 5, 100, 50, 35, 100, 80 };
+      const uint32_t ents[] = { 12345u, 777u, 0xDEADBEEFu, 1u, 4093u, 0x80000000u, 99u, 31337u };
+      for (int r = 0; ok && r < 8; r++) {
+        // MK66 (SynthPatchEditor.cpp, FEATURE_SYNTH_OPEN): the seed step, patchVary, the state takes the loop's generator in
+        sa = sa * 1664525u + 1013904223u + ents[r];
+        if (sa == 0) sa = 1;
+        uint32_t ra = sa;
+        open::patchVary(*pa, pcts[r], ra, prev);
+        sa ^= ra;
+        // IMX (Synth::varyPatch): the same steps over the rule header, the param kinds from the same list
+        sb = synthvary::seed(sb, ents[r]);
+        uint32_t rb = sb;
+        if (rb == 0) rb = 0x9E3779B9u;
+        for (int i = 0; i < n; i++) {
+          const auto& d = vd->params[i];
+          synthvary::Param q;
+          q.lo = d.min; q.hi = d.max;
+          q.before = pb->getParamValue(i).value_or(d.def);
+          q.curve = d.curve == open::CurveKind::kExp ? synthvary::Curve::kExp : d.curve == open::CurveKind::kSteep ? synthvary::Curve::kSteep
+                  : d.curve == open::CurveKind::kPower ? synthvary::Curve::kPower : synthvary::Curve::kLinear;
+          q.discrete = d.fmt == open::Fmt::kEnum || d.fmt == open::Fmt::kOnOff;
+          q.whole = d.fmt == open::Fmt::kInt || d.fmt == open::Fmt::kSemi || d.fmt == open::Fmt::kRatio;
+          q.skip = i == vd->volumeParam;
+          float v = q.before;
+          if (synthvary::draw(q, std::clamp(pcts[r], 1, 100), rb, v)) { pb->setParamValue(i, v, Patch::ParamChangeSource::kKnob); sets++; }
+        }
+        sb ^= rb;
+        ok = ok && sa == sb;
+        for (int i = 0; ok && i < n; i++) {
+          const float x = pa->getParamValue(i).value_or(-1e30f), y = pb->getParamValue(i).value_or(-1e30f);
+          ok = std::memcmp(&x, &y, sizeof x) == 0;
+        }
+        rounds += ok;
+      }
+      printf("  vary parity %-6s params=%d rounds=%d sets=%d %s\n", name, n, rounds, sets, ok && rounds == 8 && sets > 0 ? "OK" : "FAIL");
+      bad += !(ok && rounds == 8 && sets > 0);
+    };
+    for (const auto& e : engines) varyParity(int(e.id), e.name);
   }
 
 #ifdef SYNTH_ENGINE_ACD
@@ -354,6 +405,39 @@ int main() {
     chk(eb > 0.02 && bb > 0.02 && eNat < 0.002, "MIDI Chord step value (m7) overrides the patch Chord for its note");
     chk(open::testParams(0)->end[acdp::kChord] == before, "the part's Chord value is back after the note-on");
     stop(48);
+    // the two appended chords: 68 minor add9 (0 3 7 14), 69 major add9 (0 4 7 14), the 9th one octave and a tone up
+    chk(open::partChordPara(0, 68) && open::partChordPara(0, 69), "Para patch: partChordPara true for the add9 chords");
+    chk(cp.last == 255, "ACD (built in, current table) takes every chord value");
+    for (int ch = 68; ch <= 69; ch++)
+    {
+      open::partNoteChord(0, 48, uint8_t(ch));
+      play(48, 64);
+      const double third = tone(hz(ch == 68 ? 51 : 52)), wrong3 = tone(hz(ch == 68 ? 52 : 51)), fifth = tone(hz(55)), ninth = tone(hz(62));
+      printf("  step chord %d on C3: third %.3f (other third %.4f) G %.3f D4 %.3f\n", ch, third, wrong3, fifth, ninth);
+      chk(third > 0.02 && fifth > 0.02 && ninth > 0.02 && wrong3 < 0.005 && open::voicesSounding() == 1,
+          ch == 68 ? "MIDI Chord 68 (m add9): C Eb G D4 on one voice" : "MIDI Chord 69 (add9): C E G D4 on one voice");
+      stop(48);
+    }
+    // the seven appended four note chords 70..76 (the fifth dropped), on C3 = 48: the wanted notes sound on ONE voice, the quiet ones do not
+    {
+      const struct { int ch; const char* name; int up[3]; int quiet[2]; } k[] = {
+        {70, "9", {52, 58, 62}, {55, 59}},   {71, "m9", {51, 58, 62}, {55, 59}},  {72, "maj9", {52, 59, 62}, {55, 58}},
+        {73, "6/9", {52, 57, 62}, {55, 58}}, {74, "7#9", {52, 58, 63}, {55, 59}}, {75, "7b9", {52, 58, 61}, {55, 59}},
+        {76, "7b5", {52, 54, 58}, {55, 59}},
+      };
+      chk(open::partChordPara(0, 76) && open::partChordPara(0, 70), "Para patch: partChordPara true for the 70..76 chords");
+      for (const auto& c : k)
+      {
+        open::partNoteChord(0, 48, uint8_t(c.ch));
+        play(48, 64);
+        const double r = tone(hz(48)), a = tone(hz(c.up[0])), b = tone(hz(c.up[1])), d = tone(hz(c.up[2])), q0 = tone(hz(c.quiet[0])), q1 = tone(hz(c.quiet[1]));
+        printf("  step chord %d (%s) on C3: root %.3f %d %.3f %d %.3f %d %.3f quiet %.4f %.4f\n", c.ch, c.name, r, c.up[0], a, c.up[1], b, c.up[2], d, q0, q1);
+        char m[96];
+        snprintf(m, sizeof(m), "MIDI Chord %d (%s): the root and three more notes on one voice, the other 7th and fifth quiet", c.ch, c.name);
+        chk(r > 0.02 && a > 0.02 && b > 0.02 && d > 0.02 && q0 < 0.005 && q1 < 0.005 && open::voicesSounding() == 1, m);
+        stop(48);
+      }
+    }
     // Strum FX (partNoteChord strum): up 10 units = 20 ms between notes, the notes of m7 on C3 start in blocks 0, 7, 14, 21
     {
       auto strumRun = [&](int8_t strum, std::vector<float>& all) {
@@ -383,6 +467,17 @@ int main() {
       chk(upC > 0.05 && upBbEarly * 5 < refBb && upBbEarly * 5 < upBbLate, "Para strum up: the root first, the top note after 3 gaps");
       chk(dnBb > 0.05 && dnCEarly * 5 < refC && dnCEarly * 5 < dnCLate, "Para strum down: the top first, the root after 3 gaps");
       chk(zero == none, "Strum 0 renders bit identical to no strum");
+      // add9 (69) strums like the others: strum up 10 units, the D4 (the top note, 3 gaps in) starts after the root
+      {
+        open::partNoteChord(0, 48, 69);
+        rec.clear(); psrc.send(MidiEvent::Type::kNoteOn, 0, 48, 100); for (int b = 0; b < 48; b++) pblk(); std::vector<float> a9none = rec; stop(48);
+        open::partNoteChord(0, 48, 69, 10);
+        rec.clear(); psrc.send(MidiEvent::Type::kNoteOn, 0, 48, 100); for (int b = 0; b < 48; b++) pblk(); std::vector<float> a9up = rec; stop(48);
+        const double refD = toneIn(a9none, hz(62), 1, 19), earlyD = toneIn(a9up, hz(62), 1, 19), lateD = toneIn(a9up, hz(62), 23, 48);
+        const double a9C = toneIn(a9up, hz(48), 1, 6);
+        printf("  strum up on add9: C %.3f, D4 before %.4f (unstrummed %.3f) after %.3f\n", a9C, earlyD, refD, lateD);
+        chk(a9C > 0.05 && earlyD * 5 < refD && earlyD * 5 < lateD, "Strum on MIDI Chord 69 (add9): the root first, the 9th after 3 gaps");
+      }
     }
     open::partNoteChord(0, 60, 20);   // armed for C4, but E3 comes: not consumed, and the latch is dropped
     play(52, 32);
@@ -2472,14 +2567,51 @@ int main() {
       }
       printf("  automation: largest raw part of the fixtures %zu B, worst block %zu B, kRawMax %zu B\n", rawMax, wblock, open::kRawMax);
       check(wblock + rawMax + 64 <= open::kRawMax, "automation codec: an old reader's raw budget holds the worst block, the names and room for field 16");
-      // version 2: kept raw, written back as it was, automation Off
-      std::vector<uint8_t> v2 = plain; const uint8_t blk2[] = { 0x82, 0x04, 0x06, 0x08, 0x02, 0x12, 0x02, 0x08, 0x01 };
+      // version 3 (a later image): kept raw, written back as it was, automation Off
+      std::vector<uint8_t> v2 = plain; const uint8_t blk2[] = { 0x82, 0x04, 0x06, 0x08, 0x03, 0x12, 0x02, 0x08, 0x01 };
       v2.insert(v2.end(), blk2, blk2 + sizeof(blk2));
       auto d3 = std::make_unique<PatchData>();
-      check(open::decodePatch(v2.data(), v2.size(), *d3) && !open::modAnyOn(d3->mod) && encode(*d3) == v2, "automation codec: a version 2 block is kept raw and written back byte identical");
+      check(open::decodePatch(v2.data(), v2.size(), *d3) && !open::modAnyOn(d3->mod) && encode(*d3) == v2, "automation codec: a version 3 block is kept raw and written back byte identical");
       // the raw version 2 block gives way when this image's automation is set
       d3->mod[0] = a[0]; const auto v2own = encode(*d3); int n64 = 0; for (const auto& f : fields(v2own.data(), v2own.size())) n64 += f.f == open::kModField;
       check(n64 == 1, "automation codec: own automation replaces a raw block of another version (one field 64)");
+      // part destinations (kPart): field 64 version 2 only when a part slot is on, every other patch stays version 1 byte for byte
+      {
+        auto modVersion = [&](const std::vector<uint8_t>& v) -> int {
+          for (const auto& f : fields(v.data(), v.size())) if (f.f == open::kModField) {
+            size_t q = f.at + 2; while (v[q] & 0x80) q++; q++;   // tag (2 B), length varint
+            return v[q] == 0x08 ? v[q + 1] : -1; }
+          return 0; };
+        check(modVersion(full) == 1 && modVersion(plain) == 0, "part codec: param and macro slots only write version 1, no slot writes no field 64 (as before)");
+        auto dback = std::make_unique<PatchData>(); open::decodePatch(full.data(), full.size(), *dback);
+        check(encode(*dback) == full, "part codec: a version 1 patch round trips byte identical");
+        auto dp = std::make_unique<PatchData>(*d);
+        dp->mod[1] = ModSlot{}; dp->mod[1].type = ModType::kLfo; dp->mod[1].kind = ModKind::kPart; dp->mod[1].index = open::kPartGain; dp->mod[1].amount = -30; dp->mod[1].shape = 3; dp->mod[1].speed = 10;
+        const auto pbytes = encode(*dp);
+        auto pback = std::make_unique<PatchData>();
+        bool prt = !pbytes.empty() && open::decodePatch(pbytes.data(), pbytes.size(), *pback);
+        for (int s2 = 0; s2 < 4; s2++) prt = prt && sameSlot(pback->mod[s2], dp->mod[s2]);
+        check(modVersion(pbytes) == 2 && prt && pback->mod[1].kind == ModKind::kPart && pback->mod[1].index == open::kPartGain && encode(*pback) == pbytes,
+              "part codec: a part slot writes version 2, it round trips and re-encodes byte identical");
+        // a 1.4.0 codec (reads version 1 only): the block stays raw, the part destinations are not decoded, a resave writes it back byte identical
+        open::gModMaxVersion = 1;
+        auto pold = std::make_unique<PatchData>();
+        const bool oldLoad = open::decodePatch(pbytes.data(), pbytes.size(), *pold);
+        const bool oldKeeps = oldLoad && !open::modAnyOn(pold->mod) && encode(*pold) == pbytes;
+        auto vold = std::make_unique<PatchData>(); const bool v1load = open::decodePatch(full.data(), full.size(), *vold);
+        const bool v1same = v1load && open::modAnyOn(vold->mod) && encode(*vold) == full;
+        open::gModMaxVersion = 2;
+        check(oldKeeps, "part codec: a 1.4.0 codec keeps a version 2 block raw and writes it back byte identical");
+        check(v1same, "part codec: a 1.4.0 codec still reads and writes the version 1 patch (no change for patches without a part slot)");
+        // an Off slot that carries a kPart kind (the editor switched it Off) is not a part slot: version 1 or no field
+        auto dq = std::make_unique<PatchData>(*d); for (int s2 = 0; s2 < 4; s2++) { dq->mod[s2] = ModSlot{}; dq->mod[s2].kind = ModKind::kPart; }
+        check(encode(*dq) == plain, "part codec: Off slots with kind kPart write nothing");
+        // out of range indices are unresolved, not a crash
+        ModSlot bad; bad.type = ModType::kLfo; bad.kind = ModKind::kPart; bad.index = 9; open::modSanitize(bad);
+        check(open::modResolve(nullptr, bad) == -1 && bad.type == ModType::kLfo, "part codec: a part index past 3 resolves to nothing");
+        ModSlot bad2; bad2.type = ModType::kLfo; bad2.kind = ModKind(3); open::modSanitize(bad2);
+        check(bad2.type == ModType::kOff, "part codec: a kind past kPart is Off (as kind 2 was on 1.4.0)");
+      }
       // malformed inside its length: dropped, the file still loads
       for (const auto& bad64 : { std::vector<uint8_t>{ 0x82, 0x04, 0x05, 0x08, 0x01, 0x12, 0x05, 0x08 }, std::vector<uint8_t>{ 0x82, 0x04, 0x04, 0xFF, 0xFF, 0xFF, 0xFF } }) {
         std::vector<uint8_t> g = plain; g.insert(g.end(), bad64.begin(), bad64.end());
@@ -2564,7 +2696,7 @@ int main() {
           if (el) { ModSlot s; s.type = ModType::kLfo; open::modSetDest(*def, s, i); s.dest = -1; byIndex = byIndex && open::modResolve(def, s) == i; }
         }
         printf("  automation %-5s eligible %2d of %2d, wave group %d: %s\n", k.name, eligible, def->paramCount, nWave, wave.c_str());
-        never = never && n == eligible + open::kModMacros;
+        never = never && n == eligible + open::kModMacros + open::kModParts;
         for (int m = 0; m < open::kModMacros; m++) never = never && pick[nWave + m] == open::kModPickMacro + m;
         const int pinned = kWavePin.count(k.name) ? kWavePin.at(k.name) : -1;
         if (pinned >= 0 && pinned != nWave) { printf("  %s: wave group %d, pinned %d\n", k.name, nWave, pinned); never = false; }
@@ -2583,7 +2715,7 @@ int main() {
         bool hasA = false, hasB = false, noA = true, noB = true, hasCount = false;
         for (int i = 0; i < nw; i++) { hasA = hasA || withFiles[i] == 1; hasB = hasB || withFiles[i] == 4; }
         for (int i = 0; i < nn; i++) { hasCount = hasCount || noFiles[i] == 3; noA = noA && noFiles[i] != 1; noB = noB && noFiles[i] != 4; }
-        check(nw == 4 + open::kModMacros && nn == 2 + open::kModMacros && hasCount && hasA && hasB && noA && noB && open::waveFileShape(kFp[1]) && !open::waveFileShape(kFp[3]) && !open::waveFileShape(kFp[0]),
+        check(nw == 4 + open::kModMacros + open::kModParts && nn == 2 + open::kModMacros + open::kModParts && hasCount && hasA && hasB && noA && noB && open::waveFileShape(kFp[1]) && !open::waveFileShape(kFp[3]) && !open::waveFileShape(kFp[0]),
               "automation picker: wave file parameters are listed with files and left out without, other integers stay");
         check(!open::waveFileShape("A Wave", true, 0, 1024) && !open::waveFileShape("File", true, 0, 1024) && !open::waveFileShape("A File", true, 0, 1023) && open::waveFileShape("Osc 2 File", true, 0, 1024),
               "wave file parameter shape: name ends in ' File', integer, 0..1024");
@@ -2651,6 +2783,48 @@ int main() {
       const ModSlot off; op.setModSlot(0, off); blk7(); ser = open::testParams(0)->serial; int offBumps = 0;
       for (int b = 0; b < 50; b++) { blk7(); offBumps += open::testParams(0)->serial != ser; ser = open::testParams(0)->serial; }
       check(offBumps == 0 && endOf(cutoff) == base, "automation hook: every slot Off, the values are the patch's and serial stays");
+      // part destinations (kPart): a slot on Part Pan / Gain / sends hands its output to the audio engine (open::partAuto) and never touches a param
+      {
+        float pv[open::kModParts] = { 0, 0, 0, 0 };
+        check(open::partAuto(0, pv) == 0, "part automation: no part slot, no part output (the engine's per block check is one load)");
+        ModSlot pan; pan.type = ModType::kLfo; pan.shape = 3; pan.speed = 14; pan.amount = 50; open::modSetDest(acd, pan, open::kModPickPart + open::kPartPan);
+        check(pan.kind == ModKind::kPart && pan.dest == open::kPartPan && open::modPickCode(pan) == open::kModPickPart + open::kPartPan &&
+              !pan.name[0] && open::modResolve(&acd, pan) == open::kPartPan && open::modResolve(nullptr, pan) == open::kPartPan,
+              "part automation: the picker code sets kind kPart and index 0..3, no name, every engine resolves it (a placeholder too)");
+        op.setModSlot(0, pan);
+        ser = open::testParams(0)->serial; int pbumps = 0; float plo = 1e9f, phi = -1e9f; bool maskOk = true;
+        src7.send(MidiEvent::Type::kNoteOn, 0, 57, 100);
+        for (int b = 0; b < 100; b++) { blk7(); pbumps += open::testParams(0)->serial != ser; ser = open::testParams(0)->serial;
+          const uint8_t mk = open::partAuto(0, pv); maskOk = maskOk && mk == (1u << open::kPartPan); plo = std::min(plo, pv[open::kPartPan]); phi = std::max(phi, pv[open::kPartPan]); }
+        printf("  automation square on Part Pan (50 %%): offset %.1f .. %.1f pan points over 100 blocks, param serial bumps %d\n", plo, phi, pbumps);
+        check(maskOk && std::fabs(plo + 100.0f) < 0.01f && std::fabs(phi - 100.0f) < 0.01f, "part automation: a square at 50 % on Pan swings the part pan by -100 .. +100 points (range 200)");
+        check(pbumps <= 1 && endOf(cutoff) == base && std::memcmp(raw0, raw1, sizeof(float) * acd.paramCount) == 0,
+              "part automation: a part slot moves no engine param (the param refresh skip stays, no serial bump per block)");
+        // envelope on Gain: sustain 100 % at amount -25 % = -27 dB, and two slots on the same destination add up
+        ModSlot gain; gain.type = ModType::kEnv; gain.attack = 0; gain.decay = 0; gain.sustain = 100; gain.amount = -25; open::modSetDest(acd, gain, open::kModPickPart + open::kPartGain);
+        op.setModSlot(1, gain); op.setModSlot(0, off);
+        src7.send(MidiEvent::Type::kNoteOn, 0, 60, 100); for (int b = 0; b < 4; b++) blk7();
+        uint8_t mk = open::partAuto(0, pv);
+        check(mk == (1u << open::kPartGain) && std::fabs(pv[open::kPartGain] + 27.0f) < 0.01f, "part automation: an envelope on Gain at -25 % holds -27 dB while the note is held (range 108 dB)");
+        ModSlot gain2 = gain; gain2.amount = 10; op.setModSlot(2, gain2);
+        src7.send(MidiEvent::Type::kNoteOn, 0, 62, 100); for (int b = 0; b < 4; b++) blk7();
+        mk = open::partAuto(0, pv);
+        check(mk == (1u << open::kPartGain) && std::fabs(pv[open::kPartGain] + 27.0f - 10.8f) < 0.01f, "part automation: two slots on one destination add up");
+        ModSlot rv = pan; rv.shape = 2; open::modSetDest(acd, rv, open::kModPickPart + open::kPartReverb); op.setModSlot(3, rv);
+        for (int b = 0; b < 8; b++) blk7();
+        mk = open::partAuto(0, pv);
+        check(mk == ((1u << open::kPartGain) | (1u << open::kPartReverb)), "part automation: the mask names the destinations that have a slot (Gain and Reverb send)");
+        // Off: nothing is left (the engine clears the base value back in)
+        op.setModSlot(1, off); op.setModSlot(2, off); op.setModSlot(3, off); blk7();
+        check(open::partAuto(0, pv) == 0, "part automation: every part slot Off, no part output (the base value is back)");
+        // a slot on a param and one on a part destination at the same time, each in its place
+        ModSlot both = pan; both.shape = 3; open::modSetDest(acd, both, open::kModPickPart + open::kPartDelay); op.setModSlot(0, both);
+        ModSlot par; par.type = ModType::kLfo; par.shape = 3; par.speed = 14; par.amount = 40; open::modSetDest(acd, par, cutoff); op.setModSlot(1, par);
+        float clo = 1e9f, chi = -1e9f; for (int b = 0; b < 60; b++) { blk7(); clo = std::min(clo, endOf(cutoff)); chi = std::max(chi, endOf(cutoff)); }
+        mk = open::partAuto(0, pv);
+        check(mk == (1u << open::kPartDelay) && chi - clo > 0.3f * rng, "part automation: a param slot and a part slot together, the cutoff moves and the delay send is the part's");
+        op.setModSlot(0, off); op.setModSlot(1, off); blk7(); blk7();
+      }
       p7->setParamValue(cutoff, acd.params[cutoff].def, Patch::ParamChangeSource::kKnob); base = *p7->getParamValue(cutoff);
       // macro destination: Macro 1 (Cutoff, 0.4) at 0, a square on it moves cutoff by 0.4 of the range in the high half
       ModSlot mac; mac.type = ModType::kLfo; mac.shape = 3; mac.speed = 14; mac.amount = 100; open::modSetDest(acd, mac, open::kModPickMacro + 0);
@@ -2844,6 +3018,14 @@ int main() {
         open::SlotCfg row; oa.cfgFromData(*dd, row);
         ob.importData(*dd);
         check(std::memcmp(&row, ob.ownCfg(), sizeof(row)) == 0, "macros Patch FX: the bank row of a file equals the own config an import of the file makes (macros, destinations, flags)");
+        {   // a part destination goes through the same resolve path: the row of a file with a Part Pan slot equals the import's own config, partOn names the slot
+          for (int s3 = 0; s3 < open::kModSlots; s3++) dd->mod[s3] = ModSlot{};
+          dd->mod[1].type = ModType::kLfo; dd->mod[1].kind = ModKind::kPart; dd->mod[1].index = open::kPartPan; dd->mod[1].amount = 40;
+          open::SlotCfg prow; oa.cfgFromData(*dd, prow);
+          ob.importData(*dd);
+          check(std::memcmp(&prow, ob.ownCfg(), sizeof(prow)) == 0 && prow.partOn == 2 && prow.modOn == 0 && prow.mod[1].kind == ModKind::kPart && prow.mod[1].dest == open::kPartPan,
+                "part automation: the Patch FX bank row of a file with a Part Pan slot equals the own config of its import (partOn bit of the slot, modOn 0)");
+        }
         src7.send(MidiEvent::Type::kStop, 0, 0, 0); toIdle();
         open::patchBankSetLive(0, nullptr);
         i7->assignPatch(p7);

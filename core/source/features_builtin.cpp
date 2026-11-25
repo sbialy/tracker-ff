@@ -1,4 +1,5 @@
-#ifdef FEATURE_EXT_HOOKS
+#include "feature_flags.h"
+#ifdef FEATURE_FEATURES
 
 // Built-in features: restart mode, developer mode with the extension module, USB audio.
 
@@ -7,14 +8,16 @@
 #include "Platform.h"
 #include "TrackerImpl.h"
 #include "core/interface.h"
-#include "fx_auto_mute.h"
 #include "fileManagerDefs.h"
-#include "ext_hooks.h"
-#include "mtCapture.h"
 #include "mtChord.h"
 #include "midiRemote.h"
+#include "mtCapture.h"
+#ifdef FEATURE_FEATURES_FULL
+#include "fx_auto_mute.h"
+#include "ext_hooks.h"
 #include "mtSleep.h"
 #include "skipback.h"
+#endif
 
 namespace features
 {
@@ -22,11 +25,14 @@ namespace
 {
 const char* const kOnOff[] = { "Off", "On" };
 
+#ifdef FEATURE_FEATURES_FULL
 Platform* platform()
 {
     return TrackerImpl::getInstance()->getPlatform();
 }
+#endif
 
+#ifdef FEATURE_FEATURES_FULL   // the MK66 set: restart mode, developer mode, USB audio and drive
 // ---- restart mode (RestartMode.h): on = a power off restarts the unit
 const char* const kReturn[] = { "Stay off", "Start" };
 const char* const kButton[] = { "Turn off", "Restart" };
@@ -154,6 +160,7 @@ const feat_desc kUsbDrive = {
     nullptr, 0, nullptr, usbDriveApply, nullptr, nullptr, nullptr, usbDriveRunning,
 };
 #endif
+#endif   // FEATURE_FEATURES_FULL
 
 // ---- Chord names: the pattern grid shows a MIDI Chord FX value as a short chord name (on, the default) or as the stock interval
 // digits (off). Display only, the project and the playback do not change.
@@ -190,6 +197,7 @@ const feat_desc kPlayLock = {
     nullptr, 0, playLockBoot, playLockApply, nullptr, nullptr, nullptr, nullptr,
 };
 
+#ifdef FEATURE_FEATURES_FULL
 // ---- Demo start: a start with an empty project that leaves the Workspace of the last session alone. The Workspace folder is parked
 // as Workspace.keep, the unit finds no Workspace and opens a new project, which autosaves into a fresh Workspace as always. Switched off,
 // the demo Workspace is dropped and Workspace.keep comes back. Whatever the demo made is gone unless it was saved to Projects.
@@ -223,6 +231,7 @@ const feat_desc kDemo = {
     "On: the unit starts with an empty project and leaves your last Workspace alone. Off: it comes back. Takes effect at the next start.",
     FEAT_F_RESTART, 0, nullptr, 0, demoBoot, nullptr, nullptr, nullptr, nullptr, nullptr,
 };
+#endif   // FEATURE_FEATURES_FULL
 
 // ---- MIDI remote (midiRemote.h): a controller on one channel plays the Tracker's keys and pads, CC 96 and 97 turn the encoder
 const feat_param kMidiRemoteParams[] = {
@@ -246,6 +255,7 @@ const feat_desc kMidiRemote = {
     "On: notes on one MIDI channel press the Tracker's keys and pads, CC 96 and 97 turn the encoder.", 0, 2,
     kMidiRemoteParams, 0, midiRemoteBoot, midiRemoteApply, nullptr, nullptr, nullptr, nullptr,
 };
+#ifdef FEATURE_FEATURES_FULL
 #ifdef FEATURE_SKIPBACK
 // ---- Skip-back: the last seconds of the master output in an SDRAM ring (skipback.h), Shift + Sample Rec saves them to /Skipback.
 // Off by default: the audio block returns at the first test and the card is not touched.
@@ -285,17 +295,21 @@ const feat_desc kSkipback = {
 };
 #endif
 
-// ---- Capture: the pattern editor keeps what is played (green mode) and under-screen button 3 puts the last pass of the pattern
-// into the copy buffer while the pattern plays (the stock Paste places it). Off by default: the button stays the stock (greyed Fill) one.
-const feat_param kCaptureParams[] = {
-    { "idle", "Idle time", FEAT_P_INT, kCaptureIdleMin, kCaptureIdleMax, kCaptureIdleDefault, 0, 0, nullptr, 0,
-      "Seconds without a played note after which Capture forgets the notes, so a Capture takes only the latest phrase. 20 by default." },
-};
+// ---- Restart now: the power press sequence (bar, Workspace save, files) ending in a restart
+void restartNowFn()
+{
+    lowPower.requestRestartOnce();
+    mtInterface.handlePowerButtonAction(1);
+}
+#endif   // FEATURE_FEATURES_FULL
 
-void captureApply(uint8_t on, const uint8_t* v, uint8_t)
+// ---- Capture (Move style, ref/capture-move-redesign.md): every played note is kept, under-screen button 3 of the pattern editor puts the
+// take into the destination track of the pattern while it plays (one Undo, the Copy buffer is not touched). On by default (decision D1, the row is
+// a kill switch only) and listed on every card and every image (2.0.0, user decision 2026-11-23: no /.develop gate). Version 3: a file of an
+// older version loses its "on" line (features.cpp), so a card that carries "on 0" from the gated builds starts with Capture on.
+void captureApply(uint8_t on, const uint8_t*, uint8_t)
 {
     captureFeatureOn = on != 0;
-    captureIdleSec = v[0] < kCaptureIdleMin ? kCaptureIdleMin : (v[0] > kCaptureIdleMax ? kCaptureIdleMax : v[0]);
 }
 
 void captureBoot(uint8_t on, const uint8_t* v)
@@ -304,22 +318,16 @@ void captureBoot(uint8_t on, const uint8_t* v)
 }
 
 const feat_desc kCapture = {
-    sizeof(feat_desc), FEAT_ABI, 1, "capture", "Capture",
-    "Pattern editor, play mode: button 3 Capture puts the last pass you played on the clipboard. Paste with Shift + Copy. "
-    "Hold button 3 to forget the played notes. The square in the top bar shows the state.", 0, 1,
-    kCaptureParams, 0, captureBoot, captureApply, nullptr, nullptr, nullptr, nullptr,
+    sizeof(feat_desc), FEAT_ABI, 3, "capture", "Capture",
+    "Keeps every note you play. Pattern editor, play mode: button 3 Capture writes it into the track you are on, one Undo. "
+    "Hold button 3 to forget the take. After 30 s with no note held the next note starts a new take.", FEAT_F_DEFAULT_ON, 0,
+    nullptr, 0, captureBoot, captureApply, nullptr, nullptr, nullptr, nullptr,
 };
-
-// ---- Restart now: the power press sequence (bar, Workspace save, files) ending in a restart
-void restartNowFn()
-{
-    lowPower.requestRestartOnce();
-    mtInterface.handlePowerButtonAction(1);
-}
 }   // namespace
 
 void registerBuiltins()
 {
+#ifdef FEATURE_FEATURES_FULL
     const int restart = add(&kRestart);
     const int dev = add(&kDevelop);
     if (platform()->usbAudioBuilt()) add(&kUsbAudio);
@@ -333,17 +341,24 @@ void registerBuiltins()
 #ifdef FEATURE_SKIPBACK
     add(&kSkipback);
 #endif
-    const int capture = add(&kCapture);
     // decision D8: the row only with /.develop on the card, or while the feature is on (so it can be switched off again).
-    // Restart mode, Demo start and Capture follow the same rule, hiding only drops the row from the list, the feature itself is unchanged
+    // Restart mode and Demo start follow the same rule, hiding only drops the row from the list, the feature itself is unchanged.
+    // Capture is not part of this rule: it is listed on every card
     if (!platform()->getFileSystem()->exists("/.develop"))
     {
         hideUnlessOn(restart);
         hideUnlessOn(dev);
         hideUnlessOn(demo);
-        hideUnlessOn(capture);
     }
+    add(&kCapture);
     setRestartNow(restartNowFn);
+#else
+    // Tracker+ and Mini: the features of the core that need no restart, no USB audio and no extension module
+    add(&kChordNames);
+    add(&kPlayLock);
+    add(&kMidiRemote);
+    add(&kCapture);
+#endif
 }
 }   // namespace features
 

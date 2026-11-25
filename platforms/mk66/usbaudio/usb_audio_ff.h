@@ -34,6 +34,17 @@ void ffUsbAudioStart(void);
 #define FF_USB_AUDIO_STATS 12
 void ffUsbAudioGetStats(uint32_t* stats);
 
+#ifdef FEATURE_USB_AUDIO_IN
+// FEATURE_USB_AUDIO_IN (computer -> Tracker): the recorder's USB source. ffUsbAudioInWant(1) while the recorder listens to it (the
+// OUT packets then fill the ring, 0 otherwise: the USB interrupt drops them at once). ffUsbAudioInBlock(): audio block (I2S
+// interrupt), the 128 interleaved stereo frames for the audio graph (silence until the ring is primed), nullptr while not wanted,
+// the USB audio function is off, or before the SDRAM is up.
+void ffUsbAudioInWant(int on);
+const int16_t* ffUsbAudioInBlock(void);
+// ring fill, packets, overflows, underruns, repeated frames, skipped frames (host test and console)
+void ffUsbAudioInStats(uint32_t* s6);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,0 +1,23 @@
+# P6 round 4: the Master Inserts page on Tracker+. Shift + Saturation (F6) on the Master screen opens the page, Down in the Insert 1 list picks Dirt (its parameter Drive shows)
+# (the only master insert on the flow's card), which also switches the Saturation to Inserts. The Master key cycle then reaches the Inserts stop.
+# plus_flows.sh stages the card (/Plugins/Master/dirt.plg, the pinned effects-os file) and reads the slot afterwards: `inserts` must say 1=running:Dirt.
+# Replay: plus_flows.sh plus
+title: Master Inserts on Tracker+ (P6 r4)
+check: texts
+pause: 80ms
+
+use boot-to-pattern
+tap Master
+wait 800ms
+use shift-tap key=F6 wait=1s
+expect text "Inserts"
+tap F2
+wait 500ms
+tap Down
+wait 3000ms
+expect text "Drive"
+shot dirt-picked
+use goto-pattern
+use goto-master title="Inserts"
+expect text "Drive"
+shot inserts-cycle

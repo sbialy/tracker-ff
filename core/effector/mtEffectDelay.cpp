@@ -30,7 +30,7 @@ bool mtEffectDelay::startProcess()
 
     uint32_t timeInSamples = (uint32_t)((float)effectDelayParams.time * MILISECOND_SAMPLES);
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         channelParams[channel].currentDstAddr = processed[channel].selection.addr;
         channelParams[channel].lastSrcAddr =
@@ -58,14 +58,14 @@ int32_t mtEffectDelay::processBlock()
 
     int32_t processedBlockLength = 0;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         processedBlockLength = 0;
         for (uint32_t i = 0; i < 8192; i++)
         {
             if ((channelParams[channel].sourceVoicePointer[lastVoiceIdx] <
                  channelParams[channel].lastSrcAddr) &&
-                (channelParams[channel].processedSamples <= EDIT_BUFF_SIZE / 2))
+                (channelParams[channel].processedSamples <= maxFrames()))
             {
                 int32_t currentSum = 0;
 

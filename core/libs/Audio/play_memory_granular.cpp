@@ -35,8 +35,8 @@ AUDIO_CORE_FLASH void AudioPlayMemory::playGranular(uint8_t instrIdx, int8_t not
 
     if (instrIdx > kSampleInstrumentsCount - 1)
         instrIdx = kSampleInstrumentsCount - 1;
-    if (note > MAX_NOTE)
-        note = MAX_NOTE;
+    if (note > keyLimit)
+        note = keyLimit;
 
     lastInstrIdxInPlay = currentInstrIdxInPlay;
     currentInstrIdxInPlay = instrIdx;
@@ -248,9 +248,9 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopForwardNormal
                     if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                     {
                         pitchControl += pitchSmoothingControl;
-                        if (pitchControl > notes[MAX_NOTE - 1])
+                        if (pitchControl > notes[keyLimit - 1])
                         {
-                            pitchControl = notes[MAX_NOTE - 1];
+                            pitchControl = notes[keyLimit - 1];
                             pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                         }
                         else if (pitchControl < notes[MIN_NOTE])
@@ -460,9 +460,9 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopForwardRevers
                     if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                     {
                         pitchControl += pitchSmoothingControl;
-                        if (pitchControl > notes[MAX_NOTE - 1])
+                        if (pitchControl > notes[keyLimit - 1])
                         {
-                            pitchControl = notes[MAX_NOTE - 1];
+                            pitchControl = notes[keyLimit - 1];
                             pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                         }
                         else if (pitchControl < notes[MIN_NOTE])
@@ -719,9 +719,9 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopBackwardNorma
                     if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                     {
                         pitchControl += pitchSmoothingControl;
-                        if (pitchControl > notes[MAX_NOTE - 1])
+                        if (pitchControl > notes[keyLimit - 1])
                         {
-                            pitchControl = notes[MAX_NOTE - 1];
+                            pitchControl = notes[keyLimit - 1];
                             pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                         }
                         else if (pitchControl < notes[MIN_NOTE])
@@ -1026,9 +1026,9 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopBackwardRever
                     if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                     {
                         pitchControl += pitchSmoothingControl;
-                        if (pitchControl > notes[MAX_NOTE - 1])
+                        if (pitchControl > notes[keyLimit - 1])
                         {
-                            pitchControl = notes[MAX_NOTE - 1];
+                            pitchControl = notes[keyLimit - 1];
                             pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                         }
                         else if (pitchControl < notes[MIN_NOTE])
@@ -1334,9 +1334,9 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopPingPongNorma
                     if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                     {
                         pitchControl += pitchSmoothingControl;
-                        if (pitchControl > notes[MAX_NOTE - 1])
+                        if (pitchControl > notes[keyLimit - 1])
                         {
-                            pitchControl = notes[MAX_NOTE - 1];
+                            pitchControl = notes[keyLimit - 1];
                             pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                         }
                         else if (pitchControl < notes[MIN_NOTE])
@@ -1642,9 +1642,9 @@ AUDIO_CORE_FLASH audio_block_t* AudioPlayMemory::updateGranularLoopPingPongRever
                     if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                     {
                         pitchControl += pitchSmoothingControl;
-                        if (pitchControl > notes[MAX_NOTE - 1])
+                        if (pitchControl > notes[keyLimit - 1])
                         {
-                            pitchControl = notes[MAX_NOTE - 1];
+                            pitchControl = notes[keyLimit - 1];
                             pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                         }
                         else if (pitchControl < notes[MIN_NOTE])

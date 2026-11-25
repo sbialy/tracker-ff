@@ -5,7 +5,7 @@
 // the heap is full or in pieces (platforms/mk66/3rdparty/teensy_core/new.cpp). The Mac had a 64 bit system malloc that never runs out, so a
 // Model roll that needed a 4.7 KB block next to a fragmented heap passed on the Mac and faulted on the unit.
 //
-// UISHOT_HEAP=device   serve operator new / delete of the firmware code from a fixed arena of UISHOT_HEAP_BYTES with the allocation policy of
+// UISHOT_HEAP=device   (the default, UISHOT_HEAP=host turns it off; always off with SAN= and in the PLATFORM=IMX sim) serve operator new / delete of the firmware code from a fixed arena of UISHOT_HEAP_BYTES with the allocation policy of
 //                      newlib-nano: address ordered free list, first fit, a split hands out the HIGHER part of the chunk, neighbours merged
 //                      on free, 8 byte chunk overhead, 8 byte alignment, 16 byte minimum chunk. Returns nullptr on exhaustion.
 // UISHOT_HEAP_BYTES    heap size in bytes. Default 53,692 = _estack - 232 (stack in use at the last _sbrk of Profiler::init) - 8192 (STACK_MARGIN)
@@ -26,6 +26,14 @@
 // the binary by the Makefile). malloc() called directly (Profiler.cpp, plug_host.cpp, plug_bench.cpp) is not modelled. Not modelled either:
 // libc's own allocations (printf buffers), the FatFs and USB buffers, anything before Profiler::init.
 // Not with SAN= builds (ASan replaces operator new, the two do not compose): the gate runs both builds.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define HEAPMODEL_ASAN 1
+#endif
+#endif
+#ifndef HEAPMODEL_ASAN
+#define HEAPMODEL_ASAN 0
+#endif
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <execinfo.h>
@@ -280,8 +288,15 @@ Model& model()
         t_in = true;   // the model's own tables are not the firmware's allocations
         g_m = new (malloc(sizeof(Model))) Model();
         Model& m = *g_m;
+        // on by default in the original's sim (UISHOT_HEAP=host for the unlimited system heap), never under ASan (it owns operator new) and
+        // not in the Tracker+ sim (the model is the MK66 heap)
         const char* e = getenv("UISHOT_HEAP");
-        m.on = e && !strcmp(e, "device");
+#if HEAPMODEL_ASAN || defined(UISHOT_PLUS)
+        m.on = false;
+        (void)e;
+#else
+        m.on = !e || !strcmp(e, "device");
+#endif
         if (m.on)
         {
             m.arena = false;

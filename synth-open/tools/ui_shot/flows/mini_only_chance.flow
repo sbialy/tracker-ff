@@ -1,0 +1,15 @@
+# IMX round 4: Chance FX (and the COND gate). The setup pokes put C4 on step 1 of three tracks of Synth 1: track 1 has Chance 0 %, track 2 has no FX, track 3 has COND 0 with no FX in the other slot. Play runs the pattern for three passes, the trace counts the note ons the synth saw per note: the Chance 0 % note never sounds, the other two do. The keys are panel keys only (Pattern, Play)
+# Replay: plus_flows.sh mini  (setup pokes in plus_flows.sh, the poke trace UISHOT_TRACE_FFSTATE is the read, poke_ok in plus_flows.sh)
+title: Chance FX on step notes (Tracker Mini, IMX round 4)
+check: texts
+pause: 80ms
+
+wait 1500ms
+tap Fn1
+wait 3000ms
+tap Play
+wait 7000ms
+shot chance-playing
+tap Play
+wait 1500ms
+shot chance-stopped

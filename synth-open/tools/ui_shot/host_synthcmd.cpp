@@ -28,6 +28,7 @@
 #include "open_load.h"
 #include "plug_host.h"
 
+#include <algorithm>
 #include <math.h>
 #include <sstream>
 #include <stdio.h>
@@ -36,6 +37,36 @@
 #include <vector>
 
 void hostRun(uint32_t ms);   // ui_shot_main.cpp: the main loop for ms virtual milliseconds
+
+#ifndef FEATURE_SYNTH_OPEN
+// The plus pin (PLATFORM=IMX BRIDGE=1, the plus sim on the stock synth stack, no open stack): what these commands read from the open stack, from the core's
+// Synth instead. The engine name is the lib's (Synth::getInstrumentTypeName, polysynth::Synth::getInstrumentName), the values are the stored
+// values of the part's polysynth::Patch, nothing counts sounding voices
+#include "Synth.h"
+namespace polysynth::open
+{
+const EngineDef* partPatch(int part, const float** values, int* count)
+{
+    static EngineDef d;
+    static std::string name;
+    static float v[256];
+    if (part < 0 || part >= kSynthParts) return nullptr;
+    ::Synth* s = instrumentEditor.getSynth();
+    const int ti = s->getInstrumentTypeIdx(part);
+    if (ti < 0) return nullptr; // a Missing part (core/synth/synth_types.h) has no patch of its engine
+    name = s->getInstrumentTypeName(ti);
+    d = EngineDef{};
+    d.name = name.c_str();
+    polysynth::Patch& p = s->getPatch(part);
+    const int n = std::min(int(p.getMetadata().params.size()), 256);
+    for (int i = 0; i < n; i++) v[i] = p.getParamValue(i).value_or(__builtin_nanf(""));
+    if (values) *values = v;
+    if (count) *count = n;
+    return &d;
+}
+int voicesSounding() { return 0; }
+}
+#endif
 
 namespace
 {
@@ -52,7 +83,11 @@ bool viewNow(std::vector<int>& pts, const polysynth::open::EngineDef** dOut, con
     int count = 0;
     const polysynth::open::EngineDef* d = polysynth::open::partPatch(part, &values, &count);
     int8_t out[kPoints] = {};
+#ifdef FEATURE_PLUG_HOST
     const bool ok = plug::synthView(d, values, count, out, kPoints);
+#else
+    const bool ok = false;   // the cycle view is a plugin engine feature, no plugin host in the plus sim
+#endif
     Exempt ex;
     pts.assign(out, out + kPoints);
     if (dOut) *dOut = d;
@@ -63,9 +98,13 @@ bool viewNow(std::vector<int>& pts, const polysynth::open::EngineDef** dOut, con
 
 bool shown()
 {
+#ifndef FEATURE_PLUG_HOST
+    return false;   // the plugin engine cycle view is a plugin host control (the plus sim is built without it)
+#else
     const hControl h = instrumentEditor.synthViewControl;
     if (h < 0 || h >= controlsCount || display.controlsTable[h] == nullptr) return false;
     return display.controlsTable[h]->isStyleSet(controlStyleShow);
+#endif
 }
 }   // namespace
 
@@ -165,7 +204,8 @@ bool hostSynthCommand(const std::string& c, std::istringstream& is)
         return true;
     }
     if (c == "pickmodel")
-    {   // the Params page of a synth part: step the model list (Down, then Up) until the part's engine is NAME (3 s per step to attach)
+    {   // the Params page of a synth part: step the model list (Down, then Up) until the part's engine is NAME (3 s per step to attach).
+        // As many steps each way as the list has rows, so every row is reached from any start (was 12 each: rows past start + 12 were not)
         std::string want;
         is >> want;
         const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
@@ -175,9 +215,10 @@ bool hostSynthCommand(const std::string& c, std::istringstream& is)
             const polysynth::open::EngineDef* d = polysynth::open::partPatch(part, &v, &n);
             return d && d->name ? d->name : "-";
         };
-        for (int k = 0; k < 24 && name() != want; k++)
+        const int rows = std::max(int(instrumentEditor.modelListData.length), 12);
+        for (int k = 0; k < 2 * rows && name() != want; k++)
         {
-            const int id = k < 12 ? 31 : 26;   // Down, then Up
+            const int id = k < rows ? 31 : 26;   // Down, then Up
             hostp::setHeld(id, true);
             mtInterface.buttonChange(uint8_t(id), buttonPress);
             hostRun(40);

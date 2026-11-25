@@ -17,7 +17,10 @@
 # sources). Ends with "RESULT: GREEN" (exit 0) or "RESULT: RED (n failing of m)".
 #   BIN   the ui_shot binary, default build/ui-shot/ui_shot (make -C synth-open/tools/ui_shot)
 #   EXT=1 the EXTHOOKS=1 binary (build/ui-shot-ext/ui_shot): the sources behind the renamed members, modit_dispatch.cpp and the five forwarders of
-#         the image, as in the release image. The card gets Plugins/Ext/modit.plg (make_host_module.py), the goldens are the same files
+#         the image, as in the release image. The card gets Plugins/Ext/extras.plg (make_host_module.py), the goldens are the same files
+#         HOSTCON=1 (with EXT=1): develop mode with the console module loaded too (/.develop, a stand-in Plugins/Ext/module.plg at the console
+#         slot address, UISHOT_HOST_CONSOLE=1): both modules pass the loader rules, the goldens must not change, and every run must end with the
+#         console's hooks and the modit hook in the table (the coexistence of the console slot and the release region, ext_module.cpp)
 #         MODIT_PLG=FILE  the card gets that file instead (the release image's own modit.plg: with BIN_PREBUILT=1 BIN=<pinned emulator ui_shot>, whose
 #         host loader rules (MODIT_ID, MODIT_RUN of emu-release.sh) accept only the file of its release image, not the stand-in)
 set -uo pipefail
@@ -29,9 +32,10 @@ BIN="${BIN:-$ROOT/build/ui-shot${EXT:+-ext}/ui_shot}"
 UPDATE=0; [ "${1:-}" = "--update" ] && UPDATE=1
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/modit_golden.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
+if [ -n "${UI_SHOT_BIN:-}" ]; then BIN="$UI_SHOT_BIN"; BIN_PREBUILT=1; fi   # UI_SHOT_BIN: a prebuilt binary of the flavour (EXT=1: EXTHOOKS=1), no make
 if [ -z "${BIN_PREBUILT:-}" ]; then
     mkdir -p "$ROOT/build"
-    env -u EXT make -s -C "$HERE" ${EXT:+EXTHOOKS=1} -j4 >"$ROOT/build/ui-shot.make.log" 2>&1 || { tail -30 "$ROOT/build/ui-shot.make.log"; exit 2; }
+    env -u EXT make -s -C "$HERE" ${EXT:+EXTHOOKS=1} -j"$(sh "$HERE/../jobs.sh" n)" >"$ROOT/build/ui-shot.make.log" 2>&1 || { tail -30 "$ROOT/build/ui-shot.make.log"; exit 2; }
 fi
 [ -x "$BIN" ] || { echo "no ui_shot binary $BIN"; exit 2; }
 
@@ -42,11 +46,19 @@ fail() { checks=$((checks+1)); fails=$((fails+1)); printf 'FAIL  %s\n      %s\n'
 # a staged card: Mods/ holds the fixtures (and the extra files of a scenario)
 card() {
     local sd="$WORK/$1"; rm -rf "$sd"; mkdir -p "$sd/Mods"; cp "$MODIT"/fixtures/golden.* "$sd/Mods/"
-    if [ -n "$EXT" ]; then mkdir -p "$sd/Plugins/Ext"; if [ -n "${MODIT_PLG:-}" ]; then cp "$MODIT_PLG" "$sd/Plugins/Ext/modit.plg"; else python3 -I "$MODIT/make_host_module.py" "$sd/Plugins/Ext/modit.plg"; fi; fi
+    if [ -n "$EXT" ]; then mkdir -p "$sd/Plugins/Ext"; if [ -n "${MODIT_PLG:-}" ]; then cp "$MODIT_PLG" "$sd/Plugins/Ext/extras.plg"; else python3 -I "$MODIT/make_host_module.py" "$sd/Plugins/Ext/extras.plg"; fi; fi
+    if [ -n "${HOSTCON:-}" ]; then : >"$sd/.develop"; python3 -I "$MODIT/make_host_module.py" "$sd/Plugins/Ext/module.plg" --run 0x70D8A000; fi
     echo "$sd"
 }
 manifest() { ( cd "$1" && find "$2" -type f ! -name '._*' | LC_ALL=C sort | while read -r f; do printf '%s %s %s\n' "$(stat -f %z "$f")" "$(shasum -a 256 "$f" | cut -c1-64)" "$f"; done ); }
-run() { ASAN_OPTIONS=detect_leaks=0 "$BIN" "$1" "wait 500; $2" 2>"$WORK/err.txt" | grep -E '^mod(import|export) '; }
+hostcon_check() {   # HOSTCON=1: the console module was loaded and kept its hooks, the modit hook is set
+    [ -n "${HOSTCON:-}" ] || return 0
+    local st; st="$(cat "$1/Plugins/Ext/status.txt" 2>/dev/null)"
+    if grep -q 'host console: update calls [1-9][0-9]*, update hook console, log hook console, modit hook set' "$WORK/err.txt" && case "$st" in loaded*) true;; *) false;; esac; then
+        echo "ok    console loaded beside extras.plg ($(grep -o 'update calls [0-9]*' "$WORK/err.txt"), $st)" >>"$WORK/hostcon.log"
+    else echo "FAIL  console and extras.plg together: status: $st | $(grep 'host console' "$WORK/err.txt")" >>"$WORK/hostcon.log"; fi
+}
+run() { env ${HOSTCON:+UISHOT_HOST_CONSOLE=1} ASAN_OPTIONS=detect_leaks=0 "$BIN" "$1" "wait 500; $2" 2>"$WORK/err.txt" | grep -E '^mod(import|export) '; hostcon_check "$1"; }
 # compare NAME MANIFEST_FILE: against goldens/NAME.txt, or write it with --update
 golden() {
     local g="$MODIT/goldens/$1.txt"
@@ -81,5 +93,11 @@ case "$out" in *started*) manifest "$sd" Workspace >"$WORK/g5b.txt"; golden impo
 sd="$(card g5c)"; out="$(run "$sd" "modimport Mods nothere.it")"; echo "   $out"
 case "$out" in *started*) manifest "$sd" Workspace >"$WORK/g5c.txt"; golden import_missing "$WORK/g5c.txt";; *) fail "G5c" "$out";; esac
 
+if [ -n "${HOSTCON:-}" ]; then   # the runs happen in command substitutions: their coexistence checks are counted here
+    n_ok=$(grep -c '^ok' "$WORK/hostcon.log" 2>/dev/null); n_bad=$(grep -c '^FAIL' "$WORK/hostcon.log" 2>/dev/null)
+    grep '^FAIL' "$WORK/hostcon.log"; [ "${n_ok:-0}" -gt 0 ] || { echo "FAIL  no coexistence check ran"; n_bad=$((n_bad+1)); }
+    echo "coexistence: $n_ok runs with the console and extras.plg loaded together, $n_bad failing"
+    checks=$((checks+n_ok+n_bad)); fails=$((fails+n_bad))
+fi
 if [ "$fails" -eq 0 ]; then echo "RESULT: GREEN"; exit 0; fi
 echo "RESULT: RED ($fails failing of $checks)"; exit 1

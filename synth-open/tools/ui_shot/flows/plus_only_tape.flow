@@ -1,0 +1,14 @@
+# IMX round 4: Tape FX on a sample track. Instrument 1 becomes a looping sine, track 1 plays it on step 1 and a Tape run-down sits on step 5. The trace follows the voice of track 1: it starts, stops on the Tape step while the pattern runs on, starts again on the next pass (starts counts)
+# Replay: plus_flows.sh plus  (setup pokes in plus_flows.sh, the poke trace UISHOT_TRACE_FFSTATE is the read, poke_ok in plus_flows.sh)
+title: Tape FX stops a sample voice (Tracker+, IMX round 4)
+check: texts
+pause: 80ms
+
+use boot-to-pattern
+wait 3000ms
+tap Play
+wait 7000ms
+shot tape-playing
+tap Play
+wait 1500ms
+shot tape-stopped

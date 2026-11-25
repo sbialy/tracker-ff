@@ -8,9 +8,7 @@
 // limiters, insert 1 first.
 #pragma once
 
-#if defined(FEATURE_PLUG_HOST) && !defined(FEATURE_SYNTH_OPEN)
-#error "PLUG_HOST=1 needs SYNTH_OPEN=1: the sidecar hooks live in the open synth paths"
-#endif
+#include "../core/include/ff_config.h" // refuses PLUG_HOST=1 without SYNTH_OPEN=1
 
 #include "../core/libs/Audio/duck_math.h"
 #include "plug/plug_abi.h"
@@ -184,8 +182,8 @@ bool safeMode();
 const char* safeReason();            // "" or why: the crash marker named a plugin, or Shift was held at power on
 
 // ---- project sidecars (the file manager calls these, dir is "Workspace" or a project folder). Two files travel with a project:
-// plugins.txt (the master inserts, plug_sidecar.h) and project.mtff (the other FF settings of the project: the Strum ramp depth,
-// plug_mtff.h). Every hook below does both. Paths longer than the file manager's 255 bytes are refused (plug_sidecar_io.h kPathMax).
+// plugins.txt (the master inserts, plug_sidecar.h, the hooks below) and project.mtff (the other FF settings of the project: the project
+// store of core/FileManager/projectSidecar.h, which ff_hooks.h calls next to these). Paths longer than the file manager's 255 bytes are refused (plug_sidecar_io.h kPathMax).
 constexpr const char* kSidecarName = "plugins.txt";
 // after a project load from the Workspace: read the sidecar, queue the loads (bypassed ones too), turn a format 1 sidecar's
 // Hard Clip into kSatInserts (insertsOnAfterLoad), a built-in Dirt entry of an FF build into Inserts with Dirt (dirtMigrate,
@@ -197,20 +195,11 @@ bool projectSave(const char* dir);
 // the next projectLoaded start empty and keeps the project's file (no save writes over it, plug_sidecar_io.h kStale).
 bool sidecarOpen(const char* projectDir, const char* workspaceDir);
 bool sidecarToProject(const char* workspaceDir, const char* projectDir);
-// The project.mt just read or written: the CRC32 in its last four bytes and its size. project.mtff stores them (its stamp) and compares
-// them at load: a different one means the project.mt was written by something else (plug_mtff.h). Called by the file manager.
-void projectStamp(uint32_t crc, uint32_t size);
-// A new project's first project.mt is written: write its project.mtff (the new project's defaults) with that stamp
-void newProjectSaved(const char* dir);
-// The header of the project.mtff the last project load read (plug_mtff.h, Versions): the Tracker FF version that wrote it as
+// The header of the project.mtff the last project load read (mtff_codec.h, Versions): the Tracker FF version that wrote it as
 // (major << 16) | (minor << 8) | patch, 0 = no file or a writer that did not say (a dev build), and its format version (1 for a bare
 // "tffproj 1", 0 = no file read). The one API for code that behaves differently for files of older or newer builds
 uint32_t mtffWriterVersion();
 int mtffFormatVersion();
-// The on screen notice of a project open (File screen, USB console: sidecarOpen) that found a project.mtff of a newer writer (same format:
-// settings applied, unknown lines kept) or of a newer format (refused, never rewritten). True once per such open and never after an
-// autosave or a Workspace reload: fills two lines for the popup (core/interface/core/interfaceMisc.cpp), the host.txt and log lines stay
-bool takeOpenNotice(char* line1, int cap1, char* line2, int cap2);
 // The Project Settings page: the Strum ramp depth 0..100 as the project holds it, and a new one (the project is marked changed by the
 // caller)
 int strumRampDepth();
@@ -219,8 +208,6 @@ void setStrumRampDepth(int pct);
 // without the synth always answers 0)
 int macroMode();
 void setMacroMode(int mode);
-// A project is closing (open or new, before its files load): the settings that act while files load go back to the old behaviour
-void projectClosing();
 
 // ---- boot and main loop (Tracker.cpp)
 void boot(Platform* platform);   // end of TrackerImpl::init: the bench (FEATURE_PLUG_BENCH), crash marker, index

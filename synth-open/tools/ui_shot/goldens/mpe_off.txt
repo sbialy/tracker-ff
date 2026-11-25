@@ -1,0 +1,39 @@
+midi pb 4000 ch 1
+midi on 84 127 ch 1
+midi cc 1 40 ch 1
+midi on 88 127 ch 1
+midi on 91 127 ch 2
+midi on 94 127 ch 1
+midi pb -3192 ch 3
+midi off 84 ch 1
+midi on 86 127 ch 3
+midi pb 4000 ch 1
+midi off 86 ch 3
+midi on 84 127 ch 1
+midi cc 1 40 ch 1
+midi off 88 ch 1
+midi on 88 127 ch 1
+midi off 91 ch 2
+midi on 91 127 ch 2
+midi off 94 ch 1
+midi on 94 127 ch 1
+midi pb -3192 ch 3
+midi off 84 ch 1
+midi on 86 127 ch 3
+midi pb 4000 ch 1
+midi off 86 ch 3
+midi on 84 127 ch 1
+midi cc 1 40 ch 1
+midi off 88 ch 1
+midi on 88 127 ch 1
+midi off 91 ch 2
+midi on 91 127 ch 2
+midi off 94 ch 1
+midi on 94 127 ch 1
+midi pb -3192 ch 3
+midi off 84 ch 1
+midi on 86 127 ch 3
+midi off 86 ch 3
+midi off 88 ch 1
+midi off 91 ch 2
+midi off 94 ch 1

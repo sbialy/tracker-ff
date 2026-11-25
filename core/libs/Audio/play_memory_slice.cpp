@@ -9,8 +9,8 @@ AUDIO_CORE_FLASH void AudioPlayMemory::playSlice(uint8_t instrIdx, int8_t note)
 
     if (instrIdx > kSampleInstrumentsCount - 1)
         instrIdx = kSampleInstrumentsCount - 1;
-    if (note > MAX_NOTE)
-        note = MAX_NOTE;
+    if (note > keyLimit)
+        note = keyLimit;
 
     lastInstrIdxInPlay = currentInstrIdxInPlay;
     currentInstrIdxInPlay = instrIdx;

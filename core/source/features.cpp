@@ -1,4 +1,5 @@
-#ifdef FEATURE_EXT_HOOKS
+#include "feature_flags.h"
+#ifdef FEATURE_FEATURES
 
 #include "features.h"
 
@@ -8,7 +9,11 @@
 
 #ifndef FEATURES_TEST
 #include "Platform.h"
+#ifdef FEATURE_PLUG_HOST
 #include "plug_host.h"   // plug::writeText / readText: <path>.tmp, read back, replace with .bak (power cut safe)
+#else
+#error "features.cpp: the Features registry stores its files through the plugin host's writeText (PLUG_HOST=1, Tracker+ and Mini too)"
+#endif
 #endif
 
 #if defined(__arm__) && !defined(FEATURES_TEST)
@@ -98,6 +103,8 @@ void parse(Entry& e, char* t, int n)
     t[n < kFileMax ? n : kFileMax - 1] = 0;
     int stateN = 0;
     bool first = true;
+    int fileVer = 0;       // the "version" line (0: none)
+    int fileOn = -1;       // the "on" line (-1: none or not 0/1)
     for (char* line = t; line && *line;)
     {
         char* next = strchr(line, '\n');
@@ -118,7 +125,13 @@ void parse(Entry& e, char* t, int n)
             const char* val = sp + 1;
             if (strcmp(line, "on") == 0)
             {
-                if ((val[0] == '0' || val[0] == '1') && val[1] == 0) e.on = uint8_t(val[0] - '0');   // anything else: the default
+                if ((val[0] == '0' || val[0] == '1') && val[1] == 0) fileOn = val[0] - '0';   // anything else: the default
+            }
+            else if (strcmp(line, "version") == 0)
+            {
+                char* end = nullptr;
+                const long v = strtol(val, &end, 10);
+                if (end != val && *end == 0 && v >= 0 && v < 1000) fileVer = int(v);
             }
             else if (strcmp(line, "state") == 0)
             {
@@ -142,6 +155,9 @@ void parse(Entry& e, char* t, int n)
         }
         line = next;
     }
+    // A file written by an older descriptor version loses its "on" line (the default applies, the parameters stay): Capture 2 is always
+    // on, a version 1 file with "on 0" is the old opt-in Capture that was never switched on. A file without a version line is current.
+    if (fileOn >= 0 && !(fileVer && fileVer < e.d->version)) e.on = uint8_t(fileOn);
     if (stateN && e.d->loadState) e.d->loadState(s_state, stateN);
 }
 
@@ -192,8 +208,10 @@ void applyDiff(Entry& e)
 #ifndef FEATURES_TEST
 FileSystem* s_fs;
 Timer* s_timer;
+#ifdef FEATURE_PLUG_HOST
 int cardRead(const char* p, char* buf, int cap) { return plug::readText(p, buf, cap); }
 bool cardWrite(const char* p, const char* buf, int n) { return plug::writeText(p, buf, n); }
+#endif
 bool cardExists(const char* p) { return s_fs->exists(p); }
 void cardMkdir(const char* p) { s_fs->mkdir(0, p); }
 void cardRemove(const char* p) { s_fs->remove(p); }

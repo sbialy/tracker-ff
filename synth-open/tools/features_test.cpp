@@ -353,6 +353,23 @@ int main()
         s_running = 0;
     }
 
+    // ---- a file of an older descriptor version loses its "on" line (Capture 2 is always on, the old opt-in left "version 1 / on 0")
+    {
+        static feat_desc v2 = { sizeof(feat_desc), FEAT_ABI, 2, "v2", "Version 2", "h", FEAT_F_DEFAULT_ON, 0, nullptr, 0,
+                                nullptr, apply, nullptr, nullptr, nullptr, nullptr };
+        const char* const cases[] = { "feature 1\nid v2\nversion 1\non 0\n", "feature 1\nid v2\nversion 2\non 0\n", "feature 1\nid v2\non 0\nversion 1\n",
+                                      "feature 1\nid v2\nversion 3\non 0\n", "feature 1\nid v2\non 0\n", "" };
+        const bool want[] = { true, false, true, false, false, true };
+        for (int c = 0; c < 6; c++)
+        {
+            features::clear();
+            s_files["/Features/v2.cfg"] = cases[c];
+            const int k = features::add(&v2);
+            features::load(&kIo);
+            check(features::on(k) == want[c], "version: file version against the descriptor decides whether on 0 is read");
+        }
+    }
+
     printf("%d checks, %d failed\n", s_checks, s_fail);
     return s_fail ? 1 : 0;
 }

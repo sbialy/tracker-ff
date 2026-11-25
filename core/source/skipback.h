@@ -10,10 +10,7 @@
 
 #include <stdint.h>
 
-// FEATURE_NO_SKIPBACK: the 1.4.0 release image leaves Skip-back out (Capture needs the SDRAM, user decision 2026-11-15), the code stays for 1.5
-#if defined(FEATURE_EXT_HOOKS) && !defined(PLATFORM_IMX) && !defined(FEATURE_NO_SKIPBACK)
-#define FEATURE_SKIPBACK 1
-#endif
+#include "../include/ff_config.h" // FEATURE_SKIPBACK (FEATURE_NO_SKIPBACK: the release image leaves Skip-back out)
 
 namespace skipback
 {

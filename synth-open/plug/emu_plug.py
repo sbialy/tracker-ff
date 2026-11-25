@@ -92,14 +92,20 @@ def main():
     ap.add_argument("--inwav", dest="inwav")
     ap.add_argument("--image-libm", dest="image_libm", metavar="AXF",
                     help="answer sinf ... powf with the release image's own newlib code (image_libm.py: the unit's libm, what the ui_shot bridge runs)")
+    ap.add_argument("--imx", action="store_true", help="the Tracker+ / Mini host: accepts a cm7 file (cpu 2) as well, maps the IMX "
+                    "SDRAM at 0x80000000 (use --base 0x80100000), the M7 CPU model (UC_CPU_ARM_MAX, every FPv5 instruction)")
+    ap.add_argument("--rate", type=float, default=None, help="plug_host.sample_rate and the tempo clock (default 44117.64706, the MK66 rate. "
+                    "The IMX codec runs 44100, plug_imx.h kCodecRateHz)")
     ap.add_argument("--raw", help="PREFIX: write PREFIX.in.f32 and PREFIX.out.f32, the float blocks as run (per block 128 L then 128 R)")
     a = ap.parse_args()
+    rate = a.rate if a.rate is not None else 44117.64706
     data = open(a.plg, "rb").read()
     (magic, hsize, amaj, amin, kind, cpu, flags, uid, ver, min_host, img, bss, nreb, entry, ram, cyc,
      crc, rwoff) = struct.unpack_from("<IHBBBBHIIIIIIIIIII", data, 0)
     rwoff = rwoff or img
     assert magic == 0x31474C50 and hsize >= 64, "bad header"
-    assert amaj == 1 and cpu == 1 and min_host <= 1, "abi"
+    assert amaj == 1 and (cpu == 1 or (cpu == 2 and a.imx)) and min_host <= 1, "abi"
+    print("cpu %s on the %s host" % ({1: "cm4f", 2: "cm7"}.get(cpu, cpu), "imx" if a.imx else "mk66"))
     # a logo trailer (plug_logo.h, build_plug.py --logo) after the rebase table is outside the CRC: cut it off
     logo_off = struct.unpack_from("<I", data, 64 + 72)[0] if hsize >= 64 + 96 else 0
     if logo_off and logo_off == hsize + img + 4 * nreb and len(data) == logo_off + 1676:
@@ -120,7 +126,12 @@ def main():
         struct.pack_into("<I", image, off, (a.base + v) if v < rwoff else (rwbase + v - rwoff))
 
     uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
-    uc.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_A15)
+    if a.imx:
+        from unicorn.arm_const import UC_CPU_ARM_MAX
+        uc.ctl_set_cpu_model(UC_CPU_ARM_MAX)
+        uc.mem_map(0x80000000, 0x400000)   # IMX SDRAM (the first 4 MB), where the IMX host places plugin code (plug_load.h)
+    else:
+        uc.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_A15)
     uc.mem_map(SRAM, SRAM_SIZE)
     uc.mem_map(SDRAM, SDRAM_SIZE)
     uc.mem_map(0x10000000, 0x40000)   # FlexNVM
@@ -174,7 +185,7 @@ def main():
             u.reg_write(UC_ARM_REG_R0, 0)
     uc.hook_add(UC_HOOK_CODE, service, begin=stubs, end=stubs + 4 * len(names) - 1)
     host = WORK
-    fields = [15 * 4, 1, struct.unpack("<I", struct.pack("<f", 44117.64706))[0]] + [(stubs + 4 * i) | 1 for i in range(12)]
+    fields = [15 * 4, 1, struct.unpack("<I", struct.pack("<f", rate))[0]] + [(stubs + 4 * i) | 1 for i in range(12)]
     uc.mem_write(host, struct.pack("<%dI" % len(fields), *fields))
 
     count = [0]
@@ -240,7 +251,7 @@ def main():
     def tempo_calls(block):
         if not any(tempo_fns):
             return
-        ticks = 1 + int(round((a.beat0 + block * N * a.bpm / 60.0 / 44117.64706) * 2304)) if a.play else 0
+        ticks = 1 + int(round((a.beat0 + block * N * a.bpm / 60.0 / rate) * 2304)) if a.play else 0
         beat = ((ticks - 1) % (2304 * 1024)) / 2304.0 if a.play else 0.0
         for fn, fargs in ((tempo_fns[0], None), (tempo_fns[1], True)):
             if not fn:

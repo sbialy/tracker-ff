@@ -9,9 +9,8 @@
 
 #include "Platform.h"
 #include "mtSleep.h"
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
-#endif
+#include "ff_hooks.h"
+#include "stereoPairs.h"
 #include <display.h>
 #include <mtAudioExport.h>
 
@@ -420,12 +419,21 @@ void Interface::commonThingsUpdate()
                 fileManagerLastProgress = 0;
                 noProgressChangeCounter = 0;
             }
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_PROJECT_STORE
             // a project open found a project.mtff of a newer FF (project.mtff versions): once, after the load popup is gone
             static char mtffNotice[2][36];
-            if (plug::takeOpenNotice(mtffNotice[0], sizeof(mtffNotice[0]), mtffNotice[1], sizeof(mtffNotice[1])))
+            if (projstore::takeOpenNotice(mtffNotice[0], sizeof(mtffNotice[0]), mtffNotice[1], sizeof(mtffNotice[1])))
             {
                 mtPopups.show(0, mtffNotice[0], mtffNotice[1], 4);
+            }
+            // a stereo pair was just linked and its follower track holds notes (setProjPair): they stay, hidden and silent, until the pair is unlinked
+            if (stereopairs::g_linkNotice)
+            {
+                static char linkNotice[2][28];
+                snprintf(linkNotice[0], sizeof(linkNotice[0]), stereopairs::g_linkNoticeFx ? "Track %d has notes or FX" : "Track %d has notes", stereopairs::g_linkNotice);
+                snprintf(linkNotice[1], sizeof(linkNotice[1]), "hidden, not played");
+                stereopairs::g_linkNotice = 0;
+                mtPopups.show(0, linkNotice[0], linkNotice[1], 4);
             }
 #endif
         }

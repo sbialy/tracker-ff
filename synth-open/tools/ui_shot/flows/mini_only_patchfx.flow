@@ -1,0 +1,23 @@
+# P12: the Patch step FX on the Tracker Mini, Mini keys only (no pads, no encoder: the list moves by tap Down, plus_flows.sh lints the keys).
+# Fn1 Pattern, Rec on, hold FX2 (Fx) for the FX list, Down to "Patch" (list position 46 on Tracker+ and Mini, FEATURE_SYNTH_PATCHFX), release:
+# the step under the cursor gets the Patch FX (title bar "O - Patch"). Ends on the state read: expect peek lastUsedFx reads the list position of the Patch FX
+title: Patch FX on the Tracker Mini (P12)
+check: texts
+pause: 80ms
+
+tap Fn1
+wait 1000ms
+tap Rec
+wait 600ms
+press Fx
+wait 1200ms
+tap Down x46
+wait 800ms
+shot patchfx-list
+release Fx
+wait 800ms
+expect text "O - Patch"
+tap Rec
+wait 600ms
+shot patchfx-step
+expect peek lastUsedFx 46

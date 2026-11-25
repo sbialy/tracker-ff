@@ -5,6 +5,7 @@
 
 #include "fileManager.h"
 #include "fx34_io.h"
+#include "stereoPairs.h"
 
 // uint8_t patternToLoad = 0;
 
@@ -127,6 +128,11 @@ void cFileManager::copySongTracks(char* currentProjectPath,
 
         int srcTrackIdx = trackStartSrc + trackIdx;
         int destTrackIdx = trackStartDest + trackIdx;
+        // a range of the Song screen steps over the hidden follower of a linked stereo pair (source and destination), a whole pattern keeps it
+        if (tracksNum != kAllTracks && (stereopairs::isFollower(srcTrackIdx) || stereopairs::isFollower(destTrackIdx)))
+        {
+            continue;
+        }
         Sequencer::strPattern::strTrack* srcTrack = &srcPattern->track[srcTrackIdx];
         Sequencer::strPattern::strTrack* destTrack = &destPattern->track[destTrackIdx];
 
@@ -189,6 +195,10 @@ void cFileManager::deleteTracks(char* currentProjectPath,
 
         for (uint8_t track = 0; track < tracksNum; track++)
         {
+            if (tracksNum != kAllTracks && stereopairs::isFollower(track + trackStartSrc))   // a range leaves a hidden follower alone, a whole pattern clears it
+            {
+                continue;
+            }
             sequencer.clearSingleTrack(&srcPattern->track[track + trackStartSrc]);
             fx34::clearTrack(fx34::setOf(srcPattern), uint8_t(track + trackStartSrc));
         }

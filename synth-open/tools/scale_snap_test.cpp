@@ -1,6 +1,6 @@
 // Host test of the scale snap function (core/source/scales.cpp snapToScale), every note x root x scale x mode against a brute force.
 //
-//   c++ -std=c++20 -O1 -Wall -DFEATURE_PLUG_HOST -DAUDIO_CORE_RAM= -I synth-open/tools/scale_stub -I core/source \
+//   c++ -std=c++20 -O1 -Wall -DFEATURE_FF_CORE -DAUDIO_CORE_RAM= -I synth-open/tools/scale_stub -I core/source \
 //       synth-open/tools/scale_snap_test.cpp core/source/scales.cpp -o /tmp/scale_snap_test && /tmp/scale_snap_test
 //
 // Properties: Off, a note already in the scale, a note above 127 and a mode past Up change nothing. Every result is a scale note in

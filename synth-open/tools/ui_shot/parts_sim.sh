@@ -36,8 +36,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BIN="${BIN:-$ROOT/build/ui-shot/ui_shot}"
-BIN0="${BIN0:-$ROOT/build/ui-shot-noparts/ui_shot}"
+BIN="${UI_SHOT_BIN:-${BIN:-$ROOT/build/ui-shot/ui_shot}}"            # UI_SHOT_BIN: the plain binary, UI_SHOT_BIN0: the PARTS=0 one (this script never makes either)
+BIN0="${UI_SHOT_BIN0:-${BIN0:-$ROOT/build/ui-shot-noparts/ui_shot}}"
 W="${1:-$ROOT/build/parts-sim}"
 rm -rf "$W"; mkdir -p "$W/png"
 fail=0

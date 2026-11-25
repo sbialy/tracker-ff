@@ -69,6 +69,7 @@ alignas(16384) uint8_t g_sramL[kSramLSize];
 alignas(16384) uint8_t g_sramU[kSramUSize];
 alignas(16384) uint8_t g_sdram[kSdramSize];
 alignas(16384) uint8_t g_bridge[kBridgeSize];
+alignas(16384) uint8_t g_imxSdram[kImxSdramSize];
 // The K66 system MPU's CESR (0x4000D000): plug_synth start() of the image clears it before it runs a bank engine (T5 runs the image's
 // own start() in host_synthcheck_test). A plain RAM page, no MPU behind it
 alignas(16384) uint8_t g_mpu[kMpuSize];
@@ -86,6 +87,7 @@ const Window kWin[] = {
     {kSramU, kSramUSize, g_sramU, UC_PROT_ALL},
     {kSdram, kSdramSize, g_sdram, UC_PROT_ALL},
     {kBridge, kBridgeSize, g_bridge, UC_PROT_ALL},
+    {kImxSdram, kImxSdramSize, g_imxSdram, UC_PROT_ALL},
     {kMpu, kMpuSize, g_mpu, UC_PROT_READ | UC_PROT_WRITE},
 };
 

@@ -56,7 +56,7 @@ static void functImportMod();
 static void functSaveProject();
 static void functSaveAsProject();
 static void functExport();
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
 static void functProjectSettings();
 #endif
 //****************************************************
@@ -291,7 +291,7 @@ void cProjectEditor::setDefaultScreenFunct()
     ip->setButtonObj(interfaceButton3, buttonPress, functSaveProject);
     ip->setButtonObj(interfaceButton4, buttonPress, functSaveAsProject);
     ip->setButtonObj(interfaceButton5, buttonPress, functExport);
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
     ip->setButtonObj(interfaceButton6, buttonPress, functProjectSettings);
 #endif
 
@@ -423,8 +423,7 @@ uint8_t cProjectEditor::loadProjectValues()
     sampleRecorder.recorderConfig.gainRadio = mtProject.values.gainRadio;
     sampleRecorder.recorderConfig.monitor = mtProject.values.monitor;
     sampleRecorder.recorderConfig.radioFreq = mtProject.values.radioFreq;
-    sampleRecorder.recorderConfig.source =
-      mtProject.values.source >= sourceCount ? 0 : mtProject.values.source;
+    sampleRecorder.recorderConfig.source = cSampleRecorder::sourceFromProject(mtProject.values.source);
 
     //----------------------------------------------------------------------------------------------------
     // performance mode i inne
@@ -525,6 +524,12 @@ uint8_t cProjectEditor::loadProjectValues()
     for (int part = 0; part < kSynthInstrumentsCount; part++)
     {
         synth->validateSynthPartSettings(part, mtProject.values.synthPart[part]);
+#ifdef FEATURE_PART_AUTO
+        if (part == 0)
+        {
+            engine.resetSynthAuto(); // the part automation of the old project goes with it (kAuto source)
+        }
+#endif
 
         mtProject.values.synthPart[part].reverbSend =
           clamp<float>(mtProject.values.synthPart[part].reverbSend, 0.0f, 100.0f);
@@ -929,7 +934,7 @@ static void functNewFolderConfirm()
     PE->setProjectBrowserFunct();
 }
 
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
 // F7: the Project Settings page (the Config editor on its Project Settings group, configMenu.cpp). It holds the settings of project.mtff:
 // 4 FX Slots, Macro depth, Strum volume, Random seed and Scale snap
 static void functProjectSettings()

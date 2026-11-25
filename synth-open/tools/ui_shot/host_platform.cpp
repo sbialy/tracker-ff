@@ -3,6 +3,10 @@
 #include "host_platform.h"
 #include "host_pti.h"
 #include "util_string.h"
+#ifdef UISHOT_PLUS
+#include "../../../platforms/imx/source/UartMidiImpl.h"
+#include "../../../platforms/imx/source/UsbMidiImpl.h"
+#endif
 
 #include "ConfigManager.h"
 #if __has_include("PowerOffGuard.h")
@@ -13,6 +17,7 @@
 #endif
 
 #include <algorithm>
+#include <deque>
 #include <map>
 #include <dirent.h>
 #include <string.h>
@@ -22,6 +27,16 @@
 
 extern double g_audioUs;   // ui_shot_main.cpp: "audio 1" time, "midilog 1" prints every note sent to USB MIDI out with it
 extern bool g_midiLog;
+extern bool g_usbBusLost;
+// the fake USB MIDI receive queue of the "usbq" script command (midi_isr_cap_sim.sh): event numbers, each read() takes one, logs it and
+// advances the fake micros clock by g_usbReadCostUs (the cost of an expensive event, a note on that starts a voice)
+std::deque<int> g_usbQueue;
+std::vector<int> g_usbReadLog;
+uint32_t g_usbReadCostUs = 0;
+uint32_t g_pulseCostUs = 0;     // "clockcost US": each external clock pulse (96 nano ticks) played costs US on the fake micros clock
+uint32_t g_pulseBaseTicks = 0;
+extern uint32_t hostSeqTimerTicks();   // ui_shot_main.cpp: sequencer.timerTicks
+uint32_t g_usbExtraUs = 0;   // ui_shot_main.cpp, the "usbunplug" script command: the USB bus went idle (usb_dev.c flag), taken once by midiUpdate like the device does
 extern "C" volatile uint32_t systick_millis_count;   // host_stubs.cpp: the firmware's systick, kept in step with the virtual clock
 
 namespace hostp
@@ -43,6 +58,20 @@ static bool g_held[64];
 // disable (ref/shot-hang-1.2.0.md R8.2), so it bites kTimeoutMs after the arm whatever the firmware does next.
 int g_startState = 1;       // EEPROM byte 0 (UISHOT_START_STATE, default 1 = the unit was switched on)
 int g_returnMirror;         // EEPROM byte 8 (UISHOT_RETURN_MIRROR), PlatformImpl::readPowerReturnMirror
+#ifdef FEATURE_USB_AUDIO_IN
+// FEATURE_USB_AUDIO_IN (USB_IN=1): the recorder's USB source asks the platform for the stream, the sim only counts the asks
+int g_usbInWant;
+int g_usbInWantCalls;
+extern "C" void ffUsbAudioInWant(int on)
+{
+    g_usbInWant = on;
+    g_usbInWantCalls++;
+    fprintf(stderr, "usbin want %d (call %d)\n", on, g_usbInWantCalls);
+}
+#endif
+int g_filePoolUsed, g_filePoolPeak, g_filePoolRefused;   // see host_platform.h
+std::set<const void*> g_filePoolHeld;   // the HFile of every slot in use (fspool names the paths)
+int g_asyncBusy;           // see host_platform.h
 int g_usbAudioFlag;         // EEPROM byte 9 (UISHOT_USB_FLAG), ffUsbAudioBootFlag
 int g_usbAudioRunning;      // usb_init at the last start (ff_usb_audio_select)
 int g_usbAudioMode;         // EEPROM byte 7 (UISHOT_USB_MODE): 1 = 8+3 mono (0xA5), ffUsbAudioBootFlag
@@ -168,6 +197,7 @@ __attribute__((weak)) void extendPlatform(HwSlots&) {}
 
 extern "C" void hostPokePoll(); // host_poke.cpp: UISHOT_POKE actions, run from the main loop
 
+int g_radioStereo = -1; // the last Radio::setStereo of the firmware (-1 never called), read by host_poke recstat
 namespace
 {
 // ------------------------------------------------------------------------------------------------ simple devices
@@ -175,7 +205,11 @@ class HTimer : public Timer
 {
   public:
     uint32_t millis() override { hostPokePoll(); return g_nowMs; }
-    uint32_t micros() override { return g_nowMs * 1000u; }
+    uint32_t micros() override
+    {
+        const uint32_t pulseUs = ::g_pulseCostUs ? (hostSeqTimerTicks() - ::g_pulseBaseTicks) * ::g_pulseCostUs / 96u : 0u;
+        return g_nowMs * 1000u + ::g_usbExtraUs + pulseUs;
+    }
     void delay(int ms) override { advance(uint32_t(ms)); }
     uint32_t clockCycles() override { return g_nowMs * 180000u; }
     uint32_t clockCyclesPerUs() override { return 180; }
@@ -252,6 +286,9 @@ class HRadio : public Radio
     void setRegion(Region) override {}
     bool isRegionChanged() override { return false; }
     char* getStationName() override { static char n[1] = {0}; return n; }
+#ifdef FEATURE_RADIO_STEREO
+    void setStereo(bool s) override { g_radioStereo = s ? 1 : 0; }
+#endif
 
   private:
     float freq_ = 100.0f;
@@ -286,20 +323,45 @@ class HUsbAudio : public UsbAudio
     void finishFillData() override {}
 };
 
+
 class HUsbMidi : public UsbMidi
 {
   public:
-    bool isReadAvailable() override { return false; }
-    void read() override {}
+    bool isReadAvailable() override { return !::g_usbQueue.empty(); }
+    bool takeBusLost() override
+    {
+        const bool lost = ::g_usbBusLost;
+        ::g_usbBusLost = false;
+        return lost;
+    }
+    void read() override
+    {
+        if (::g_usbQueue.empty()) return;
+        ::g_usbReadLog.push_back(::g_usbQueue.front());
+        ::g_usbQueue.pop_front();
+        ::g_usbExtraUs += ::g_usbReadCostUs;
+    }
     void sendRealTime(MessageType) override {}
     void sendControlChange(uint8_t index, uint8_t v, uint8_t ch) override
     {
         if (::g_midiLog) printf("midi cc %u %u ch %u t %.1f\n", index, v, ch, ::g_audioUs / 1000.0);
     }
-    void sendProgramChange(uint8_t, uint8_t) override {}
-    void sendAfterTouch(uint8_t, uint8_t) override {}
-    void sendPolyPressure(uint8_t, uint8_t, uint8_t) override {}
-    void sendPitchBend(int, uint8_t) override {}
+    void sendProgramChange(uint8_t v, uint8_t ch) override
+    {
+        if (::g_midiLog) printf("midi pc %u ch %u t %.1f\n", v, ch, ::g_audioUs / 1000.0);
+    }
+    void sendAfterTouch(uint8_t v, uint8_t ch) override
+    {
+        if (::g_midiLog) printf("midi at %u ch %u t %.1f\n", v, ch, ::g_audioUs / 1000.0);
+    }
+    void sendPolyPressure(uint8_t n, uint8_t v, uint8_t ch) override
+    {
+        if (::g_midiLog) printf("midi pp %u %u ch %u t %.1f\n", n, v, ch, ::g_audioUs / 1000.0);
+    }
+    void sendPitchBend(int v, uint8_t ch) override
+    {
+        if (::g_midiLog) printf("midi pb %d ch %u t %.1f\n", v, ch, ::g_audioUs / 1000.0);
+    }
     void sendNoteOn(uint8_t n, uint8_t v, uint8_t ch) override
     {
         if (::g_midiLog) printf("midi on %u %u ch %u t %.1f\n", n, v, ch, ::g_audioUs / 1000.0);
@@ -310,6 +372,20 @@ class HUsbMidi : public UsbMidi
     }
     void setReceiveActions(MidiReceiveActions*) override {}
 };
+
+#ifdef UISHOT_PLUS
+// the real IMX USB MIDI driver, plus the host seam of the bus lost flag ("usbunplug", the usb_dev.c flag of the image)
+class PlusUsbMidi : public UsbMidiImpl
+{
+  public:
+    bool takeBusLost() override
+    {
+        const bool lost = ::g_usbBusLost;
+        ::g_usbBusLost = false;
+        return lost;
+    }
+};
+#endif
 
 class HUartMidi : public UartMidi
 {
@@ -385,6 +461,7 @@ struct HFile
 {
     FILE* f = nullptr;
     std::string path;
+    bool slot = false;   // holds a slot of the device's SdFile pool (g_filePoolUsed)
 };
 
 class HFileSystem : public FileSystem
@@ -454,10 +531,32 @@ class HFileSystem : public FileSystem
         }
         FILE* f = cardOpen(filepath ? filepath : "") ? fopen(p.c_str(), m) : nullptr;
         if (!f && mode == kWriteOpen) f = fopen(p.c_str(), "w+b");
-        HFile* h = (fileHandle && *fileHandle) ? static_cast<HFile*>(*fileHandle) : new HFile;
+        HFile* h = (fileHandle && *fileHandle) ? static_cast<HFile*>(*fileHandle) : nullptr;
+        if (!h)
+        {   // FileSystemImpl::allocateSdFile: a free slot of the pool, else the open fails and the caller gets no handle
+            static const int limit = getenv("UI_SHOT_FILE_POOL") ? atoi(getenv("UI_SHOT_FILE_POOL")) : 24;
+            if (limit > 0 && hostp::g_filePoolUsed >= limit)
+            {
+                hostp::g_filePoolRefused++;
+                if (f) fclose(f);
+                return {false, nullptr};
+            }
+            h = new HFile;
+            h->slot = true;
+            hostp::g_filePoolHeld.insert(h);
+            if (++hostp::g_filePoolUsed > hostp::g_filePoolPeak) hostp::g_filePoolPeak = hostp::g_filePoolUsed;
+            if (fileHandle) *fileHandle = h;
+        }
         h->f = f;
         h->path = filepath;
-        if (fileHandle) *fileHandle = h;
+        if (!f && !fileHandle)
+        {   // FileSystemImpl::openFile: a failed open without a caller's handle gives the slot back and answers no handle
+            h->slot = false;
+            hostp::g_filePoolUsed--;
+            hostp::g_filePoolHeld.erase(h);
+            delete h;
+            return {false, nullptr};
+        }
         return {f != nullptr, h};
     }
     int32_t readFile(void* d, size_t n, FileHandle h) override
@@ -477,11 +576,13 @@ class HFileSystem : public FileSystem
     }
     bool seekFileCur(int off, FileHandle h) override { auto* f = static_cast<HFile*>(h); return f && f->f && fseek(f->f, off, SEEK_CUR) == 0; }
     bool seekFile(uint32_t pos, FileHandle h) override { auto* f = static_cast<HFile*>(h); return f && f->f && fseek(f->f, long(pos), SEEK_SET) == 0; }
-    void closeFile(FileHandle h, bool) override
+    void closeFile(FileHandle h, bool deleteOnClose) override
     {
         backendHandle();
         auto* f = static_cast<HFile*>(h);
         if (f && f->f) { cardClose(f->path); fclose(f->f); f->f = nullptr; }
+        // the slot goes back to the pool only with deleteOnClose (the memory stays: a caller may still look at the handle, as the static pool of the device allows)
+        if (f && deleteOnClose && f->slot) { f->slot = false; hostp::g_filePoolUsed--; hostp::g_filePoolHeld.erase(f); }
     }
     void endFile(FileHandle h) override { auto* f = static_cast<HFile*>(h); if (f && f->f) { fflush(f->f); if (ftruncate(fileno(f->f), ftell(f->f)) != 0) {} } }
     bool isFileOpen(FileHandle h) override { auto* f = static_cast<HFile*>(h); return f && f->f; }
@@ -489,7 +590,7 @@ class HFileSystem : public FileSystem
     bool readSectorsAsync(uint8_t*, uint32_t, uint32_t) override { return false; }
     bool pollAsyncRead(bool* ok) override { if (ok) *ok = false; return true; }
     bool waitAsyncRead() override { return true; }
-    bool isAsyncReadBusy() override { return false; }
+    bool isAsyncReadBusy() override { return hostp::g_asyncBusy != 0; }
 
     // directory listings: names of the entries of path, folders first when asked (a stand-in: the file browsers are not drawn here)
     static std::vector<std::string> names(const std::string& dir, bool folders)
@@ -768,8 +869,14 @@ class HPlatform : public Platform
     HRadio radio;
     HCodec codec;
     HUsbAudio usbAudio;
+#ifdef UISHOT_PLUS
+    // the Tracker+ / Mini MIDI is the real driver (UsbMidiImpl, UartMidiImpl) over the byte level stub of host_imxmidi.cpp
+    PlusUsbMidi usbMidi;
+    UartMidiImpl uartMidi;
+#else
     HUsbMidi usbMidi;
     HUartMidi uartMidi;
+#endif
     HUsb usb;
     HCrc crc;
     HConfig config;
@@ -826,4 +933,10 @@ bool HUsb::getClassState(ClassType t)
 namespace hostp
 {
 int g_padLed[64];
+std::string filePoolHeldPaths()
+{
+    std::string r;
+    for (const void* p : g_filePoolHeld) r += " " + static_cast<const HFile*>(p)->path;
+    return r;
+}
 }

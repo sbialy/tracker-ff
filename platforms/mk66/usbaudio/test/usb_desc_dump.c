@@ -34,6 +34,9 @@ int main(int argc, char** argv)
 #else
     (void)on;
 #endif
+#ifdef FF_USB_MSC
+    ff_usb_msc_select(argc > 2 ? atoi(argv[2]) : 0); // argument 2: the USB drive on or off (usb_desc_in_test.sh)
+#endif
     for (const usb_descriptor_list_t* l = usb_descriptor_list; l->addr; l++)
     {
         // usb_dev.c case 0x0680: strings by their own length, the rest by the list, the configuration by its wTotalLength
@@ -57,11 +60,18 @@ int main(int argc, char** argv)
 #endif
     // usb_dev.c case 0x0900: ENDPT1..NUM_ENDPOINTS from the table, an endpoint past the table is never written (reset value 0)
     printf("endpoints:");
-    for (int i = 1; i <= 8; i++)
+    for (int i = 1; i <= (NUM_ENDPOINTS > 8 ? NUM_ENDPOINTS : 8); i++)
     {
         unsigned c = i <= NUM_ENDPOINTS ? usb_endpoint_config_table[i - 1] : 0;
 #ifdef FF_USB_AUDIO_TX
         if (i == AUDIO_TX_ENDPOINT && !ff_usb_audio_on) c = 0;
+#endif
+#ifdef FF_USB_AUDIO_RX
+        if (i == AUDIO_TX_ENDPOINT && !ff_usb_audio_in) c &= ~0x08u; // USB_ENDPT_EPRXEN, as usb_dev.c case 0x0900
+        if (i == FF_AUDIO_FB_ENDPOINT && !ff_usb_audio_in) c = 0;
+#endif
+#ifdef FF_USB_MSC
+        if ((i == MSC_TX_ENDPOINT || i == MSC_RX_ENDPOINT) && !ff_usb_msc_on) c = 0;
 #endif
         printf(" %u=%02x", i, c);
     }

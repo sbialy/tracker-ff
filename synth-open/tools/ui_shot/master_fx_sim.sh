@@ -16,14 +16,15 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 OUT="${OUT:-$ROOT/build/ui-shot-masterfx}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/master_fx_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
+BIN="${UI_SHOT_BIN:-$OUT/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make
 mkdir -p "$OUT"
-make -s -C "$HERE" OUT="$OUT" -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" >"$OUT.make.log" 2>&1 || { tail -30 "$OUT.make.log"; exit 2; }
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" OUT="$OUT" -j"$(sh "$HERE/../jobs.sh" n)" >"$OUT.make.log" 2>&1 || { tail -30 "$OUT.make.log"; exit 2; }
 
 sd="$WORK/sd"; mkdir -p "$sd"
 # percent, damp in permille: the default project (50, DEFAULT_REVERB_DAMP), the ends of both ranges and two in between
 cases="50:500 0:0 100:1000 25:250 99:800"
 script="wait 300"; for c in $cases; do script="$script; poke masterfx ${c%%:*} ${c##*:}"; done
-UISHOT_POKE="$WORK/poke" "$OUT/ui_shot" "$sd" "$script" >"$WORK/out.txt" 2>"$WORK/err.txt" || { echo "ui_shot failed:"; tail -5 "$WORK/err.txt"; exit 2; }
+UISHOT_POKE="$WORK/poke" "$BIN" "$sd" "$script" >"$WORK/out.txt" 2>"$WORK/err.txt" || { echo "ui_shot failed:"; tail -5 "$WORK/err.txt"; exit 2; }
 [ -f "$WORK/poke.out" ] || { echo "no poke output"; exit 2; }
 
 fails=0; checks=0

@@ -8,6 +8,7 @@ namespace polysynth
 class FileSystem
 {
   public:
+#define POLYSYNTH_FS_PRESENCE 1   // open_fileops.h takes this Presence
     enum class Presence
     {
         kAbsent,

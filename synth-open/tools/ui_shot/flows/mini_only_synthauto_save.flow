@@ -1,0 +1,32 @@
+# IMX round 4: the Synth Automation slots in project.mtff on the Tracker Mini (partAuto.h, synth.N.auto.K lines of mtff_codec.h, projectSidecar.cpp applySynthAuto).
+# Mini keys only. Slot 1 of Synth 1 is set to an LFO on Part Pan through the page (F3, Down), the setup pokes (plus_flows.sh) put an Envelope on Part Delay in slot 4 of
+# Synth 3, save the project (fmsave), take both slots Off, open the saved project (fmopen) and read the slots back. Ends on the poke trace (UISHOT_TRACE_PARTAUTO and
+# the closing `partauto 2` read): both slots are back, field for field, after the reload
+title: Synth Automation slots saved in project.mtff on the Tracker Mini (IMX round 4)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Instr
+wait 400ms
+tap Up x3
+wait 300ms
+release Instr
+wait 600ms
+tap Fn2
+wait 1200ms
+tap Fn2
+wait 1200ms
+tap Fn2
+wait 1500ms
+expect text "Synth Automation 3/4"
+expect text "Destination"
+tap F3
+wait 400ms
+tap Down
+wait 1500ms
+expect text "Shape"
+expect text "Speed"
+shot synthauto-lfo
+wait 32000ms
+shot synthauto-reloaded

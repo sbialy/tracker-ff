@@ -1,0 +1,25 @@
+# P4: Scale snap on Tracker+ and Mini (the list moves by tap Down, the Mini has no encoder, expect peek snap0 reads scaleSnapMode[0] from the devtools console). Project Settings, the Scale snap group (Enter), Track 1 to Nearest, the page's value column counts the tracks.
+title: Scale snap on Tracker+ (P4)
+check: texts
+pause: 80ms
+
+tap File
+wait 800ms
+tap F7
+wait 1000ms
+expect text "4 FX Slots"
+tap Down x4
+wait 400ms
+expect text "Scale snap"
+expect peek snap0 0
+tap F8
+wait 800ms
+shot snap-group
+tap F8
+wait 500ms
+tap Down
+wait 500ms
+tap F8
+wait 800ms
+shot snap-nearest
+expect peek snap0 1

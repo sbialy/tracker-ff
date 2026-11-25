@@ -19,13 +19,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 PNG_DIR="${1:-}"
 [ -n "$PNG_DIR" ] && mkdir -p "$PNG_DIR"
-NCPU="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+NCPU="$(sh "$HERE/../jobs.sh" n)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/fx34_store.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 SAN="${SAN:-}"   # SAN=address,undefined: the sanitizer build (build/ui-shot-san), a report fails the run
 mkdir -p "$ROOT/build/ui-shot${SAN:+-san}"
-make -s -C "$HERE" -j"$NCPU" ${SAN:+SAN=$SAN} >"$ROOT/build/ui-shot.make.log" 2>&1 || { tail -30 "$ROOT/build/ui-shot.make.log"; exit 2; }
-BIN="$ROOT/build/ui-shot${SAN:+-san}/ui_shot"
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$NCPU" ${SAN:+SAN=$SAN} >"$ROOT/build/ui-shot.make.log" 2>&1 || { tail -30 "$ROOT/build/ui-shot.make.log"; exit 2; }
+BIN="${UI_SHOT_BIN:-$ROOT/build/ui-shot${SAN:+-san}/ui_shot}"
 
 fails=0; checks=0
 pass() { checks=$((checks+1)); printf 'ok    %s\n' "$1"; }

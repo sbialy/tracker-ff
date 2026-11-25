@@ -376,7 +376,12 @@ int decodeMod(Reader r, ModSlot* out)
             return 0;
         }
     }
-    if (version != 1)
+#ifdef OPEN_HOST_TEST
+    const uint64_t maxVersion = uint64_t(gModMaxVersion); // host test: 1 reads like the 1.4.0 codec
+#else
+    constexpr uint64_t maxVersion = 2; // 2: the part destinations (kPart), a later version stays raw
+#endif
+    if (version < 1 || version > maxVersion)
     {
         return 2;
     }
@@ -467,8 +472,18 @@ void writeMod(Writer& w, const ModSlot* mod)
     }
     uint8_t buf[kModBlockMax];
     Writer b{ buf, buf + sizeof(buf) };
+    // Version 2 only when a part destination (kPart) is in use: every other patch keeps writing version 1, byte for byte as before, and an
+    // older image that reads a version above 1 keeps the block raw and writes it back (it cannot play the part destinations)
+    uint8_t version = 1;
+    for (int i = 0; i < kModSlots; i++)
+    {
+        if (mod[i].type != ModType::kOff && mod[i].kind == ModKind::kPart)
+        {
+            version = 2;
+        }
+    }
     b.tag(1, 0);
-    b.byte(1);
+    b.byte(version);
     for (int i = 0; i <= last; i++)
     {
         const ModSlot& m = mod[i];
@@ -514,6 +529,7 @@ void writeMod(Writer& w, const ModSlot* mod)
 
 #ifdef OPEN_HOST_TEST
 bool gModDecodeOff = false;
+int gModMaxVersion = 2;
 #endif
 
 bool modAnyOn(const ModSlot* slots)

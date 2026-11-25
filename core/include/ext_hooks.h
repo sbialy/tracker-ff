@@ -17,7 +17,8 @@ void ext_boot(void* platform, int develop);   // synth-open/ext_module.cpp
 void ext_update(void);                         // main loop: the crash marker, then the module
 const char* ext_status_short(void);            // Features page: "Loaded", "No module", "Refused", "Crashed", "On"
 void ext_power_down(void);                     // power off, interrupts off: stock vectors back, hooks cleared
-int ext_modit_check(const char** line1, const char** line2);   // MOD/IT: 0 when modit.plg is loaded (loads it on the first use), else the popup lines
+int ext_modit_check(const char** line1, const char** line2);   // extras.plg: 0 when it is loaded (loads it on the first use), else the popup lines
+void ext_extras_bind(void* platform);          // the card for extras.plg before ext_boot ran (a custom theme applied at start)
 #ifdef __cplusplus
 }
 #endif

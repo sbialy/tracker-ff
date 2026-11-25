@@ -10,7 +10,7 @@
 //   Tr+Snap     Transp, then Snap
 //
 // The setting lives in the project sidecar project.mtff (Workspace and project folder) as one track.N.follow line for each follower
-// (synth-open/plug_mtff.h), written only when a track follows. Without the file every track plays as before (project.mt cannot grow:
+// (core/FileManager/mtff_codec.h), written only when a track follows. Without the file every track plays as before (project.mt cannot grow:
 // 1.3.0 rejects a bigger file). A build without the plugin host (no project.mtff) does not keep it.
 #include <stdint.h>
 

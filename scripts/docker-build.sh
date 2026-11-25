@@ -6,7 +6,7 @@
 #   copy  repo copied into the container filesystem first (no mount I/O cost, host tree untouched)
 #   runs  number of clean builds, default 1 (prints wall time per run and the -j used)
 #
-# env: IMAGE (default tracker-ff-build-arm64), DOCKER (default docker)
+# env: IMAGE (default tracker-ff-build-arm64), DOCKER (default docker), STORECI (default /Volumes/StoreCI)
 set -euo pipefail
 
 mode="${1:-bind}"
@@ -40,6 +40,12 @@ done
 sha256sum build/PolyendTracker_CE_1.0.0.ptf
 '
 
+# build/ subdirs are symlinks into /Volumes/StoreCI, so the volume must be mounted at the same path
+# (read-write, builds write there) or they dangle inside the container.
+storeci="${STORECI:-/Volumes/StoreCI}"
+mounts=(-v "$repo:/work")
+[ -d "$storeci" ] && mounts+=(-v "$storeci:$storeci")
+
 exec "$docker" run --rm --platform linux/arm64 \
-  -v "$repo:/work" -e MODE="$mode" -e RUNS="$runs" \
+  "${mounts[@]}" -e MODE="$mode" -e RUNS="$runs" \
   "$image" bash -c "$inner"

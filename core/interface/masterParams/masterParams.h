@@ -493,5 +493,17 @@ extern cMasterParams masterParams;
 // external linkage so the plugin host can list them (synth-open/plug_ui.cpp)
 extern const char* const saturationListTexts[kSaturationTypeEnd];
 #endif
+#if defined(FEATURE_SAT_SOFTKNEE) && !defined(FEATURE_PLUG_HOST) && !defined(FEATURE_FF_DIRT)
+// Soft Knee (value 10) without the Inserts page: the list holds the five stock types and Soft Knee at position 5, the values 5..9 are holes
+// that are never listed (the audio engine plays them as Hard Clip). The list position and the project value differ for that one entry
+constexpr int kSatListCount = 6;
+inline int satListPos(uint8_t type) { return type == SaturationType::kSoftKnee ? 5 : (type < 5 ? type : 0); }
+inline uint8_t satListType(int pos) { return pos >= 5 ? uint8_t(SaturationType::kSoftKnee) : uint8_t(pos < 0 ? 0 : pos); }
+extern const char* const saturationListNames[kSatListCount];
+#else
+constexpr int kSatListCount = kSaturationTypeEnd;
+inline int satListPos(uint8_t type) { return type; }
+inline uint8_t satListType(int pos) { return uint8_t(pos); }
+#endif
 
 #endif /* INTERFACE_MASTERPARAMS_H_ */

@@ -2,6 +2,7 @@
 #include "mtAudioEngine.h"
 #endif
 #include "fx_auto_mute.h"
+#include "stereoPairs.h"
 #include "ampLogarythmicValues.h"
 #include "mtMasterEnhancer.h"
 #ifdef FEATURE_SYNTH
@@ -52,6 +53,8 @@ const char* const saturationListTexts[kSaturationTypeEnd] = { "Hard Clip",
                                                              "Soft Knee"
 #endif
 };
+
+#include "gMasterParams_ff.inc"
 
 void cMasterParams::initDisplayControls()
 {
@@ -261,8 +264,12 @@ void cMasterParams::initDisplayControls()
 
     saturationListData.linesCount = 5;
     saturationListData.start = 0;
-    saturationListData.length = kSaturationTypeEnd;
+    saturationListData.length = kSatListCount;
+#if defined(FEATURE_SAT_SOFTKNEE) && !defined(FEATURE_PLUG_HOST) && !defined(FEATURE_FF_DIRT)
+    saturationListData.data = (char**)saturationListNames;
+#else
     saturationListData.data = (char**)saturationListTexts;
+#endif
 
     strControlProperties saturationListProperties;
     saturationListProperties.style =
@@ -275,9 +282,7 @@ void cMasterParams::initDisplayControls()
     saturationListProperties.data = &saturationListData;
     saturationListProperties.colors = nullptr;
     saturationList = display.createControl<cList>(&saturationListProperties);
-#ifdef FEATURE_PLUG_HOST
-    plugUiInitControls(); // the Master Inserts page's two extra list columns, the page starts closed
-#endif
+    FF_GMP_PLUG_INIT_CONTROLS(); // the Master Inserts page's two extra list columns, the page starts closed
 }
 
 void cMasterParams::showMasterScreen()
@@ -861,56 +866,7 @@ void cMasterParams::showLimiterSidechain()
     display.refreshControl(label[4]);
 }
 
-#ifdef FEATURE_SEND_DUCK
-// Send ducking page (a second page of the limiter screen, same places: 0 depth, 1 release, 2 threshold, 3 meter, 4 source)
-void cMasterParams::showDuckDepth()
-{
-    const DuckParams& d = engine.getSendDuck();
-    snprintf(duckDepthVal, sizeof(duckDepthVal), "%d%%", d.depth);
-    display.setControlValue(barControl[0], d.depth);
-    display.refreshControl(barControl[0]);
-    display.setControlText2(label[0], duckDepthVal);
-    display.refreshControl(label[0]);
-}
-
-void cMasterParams::showDuckRelease()
-{
-    const DuckParams& d = engine.getSendDuck();
-    snprintf(duckReleaseVal, sizeof(duckReleaseVal), "%d ms", (int)(duckReleaseMs(d.release) + 0.5f));
-    display.setControlValue(barControl[1], d.release);
-    display.refreshControl(barControl[1]);
-    display.setControlText2(label[1], duckReleaseVal);
-    display.refreshControl(label[1]);
-}
-
-void cMasterParams::showDuckThreshold()
-{
-    const DuckParams& d = engine.getSendDuck();
-    snprintf(duckThresholdVal, sizeof(duckThresholdVal), "%d dB", (int)lroundf(duckThresholdDb(d.thresh)));
-    display.setControlValue(barControl[2], d.thresh);
-    display.setControlShow(barControl[2]);
-    display.refreshControl(barControl[2]);
-    display.setControlText2(label[2], duckThresholdVal);
-    display.refreshControl(label[2]);
-}
-
-void cMasterParams::showDuckMeter()
-{
-    display.setControlValue(barControl[3], duckMeterValue);
-    display.setControlShow(barControl[3]);
-    display.refreshControl(barControl[3]);
-}
-
-void cMasterParams::showDuckSource()
-{
-    const uint8_t src = engine.getSendDuck().source;
-    display.setControlValue(limiterSidechainList, src);
-    display.refreshControl(limiterSidechainList);
-
-    display.setControlText2(label[4], limiterSidechainListTxt[src]);
-    display.refreshControl(label[4]);
-}
-#endif
+#include "gMasterParams_duck.inc"
 
 // EQ
 
@@ -1131,6 +1087,15 @@ void cMasterParams::resizeBarControl(displayMode val)
     uint32_t shadow = (display.getTheme().bottomScreenShadow > 0 ? controlStyleBottomShadow : 0);
     uint32_t gradient = (display.getTheme().barShadow > 0 ? controlStyleGradient : 0);
 
+    // the track strips of the Mixer: a linked stereo pair is one strip, the follower's is hidden and the strips after it move up. Every other
+    // page has the strips at their own slots
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        const int slot = val == displayMode::mixer ? i - __builtin_popcount(stereopairs::hiddenMask() & ((1u << i) - 1u)) : i;
+        display.setControlPosition(trackNameLabel[i], (800 / 8) * slot + (800 / 16), 32);
+        display.setControlPosition(label[i], (800 / 8) * slot + (800 / 16), 424);
+    }
+
     if (val == displayMode::masterValues)
     {
         if (!isLimiterScreen)
@@ -1164,13 +1129,23 @@ void cMasterParams::resizeBarControl(displayMode val)
 
         for (uint8_t i = 0; i < 8; i++)
         {
-            display.setControlPosition(trackVolumeBar[i], (800 / 8) * i + 2, 64);
+            const int slot = i - __builtin_popcount(stereopairs::hiddenMask() & ((1u << i) - 1u));
+            display.setControlPosition(trackVolumeBar[i], (800 / 8) * slot + 2, 64);
             display.setControlSize(trackVolumeBar[i], 800 / 16 - 3, 359);
             display.refreshControl(trackVolumeBar[i]);
 
-            display.setControlPosition(barControl[i], (800 / 8) * i + 2 + 800 / 16, 64);
+            display.setControlPosition(barControl[i], (800 / 8) * slot + 2 + 800 / 16, 64);
             display.setControlSize(barControl[i], 800 / 16 - 3, 359);
             display.refreshControl(barControl[i]);
+            if (stereopairs::isFollower(i))
+            {
+                display.setControlHide(trackVolumeBar[i]);
+                display.setControlHide(barControl[i]);
+                display.setControlHide(trackNameLabel[i]);
+                display.setControlText(label[i], "");
+                display.setControlText2(label[i], "");
+                display.refreshControl(label[i]);
+            }
         }
 #ifdef FEATURE_SYNTH
         for (uint8_t i = 8; i < 8 + kSynthParts; i++)
@@ -1300,17 +1275,8 @@ void cMasterParams::showVolume()
 
 void cMasterParams::showSaturationType()
 {
-#ifdef FEATURE_PLUG_HOST
-    // built-in entries plus the master insert plugins (synth-open/plug_ui.cpp)
-    plugUiSatList(&saturationListData);
-    display.setControlValue(saturationList, plugUiSatPos());
-    display.refreshControl(saturationList);
-
-    display.setControlText2(label[5], plugUiSatText());
-    display.refreshControl(label[5]);
-    return;
-#endif
-    display.setControlValue(saturationList, mtProject.values.saturationType);
+    FF_GMP_PLUG_SAT_SHOW_OR_RETURN(); // built-in entries plus the master insert plugins (synth-open/plug_ui.cpp)
+    display.setControlValue(saturationList, satListPos(mtProject.values.saturationType));
     display.refreshControl(saturationList);
 
     display.setControlText2(label[5], saturationListTexts[mtProject.values.saturationType]);
@@ -1412,6 +1378,11 @@ void cMasterParams::showDelaySyncEnable()
 void cMasterParams::showDelayRate()
 {
     uint8_t rateIdx = (mtProject.values.delayParams & (0b00111111));
+    // The index is six bits of a project value, and nothing checks it when a project is loaded.
+    // The delay uses its last rate for such a value, so show that one.
+    constexpr uint8_t kLastRateIdx = sizeof(delaySyncRates) / sizeof(delaySyncRates[0]) - 1;
+    if (rateIdx > kLastRateIdx)
+        rateIdx = kLastRateIdx;
 
     display.setControlValue(delaySyncRateList, rateIdx);
     display.refreshControl(delaySyncRateList);
@@ -1509,7 +1480,7 @@ void cMasterParams::showMixerScreen()
         showLevelBar(i, &trackLevel[i]);
         showTrackVolumeBar(i);
 
-        display.setControlText(trackNameLabel[i], &mtProject.values.TrackNames[i][0]);
+        display.setControlText(trackNameLabel[i], stereopairs::isLeader(i) ? (char*)stereopairs::label(i >> 1) : &mtProject.values.TrackNames[i][0]);
         display.setControlShow(trackNameLabel[i]);
         display.refreshControl(trackNameLabel[i]);
 
@@ -1760,6 +1731,8 @@ void cMasterParams::showMixerDelayReverbScreen()
 
 void cMasterParams::showLevelBar(uint8_t n, strTrackLevel* level)
 {
+    if (displayType == displayMode::mixer && stereopairs::isFollower(n))
+        return; // a linked pair is one strip, the follower's strip is hidden
     uint32_t one_true_red = display.getTheme().red;
     uint32_t one_true_green = display.getTheme().green;
     constexpr uint8_t RED_COLOR_LEVEL = 95;
@@ -1844,6 +1817,8 @@ void cMasterParams::showLevelBar(uint8_t n, strTrackLevel* level)
 
 void cMasterParams::showTrackVolumeBar(uint8_t n)
 {
+    if (stereopairs::isFollower(n))
+        return;
     float trackVolumeInDecybels = calcLevelDecybelValue(mtProject.values.trackVolume[n]);
 
     sprintf(mixerVolumeLabel[n], "%0.2f dB", trackVolumeInDecybels);

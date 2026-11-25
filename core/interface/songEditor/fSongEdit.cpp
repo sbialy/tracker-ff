@@ -1,6 +1,4 @@
-#ifdef FEATURE_PARTS
-#include "parts.h"
-#endif
+#include "fSongEdit_ff.inc"
 #include "core/interfaceMenuPopup.h"
 #include "fileManager.h"
 #include "songEditor/songEditor.h"
@@ -14,6 +12,7 @@
 #include "mtPadBoard.h"
 #include "mtPadsBacklight.h"
 #include "mtStructs.h"
+#include "stereoPairs.h"
 #include "util_math.h"
 
 cSongEditor songEditor;
@@ -65,19 +64,7 @@ void playSongFromSelectedPattern_stop();
 
 void cSongEditor::update()
 {
-#ifdef FEATURE_PARTS
-    if (partsView)
-    {
-        if (songPlayerRefreshTimer > 100)
-        {
-            songPlayerRefreshTimer = 0;
-            partsUpdate();
-            if (!editMode) refreshTempoField();   // Build: F8 is the track 8 / 16 button, not Tempo
-        }
-        tapTempo_update();
-        return;
-    }
-#endif
+    FF_SONG_PARTS_UPDATE_OR_RETURN(); // the Parts view refreshes its own rows
     if (songPlayerRefreshTimer > 100)
     {
         songPlayerRefreshTimer = 0;
@@ -235,9 +222,7 @@ void cSongEditor::setDefaultScreenFunct()
     ip->setButtonObj(interfaceButtonDelete, buttonPress, functDelete);
 
     ip->setPadsGlobal(functPads);
-#ifdef FEATURE_PARTS
-    if (partsView) partsBind();   // Arrange / Build keys over the stock ones (fSongParts.cpp)
-#endif
+    FF_SONG_PARTS_BIND(); // Arrange / Build keys over the stock ones (fSongParts.cpp)
 }
 
 void cSongEditor::lightUpPadBoard()
@@ -651,13 +636,7 @@ static void functTempo(uint8_t state)
     {
         return;
     }
-#ifdef FEATURE_PARTS
-    if (state == buttonPress && SE->buttons->isButtonPressed(interfaceButtonShift))
-    {
-        SE->partsEnterView(!SE->partsView); // Shift + F8: Patterns <-> Parts
-        return;
-    }
-#endif
+    FF_SONG_PARTS_TOGGLE_OR_RETURN(state); // Shift + F8: Patterns <-> Parts
 
     if (state == buttonPress)
     {
@@ -896,9 +875,7 @@ static void functRecAction()
     SE->editMode = !SE->editMode;
 
     SE->refreshEditMode();
-#ifdef FEATURE_PARTS
-    if (SE->partsView) SE->partsModeChanged();   // Rec: Arrange <-> Build
-#endif
+    FF_SONG_PARTS_MODE_CHANGED(); // Rec: Arrange <-> Build
 }
 
 static void functSwitchModule(uint8_t button)
@@ -956,12 +933,7 @@ void cSongEditor::refreshSongPlayer(uint8_t source)
 
 void cSongEditor::changeSongPositionSelection(int16_t value)
 {
-#ifdef FEATURE_PARTS
-    if (partsView && songLength == 0)
-    {
-        return;
-    }
-#endif
+    FF_SONG_PARTS_EMPTY_OR_RETURN();
     if (SE->editMode == 0
 #ifdef FEATURE_PARTS
         && !partsView // the Parts view moves while playing: F2 queues the selected Part
@@ -1051,6 +1023,13 @@ void cSongEditor::readSong()
     }
     patternsList.start = selectedSongPosition;
 
+    // a linked stereo pair is one column "1+2": the follower is hidden, the cursor and the selection never rest on it (its pattern bits stay)
+    songPlayerData.hidden = stereopairs::hiddenMask();
+    if (stereopairs::isFollower(songPlayerData.selection.startTrack))
+    {
+        songPlayerData.selection.startTrack--;
+        songPlayerData.selection.trackSelectionLength++;
+    }
     songPlayerData.normalTracksCount = kSampleTracks;
     songPlayerData.midiTracksCount = kMidiTracks;
     songPlayerData.normalTracksNames = &mtProject.values.TrackNames[0][0];
@@ -1071,12 +1050,7 @@ void cSongEditor::readSong()
 
 void cSongEditor::refreshPatternsList()
 {
-#ifdef FEATURE_PARTS
-    if (partsView)
-    {
-        return; // fSongParts.cpp keeps the rows
-    }
-#endif
+    FF_SONG_PARTS_ROWS_OR_RETURN(); // fSongParts.cpp keeps the rows
     patternsList.length = songLength;
     patternsList.linesCount = 12;
     patternsList.data = mtProject.song.playlist;
@@ -1264,6 +1238,7 @@ void cSongEditor::switchToNewPattern()
 
 void cSongEditor::selectSpecificTrack(uint8_t track, uint8_t songPosition)
 {
+    track = uint8_t(stereopairs::base(track));
     songPlayerData.selection.isActive = 1;
     songPlayerData.selection.patternSelectionLength = 1;
     songPlayerData.selection.trackSelectionLength = 1;
@@ -1406,6 +1381,11 @@ void cSongEditor::walkOnSongPlayer(player_direction_t dir)
                     if (songPlayerData.selection.trackSelectionLength > 1)
                     {
                         songPlayerData.selection.trackSelectionLength--;
+                        // the range never ends on a hidden follower
+                        while (songPlayerData.selection.trackSelectionLength > 1 &&
+                               stereopairs::isFollower(songPlayerData.selection.startTrack +
+                                                       songPlayerData.selection.trackSelectionLength - 1))
+                            songPlayerData.selection.trackSelectionLength--;
                     }
                     else
                     {
@@ -1420,6 +1400,11 @@ void cSongEditor::walkOnSongPlayer(player_direction_t dir)
                     {
                         songPlayerData.selection.trackSelectionLength++;
                         songPlayerData.selection.startTrack--;
+                        if (stereopairs::isFollower(songPlayerData.selection.startTrack) && songPlayerData.selection.startTrack)
+                        {
+                            songPlayerData.selection.trackSelectionLength++;
+                            songPlayerData.selection.startTrack--;
+                        }
                     }
                 }
             }
@@ -1428,6 +1413,8 @@ void cSongEditor::walkOnSongPlayer(player_direction_t dir)
                 if (songPlayerData.selection.startTrack > 0)
                 {
                     songPlayerData.selection.startTrack--;
+                    songPlayerData.selection.startTrack =
+                      uint8_t(stereopairs::skip(songPlayerData.selection.startTrack, -1));
                 }
             }
 
@@ -1448,6 +1435,13 @@ void cSongEditor::walkOnSongPlayer(player_direction_t dir)
                         {
                             songPlayerData.selection.trackSelectionLength--;
                             songPlayerData.selection.startTrack++;
+                            // the range never starts on a hidden follower
+                            while (songPlayerData.selection.trackSelectionLength > 1 &&
+                                   stereopairs::isFollower(songPlayerData.selection.startTrack))
+                            {
+                                songPlayerData.selection.trackSelectionLength--;
+                                songPlayerData.selection.startTrack++;
+                            }
                         }
                     }
                     else
@@ -1462,6 +1456,10 @@ void cSongEditor::walkOnSongPlayer(player_direction_t dir)
                     if (songPlayerData.selection.trackSelectionLength < allTracksCount)
                     {
                         songPlayerData.selection.trackSelectionLength++;
+                        if (stereopairs::isFollower(songPlayerData.selection.startTrack +
+                                                    songPlayerData.selection.trackSelectionLength - 1) &&
+                            songPlayerData.selection.startTrack + songPlayerData.selection.trackSelectionLength < allTracksCount)
+                            songPlayerData.selection.trackSelectionLength++;
                     }
                 }
             }
@@ -1470,6 +1468,8 @@ void cSongEditor::walkOnSongPlayer(player_direction_t dir)
                 if (songPlayerData.selection.startTrack < allTracksCount - 1)
                 {
                     songPlayerData.selection.startTrack++;
+                    songPlayerData.selection.startTrack =
+                      uint8_t(stereopairs::skip(songPlayerData.selection.startTrack, 1));
                 }
             }
 

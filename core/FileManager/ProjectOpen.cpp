@@ -4,9 +4,7 @@
 #include "ProjectOpen.h"
 #include "fx34_io.h"
 #include "mtFollowChord.h"
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
-#endif
+#include "ff_hooks.h"
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
@@ -198,6 +196,10 @@ void ProjectOpen::loadProjectFileFromSd()
         {
             operationError();
         }
+        else
+        {
+            ffHookOpenStampKeep(); // the Workspace copy of this file gets this project's name and path next: another CRC
+        }
     }
     else if (loadStatus >= fileTransferError)
     {
@@ -205,7 +207,7 @@ void ProjectOpen::loadProjectFileFromSd()
     }
 }
 
-bool ProjectOpen::copyPaterns(int& idx)
+__attribute__((noinline)) bool ProjectOpen::copyPaterns(int& idx)
 {
     char srcPatternFilePath[PATCH_SIZE];
     char destPatternFilePath[PATCH_SIZE];
@@ -253,7 +255,7 @@ bool ProjectOpen::copyPaterns(int& idx)
     return false;
 }
 
-bool ProjectOpen::copyInstruments(int idx, uint8_t& copyState)
+__attribute__((noinline)) bool ProjectOpen::copyInstruments(int idx, uint8_t& copyState)
 {
     static char srcInstrFilePath[PATCH_SIZE];
     static char destInstrFilePath[PATCH_SIZE];
@@ -320,7 +322,7 @@ bool ProjectOpen::copyInstruments(int idx, uint8_t& copyState)
     return false;
 }
 
-bool ProjectOpen::copySamples(int idx, uint8_t& copyState)
+__attribute__((noinline)) bool ProjectOpen::copySamples(int idx, uint8_t& copyState)
 {
     char srcSampleFilePath[PATCH_SIZE];
     char destSampleFilePath[PATCH_SIZE];
@@ -381,13 +383,11 @@ void ProjectOpen::openProjectFinish()
                                                                cWorkspacePatternsMetadataFilePath);
     //------------ synth patches
 
-#if FILEMANAGER_HANDLE_SYNTH == 1
     snprintf(srcFilePath,
              pathSize,
              cProjectsPathFormat,
              newFileManager.getCurrentProjectPath(),
              newFileManager.getCurrentProjectName());
-#endif
 
     //-----------------------------------
 
@@ -400,11 +400,9 @@ void ProjectOpen::openProjectFinish()
     polysynth::open::openProjectAfterBankCopy(
       [&]()
       {
-#ifdef FEATURE_PLUG_HOST
-          // the plugin sidecar follows the project (removed when it has none). A failed copy does not decide the open either:
-          // the project loads with empty inserts and its own sidecar is kept (no save writes over it)
-          plug::sidecarOpen(srcFilePath, cWorkspacePath);
-#endif
+          // the project sidecars follow the project (removed when it has none). A failed copy does not decide the open either:
+          // the project loads with empty settings and its own sidecar is kept (no save writes over it)
+          ffHookProjectOpen(srcFilePath, cWorkspacePath);
           return newFileManager.getSynth()->copyWorkspacePatches(srcFilePath, cWorkspacePath, true);
       },
       []()
@@ -416,6 +414,7 @@ void ProjectOpen::openProjectFinish()
       []() { newFileManager.createNewProjectInWorkspace(); });
 #else
 #if FILEMANAGER_HANDLE_SYNTH == 1
+    ffHookProjectOpen(srcFilePath, cWorkspacePath);   // project.mtff follows the project (Tracker+ and Mini: the open stack calls it above)
     newFileManager.getSynth()->copyWorkspacePatches(srcFilePath, cWorkspacePath);
 #endif
 
@@ -526,7 +525,7 @@ void ProjectOpen::operationError()
 
 //=================================================================================================
 //=================================================================================================
-uint32_t ProjectOpen::calcProjectInstrumentsSize()
+__attribute__((noinline)) uint32_t ProjectOpen::calcProjectInstrumentsSize()
 {
     char srcInstrFilePath[PATCH_SIZE];
     volatile int pathSize = sizeof(srcInstrFilePath);

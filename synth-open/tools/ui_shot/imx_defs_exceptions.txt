@@ -1,0 +1,17 @@
+# imx_check.sh: the -D defines of the real core compile line (make -n -B plus|mini, core/makefile) against the sim's (ui_shot PLATFORM=IMX).
+# One rule per line: <side> <prefix of a -D token>. `real` = the image has it and the sim may not, `sim` = the sim has it and the image may not.
+# Anything else that differs is a drift and fails the check. Comment lines start with #.
+# the image build is NDEBUG, the sim keeps assert() live on purpose (the sim is where an assert should fire)
+real -DNDEBUG
+# the edition name and the version come from version.mk and the sim's own FW_VERSION_DEFINES (the plus pin says tracker-ff)
+real -DFW_EDITION_NAME=
+sim  -DFW_EDITION_NAME=
+# host build plumbing of ui_shot: the console, the host hooks, the Unicorn bridge, the host stand-ins for the AUDIO_CORE_* section macros
+sim  -DENABLE_DEV_CONSOLE
+sim  -DUI_SHOT_HOST
+sim  -DTINY_OPTIONAL_x64
+sim  -DAUDIO_CORE_RAM=
+sim  -DAUDIO_CORE_FLASH=
+sim  -D_GLIBCXX_THROW_OR_ABORT
+sim  -Dstatic_assert
+sim  -DUISHOT_

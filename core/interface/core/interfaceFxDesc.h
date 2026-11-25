@@ -2,6 +2,10 @@
 #ifndef INTERFACE_INTERFACEFXDESC_H_
 #define INTERFACE_INTERFACEFXDESC_H_
 
+// The release image (FW_TRIM + FEATURE_SYNTH_OPEN) keeps these texts deflated, interfaceFxDescZ.cpp (generated data by
+// synth-open/tools/fxdesc_deflate.py from the table below, proof synth-open/tools/fxdesc_test.sh). Every other build uses the table.
+#if !(defined(FW_TRIM) && defined(FEATURE_SYNTH_OPEN))
+
 #ifdef FEATURE_SYNTH
 
 const char* const fxDescriptions[FX_COUNT] = {
@@ -331,6 +335,19 @@ const char* const fxDescriptions[FX_COUNT] = {
     "0: the open slot, 100: the other slot, in between a mix. Number settings glide, switches and lists"
     " change at 50. The other slot is the Patch FX in the other FX column, else the Morph target"
     " (Synth screen, Shift + encoder on the slot).",
+#elif defined(FEATURE_SYNTH_PATCHFX)
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_PATCH_CHANGE,
+    "Destination: Synth \n\nSwitches the Synth instrument to another patch slot of the project."
+    "\n"
+    "\n"
+    "The value is the slot number from 0 to 15 (Synth screen, Shift + Up or Down). Slot 0 is the patch of the song."
+    " A slot with no patch of this engine is ignored.",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_PATCH_MORPH,
+    "Destination: Synth \n\nBlends the open patch slot with another slot of the project, from this step on."
+    "\n"
+    "\n"
+    "0: the open slot, 100: the other slot, in between a mix. Number settings glide, switches and lists"
+    " change at 50. The other slot is the Patch FX in the other FX column, else slot 1.",
 #endif
     // Sequencer::strFxConsts::enFxType::FX_TYPE_COND,
     "Destination: Sample, Synth, MIDI \n\nA condition for the other FX of the step. When it fails the note still plays, only the"
@@ -356,6 +373,13 @@ const char* const fxDescriptions[FX_COUNT] = {
     "\n"
     "0: off, 1: nearest scale note, 2: down, 3: up, 4: track (back to the Scale snap setting of the track). The note of this step is snapped too. The scale and the root note are the ones of"
     " Project Settings. Playback only, the pattern keeps the notes as written.",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_TABLE,
+    "Destination: Sample, Synth \n\nStarts a table on the track: a sequence of up to 16 rows of transpose, volume and one FX, played"
+    " at the speed of the table while the note sounds. On a step with a note the table starts with the note (instead of the table"
+    " of the instrument), on an empty step it starts on the note that sounds."
+    "\n"
+    "\n"
+    "1-16: the table, 0: stop the table of the track. Synth tracks take the transpose, the volume and the Panning, Send and CC A-F FX of a row.",
     // Sequencer::strFxConsts::enFxType::FX_TYPE_BREAK_PATTERN,
     "Destination: Pattern \n\n"
     "Breaks current pattern playback and jumps to the next pattern.",
@@ -662,10 +686,19 @@ const char* const fxDescriptions[FX_COUNT] = {
     "\n"
     "0: off, 1: nearest scale note, 2: down, 3: up, 4: track (back to the Scale snap setting of the track). The note of this step is snapped too. The scale and the root note are the ones of"
     " Project Settings. Playback only, the pattern keeps the notes as written.",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_TABLE,
+    "Destination: Sample \n\nStarts a table on the track: a sequence of up to 16 rows of transpose, volume and one FX, played"
+    " at the speed of the table while the note sounds. On a step with a note the table starts with the note (instead of the table"
+    " of the instrument), on an empty step it starts on the note that sounds."
+    "\n"
+    "\n"
+    "1-16: the table, 0: stop the table of the track.",
     // Sequencer::strFxConsts::enFxType::FX_TYPE_BREAK_PATTERN,
     "Destination: Pattern \n\n"
     "Breaks current pattern playback and jumps to the next pattern.",
 };
 #endif
+
+#endif // !(FW_TRIM && FEATURE_SYNTH_OPEN)
 
 #endif /* INTERFACE_INTERFACEFXDESC_H_ */

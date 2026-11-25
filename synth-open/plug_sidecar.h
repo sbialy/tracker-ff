@@ -12,7 +12,7 @@
 //
 // Unknown lines are skipped, a value that does not parse is skipped, a file without the first line reads as empty. A project
 // with no plugin and a Hard Clip mixer stage has no file at all (write returns 0 and the caller removes the file).
-// The random seed, the scale snap and the send ducking were lines of this file for a while in the 1.4.0 line: they are keys of project.mtff now (plug_mtff.h).
+// The random seed, the scale snap and the send ducking were lines of this file for a while in the 1.4.0 line: they are keys of project.mtff now (mtff_codec.h).
 //
 // Whether the inserts play is not in the sidecar: the binary project's saturationType holds kSatInserts (the "Inserts" entry
 // of the Saturation list) or a built-in entry (the inserts are bypassed and kept). Stock firmware clamps kSatInserts to Hard

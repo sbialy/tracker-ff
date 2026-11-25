@@ -201,6 +201,8 @@ class Sequencer
             FX_TYPE_R10, // RESERVED HOLE, never reuse: the former Tape Start (dev projects), migrated on load to Tape (id 50) with the value + 64 (tapeFx.h)
             FX_TYPE_R11, // rel140-snapfx: id 52, older firmware shows it as no FX
             FX_TYPE_SNAP = FX_TYPE_R11, // tracker-ff: latching scale snap of the track from this step (value 0 Off, 1 Nearest, 2 Down, 3 Up, 4 Track = back to the project setting)
+            FX_TYPE_R12, // rel141-tables: id 53, older firmware shows it as no FX
+            FX_TYPE_TABLE = FX_TYPE_R12, // tracker-ff: TBL, starts table 1..16 on the track (with the note of the step, or on the sounding note), 0 stops it (core/source/tables_format.h)
 
         };
 
@@ -982,15 +984,19 @@ class Sequencer
     void chordCaptureMidiOn(uint8_t note, bool firstWritten);
     void chordCaptureMidiOff(uint8_t note);
 
-    // Capture (Ableton Move style, mtSequencer_capture.cpp, Config > Features > Capture, off by default): the notes played in the green
-    // mode of the pattern editor go into a ring (mtCapture.h), the under-screen button 3 puts the last pass of the pattern into the copy
-    // buffer (the stock Copy/Paste one) with the stock live record rules, the pattern is not touched. captureTap is the one funnel:
-    // handleNoteOn / handleNoteOff call it for pads and MIDI in.
-    void captureTap(uint8_t channel, uint8_t note, uint8_t velocity, bool on, int16_t source);
-    void captureCommit();   // main loop, a popup tells what was captured or why not
-    uint8_t captureIndicator(); // main loop, every 60 ms: the idle time empties the ring, returns the CaptureIndicator state for the title bar
-    void captureClear();        // long press of button 3: the ring is emptied, popup "Capture cleared"
-    bool captureWindow(int& track, uint32_t& passUs); // the start track and the length of one pass in us (false: no usable track)
+    // Capture (Move style, ref/capture-move-redesign.md, mtCapture.h): every played note goes into a ring (the image's tap, mtSequencer_capture.cpp,
+    // pads from handleNoteOn, MIDI from mtMidi.cpp), the take logic (mtSequencer_captureMod.cpp, the Capture tenant of extras.plg in the release
+    // image) keeps the take and the gap rule, and the under-screen button 3 writes the take into the destination track of the pattern on screen.
+    void captureTap(uint8_t note, uint8_t velocity, bool on, uint8_t src);
+    void captureCommit();       // main loop, a popup tells what was captured or why not
+    uint8_t captureIndicator(); // main loop, every 60 ms: the CaptureIndicator state for the title bar
+    void captureClear();        // long press of button 3: the take ends, popup "Capture cleared"
+    void captureFlushNow();     // before the card is lent to the computer (USB drive mode): the take file gets every pending event
+    static uint32_t captureOp(uint32_t op); // the take logic (CAPTURE_OP_*): ext_hooks.capture in the release image
+    bool captureWindow(int& track); // the destination track of a press (false: no usable track)
+    void captureCommitTake();   // the commit itself (take logic)
+    uint8_t captureTakeTick();  // the indicator itself (take logic)
+    static void captureKeep();  // the release image: keeps what only extras.plg calls
 
     // Strum FX (tracker-ff, FX_TYPE_STRUM): the value as signed units, + up (lowest note first), - down, 0 off (values 0 and 64).
     // A unit is kStrumUnitUs between two successive chord notes. The notes start on audio block boundaries (2,902 us on MK66),
@@ -1073,6 +1079,12 @@ class Sequencer
                                  enFxValLabelAlign align);
 
     uint8_t getActualPos() { return player.track[0].actual_pos; }
+#ifdef FEATURE_SYNTH_OPEN
+    uint8_t nnaParkedCount() const { return nnaParkCount; } // New Note Action Continue: notes parked and not released yet (host tests)
+#if !defined(__arm__)
+    void nnaHostPreempt(bool on) { nnaPreemptOn = on; }
+#endif
+#endif
     uint8_t getPatternLength() { return getActualPattern()->track[0].length + 1; }
 
     void alignToGlobalPos(uint8_t);
@@ -1082,6 +1094,7 @@ class Sequencer
     void handleMidiInClock();
     void handleMidiInStart(bool continuePlay = false, bool songMode = false);
     void handleMidiInStop();
+    void playExternalClockPulses(int nanoTicksInClockPulse);
     void handleMidiInSongPosition(uint16_t beats);
 
     void setPreRollMetronomeEndCallback(void (*preRollMetronomeEndCalback)(void))
@@ -1111,6 +1124,35 @@ class Sequencer
     uint16_t noteSerial = 0;
     uint16_t noteId[kAllTracks] = {};
     uint16_t nextNoteId() { return noteSerial = (noteSerial == 0xFFFF) ? uint16_t(1) : uint16_t(noteSerial + 1); }
+
+    // New Note Action Continue (ref/synth-nna-design.md 3.3): the note a new step replaces is not ended, it is parked here and its note-off
+    // goes out when the track's newest note ends (gate end, mute, an Off step, replaced by a note of a part that is not Continue, Stop, Play,
+    // record start, or the tick that finds the track without an open note). One pool for all tracks, the voice pool is 4. Full: the oldest
+    // parked note is released at once (it degrades to Release). Nothing runs while the pool is empty.
+    static constexpr int kNnaParkMax = 6;
+    struct NnaPark
+    {
+        uint16_t id;     // the note id of the parked note (noteTag), the note-off carries it
+        uint8_t track;
+        bool para;       // the MIDI Chord note-on went out as one paraphonic note (chordParaTracks at park time)
+        strPlayer::strPlayerTrack::strSendStep step; // what the note-off needs: note, instrument, the chord FX
+    };
+    NnaPark nnaParked[kNnaParkMax];
+    uint8_t nnaParkCount = 0;
+    void nnaParkNote(uint8_t track, bool open);
+    void nnaRelease(const NnaPark& e);
+    bool nnaPop(int track, NnaPark& out); // the one place the main loop and the audio callback both take entries out (interrupts masked inside)
+    void nnaFlushTrack(uint8_t track);
+    void nnaFlushAll();
+#if defined(__arm__)
+    void nnaPreempt() {}
+#else
+    // host sim only (synth_nna_sim.sh S-K10): stands in for the audio callback preempting the main loop, runs the tick net of every track
+    void nnaPreempt();
+    bool nnaPreemptOn = false;
+    uint8_t nnaLockDepth = 0;
+    bool nnaInPreempt = false;
+#endif
 #endif
 
     // Strum FX: the delayed note-ons of strummed chords (MIDI out and Poly synth parts). Filled and served in the audio callback
@@ -1168,6 +1210,10 @@ class Sequencer
     static constexpr int kTicksInStep = 576;
     static constexpr size_t kExternalTempoCounterSize = 24 * 2;
     static constexpr int kExternalClockPpqn = 24;
+    // time spent on external clock pulses per audio block before the rest of a burst waits in externalClocksToPlay (Sequencer::tick),
+    // a third of the 2,902 us block, and the longest backlog kept (4 beats, a real clock never gets there)
+    static constexpr uint32_t kExternalClockBudgetUs = 1000;
+    static constexpr int kMaxExternalClockBacklog = 96;
     static constexpr int kStepsPerBeat = 4;
 
     static constexpr int kuStepsInStep = 48;
@@ -1209,7 +1255,7 @@ class Sequencer
     uint8_t isTrackEngineMuted(uint8_t track);
 
     void stopAllOpenNotes(void);
-    void stopOpenNoteOnTrack(int track, bool leaveStepOpen = false);
+    void stopOpenNoteOnTrack(int track, bool leaveStepOpen = false, uint8_t endMode = 0);
 
     void cancelFxes(int8_t track);
     void cancelFxes();
@@ -1227,19 +1273,51 @@ class Sequencer
     void midiSendCC(uint8_t channel, uint8_t control, uint8_t value, uint8_t midiOut);
 
     void sendNoteOn(uint8_t track, strPlayer::strPlayerTrack::strSendStep* step);
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
     // Scale snap (scales.h): moves the note of the step in place, so the note off that follows names the note that was sent
     void snapStepNote(uint8_t track, strPlayer::strPlayerTrack::strSendStep* step, uint8_t rollMode = kSnapOff);
     // Snap FX latch of a track: back to the project setting / the latch a forward start at step `pos` would hold (the last Snap FX above it)
     void snapFxReset(uint8_t track) { player.track[track].snapFx = kSnapFxNone; }
     void snapFxEnter(uint8_t track, int pos);
+
+  public: // called by the hooks (core/include/ff_hooks.h), from the stock sequencer files
+    // Tables (core/source/tables.h): the runner of each track. tableNoteOn after a step note went out (the TBL FX of the step, else
+    // the binding of its instrument), tableRetrigger after an Arp, Roll or Stutter note (the running table again from row 0),
+    // tableAdvance once per uStep of a track with a running table, tableStop ends it (restore: the voice gets back what the table
+    // changed, else only a synth part's transpose and gain are reset)
+    void tableNoteOn(uint8_t track, const strPlayer::strPlayerTrack::strSendStep& step, int fxSlots);
+    void tableRetrigger(uint8_t track, const strPlayer::strPlayerTrack::strSendStep& step);
+    void tableStart(uint8_t track, uint8_t table, int instrument);
+    // a live note (pads, MIDI in) on the track: the instrument's table, tableIdleTick advances it while the sequencer is stopped
+    void tableLiveNoteOn(uint8_t track, int instrument);
+    // the live note went off (pad release, MIDI note off): a Loop table runs through the release and ends when the voice is silent
+    void tableLiveNoteOff(uint8_t track);
+    bool tableVoiceSilent(uint8_t track);
+    void tableReleaseCheck();
+    void tableIdleTick();
+    void tableIdleFallback(float intervalSeconds);
+#ifdef TABLE_DWT
+    void tableDwtBlockEnd(); // measurement build only (tables.h DwtBlock)
+#endif
+    static constexpr float kTableIdleClockGapSec = 0.5f;
+    void tableAdvance(uint8_t track);
+    void tableApply(uint8_t track);
+    void tableStop(uint8_t track, bool restore);
+    void tableStopAll();
+    void tableFxStep(uint8_t track, int fxIndex, uint8_t value, bool noteSounds, int instrument);
+  private:
 #endif
     void sendNoteOff(uint8_t track,
                      strPlayer::strPlayerTrack::strSendStep* step,
-                     int8_t offOption = STEP_NOTE_OFF_DEFAULT);
+                     int8_t offOption = STEP_NOTE_OFF_DEFAULT,
+                     uint8_t endMode = 0);
+    // New Note Action (SynthPartSettings::nna): how the note of `old` ends when `next` takes its track (kNnaRelease unless both are synth steps)
+    uint8_t nnaReplaceMode(const strPlayer::strPlayerTrack::strSendStep& old, const strPlayer::strPlayerTrack::strSendStep& next) const;
 
     void sendMidiChordOn(uint8_t track, strPlayer::strPlayerTrack::strSendStep* step);
-    void sendMidiChordOff(uint8_t track, strPlayer::strPlayerTrack::strSendStep* step);
+    // para: -1 the track's chordParaTracks bit decides and the track's pending strum is cancelled (the note that ends is the track's own).
+    // 0 / 1: the note-off of a parked Continue note (nnaRelease): its own para flag, the track's strum belongs to the newer note and stays
+    void sendMidiChordOff(uint8_t track, strPlayer::strPlayerTrack::strSendStep* step, int8_t para = -1);
 
     uint16_t getChordBitmask(uint8_t chord);
     uint16_t getChordBitmaskForArp(uint8_t chord);

@@ -5,4 +5,4 @@
 #include <stdint.h>
 
 constexpr int LiberationSans_Bold_17_L4_rawSize = 22396;
-extern const uint8_t LiberationSans_Bold_17_L4_deflated[3688];
+extern const uint8_t LiberationSans_Bold_17_L4_deflated[3503];

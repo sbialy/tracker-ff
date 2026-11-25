@@ -158,8 +158,13 @@ void attach()
     s_probe = new Probe();
     for (int t = 0; t < 8; t++)
     {
+#ifndef PLATFORM_IMX
         new AudioConnection(instrumentPlayer[t].getAudioVoice()->getMonoToStereo(), 0, s_probe, uint8_t(t));
         new AudioConnection(instrumentPlayer[t].getAudioVoice()->getMonoToStereo(), 1, s_probe, uint8_t(8 + t));
+#else   // the Tracker+ voice is stereo (AudioVoice.h): its two panning amplifiers are the left and right outputs
+        new AudioConnection(instrumentPlayer[t].getAudioVoice()->getPanningAmplifier(AudioVoice::kLeft), 0, s_probe, uint8_t(t));
+        new AudioConnection(instrumentPlayer[t].getAudioVoice()->getPanningAmplifier(AudioVoice::kRight), 0, s_probe, uint8_t(8 + t));
+#endif
     }
     for (int p = 0; p < 3; p++)
     {

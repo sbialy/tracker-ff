@@ -72,6 +72,14 @@ void cFileManager::loadPatternFromWorkspace(uint8_t index)
                                                        sizeof(Sequencer::strPattern),
                                                        fileWholeOnce);
 
+    // A pattern is saved by removing its file and writing a new one. When power is lost in
+    // between, a file of zero length is left behind. It holds nothing, so it is loaded like
+    // a pattern without a file instead of failing the load of the whole project.
+    if (loadStatus == fileTransferEnd && fileSystem->getFileSize(patternFilename) == 0)
+    {
+        loadStatus = fileTransferFileNoExist;
+    }
+
     if (loadStatus == fileTransferEnd)
     {
         size_t fileSize = fileSystem->getFileSize(patternFilename);
@@ -312,7 +320,6 @@ bool cFileManager::saveWorkspacePatternNow(uint8_t index)
 //-----------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------
 
-#ifdef FEATURE_PARTS
 bool cFileManager::readWorkspacePatternTo(uint8_t index, Sequencer::strPattern* dest)
 {
     char p[PATCH_SIZE];
@@ -330,7 +337,6 @@ bool cFileManager::writeWorkspacePatternFrom(uint8_t index, Sequencer::strPatter
     snprintf(p, PATCH_SIZE, cWorkspacePatternFileFormat, index);
     return writePatternFile(p, src);
 }
-#endif
 
 bool cFileManager::writePatternFile(const char* filePath, Sequencer::strPattern* sourcePattern)
 {
@@ -423,6 +429,19 @@ bool cFileManager::readPatternFile(const char* filePath, Sequencer::strPattern* 
     return true;
 }
 
+// The player, the editors and the translations below index the steps of a track with its
+// length, and nothing but the size of a pattern file is checked when it is read.
+static void limitTrackLengths(Sequencer::strPattern* pattern)
+{
+    for (Sequencer::strPattern::strTrack& track : pattern->track)
+    {
+        if (track.length > Sequencer::MAXSTEP)
+        {
+            track.length = Sequencer::MAXSTEP;
+        }
+    }
+}
+
 void cFileManager::checkVersionAndTranslate(Sequencer::strPattern* pattern)
 {
 
@@ -432,6 +451,8 @@ void cFileManager::checkVersionAndTranslate(Sequencer::strPattern* pattern)
         {
             translatePatternFromFileVersion5ToFileVersion6(pattern);
         }
+
+        limitTrackLengths(pattern);
 
         if (pattern->header.fileStructureVersion[0] <= 1)
         {
@@ -457,6 +478,10 @@ void cFileManager::checkVersionAndTranslate(Sequencer::strPattern* pattern)
         {
             pattern->header.fileStructureVersion[i] = PATTERN_FILE_VERSION;
         }
+    }
+    else
+    {
+        limitTrackLengths(pattern);
     }
 
     translatePatternWithDifferentTrackCount(pattern);
@@ -607,7 +632,7 @@ void cFileManager::translatePatternFromFileVersion4ToFileVersion5(
     }
 }
 
-void cFileManager::translatePatternFromFileVersion5ToFileVersion6(
+__attribute__((noinline)) void cFileManager::translatePatternFromFileVersion5ToFileVersion6(
   Sequencer::strPattern* patternToTranslate)
 {
     struct strTrack_v5

@@ -35,11 +35,26 @@
 // The per block work of every mixer size is one function (mixer.cpp, AudioMixerBase::mix), the template only holds the gain tables
 class AudioMixerBase : public AudioStream
 {
+  public:
+    // Room of the input table on the stack of mix(), the most inputs one mixer of this platform may have. The Tracker+ and Mini audio graph
+    // has 18 and 21 input mixers (as upstream), the original (MK66) has 13 at most (the send mixers: 8 tracks + 2 external + kSynthParts
+    // synth sends) and keeps the smaller table, every word of it is ISR stack. AudioMixer<N> refuses N above this at compile time.
+#ifdef PLATFORM_IMX
+    static constexpr int kMaxInputs = 21;
+#else
+    static constexpr int kMaxInputs = 13;
+#endif
+
   protected:
     AudioMixerBase(unsigned char inputs, audio_block_t** queue)
       : AudioStream(inputs, queue)
     {
     }
+
+  private:
+    // Only AudioMixer<N> calls it, and only with N <= kMaxInputs (static_assert in AudioMixer), so the table can never be overrun
+    template<int mixerSize>
+    friend class AudioMixer;
     void mix(int size, int32_t* multiplier, int32_t* previousMultiplier, SaturationType saturationType);
 
   public:
@@ -63,6 +78,11 @@ class AudioMixer : public AUDIO_MIXER_PARENT
     static constexpr float kUnityGain = 65536.0f;
     static constexpr float kMinGain = -32767.0f;
     static constexpr float kMaxGain = 32767.0f;
+
+#ifdef AUDIO_NULL_IS_SILENCE
+    static_assert(mixerSize > 0 && mixerSize <= AudioMixerBase::kMaxInputs,
+                  "this mixer has more inputs than AudioMixerBase::kMaxInputs of the platform (mixer.h)");
+#endif
 
     AudioMixer(void)
       : AUDIO_MIXER_PARENT(mixerSize, inputQueueArray)

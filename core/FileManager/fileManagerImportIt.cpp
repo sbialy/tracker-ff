@@ -555,7 +555,7 @@ void cFileManager::importItFile_LoadSamples()
             if (is16or8bit)
             {
                 uint32_t totalToRead = instr->sample.length * 2;
-                if ((mtProject.used_memory + instr->sample.length * 2) > SAMPLE_MEMORY_SIZE)
+                if ((mtProject.used_memory + instr->sample.length * 2) > SAMPLE_POOL_BYTES)
                 {
                     moveToNextOperationStep();
                     return;
@@ -612,7 +612,7 @@ void cFileManager::importItFile_LoadSamples()
             else // 8bit
             {
                 uint32_t totalToRead = instr->sample.length;
-                if ((mtProject.used_memory + instr->sample.length * 2) > SAMPLE_MEMORY_SIZE)
+                if ((mtProject.used_memory + instr->sample.length * 2) > SAMPLE_POOL_BYTES)
                 {
                     moveToNextOperationStep();
                     return;

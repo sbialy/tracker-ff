@@ -13,8 +13,8 @@ AUDIO_CORE_FLASH void AudioPlayMemory::playLoopForward(uint8_t instrIdx, int8_t 
 
     if (instrIdx > kSampleInstrumentsCount - 1)
         instrIdx = kSampleInstrumentsCount - 1;
-    if (note > MAX_NOTE)
-        note = MAX_NOTE;
+    if (note > keyLimit)
+        note = keyLimit;
 
     lastInstrIdxInPlay = currentInstrIdxInPlay;
     currentInstrIdxInPlay = instrIdx;
@@ -33,6 +33,7 @@ AUDIO_CORE_FLASH void AudioPlayMemory::playLoopForward(uint8_t instrIdx, int8_t 
     lastNote = note;
 
     uint16_t startPoint, endPoint, loopPoint1, loopPoint2;
+    const bool oscillator = mtProject.instrument[instrIdx].playMode == playModeOscillator;
 
     if (pointsForceFlag)
     {
@@ -47,6 +48,10 @@ AUDIO_CORE_FLASH void AudioPlayMemory::playLoopForward(uint8_t instrIdx, int8_t 
         endPoint = mtProject.instrument[instrIdx].endPoint;
         loopPoint1 = mtProject.instrument[instrIdx].loopPoint1;
         loopPoint2 = mtProject.instrument[instrIdx].loopPoint2;
+    }
+    if (oscillator)
+    {
+        startPoint = loopPoint1; // the Start point is ignored, the cycle starts at its loop start
     }
 
     if ((startPoint >= endPoint) || (startPoint > loopPoint1) || (startPoint > loopPoint2) ||
@@ -96,6 +101,18 @@ AUDIO_CORE_FLASH void AudioPlayMemory::playLoopForward(uint8_t instrIdx, int8_t 
     constrainsInSamples.loopPoint2 = pointsInSamples.loop2 - pointsInSamples.start;
     constrainsInSamples.loopLength = pointsInSamples.loop2 - pointsInSamples.loop1;
     constrainsInSamples.endPoint = pointsInSamples.end - pointsInSamples.start;
+
+    if (oscillator)
+    {
+        // C5 plays the cycle at the C5 of the wavetable tables (523.25 Hz at 44.1 kHz): one multiply per note-on, nothing per block
+        const float cycleScale = (float)std::max<uint32_t>(constrainsInSamples.loopLength, 1) * (523.2511306f / 44100.0f);
+        pitchControl *= cycleScale;
+        pitchSmoothingControl *= cycleScale;
+    }
+    else
+    {
+        applyRepitch();
+    }
 
     next = currentStartAddress + pointsInSamples.start;
     length = currentSampleLength - pointsInSamples.start;
@@ -217,9 +234,9 @@ AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateLoopForwardNormal()
                         if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                         {
                             pitchControl += pitchSmoothingControl;
-                            if (pitchControl > notes[MAX_NOTE - 1])
+                            if (pitchControl > notes[keyLimit - 1])
                             {
-                                pitchControl = notes[MAX_NOTE - 1];
+                                pitchControl = notes[keyLimit - 1];
                                 pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                             }
                             else if (pitchControl < notes[MIN_NOTE])
@@ -378,9 +395,9 @@ AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateLoopForwardReverse()
                         if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                         {
                             pitchControl += pitchSmoothingControl;
-                            if (pitchControl > notes[MAX_NOTE - 1])
+                            if (pitchControl > notes[keyLimit - 1])
                             {
-                                pitchControl = notes[MAX_NOTE - 1];
+                                pitchControl = notes[keyLimit - 1];
                                 pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                             }
                             else if (pitchControl < notes[MIN_NOTE])

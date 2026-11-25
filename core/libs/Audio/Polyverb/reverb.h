@@ -40,6 +40,7 @@
 #ifndef POLYVERB_REVERB_H_
 #define POLYVERB_REVERB_H_
 
+#include "stereo_sends.h"
 #include "fx_engine.h"
 #include "util.h"
 
@@ -61,11 +62,16 @@ class Reverb
 
     // buffer: the kBufferSamples x 16 bit SRAM line buffer (effect_polyverb.cpp). Both line sets live in it: E in the first kLen1
     // samples, E2 in the next kLen2.
-    // buffer2 (the 16384 x 16 bit SDRAM buffer of the full rate reverb) is not used any more.
+    // buffer2: only with FW_STEREO_SENDS, the kSideSamples x 16 bit SDRAM ring of the side input lines (ring 3). Otherwise (the 16384 x 16
+    // bit SDRAM buffer of the full rate reverb) it is not used any more.
     void Init(uint16_t* buffer, uint16_t* buffer2)
     {
+#ifdef FW_STEREO_SENDS
+        engine_.Init(buffer, buffer + kLen1, buffer2);
+#else
         (void)buffer2;
         engine_.Init(buffer, buffer + kLen1);
+#endif
 #ifdef FEATURE_SYNTH_OPEN
         quiet_samples_ = 0;
 #endif
@@ -79,10 +85,20 @@ class Reverb
     }
 
     static constexpr size_t kBufferSamples = 8192 + 5536; // kLen1 + kLen2
+#ifdef FW_STEREO_SENDS
+    static constexpr size_t kSideSamples = 3136; // kLen3: the side input lines, in SDRAM (effect_polyverb.cpp)
+#endif
     static constexpr size_t GetBufferSize() { return kBufferSamples * sizeof(uint16_t); }
 
     // size: full rate samples per block, even. In place: out = in + (wet - in) * amount.
+#ifdef FW_STEREO_SENDS
+    // side (stereo_sends.h): the (L - R) / 2 send block of the pair, or nullptr (no side, the old mono input bit for bit). On a side block
+    // left and right hold the same mid on entry. The side goes through its own halfband decimator and is added to the first tank and
+    // taken from the second one, after the input diffusers (a width cue, not a stereo reverb).
+    inline __attribute__((always_inline)) void Process(int16_t* left, int16_t* right, size_t size, const int16_t* side = nullptr)
+#else
     inline __attribute__((always_inline)) void Process(int16_t* left, int16_t* right, size_t size)
+#endif
     {
         // The stock loop at half rate: every line (n + 1) / 2 long.
         typedef E::Reserve<
@@ -97,6 +113,13 @@ class Reverb
                   1091,
                   E::Reserve<1345, E::Reserve<2251, E::Reserve<predelay_buffer_size_>>>>>>>>
           Memory;
+#ifdef FW_STEREO_SENDS
+        // the side input has its own predelay and four input diffusers (the same lengths as del0 and ap1..ap4) in the third ring (SDRAM, the
+        // 6,272 B stay out of the SRAM heap, they are read only while a pair is linked): the allpass chain turns the
+        // phase of a signal by a frequency dependent amount, a side that skipped it would add to the mid with a polarity that flips along
+        // the spectrum (sim, stereo_sends_sim.sh)
+        typedef E::Reserve<75, E::Reserve<107, E::Reserve<160, E::Reserve<264, E::Reserve<predelay_buffer_size_>>>>> Memory3;
+#endif
         typedef E::Reserve<1263, E::Reserve<1099, E::Reserve<3156>>> Memory2;
         E::DelayLine<Memory, 0> ap1;
         E::DelayLine<Memory, 1> ap2;
@@ -109,6 +132,14 @@ class Reverb
         E::DelayLine<Memory2, 0> dap2a;
         E::DelayLine<Memory2, 1> dap2b;
         E::DelayLine<Memory2, 2> del2;
+#ifdef FW_STEREO_SENDS
+        E::DelayLine<Memory3, 0> ap1s;
+        E::DelayLine<Memory3, 1> ap2s;
+        E::DelayLine<Memory3, 2> ap3s;
+        E::DelayLine<Memory3, 3> ap4s;
+        E::DelayLine<Memory3, 4> del0s;
+        static_assert(decltype(del0s)::base + decltype(del0s)::length + 1 <= kLen3, "ring 3 too short for the side diffusers");
+#endif
         static_assert(decltype(del0)::base + decltype(del0)::length + 1 <= kLen1, "E ring too short for the lines");
         static_assert(decltype(del2)::base + decltype(del2)::length + 1 <= kLen2, "E2 ring too short for the lines");
         // Wrap() takes i < 2 n: the largest index is write_ptr_ (n - 1) + base + the largest integer offset of the modulated del2
@@ -134,6 +165,10 @@ class Reverb
         // per channel: w0 w1 w2 (half rate wet, oldest first).
         float d0 = d0_, d1 = d1_, d2 = d2_, d3 = d3_, d4 = d4_, d5 = d5_;
         float wl0 = wl0_, wl1 = wl1_, wl2 = wl2_, wr0 = wr0_, wr1 = wr1_, wr2 = wr2_;
+#ifdef FW_STEREO_SENDS
+        float s1 = s1_, s2 = s2_, s3 = s3_, s4 = s4_, s5 = s5_;
+        float lp_s = lp_decay_s_;
+#endif
 
         const size_t ticks = size / 2;
         for (size_t k = 0; k < ticks; k++)
@@ -152,6 +187,20 @@ class Reverb
             d4 = x0;
             d5 = x1;
 
+#ifdef FW_STEREO_SENDS
+            float ys = 0.0f;
+            if (side != nullptr)
+            {
+                const float xs0 = 2.0f * gain * (float)side[2 * k] / 32768;
+                const float xs1 = 2.0f * gain * (float)side[2 * k + 1] / 32768;
+                ys = (16.0f * s4 + 9.0f * (s3 + s5) - (s1 + xs1)) * (1.0f / 32.0f);
+                s1 = s3;
+                s2 = s4;
+                s3 = s5;
+                s4 = xs0;
+                s5 = xs1;
+            }
+#endif
             engine_.Start(&c);
             c.Load(y);
             c.Write(del0, 0.0f);
@@ -168,9 +217,32 @@ class Reverb
             c.Read(ap4 TAIL, kap);
             c.WriteAllPass(ap4, -kap);
             c.Write(apout);
+#ifdef FW_STEREO_SENDS
+            float sd = 0.0f;
+            if (side != nullptr)
+            {
+                c.Load(ys);
+                c.Write3(del0s, 0.0f);
+                c.Read3(del0s, predelay_length_, 1.0f);
+                c.Lp(lp_s, klp);
+                c.Read3(ap1s TAIL, kap);
+                c.WriteAllPass3(ap1s, -kap);
+                c.Read3(ap2s TAIL, kap);
+                c.WriteAllPass3(ap2s, -kap);
+                c.Read3(ap3s TAIL, kap);
+                c.WriteAllPass3(ap3s, -kap);
+                c.Read3(ap4s TAIL, kap);
+                c.WriteAllPass3(ap4s, -kap);
+                c.Write(sd);
+            }
+#endif
 
             // Main reverb loop.
+#ifdef FW_STEREO_SENDS
+            c.Load(apout + sd);
+#else
             c.Load(apout);
+#endif
             c.Interpolate2(del2, 3105.5f, LFO_2, 50.0f, krt);
             c.Lp(lp_1, klp);
             c.Read(dap1a TAIL, -kap);
@@ -192,7 +264,11 @@ class Reverb
                 left[2 * k + 1] += delta;
             }
 
+#ifdef FW_STEREO_SENDS
+            c.Load(apout - sd);
+#else
             c.Load(apout);
+#endif
             c.Read(del1 TAIL, krt);
             c.Lp(lp_2, klp);
             c.Read2(dap2a TAIL, kap);
@@ -229,6 +305,15 @@ class Reverb
         wr0_ = wr0;
         wr1_ = wr1;
         wr2_ = wr2;
+#ifdef FW_STEREO_SENDS
+        // no side block: the decimator history restarts from silence
+        s1_ = side != nullptr ? s1 : 0.0f;
+        s2_ = side != nullptr ? s2 : 0.0f;
+        s3_ = side != nullptr ? s3 : 0.0f;
+        s4_ = side != nullptr ? s4 : 0.0f;
+        s5_ = side != nullptr ? s5 : 0.0f;
+        lp_decay_s_ = side != nullptr ? lp_s : 0.0f;
+#endif
 #ifdef FEATURE_SYNTH_OPEN
         // Quiet block = the two long lines of the feedback loop (del1, del2: all the recirculating energy passes through them, at the
         // latest after the longest line, 3156 samples) were written with values below 1 LSB of 16 bit (they compress to 0), and the three
@@ -301,7 +386,14 @@ class Reverb
     static constexpr size_t kLen1 = 8192;
     static constexpr size_t kLen2 = 5536;
     static_assert(kBufferSamples == kLen1 + kLen2, "kBufferSamples follows the rings");
+#ifdef FW_STEREO_SENDS
+    // ring 3: the side input diffusers and the side predelay (sum of the lines 75 + 107 + 160 + 264 + 2500 plus the 5 gaps, rounded up to
+    // a multiple of 32 as kLen2 was before they moved out of E2)
+    static constexpr size_t kLen3 = kSideSamples;
+    typedef FxEngine<kLen1, FORMAT_16_BIT, kLen2, kLen3> E;
+#else
     typedef FxEngine<kLen1, FORMAT_16_BIT, kLen2> E;
+#endif
     E engine_;
 
     static constexpr size_t predelay_buffer_size_ = 2500; // 5000 at the full rate
@@ -325,11 +417,18 @@ class Reverb
 
     float d0_, d1_, d2_, d3_, d4_, d5_;
     float wl0_, wl1_, wl2_, wr0_, wr1_, wr2_;
+#ifdef FW_STEREO_SENDS
+    float s1_, s2_, s3_, s4_, s5_; // halfband history of the side input
+    float lp_decay_s_;             // its input low pass
+#endif
 
     void ClearRate()
     {
         d0_ = d1_ = d2_ = d3_ = d4_ = d5_ = 0.0f;
         wl0_ = wl1_ = wl2_ = wr0_ = wr1_ = wr2_ = 0.0f;
+#ifdef FW_STEREO_SENDS
+        s1_ = s2_ = s3_ = s4_ = s5_ = lp_decay_s_ = 0.0f;
+#endif
     }
 
     DISALLOW_COPY_AND_ASSIGN(Reverb);

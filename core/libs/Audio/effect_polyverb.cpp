@@ -13,12 +13,22 @@ static uint16_t internalRamReverbBuff[Reverb::kBufferSamples] __attribute__((sec
 #else
 static __NOINIT(EXTERNAL_RAM) uint16_t internalRamReverbBuff[16384];
 #endif
+#ifdef FW_STEREO_SENDS
+// Stereo sends: the side input lines (ring 3, 6,272 B) are in the SDRAM, not in the SRAM heap. The 16 KB heap rule and the profile rule
+// (new buffers never go to SRAM): the lines are read and written only while a pair is linked, the E and E2 rings stay in SRAM as they
+// were, so a project with no pair costs what it did without the flag. Zeroed by Reverb::Reset() like the SRAM rings.
+static __NOINIT(EXTERNAL_RAM) uint16_t sideReverbBuff[Reverb::kSideSamples];
+#endif
 
 AudioEffectPolyverb::AudioEffectPolyverb()
   : AudioStream(2, inputQueueArray)
 {
     buffer = internalRamReverbBuff;
+#ifdef FW_STEREO_SENDS
+    reverb.Init(buffer, sideReverbBuff); // the second buffer of the full rate reverb is gone, the side lines (ring 3) use that argument
+#else
     reverb.Init(buffer, nullptr); // the second buffer is not used by the half rate reverb
+#endif
 
     reverb.SetInputGain(0.1f);
     reverb.SetDiffusion(0.625f);
@@ -68,16 +78,29 @@ AUDIO_CORE_RAM void AudioEffectPolyverb::update(void)
     }
     // a missing input is silence: the reverb tail keeps ringing (stock took a block of zeros here, and left the other input unread)
     block_left = receiveWritable(0);
+#ifdef FW_STEREO_SENDS
+    // port 1 is the side (L - R) / 2 send, port 0 the mid. The right block starts as a copy of the mid, as the second port of the mono
+    // feed was (bit identical to it when the side is silent or missing)
+    audio_block_t* block_side = receiveReadOnly(1);
+    const bool silentIn = isSilentOrMissing(block_left) && isSilentOrMissing(block_side);
+    block_right = nullptr;
+#else
     block_right = receiveWritable(1);
     const bool silentIn = isSilentOrMissing(block_left) && isSilentOrMissing(block_right);
+#endif
     if (silentIn && reverb.IsQuiet())
     {
         // Silent input and a reverb that has decayed below 1 LSB everywhere (the line buffers are zero): nothing to compute, nothing to
         // transmit. The next block with sound starts from a clean reverb. Not bit identical to the stock tail, see synth-open/README.md.
         if (block_left)
             release(block_left);
+#ifdef FW_STEREO_SENDS
+        if (block_side)
+            release(block_side);
+#else
         if (block_right)
             release(block_right);
+#endif
         reverb.SkipQuiet(AUDIO_BLOCK_SAMPLES);
         return;
     }
@@ -87,18 +110,28 @@ AUDIO_CORE_RAM void AudioEffectPolyverb::update(void)
         if (block_left)
             memset(block_left->data, 0, sizeof(block_left->data));
     }
+#ifdef FW_STEREO_SENDS
+    block_right = allocate();
+    if (block_right && block_left)
+        memcpy(block_right->data, block_left->data, sizeof(block_right->data));
+#else
     if (block_right == NULL)
     {
         block_right = allocate();
         if (block_right)
             memset(block_right->data, 0, sizeof(block_right->data));
     }
+#endif
     if (block_left == NULL || block_right == NULL)
     {
         if (block_left)
             release(block_left);
         if (block_right)
             release(block_right);
+#ifdef FW_STEREO_SENDS
+        if (block_side)
+            release(block_side);
+#endif
         return;
     }
 #else
@@ -113,7 +146,13 @@ AUDIO_CORE_RAM void AudioEffectPolyverb::update(void)
     }
 #endif
 
+#ifdef FW_STEREO_SENDS
+    reverb.Process(block_left->data, block_right->data, AUDIO_BLOCK_SAMPLES, isSilentOrMissing(block_side) ? nullptr : block_side->data);
+    if (block_side)
+        release(block_side);
+#else
     reverb.Process(block_left->data, block_right->data, AUDIO_BLOCK_SAMPLES);
+#endif
 #ifdef AUDIO_NULL_IS_SILENCE
     if (!silentIn)
         reverb.ClearQuiet();

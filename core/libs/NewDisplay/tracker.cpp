@@ -560,10 +560,10 @@ void cTracker::playHead()
                 return;
             }
 
-            phx1 = leftOffset + (phx1 - tracks->firstVisibleTrack) * tracksWidth + 1;
+            phx1 = leftOffset + tracks->colOf(phx1) * tracksWidth + 1;
             phx1 = phx1 < (leftOffset + 1) ? leftOffset + 1 : phx1;
 
-            phx2 = leftOffset + (phx2 + 1 - tracks->firstVisibleTrack) * tracksWidth;
+            phx2 = leftOffset + (tracks->colOf(phx2) + 1) * tracksWidth;
             phx2 = phx2 > (800 - rightOffset - 1) ? 800 - rightOffset - 1 : phx2;
 
             phw = phx2 - phx1;
@@ -629,7 +629,7 @@ void cTracker::calculateSelection()
             select2_y = tracks->selectEndStep;
         }
 
-        select1_x = select1_x - tracks->firstVisibleTrack;
+        select1_x = tracks->colOf(select1_x);
         select1_x = rightOffset + select1_x * tracksWidth + 1;
 
         if (select1_x < rightOffset + 1)
@@ -637,7 +637,7 @@ void cTracker::calculateSelection()
             select1_x = rightOffset + 1;
         }
 
-        select2_x = select2_x - tracks->firstVisibleTrack;
+        select2_x = tracks->colOf(select2_x);
         select2_x = rightOffset + select2_x * tracksWidth + tracksWidth - 2;
 
         if (select2_x > 800 - rightOffset - 4)
@@ -769,10 +769,10 @@ void cTracker::selection()
 
     // aktualnie modyfikowany step
     if (tracks->selectState && tracks->actualTrack >= tracks->firstVisibleTrack &&
-        tracks->actualTrack <= tracks->firstVisibleTrack + columnsCount)
+        tracks->colOf(tracks->actualTrack) <= columnsCount)
     {
         uint16_t select_x =
-          rightOffset + (tracks->actualTrack - tracks->firstVisibleTrack) * tracksWidth + 2;
+          rightOffset + (tracks->colOf(tracks->actualTrack)) * tracksWidth + 2;
         uint16_t select1_y = posY + stepHight * 7;
         uint16_t select2_y = select1_y + stepHight - 1;
         uint16_t select_w = tracksWidth - 5;
@@ -970,12 +970,12 @@ void cTracker::tracksNumbers()
 
     for (uint8_t i = 0; i < columnsCount; i++)
     {
-        if (tracks->inactive[tracks->firstVisibleTrack + i])
+        if (tracks->inactive[tracks->colTrack(i)])
             API_COLOR(colors[12]);
         else
             API_COLOR(colors[19]);
 
-        int trackIdx = tracks->firstVisibleTrack + i;
+        int trackIdx = tracks->colTrack(i);
         const char* text = trackIdx < tracks->kTrackCount ? tracks->tracksNames[trackIdx] : "";
         int letersCount = strlen(text);
         w = getTextWidth((strFont*)font, text, letersCount);
@@ -1016,7 +1016,7 @@ void cTracker::tracksNumbers()
     for (uint8_t i = 0; i < columnsCount; i++)
     {
         x = rightOffset + (i * tracksWidth) + 4;
-        int trackIdx = tracks->firstVisibleTrack + i;
+        int trackIdx = tracks->colTrack(i);
         const char* trackName = trackIdx < tracks->kTrackCount ? tracks->tracksNames[trackIdx] : "";
         string2Bitmaps(x, y, trackName, textLetersCount[i], false); //, tracksWidth-fonts[3].width
     }
@@ -1048,7 +1048,7 @@ void cTracker::notes()
     int8_t mark = -1;
     if ((tracks->selectedParam == 0 /*|| tracks->selectedParam == 4*/) && tracks->selectState)
     {
-        mark = tracks->actualTrack - tracks->firstVisibleTrack;
+        mark = tracks->colOf(tracks->actualTrack);
     }
 
     for (uint16_t i = 0; i < columnsCount; i++)
@@ -1058,7 +1058,7 @@ void cTracker::notes()
             int16_t param_x = offset_x + i * tracksWidth;
             int16_t param_y = offset_y + j * stepHight;
 
-            char* text = tracks->track[tracks->firstVisibleTrack + i].row[j].note;
+            char* text = tracks->track[tracks->colTrack(i)].row[j].note;
 
             if (selectActive && mark >= 0 && param_x > select1_x && param_x < select2_x &&
                 param_y > select1_y && param_y < select2_y)
@@ -1067,7 +1067,7 @@ void cTracker::notes()
                 actualColor = colors[14];
             else
             {
-                if (tracks->inactive[tracks->firstVisibleTrack + i] || tracks->isBeyondLength(tracks->firstVisibleTrack + i, j))
+                if (tracks->inactive[tracks->colTrack(i)] || tracks->isBeyondLength(tracks->colTrack(i), j))
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[6];
@@ -1104,12 +1104,12 @@ void cTracker::instruments()
     int8_t mark = -1;
     if ((tracks->selectedParam == 1 /*|| tracks->selectedParam == 4*/) && tracks->selectState)
     {
-        mark = tracks->actualTrack - tracks->firstVisibleTrack;
+        mark = tracks->colOf(tracks->actualTrack);
     }
 
     for (uint16_t i = 0; i < columnsCount; i++)
     {
-        uint8_t track = tracks->firstVisibleTrack + i;
+        uint8_t track = tracks->colTrack(i);
         for (uint16_t j = 0; j < rowCount; j++)
         {
             int16_t param_x = offset_x + i * tracksWidth;
@@ -1171,7 +1171,7 @@ void cTracker::fxes1()
     int8_t mark = -1;
     if ((tracks->selectedParam == 2 /*|| tracks->selectedParam == 4*/) && tracks->selectState)
     {
-        mark = tracks->actualTrack - tracks->firstVisibleTrack;
+        mark = tracks->colOf(tracks->actualTrack);
     }
 
     for (uint16_t i = 0; i < columnsCount; i++)
@@ -1181,7 +1181,7 @@ void cTracker::fxes1()
 
             int16_t param_x = offset_x + i * tracksWidth;
             int16_t param_y = offset_y + j * stepHight;
-            char* text = &tracks->track[tracks->firstVisibleTrack + i].row[j].fx[0][0];
+            char* text = &tracks->track[tracks->colTrack(i)].row[j].fx[0][0];
 
             if (selectActive && mark >= 0 && param_x > select1_x && param_x < select2_x &&
                 param_y > select1_y && param_y < select2_y)
@@ -1190,7 +1190,7 @@ void cTracker::fxes1()
                 actualColor = colors[14];
             else
             {
-                if (tracks->inactive[tracks->firstVisibleTrack + i] || tracks->isBeyondLength(tracks->firstVisibleTrack + i, j))
+                if (tracks->inactive[tracks->colTrack(i)] || tracks->isBeyondLength(tracks->colTrack(i), j))
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[8];
@@ -1225,7 +1225,7 @@ void cTracker::fxes2()
     int8_t mark = -1;
     if ((tracks->selectedParam == 3 /*|| tracks->selectedParam == 4*/) && tracks->selectState)
     {
-        mark = tracks->actualTrack - tracks->firstVisibleTrack;
+        mark = tracks->colOf(tracks->actualTrack);
     }
 
     for (uint16_t i = 0; i < columnsCount; i++)
@@ -1235,7 +1235,7 @@ void cTracker::fxes2()
 
             int16_t param_x = offset_x + i * tracksWidth;
             int16_t param_y = offset_y + j * stepHight;
-            char* text = &tracks->track[tracks->firstVisibleTrack + i].row[j].fx[1][0];
+            char* text = &tracks->track[tracks->colTrack(i)].row[j].fx[1][0];
 
             if (selectActive && mark >= 0 && param_x > select1_x && param_x < select2_x &&
                 param_y > select1_y && param_y < select2_y)
@@ -1244,7 +1244,7 @@ void cTracker::fxes2()
                 actualColor = colors[14];
             else
             {
-                if (tracks->inactive[tracks->firstVisibleTrack + i] || tracks->isBeyondLength(tracks->firstVisibleTrack + i, j))
+                if (tracks->inactive[tracks->colTrack(i)] || tracks->isBeyondLength(tracks->colTrack(i), j))
                     actualColor = colors[12];
                 else if (*text == '-')
                     actualColor = colors[9];
@@ -1269,7 +1269,7 @@ void cTracker::marks()
     bool any = false;
     for (uint16_t i = 0; i < columnsCount && !any; i++)
     {
-        const auto& t = tracks->track[tracks->firstVisibleTrack + i];
+        const auto& t = tracks->track[tracks->colTrack(i)];
         for (uint16_t j = 0; j < rowCount; j++)
         {
             if (t.row[j].vol >= 0 || t.row[j].mm >= 0 || t.row[j].hidden)
@@ -1290,7 +1290,7 @@ void cTracker::marks()
 
     for (uint16_t i = 0; i < columnsCount; i++)
     {
-        const uint8_t track = tracks->firstVisibleTrack + i;
+        const uint8_t track = tracks->colTrack(i);
         const int16_t x0 = rightOffset + i * tracksWidth;
         for (uint16_t j = 0; j < rowCount; j++)
         {
@@ -1347,7 +1347,7 @@ void cTracker::vmColumns()
         const int16_t offset_x = rightOffset + sixParamsOffset[4 + col];
         for (uint16_t i = 0; i < columnsCount; i++)
         {
-            const uint8_t track = tracks->firstVisibleTrack + i;
+            const uint8_t track = tracks->colTrack(i);
             for (uint16_t j = 0; j < rowCount; j++)
             {
                 const auto& row = tracks->track[track].row[j];

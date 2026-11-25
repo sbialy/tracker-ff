@@ -4,9 +4,7 @@
 #include "ProjectSave.h"
 #include "fx34_io.h"
 #include "mtFollowChord.h"
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
-#endif
+#include "ff_hooks.h"
 
 #include "VoiceStreamManager.h"
 #include "fileManager.h"
@@ -201,7 +199,7 @@ void ProjectSave::copyProject()
     }
 }
 
-bool ProjectSave::copyPaterns(int& idx)
+__attribute__((noinline)) bool ProjectSave::copyPaterns(int& idx)
 {
     char srcPatternFilePath[PATCH_SIZE];
     char destPatternFilePath[PATCH_SIZE];
@@ -249,7 +247,7 @@ bool ProjectSave::copyPaterns(int& idx)
     return false;
 }
 
-bool ProjectSave::copyInstruments(int idx, uint8_t& copyState)
+__attribute__((noinline)) bool ProjectSave::copyInstruments(int idx, uint8_t& copyState)
 {
     static char srcInstrFilePath[PATCH_SIZE];
     static char destInstrFilePath[PATCH_SIZE];
@@ -565,14 +563,12 @@ void ProjectSave::saveProjectFinish()
              newFileManager.getCurrentProjectPath(),
              newFileManager.getCurrentProjectName());
 
-#ifdef FEATURE_PLUG_HOST
-    if (!plug::sidecarToProject(cWorkspacePath, destFilePath)) // the plugin sidecar follows the project (removed when it has none)
+    if (!ffHookProjectSaveAs(cWorkspacePath, destFilePath)) // the project sidecars follow the project (removed when it has none)
     {
-        mtProject.values.projectNotSavedFlag |= 1; // the project folder lacks the current plugin settings: as the patches below
+        mtProject.values.projectNotSavedFlag |= 1; // the project folder lacks the current FF settings: as the patches below
         operationError();
         return;
     }
-#endif
 #ifdef FEATURE_SYNTH_OPEN
     if (!newFileManager.getSynth()->copyWorkspacePatches(cWorkspacePath, destFilePath))
     {
@@ -672,7 +668,7 @@ bool ProjectSave::saveProject(char* projectPathToSave, char* projectNameToSave)
 
 //=================================================================================================
 //=================================================================================================
-void ProjectSave::listProjectExistingInstruments()
+__attribute__((noinline)) void ProjectSave::listProjectExistingInstruments()
 {
     clearExistingInstrumentList();
 
@@ -727,7 +723,7 @@ void ProjectSave::operationError()
     stopOperationWithError(fmSaveError);
 }
 
-uint32_t ProjectSave::calcWorkspaceInstrumentsSize()
+__attribute__((noinline)) uint32_t ProjectSave::calcWorkspaceInstrumentsSize()
 {
     char currentPatch[PATCH_SIZE];
     int32_t size = 0;

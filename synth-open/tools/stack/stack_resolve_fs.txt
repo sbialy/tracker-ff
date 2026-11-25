@@ -3,6 +3,11 @@
 # noteOff and releaseAll call engine->noteOff only (open_synth.cpp:1044-1075), same class as noteOnNow: without this rule the generic OpenInstrument rule
 # below gives them every engine method including render (PercEngine::render 1,768 B) and the main loop reads a false 3,232 B instead of 2,544 B
 ^polysynth::\(anonymous namespace\)::OpenInstrument::(noteOff|releaseAll)\( => ^(ot::audio::.*Engine|plug::\(anonymous namespace\)::PlugSynth|polysynth::open::\(anonymous namespace\)::ChipEngine)::noteOff\(
+# assignPatch (open_synth.cpp:254) calls engine->slotReset only (:270) next to cutAll and modResetAll, which call no engine method. Same class as noteOnNow
+# above: where GCC 10.3 keeps assignPatch as its own function (the capture-spill merge changed the LTO layout), the generic OpenInstrument rule gave its
+# virtual call every engine method including render (PercEngine::render 1,768 B) and the main loop read a false 3,368 B instead of 2,744 B (release gate
+# on 10.3: weakest margin +2 B, floor 512 B). 12.3 was never affected.
+^polysynth::\(anonymous namespace\)::OpenInstrument::assignPatch\( => ^(ot::audio::.*Engine|plug::\(anonymous namespace\)::PlugSynth|polysynth::open::\(anonymous namespace\)::ChipEngine)::slotReset\(
 # plug::start (plug_synth.cpp:392) calls plugin code only: plug_entry (:404), plug_desc.init (:408) and plug_desc.query (:410, :412), all through function
 # pointers. It never calls the FileSystem. In the 1.4.0 image GCC keeps the descriptor pointer in a stack slot (`ldr r3,[sp] ; ldr r4,[r3,#28] ; blx r4`),
 # which the FileSystem rule below reads as a vptr load: plug_desc.init (byte 28) became slot 28 = removeDirWithFiles and .query (byte 44) slot 44 =
@@ -42,6 +47,11 @@
 ^polysynth::\(anonymous namespace\)::Open(Instrument::|Synth::render) => ^(ot::audio::.*Engine|plug::\(anonymous namespace\)::PlugSynth|polysynth::open::\(anonymous namespace\)::ChipEngine)::\w+\(
 # optional-rule: see above
 ^polysynth::open::chipVoiceReset => ^polysynth::\(anonymous namespace\)::ChiptuneSynthVoice::
+# engineOf() is an inline function of open_engine.h: the image keeps one out of line copy, and with FW_LTO=ui that copy can come from the link time
+# optimised UI partition, where &OBJ would mean every address-taken function of the whole partition. It calls only the engine factories
+# optional-rule
+^polysynth::open::engineOf\( => ^ot::audio::(\w+::)*(engine|synthAcdEngine|percEngine)\(\)$
+
 ^polysynth:: => &OBJ
 ^ot::audio:: => &OBJ
 # plugin code is not in the image: its own depth is added with --extra

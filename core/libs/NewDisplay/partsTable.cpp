@@ -33,6 +33,11 @@ inline int cellX(int t)
 {
     return kCellX + t * kCellPitch + (t >= 8 ? kHalfGap : 0);
 }
+// a track's column: the hidden followers of linked stereo pairs (d->hidden) take no column, the tracks after them move left
+inline int colOfT(uint16_t hidden, int t)
+{
+    return t - __builtin_popcount(hidden & ((1u << t) - 1u));
+}
 inline int rowY(int r)
 {
     return kRowY + r * kRowPitch;
@@ -188,24 +193,25 @@ void cPartsTable::update()
     // Build: the 8 tracks the F-row stands for are a tinted column band (header to the last row), held tracks get a white box
     if (d->build)
     {
-        const int h0 = d->cursor < 8 ? 0 : 8, nr = rows();
+        const int cc0 = colOfT(d->hidden, d->cursor & 15), h0 = cc0 < 8 ? 0 : 8, nr = rows(), lastCol = 15 - __builtin_popcount(d->hidden);
+        const int h7 = h0 + 7 < lastCol ? h0 + 7 : lastCol;
         w(COLOR_RGB(0xCD, 0x18, 0x18));   // a red rule under the title bar: this is Build
         w(VERTEX2F(posX, posY));
         w(VERTEX2F(posX + width, posY + 3));
         w(COLOR_RGB(0x2A, 0x14, 0x14));
         w(VERTEX2II(cellX(h0) - 2, kHeadY - 3, 0, 0));
-        w(VERTEX2II(cellX(h0 + 7) + kCellW + 2, nr ? rowY(nr - 1) + kRowH + 2 : kHeadY + 17, 0, 0));
+        w(VERTEX2II(cellX(h7) + kCellW + 2, nr ? rowY(nr - 1) + kRowH + 2 : kHeadY + 17, 0, 0));
         w(COLOR_RGB(0x77, 0x77, 0x77));
         w(VERTEX2II(cellX(h0), kHeadY + 15, 0, 0));
-        w(VERTEX2II(cellX(h0 + 7) + kCellW, kHeadY + 16, 0, 0));
+        w(VERTEX2II(cellX(h7) + kCellW, kHeadY + 16, 0, 0));
         if (d->held)
         {
             w(COLOR_RGB(0xFF, 0xFF, 0xFF));
             for (int t = 0; t < 16; t++)
-                if (d->held & (1u << t))
+                if ((d->held & (1u << t)) && !(d->hidden & (1u << t)))
                 {
-                    w(VERTEX2II(cellX(t), kHeadY - 2, 0, 0));
-                    w(VERTEX2II(cellX(t) + kCellW, kHeadY + 13, 0, 0));
+                    w(VERTEX2II(cellX(colOfT(d->hidden, t)), kHeadY - 2, 0, 0));
+                    w(VERTEX2II(cellX(colOfT(d->hidden, t)) + kCellW, kHeadY + 13, 0, 0));
                 }
         }
     }
@@ -227,12 +233,18 @@ void cPartsTable::update()
     glyphs(kRepRight, kHeadY, kFontCell, "Repeats", 2);
     for (int t = 0; t < 16; t++)
     {
+        if (d->hidden & (1u << t)) continue;
+        const int col = colOfT(d->hidden, t);
         const bool held = d->build && (d->held & (1u << t));
-        const bool half = d->build && ((t < 8) == (d->cursor < 8));
+        const bool half = d->build && ((col < 8) == (colOfT(d->hidden, d->cursor & 15) < 8));
         const uint32_t c = held ? kBlack : half ? kWhite : 0x575757;
-        if (t == 0 || held || half || (t == 8))
+        if (t == 0 || held || half || (col == 8))
             w((4UL << 24) | c);
-        glyphs(cellX(t) + kCellW / 2, kHeadY, kFontCell, num(b, t + 1), 1);
+        if (d->hidden & (2u << t))
+            snprintf(b, sizeof(b), "%d+%d", t + 1, t + 2);   // a linked stereo pair: the follower has no column
+        else
+            num(b, t + 1);
+        glyphs(cellX(col) + kCellW / 2, kHeadY, kFontCell, b, 1);
         if (held) w((4UL << 24) | 0x575757);
     }
     const int n = rows();
@@ -261,7 +273,21 @@ void cPartsTable::update()
     if (d->build)
     {   // what the F-row stands for, under the tinted half
         w((4UL << 24) | 0xE05050);
-        glyphs(cellX(d->cursor < 8 ? 0 : 8), rowY(kRows) + 2, kFontCell, d->cursor < 8 ? "F1-F8 = tracks 1-8" : "F1-F8 = tracks 9-16", 0);
+        {   // the band is 8 columns of the table: tracks counted without the hidden followers
+            const int lastCol = 15 - __builtin_popcount(d->hidden), h0 = colOfT(d->hidden, d->cursor & 15) < 8 ? 0 : 8;
+            const int cnt = lastCol - h0 + 1 < 8 ? lastCol - h0 + 1 : 8;
+            int first = 0, last = 0, k = 0;
+            for (int t = 0; t < 16; t++)
+                if (!(d->hidden & (1u << t)))
+                {
+                    if (k == h0) first = t;
+                    if (k == h0 + cnt - 1) last = t;
+                    k++;
+                }
+            char t2[28];
+            snprintf(t2, sizeof(t2), "F1-F%d = tracks %d-%d", cnt, first + 1, last + 1);
+            glyphs(cellX(h0), rowY(kRows) + 2, kFontCell, t2, 0);
+        }
         const int r = d->sel - d->top, c = d->cursor & 15;
         if (!d->field && r >= 0 && r < n && src(d->sel)[c] && start(d->sel)[c])
         {   // the cursor cell starts late in its source pattern
@@ -301,7 +327,7 @@ void cPartsTable::cells()
                 {
                     if (!begun) { w(BEGIN(RECTS)); w((4UL << 24) | col[0]); begun = true; }
                     w(VERTEX2II(cellX(0), rowY(r) + kRowH / 2 - 1, 0, 0));
-                    w(VERTEX2II(cellX(15) + kCellW, rowY(r) + kRowH / 2 + 1, 0, 0));
+                    w(VERTEX2II(cellX(15 - __builtin_popcount(d->hidden)) + kCellW, rowY(r) + kRowH / 2 + 1, 0, 0));
                 }
                 continue;
             }
@@ -309,6 +335,7 @@ void cPartsTable::cells()
             const bool aboveEnd = a && a[kOffRepeats] == 0;
             for (int t = 0; t < 16; t++)
             {
+                if (d->hidden & (1u << t)) continue;
                 const int v = s[t], u = (a && !aboveEnd) ? a[t] : 0;
                 int kind;   // 0 light, 1 dark, 2 drop, 3 off
                 if (v) kind = (a && !aboveEnd && v == u) ? 1 : 0;
@@ -316,7 +343,7 @@ void cPartsTable::cells()
                 const bool draw = (pass == 0 && kind == 0) || (pass == 1 && kind == 1) || ((pass == 2 || pass == 3) && kind == 2);
                 if (!draw) continue;
                 if (!begun) { w(BEGIN(RECTS)); w((4UL << 24) | col[pass]); begun = true; }
-                const int x = cellX(t), y = rowY(r), k = pass == 3 ? 1 : 0;
+                const int x = cellX(colOfT(d->hidden, t)), y = rowY(r), k = pass == 3 ? 1 : 0;
                 w(VERTEX2II(x + k, y + k, 0, 0));
                 w(VERTEX2II(x + kCellW - k, y + kRowH - k, 0, 0));
             }
@@ -334,9 +361,9 @@ void cPartsTable::cells()
         const bool aboveEnd = a && a[kOffRepeats] == 0;
         for (int t = 0; t < 16; t++)
         {
-            if (s[t] || (a && !aboveEnd && a[t])) continue;
+            if ((d->hidden & (1u << t)) || s[t] || (a && !aboveEnd && a[t])) continue;
             if (!begun) { w(POINT_SIZE(24)); w(BEGIN(FTPOINTS)); w((4UL << 24) | 0x3A3A3A); begun = true; }
-            w(VERTEX2II(cellX(t) + kCellW / 2, rowY(r) + kRowH / 2, 0, 0));
+            w(VERTEX2II(cellX(colOfT(d->hidden, t)) + kCellW / 2, rowY(r) + kRowH / 2, 0, 0));
         }
     }
     if (begun) w(END());
@@ -364,7 +391,7 @@ void cPartsTable::numbers()
             const bool aboveEnd = a && a[kOffRepeats] == 0;
             int need = 3 * 16;   // the glyphs of a row at most: 16 cells of 3 digits, 4 more for each start step
             for (int t = 0; t < 16; t++)
-                if (s[t] && start(p)[t]) need += 4;
+                if (s[t] && start(p)[t] && !(d->hidden & (1u << t))) need += 4;
             if (words + need > budget)
             {
                 d->dropped = uint8_t(pass + 1);
@@ -373,7 +400,7 @@ void cPartsTable::numbers()
             for (int t = 0; t < 16; t++)
             {
                 const int v = s[t];
-                if (!v) continue;
+                if (!v || (d->hidden & (1u << t))) continue;
                 const bool repeat = a && !aboveEnd && a[t] == v;
                 if (repeat != (pass == 1)) continue;
                 cellText(b, v, start(p)[t]);
@@ -382,7 +409,7 @@ void cPartsTable::numbers()
                     num(b, v);
                     strcat(b, ":");
                 }
-                glyphs(cellX(t) + kCellW / 2, rowY(r) + 3, kFontCell, b, 1);
+                glyphs(cellX(colOfT(d->hidden, t)) + kCellW / 2, rowY(r) + 3, kFontCell, b, 1);
             }
         }
         if (d->dropped) break;
@@ -400,7 +427,7 @@ void cPartsTable::marks()
     {
         int r1 = r0 + (d->selRows ? d->selRows : 1) - 1;
         if (r1 >= n) r1 = n - 1;
-        const int x0 = cellX(0) - 3, x1 = cellX(15) + kCellW + 3, y0 = rowY(r0) - 2, y1 = rowY(r1) + kRowH + 1;
+        const int x0 = cellX(0) - 3, x1 = cellX(15 - __builtin_popcount(d->hidden)) + kCellW + 3, y0 = rowY(r0) - 2, y1 = rowY(r1) + kRowH + 1;
         w((4UL << 24) | (d->build ? kRed : kWhite));
         w(LINE_WIDTH(16));
         w(BEGIN(LINE_STRIP));
@@ -412,7 +439,7 @@ void cPartsTable::marks()
         w(END());
         if (d->build)
         {   // the cursor box: a track cell, or the Length / Repeats field (a box around its column text, same line). VERTEX2F: x is past 511
-            const int cx = d->field == 1 ? kLenRight - kFieldW[0] : d->field == 2 ? kRepRight - kFieldW[1] : cellX(d->cursor & 15);
+            const int cx = d->field == 1 ? kLenRight - kFieldW[0] : d->field == 2 ? kRepRight - kFieldW[1] : cellX(colOfT(d->hidden, d->cursor & 15));
             const int cw = d->field == 1 ? kFieldW[0] + 2 : d->field == 2 ? kFieldW[1] + 2 : kCellW + 1;
             w(LINE_WIDTH(24));
             w(BEGIN(LINE_STRIP));
@@ -445,7 +472,7 @@ void cPartsTable::marks()
         w(LINE_WIDTH(24));
         w(BEGIN(LINES));
         w(VERTEX2II(cellX(0), y, 0, 0));
-        w(VERTEX2II(cellX(15) + kCellW, y, 0, 0));
+        w(VERTEX2II(cellX(15 - __builtin_popcount(d->hidden)) + kCellW, y, 0, 0));
         w(END());
     }
 

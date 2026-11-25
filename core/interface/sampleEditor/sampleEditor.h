@@ -163,6 +163,7 @@ class cSampleEditor : public ModuleBase
     void setStopSeqFunctions();
     void setSaveChangesFunctions();
     void setTooLongSampleFunctions();
+    void setStereoToMonoFunctions();
     void setTooLongProcessedSampleFunctions();
     bool isParametersScreen();
     bool canApplyCurrentEffect() const;
@@ -245,6 +246,7 @@ class cSampleEditor : public ModuleBase
     void showPopupStopSequencer();
     void showPopupSeqWindow();
     // Too Long instrument
+    void showPopupStereoToMonoWindow();
     void showPopupTooLongSample();
     void showPopupTooLongSampleWindow();
     // Too Long processed sample

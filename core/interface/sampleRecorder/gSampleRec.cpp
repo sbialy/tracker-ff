@@ -35,7 +35,7 @@ void cSampleRecorder::initDisplayControls()
     points.pointsType = 0;
     points.endPoint = MAX_16BIT;
     points.startPoint = 0;
-    for (int ch = 0; ch < SAMPLE_CHANNELS; ch++)
+    for (int ch = 0; ch < kRecorderChannels; ch++)
     {
         spectrum[ch].init();
     }
@@ -50,7 +50,7 @@ void cSampleRecorder::initDisplayControls()
     pointsControl = display.createControl<cPoints>(&prop);
     prop.data = &spectrum[0];
     spectrumControl[0] = display.createControl<cSpectrum>(&prop);
-    if (SAMPLE_CHANNELS == 2)
+    if (kRecorderChannels == 2)
     {
         prop.h = (MAX_16BIT / 300) / 2;
         prop.y = 75 + ((300 - (MAX_16BIT / 300)) / 2) + (MAX_16BIT / 300) / 2;
@@ -122,9 +122,9 @@ void cSampleRecorder::initDisplayControls()
     radioSpaceCover = display.createControl<cLabel>(&prop2);
 
     strControlProperties prop4;
-    sourceList.linesCount = sourceCount;
+    sourceList.linesCount = availableSourceCount();
     sourceList.start = recorderConfig.source;
-    sourceList.length = sourceCount;
+    sourceList.length = availableSourceCount();
     sourceList.data = (char**)ptrSourcesNamesLabels;
     prop4.x = 0 + 2;
     prop4.y = 29;
@@ -220,7 +220,7 @@ void cSampleRecorder::showDefaultScreen()
         showMonitor();
 
         // spectrum
-        for (int channel = 0; channel < SAMPLE_CHANNELS; channel++)
+        for (int channel = 0; channel < kRecorderChannels; channel++)
         {
             display.setControlHide(spectrumControl[channel]);
             display.refreshControl(spectrumControl[channel]);
@@ -320,7 +320,7 @@ void cSampleRecorder::showDefaultScreen()
 
         resizeSpectrum();
 
-        for (int channel = 0; channel < SAMPLE_CHANNELS; channel++)
+        for (int channel = 0; channel < kRecorderChannels; channel++)
         {
             if (isChannelShown(channel))
             {
@@ -435,7 +435,7 @@ void cSampleRecorder::showDefaultScreen()
         display.setControlHide(radioRdsLabel);
 
         // spectrum
-        for (int channel = 0; channel < SAMPLE_CHANNELS; channel++)
+        for (int channel = 0; channel < kRecorderChannels; channel++)
         {
             display.setControlHide(spectrumControl[channel]);
             display.refreshControl(spectrumControl[channel]);
@@ -666,8 +666,8 @@ void cSampleRecorder::showFreqValue()
 void cSampleRecorder::showSourceList()
 {
     sourceList.start = recorderConfig.source;
-    sourceList.length = sourceCount;
-    sourceList.linesCount = sourceCount;
+    sourceList.length = availableSourceCount();
+    sourceList.linesCount = availableSourceCount();
     sourceList.data = (char**)ptrSourcesNamesLabels;
 
     display.setControlData(sourceListControl, &sourceList);
@@ -999,7 +999,7 @@ void cSampleRecorder::showGain()
     {
         sprintf(gainVal, "%d", recorderConfig.gainMicHigh);
     }
-#ifdef PLATFORM_IMX
+#ifdef SREC_USB_SOURCE
     else if (recorderConfig.source == sourceTypeUsb)
     {
         sprintf(gainVal, "%d", recorderConfig.gainUsb);
@@ -1016,6 +1016,8 @@ void cSampleRecorder::resizeSpectrum()
 #ifdef PLATFORM_IMX
     bool isStereo = (recorderConfig.source != cSampleRecorder::sourceTypeMicHG &&
                      recorderConfig.source != cSampleRecorder::sourceTypeMicLG);
+#elif defined(FEATURE_STEREO_REC)
+    bool isStereo = isStereoTake();
 #else
     bool isStereo = false;
 #endif
@@ -1040,6 +1042,9 @@ bool cSampleRecorder::isChannelShown(int channel)
     }
     else if (channel == 1)
     {
+#if defined(FEATURE_STEREO_REC) && !defined(PLATFORM_IMX)
+        return isStereoTake();
+#endif
         return (recorderConfig.source != cSampleRecorder::sourceTypeMicHG &&
                 recorderConfig.source != cSampleRecorder::sourceTypeMicLG);
     }

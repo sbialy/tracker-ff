@@ -2,7 +2,7 @@
 # projset_sim.sh [BIN]
 #
 # The Project Settings page (File screen F7, core/interface/configEditor/configMenu.cpp, fConfigEdit.cpp) on the real UI of this tree
-# (ui_shot) over a card folder on the Mac, and the Macro depth project setting behind it (project.mtff "macro.mode", plug_mtff.h,
+# (ui_shot) over a card folder on the Mac, and the Macro depth project setting behind it (project.mtff "macro.mode", mtff_codec.h,
 # synth-open/open_cold.cpp projectMacroMode):
 #   1  the screens: the File entry, every row selected and its editor, On and Off, Per patch / Add / Scale, byte equal to goldens/projset/
 #   2  the rows act: 4 FX Slots, Strum volume, Random seed, Reroll seed, Scale snap, Macro depth
@@ -16,7 +16,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BIN="${1:-$ROOT/build/ui-shot/ui_shot}"
+BIN="${1:-${UI_SHOT_BIN:-$ROOT/build/ui-shot/ui_shot}}"
 [ -x "$BIN" ] || { echo "projset_sim.sh: no $BIN (ui_shot.sh pattern builds it)" >&2; exit 2; }
 GOLD="$HERE/goldens/projset"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/projset_sim.XXXXXX")"

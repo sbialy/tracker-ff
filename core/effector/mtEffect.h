@@ -13,9 +13,34 @@ class mtEffect
   public:
 #ifdef PLATFORM_IMX
     static constexpr int kChannels = 2;
+#elif defined(FEATURE_STEREO_EDIT)
+    // MK66 stereo editor: arrays hold both channels, the loops run over nChannels() (2 for a stereo instrument, 1 for a mono one,
+    // so a mono edit costs and looks as before). The edit region holds either 1 channel of EDIT_BUFF_SIZE or 2 of half that
+    static constexpr int kChannels = 2;
 #else
     static constexpr int kChannels = 1;
 #endif
+#if defined(FEATURE_STEREO_EDIT) && !defined(PLATFORM_IMX)
+    static inline uint8_t editChannels = 1;
+    static int nChannels() { return editChannels; }
+    // call before the first buffer address is computed: sets the channel count from the instrument
+    static void selectEditChannels(uint8_t instrIdx)
+    {
+        editChannels = (instrIdx < kSampleInstrumentsCount && mtProject.sampleMemory[instrIdx].isStereo &&
+                        mtProject.sampleMemory[instrIdx].address[1] != nullptr)
+          ? 2
+          : 1;
+    }
+    static uint32_t bufStride() { return editChannels > 1 ? EDIT_BUFF_SIZE / 2 : EDIT_BUFF_SIZE; }
+#else
+    static constexpr int nChannels() { return kChannels; }
+    static constexpr uint32_t bufStride() { return EDIT_BUFF_SIZE; }
+    static void selectEditChannels(uint8_t) {}
+#endif
+    // longest editable sample in frames
+    static uint32_t maxFrames() { return bufStride() / 2; }
+    static int16_t* confirmedBuf(int idx) { return externalRamEffectsBuff + idx * bufStride(); }
+    static int16_t* processedBuf(int idx) { return externalRamEffectsBuff + idx * bufStride() + bufStride() / 2; }
     enum Channel
     {
         kLeft,
@@ -34,9 +59,8 @@ class mtEffect
     {
         for (int idx = 0; idx < kChannels; idx++)
         {
-            int16_t* confirmedBuffer = externalRamEffectsBuff + idx * EDIT_BUFF_SIZE;
-            int16_t* processedBuffer =
-              externalRamEffectsBuff + idx * EDIT_BUFF_SIZE + EDIT_BUFF_SIZE / 2;
+            int16_t* confirmedBuffer = confirmedBuf(idx);
+            int16_t* processedBuffer = processedBuf(idx);
 
             confirmed[idx] = { { confirmedBuffer, 0 }, { confirmedBuffer, 0 } };
             processed[idx] = { { processedBuffer, 0 }, { processedBuffer, 0 } };

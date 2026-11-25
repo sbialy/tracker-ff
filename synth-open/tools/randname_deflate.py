@@ -10,19 +10,9 @@ the names are unchanged is synth-open/tools/randname_test.sh (golden hash of 6,0
 """
 import os
 import sys
-import zlib
 
-
-def best_deflate(raw):
-    best = None
-    for mem in range(1, 10):
-        for strat in (zlib.Z_DEFAULT_STRATEGY, zlib.Z_FILTERED):
-            co = zlib.compressobj(9, zlib.DEFLATED, -15, mem, strat)
-            z = co.compress(raw) + co.flush()
-            if best is None or len(z) < len(best):
-                best = z
-    assert zlib.decompress(best, -15) == raw
-    return best
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from deflate_best import best_deflate  # noqa: E402
 
 
 def main(src):

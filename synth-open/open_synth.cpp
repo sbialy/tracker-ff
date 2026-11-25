@@ -16,8 +16,10 @@
 // inside DISABLE_AUDIO_INTERRUPTS, so the render (audio interrupt) never overlaps them and this
 // file takes no locks. The governor runs in the audio interrupt too (end of the block).
 #include "open_engine.h"
+#include "ff_seams.h"
 #include "open_load.h"
 #include "open_patch.h"
+#include "../core/source/mtTuning.h" // pure arithmetic as well
 #include "../core/source/tapeFx.h" // pure arithmetic, no firmware includes: the host builds of this file (run_smoke.sh) have no core/source on the path
 
 #include "audio/cpu_meter.h"
@@ -111,7 +113,7 @@ void open::OpenPatch::effective(float* out, const float* modOut) const
             {
                 macroMod[c.dest] += modOut[s];
             }
-            else if (c.dest < count)
+            else if (c.kind == open::ModKind::kParam && c.dest < count)
             {
                 const auto& p = metadata.params[c.dest];
                 add[c.dest] += modOut[s] * (float(p.maxValue) - float(p.minValue));
@@ -172,15 +174,30 @@ struct Voice
 {
     ot::audio::SynthVoice v; // v.fading: stolen by the pool, its last block fades the gain to 0
     bool on = false;
+    uint8_t fadeLeft = 0; // New Note Action Cut / Fade: blocks of the shim's ramp to 0 that are left (1: the last one), 0: none (sits in the padding after `on`)
     uint16_t id = 0; // the sequencer's id of the note that started the voice (open::noteTag), 0: none (pad, MIDI in, record)
     float vel = 1.0f;
     float gain = 0.0f;
     uint32_t age = 0;
+    float tuneSt = 0.0f; // the project tuning of the note in semitones on the bend, for an engine that reads only the integer note (CHIP), 0 otherwise
     uint32_t onCyc = 0; // live: cycles of the engine's noteOn, added to the first render to learn the part's note-on cost
+    // MPE in (open::mpeNote): the member channel of the note (0: none, a plain note), its raw 14 bit bend (-8192..8191, 0 for a plain note, kept
+    // when a newer note takes the channel) and its pressure (127: none yet, no change of the level)
+    uint8_t chan = 0;
+    uint8_t press = 127;
+    int16_t nbend = 0;
+    // counts for the pool and can be stolen: on, not stolen already, not on the last block of a Cut
+    bool live() const { return on && !v.fading && fadeLeft != 1; }
 };
 
 // The sequencer's id of the note it is sending (open::noteTag), 0 outside a sequencer send. Read by onMidi, which runs inside the send.
 uint16_t gNoteTag = 0;
+// The MPE member channel (2..16) of the note-on or note-off that is being sent (open::mpeNote), 0 outside it. Read by onMidi like the tag
+uint8_t gMpeChan = 0;
+// How the note-off of that send ends the note (open::noteTag): 0 Release, 2 Cut, 3 Fade (the New Note Action of the replaced note's part)
+uint8_t gNoteEnd = 0;
+// Fade: 120 ms = 41 blocks of 128 frames at 44.1 kHz, linear in amplitude. Cut is the last block of it (fadeLeft 1)
+constexpr uint8_t kNnaFadeBlocks = 41;
 
 // Note-on admission and the cost model (live blocks only, OpenSynth::admit). Cycles at 180 MHz.
 constexpr uint32_t kCyclesPerUs = 180;
@@ -215,7 +232,7 @@ class VoiceHost
     // chord: the MIDI Chord value the note-on carries to a paraphonic engine (-1: none), it rides with a queued note-on
     // id: the note id of the note-on (0: none)
     virtual bool admit(OpenInstrument& inst, uint8_t note, uint8_t velocity, int16_t chord, uint16_t id) = 0;
-    virtual bool pendingOff(OpenInstrument& inst, uint8_t note, uint16_t id) = 0;   // a queued note-on of this note (and id) gets its note-off too
+    virtual bool pendingOff(OpenInstrument& inst, uint8_t note, uint16_t id, uint8_t chan) = 0;   // a queued note-on of this note (and id) gets its note-off too
     virtual void flushPending(OpenInstrument& inst) = 0;               // start the queued note-ons of this part now (Stop)
     virtual void dropPending(OpenInstrument& inst) = 0;                // forget them (the part's voices were cut)
     virtual ot::audio::CpuMeter::CycleFn clock() const = 0;            // live cycle counter, nullptr when not live
@@ -227,6 +244,7 @@ class VoiceHost
 class OpenInstrument final : public Instrument
 {
   public:
+    void releaseGated() { releaseAll(); } // New Note Action D11: Stop releases every gated voice of the part
     OpenInstrument(int id, VoiceHost& host)
       : host(host)
       , id(id)
@@ -314,6 +332,25 @@ class OpenInstrument final : public Instrument
     std::span<Voice> voiceSpan() { return voices; }
     float testBend() const { return bend; }   // ui_shot only (gen_overlay.py hostPart): the live bend in semitones and its range
     float testBendRange() const { return bendRange; }
+    int testMpe(char* buf, size_t n) const
+    {
+        int at = snprintf(buf, n, "n=");
+        int cnt = 0, k = 0;
+        char list[256] = "";
+        int la = 0;
+        for (const auto& v : voices)
+        {
+            if (v.on)
+            {
+                la += snprintf(list + la, sizeof(list) - size_t(la), " %d:%d:%d:%d:%d:%d:%d", k, int(v.v.note), int(v.chan), int(v.v.gate), int(v.nbend), int(v.press),
+                               int(v.gain * 1000.0f));
+                cnt++;
+            }
+            k++;
+        }
+        at += snprintf(buf + at, n - size_t(at), "%d [%s ]", cnt, list);
+        return at;
+    }
     float testGain() const { return morphGain; }   // ui_shot only (gen_overlay.py hostGain): the morph factor and the gain of the first voice that is on
     float testVoiceGain() const
     {
@@ -422,10 +459,25 @@ class OpenInstrument final : public Instrument
             }
             const float vol = hasVol ? params.end[def->volumeParam] : 1.0f;
             const bool fade = v.v.fading;
-            const float target =
-              fade ? 0.0f : std::clamp(vol * (1.0f + velK * (v.vel - 1.0f)), volMin, volMax) * tapeGain * morphGain;
+            float target =
+              fade ? 0.0f : std::clamp(vol * (1.0f + velK * (v.vel - 1.0f)), volMin, volMax) * tapeGain * morphGain * tableGain;
+            if (pressAmt != 0.0f)
+            {
+                target *= 1.0f + pressAmt * (float(v.press) * (1.0f / 127.0f) - 1.0f); // MPE pressure: full at 127, 1 - amount at 0
+            }
+            const uint8_t nnaLeft = v.fadeLeft;
+            if (nnaLeft)
+            {
+                // New Note Action Cut / Fade: the gain ramps down block by block, 0 in the last one (Cut is only that block)
+                target *= float(nnaLeft - 1) * (1.0f / float(kNnaFadeBlocks));
+                v.fadeLeft = uint8_t(nnaLeft - 1);
+            }
             v.v.bendStart = v.v.bend;
-            v.v.bend = bend + tapeSt;
+            v.v.bend = bend + tapeSt + tableSt + v.tuneSt;
+            if (v.nbend != 0)
+            {
+                v.v.bend += float(v.nbend) * mpeStep; // MPE member bend (open::partNoteBend), kept by a tail the channel's next note left behind
+            }
             const float g0 = v.gain;
             const float gInc = (target - g0) * (1.0f / float(kAudioBufferSize));
             v.gain = target;
@@ -439,7 +491,7 @@ class OpenInstrument final : public Instrument
                 blockVoices++;
                 blockRenderCyc += cyc;
             }
-            if (!alive || fade)
+            if (!alive || fade || nnaLeft == 1)
             {
                 v.on = false;
             }
@@ -476,16 +528,16 @@ class OpenInstrument final : public Instrument
     uint32_t attackCost() const { return attackCyc; }
     uint32_t voiceCost() const { return voiceCyc; }
     // A queued note-on starts (OpenSynth, start of the next block) and its note-off when one came while it waited
-    void startQueued(uint8_t note, uint8_t velocity, bool off, int16_t chord, uint16_t id)
+    void startQueued(uint8_t note, uint8_t velocity, bool off, int16_t chord, uint16_t id, uint8_t chan)
     {
         if (!engine || !patch || voiceCount == 0)
         {
             return;
         }
-        noteOnNow(note, velocity, chord, id);
+        noteOnNow(note, velocity, chord, id, chan);
         if (off)
         {
-            noteOff(note, id);
+            noteOff(note, id, chan);
         }
     }
     // Whether a note-on now would take a new record of the shared pool (not mono legato on a held voice)
@@ -497,16 +549,16 @@ class OpenInstrument final : public Instrument
     bool owns(const Voice* v) const { return v >= voices && v < voices + kMaxVoicesPerInstrument; }
     // Paraphony (PLUG_EXT_CHORD): the engine has Chord and Chord Mode parameters and the patch is at Para. The sequencer then sends a
     // MIDI Chord step as one note-on (noteChord, then the note-on of `note`) instead of one per chord note.
-    bool chordPara() const
+    bool chordPara(uint8_t chord) const
     {
         if (!engine || !patch || voiceCount == 0)
         {
             return false;
         }
         const ChordParams cp = chordParamsOf(def);
-        return cp.chord >= 0 && cp.mode >= 0 && patch->values_()[cp.mode] >= 0.5f;
+        return cp.chord >= 0 && cp.mode >= 0 && chord <= cp.last && patch->values_()[cp.mode] >= 0.5f;
     }
-    // The next note-on of `note` carries `chord` (0..67) to the engine's Chord parameter and a Strum FX (units, + up, - down, 0 none)
+    // The next note-on of `note` carries `chord` (0..76) to the engine's Chord parameter and a Strum FX (units, + up, - down, 0 none)
     // to its Strum parameter when it has one. Same thread as the note-on that follows.
     void noteChord(uint8_t note, uint8_t chord, int8_t strum)
     {
@@ -515,13 +567,64 @@ class OpenInstrument final : public Instrument
     }
     // The Synth play page (open::partBendRange): the bend range of the part in semitones, 0..24
     void setBendRange(float semitones) { bendRange = std::clamp(semitones, 0.0f, 24.0f); }
+    // MPE in (open::partMpe, partNoteBend, partNotePress). The kits (PERC, T-Type: the note picks the drum) take no member bend
+    bool mpeKit() const { return def && (def->typeId == int(polysynth::InstrumentTypeId::kDrumSynth) || def->typeId == 0x85); }
+    void setMpe(float memberRange, float pressAmount)
+    {
+        mpeRangeSt = std::clamp(memberRange, 0.0f, 96.0f) * (1.0f / 8192.0f);
+        mpeStep = mpeRangeSt * tuning::tableScale();
+        pressAmt = std::clamp(pressAmount, 0.0f, 1.0f);
+    }
+    // chan 2..16: the voices of that member channel (a note that was released is a tail, no longer on it). The raw value is kept for the next note on it
+    void noteBend(uint8_t chan, int raw)
+    {
+        if (chan < 2 || chan > 16 || mpeKit())
+        {
+            return;
+        }
+        mpeBend[chan] = int16_t(std::clamp(raw, -8192, 8191));
+        mpeStep = mpeRangeSt * tuning::tableScale(); // the member bend is in key steps of the tuning (1.0 for 12 notes), taken here so the render path stays as it was
+        for (auto& v : voices)
+        {
+            if (v.on && v.chan == chan)
+            {
+                v.nbend = mpeBend[chan];
+            }
+        }
+    }
+    // chan 2..16: only a key that is down follows its pressure (a tail keeps the level its finger left it at). chan 1, the master: every voice of the part
+    void notePress(uint8_t chan, uint8_t press)
+    {
+        if (chan < 1 || chan > 16)
+        {
+            return;
+        }
+        if (chan > 1)
+        {
+            mpePress[chan] = press;
+        }
+        for (auto& v : voices)
+        {
+            if (v.on && (chan == 1 || (v.chan == chan && v.v.gate)))
+            {
+                v.press = press;
+            }
+        }
+    }
     void setMorphGain(float g) { morphGain = std::clamp(g, 0.0f, 1.0f); }
+    // the table of the track that plays the part (core/source/tables.h): transpose in semitones and a gain factor, on every voice
+    void setTable(float semis, float gain)
+    {
+        tableSt = semis * tuning::tableScale(); // a key step of the tuning, 1.0 for 12 notes of 1200 cents
+        tableGain = std::clamp(gain, 0.0f, 1.0f);
+    }
+    bool active() const { return anyActive(); } // a voice is on, a releasing one too
     int soundingVoices() const
     {
         int n = 0;
         for (const Voice& v : voices)
         {
-            n += v.on && !v.v.fading;
+            n += v.live();
         }
         return n;
     }
@@ -555,7 +658,7 @@ class OpenInstrument final : public Instrument
         return def;
     }
 
-#ifdef OPEN_HOST_TEST
+#if defined(OPEN_HOST_TEST) || defined(UI_SHOT_HOST)   // read only test accessors: the host tests and ui_shot
     const ot::audio::SynthParams& testParams() const { return params; }
     float testModOut(int s) const { return modSt[s].out; }
 #endif
@@ -619,6 +722,36 @@ class OpenInstrument final : public Instrument
         }
     }
 
+  public:
+    // Part destinations of the automation (open_mod.h kPart): the output of every live part slot in the audio engine's units, summed per
+    // destination into v[open::kModParts]. Returns the mask of the destinations that have a slot (bit = open::ModPart), 0 for none. Audio
+    // interrupt, once per block (audioEngine::updateSynthParams), reads the outputs of the last render.
+    uint8_t partAuto(float* v)
+    {
+        if (!patch || !patch->live().partOn)
+        {
+            return 0;
+        }
+        modCheck();
+        const open::SlotCfg& c = patch->live();
+        uint8_t mask = 0;
+        for (int s = 0; s < open::kModSlots; s++)
+        {
+            if (c.partOn & (1u << s))
+            {
+                const int d = c.mod[s].dest;
+                if (!(mask & (1u << d)))
+                {
+                    v[d] = 0.0f;
+                    mask = uint8_t(mask | (1u << d));
+                }
+                v[d] += modOut[s] * open::kModPartRange[d];
+            }
+        }
+        return mask;
+    }
+
+  private:
     bool anyGate() const
     {
         for (const auto& v : voices)
@@ -886,14 +1019,14 @@ class OpenInstrument final : public Instrument
             case MidiEvent::Type::kNoteOn:
                 if (e.data.note.velocity == 0)
                 {
-                    noteOff(e.data.note.note, gNoteTag);
+                    noteOff(e.data.note.note, gNoteTag, gMpeChan);
                 }
                 else
                 {
                     noteOn(e.data.note.note, e.data.note.velocity, gNoteTag);
                 }
                 break;
-            case MidiEvent::Type::kNoteOff: noteOff(e.data.note.note, gNoteTag); break;
+            case MidiEvent::Type::kNoteOff: noteOff(e.data.note.note, gNoteTag, gMpeChan); break;
             case MidiEvent::Type::kPitchBendChange:
                 bend = float(e.data.pitchBendChange.value) * (bendRange * (1.0f / 8192.0f));
                 break;
@@ -1020,11 +1153,15 @@ class OpenInstrument final : public Instrument
         {
             return; // queued: starts at the start of the next block
         }
-        noteOnNow(note, velocity, chord, id);
+        noteOnNow(note, velocity, chord, id, gMpeChan);
     }
 
-    void noteOnNow(uint8_t note, uint8_t velocity, int16_t chord, uint16_t id)
+    void noteOnNow(uint8_t note, uint8_t velocity, int16_t chord, uint16_t id, uint8_t chan)
     {
+        if (chan > 16)
+        {
+            chan = 0;
+        }
         if (patch->modActive())
         {
             modNoteOnAll();
@@ -1046,7 +1183,12 @@ class OpenInstrument final : public Instrument
         }
         ot::audio::SynthNote n;
         n.note = note;
-        n.pitch = float(note);
+        // The project tuning (core/source/mtTuning.h): the engine's note pitch moves by the key's offset. PERC and T-Type are kits, the note picks the drum:
+        // untuned. CHIP reads only the integer note: its offset goes on the bend. Zero for the default tuning, so the sound is what it was
+        const int typeId = def ? def->typeId : -1;
+        const bool kit = typeId == int(polysynth::InstrumentTypeId::kDrumSynth) || typeId == 0x85;
+        const float tuneOff = kit ? 0.0f : tuning::synthOffset(note);
+        n.pitch = float(note) + tuneOff;
         n.velocity = def && def->volumeParam < 0 ? float(velocity) * (1.0f / 127.0f) : 1.0f;
         n.reused = reused;
         n.overlap = reused && v->v.gate;
@@ -1063,7 +1205,20 @@ class OpenInstrument final : public Instrument
         v->id = id; // a reused (mono legato) voice is the new note's now: the earlier note's off no longer matches it
         v->v.gate = true;
         v->v.fading = false;
-        v->v.bend = v->v.bendStart = bend + tapeBendNow();
+        v->fadeLeft = 0;
+        v->tuneSt = typeId == int(polysynth::InstrumentTypeId::kChiptuneSynth) ? tuneOff : 0.0f;
+        // MPE: a newer note on the member channel takes it over (a note that was not released is a tail now, as a released one is: it keeps its bend and level)
+        for (auto& o : voices)
+        {
+            if (chan != 0 && o.chan == chan)
+            {
+                o.chan = 0;
+            }
+        }
+        v->chan = chan;
+        v->nbend = chan != 0 && !kit ? mpeBend[chan] : int16_t(0);
+        v->press = chan != 0 ? mpePress[chan] : uint8_t(127);
+        v->v.bend = v->v.bendStart = bend + tapeBendNow() + v->tuneSt + float(v->nbend) * mpeStep;
         v->vel = float(velocity) * (1.0f / 127.0f);
         v->on = true;
         const auto clk = host.clock();
@@ -1111,19 +1266,31 @@ class OpenInstrument final : public Instrument
 
     // id: the note id of the note-off (0: none, matches by pitch alone as before). With an id only the voice that note started is released.
     // Out of line: inlined into the MIDI callback (two call sites) the id compare cost 1,000 B of flash, called it costs 100
-    __attribute__((noinline)) void noteOff(uint8_t note, uint16_t id)
+    __attribute__((noinline)) void noteOff(uint8_t note, uint16_t id, uint8_t chan)
     {
         if (!engine)
         {
             return;
         }
-        host.pendingOff(*this, note, id);
+        host.pendingOff(*this, note, id, chan);
+        // New Note Action: a Cut or a Fade needs a record to ramp out while the new note starts on another one. A mono part (Voices 1, an
+        // engine with one voice such as PERC and T-Type) has none, it releases as before
+        const uint8_t end = voiceCount > 1 && def && def->maxVoices > 1 && (gNoteEnd == 2 || gNoteEnd == 3) ? gNoteEnd : uint8_t(0);
         for (auto& v : voices)
         {
-            if (v.on && v.v.gate && v.v.note == note && (id == 0 || v.id == id))
+            if (v.on && v.v.gate && v.v.note == note && (id == 0 || v.id == id) && (chan == 0 || v.chan == chan))
             {
+                if (v.chan != 0)
+                {
+                    mpePress[v.chan] = 127; // the finger is up: the next note on the channel starts at full level until its own pressure comes
+                    v.chan = 0;             // and the voice is a tail: it keeps the bend and level it had (the bend that comes with the next note is not its)
+                }
                 v.v.gate = false;
                 engine->noteOff(v.v, params);
+                if (end)
+                {
+                    v.fadeLeft = end == 2 ? uint8_t(1) : kNnaFadeBlocks;
+                }
             }
         }
         modGateEnded();
@@ -1178,8 +1345,17 @@ class OpenInstrument final : public Instrument
     uint8_t modSerial = 0;
     uint8_t cfgSerial = 0;
     float bend = 0.0f; // pitch bend in semitones, applied to every voice (SynthVoice::bend)
+    // MPE in (the Synth play page): the member bend range as semitones per raw step, the pressure amount 0..1 (0: pressure does nothing),
+    // and per member channel the last raw bend and pressure received (the next note on the channel starts from them)
+    float mpeRangeSt = 48.0f / 8192.0f; // the member range, in semitones per raw unit
+    float mpeStep = 48.0f / 8192.0f;   // the same in key steps of the tuning (mpeRangeSt x tuning::tableScale())
+    float pressAmt = 0.0f;
+    int16_t mpeBend[17] = {};
+    uint8_t mpePress[17] = { 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127 };
     float bendRange = kBendRange; // semitones for a full deflection of the bend message, open::partBendRange
     float morphGain = 1.0f;       // the A/B page: factor on the voice gain target, open::partGain
+    float tableSt = 0.0f;         // the row of a running table (open::partTable): semitones on the bend of every voice
+    float tableGain = 1.0f;       // ... and its V column as a factor on the voice gain target
     // Tape Stop / Tape Start step FX (core/source/tapeFx.h): the tape speed of the part. It adds semitones to the pitch bend of every voice
     // and a level to its gain, both stepped once per block, and moves on only in rendered blocks.
     tapefx::Mode tapeMode = tapefx::kOff;
@@ -1239,7 +1415,7 @@ class OpenSynth final
             {
                 for (const Voice& v : static_cast<OpenInstrument&>(*i).voiceSpan())
                 {
-                    n += v.on && !v.v.fading;
+                    n += v.live();
                 }
             }
         }
@@ -1254,7 +1430,7 @@ class OpenSynth final
             {
                 for (Voice& v : static_cast<OpenInstrument&>(*i).voiceSpan())
                 {
-                    if (v.on && !v.v.fading && (!best || betterVictim(v, *best)))
+                    if (v.live() && (!best || betterVictim(v, *best)))
                     {
                         best = &v;
                     }
@@ -1369,7 +1545,7 @@ class OpenSynth final
         {
             pendSlots++;
         }
-        pend[pendN++] = Pending{&inst, note, velocity, false, chord, c(), id};
+        pend[pendN++] = Pending{&inst, note, velocity, false, chord, c(), id, gMpeChan};
         queuedCost += cost;
         stats.deferred++;
         shot.deferred++;
@@ -1379,12 +1555,12 @@ class OpenSynth final
         }
         return false;
     }
-    bool pendingOff(OpenInstrument& inst, uint8_t note, uint16_t id) override
+    bool pendingOff(OpenInstrument& inst, uint8_t note, uint16_t id, uint8_t chan) override
     {
         bool hit = false;
         for (int i = 0; i < pendN; i++)
         {
-            if (pend[i].inst == &inst && pend[i].note == note && (id == 0 || pend[i].id == id))
+            if (pend[i].inst == &inst && pend[i].note == note && (id == 0 || pend[i].id == id) && pend[i].chan == chan)
             {
                 pend[i].off = true;
                 hit = true;
@@ -1410,7 +1586,7 @@ class OpenSynth final
         pendN = k;
         for (int i = 0; i < n; i++)
         {
-            mine[i].inst->startQueued(mine[i].note, mine[i].vel, mine[i].off, mine[i].chord, mine[i].id);
+            mine[i].inst->startQueued(mine[i].note, mine[i].vel, mine[i].off, mine[i].chord, mine[i].id, mine[i].chan);
         }
     }
     void dropPending(OpenInstrument& inst) override
@@ -1451,7 +1627,7 @@ class OpenSynth final
             const uint32_t us = (t - q[i].asked) / kCyclesPerUs;
             stats.deferMaxUs = std::max(stats.deferMaxUs, us);
             extra += q[i].inst->attackCost() + q[i].inst->voiceCost();
-            q[i].inst->startQueued(q[i].note, q[i].vel, q[i].off, q[i].chord, q[i].id);
+            q[i].inst->startQueued(q[i].note, q[i].vel, q[i].off, q[i].chord, q[i].id, q[i].chan);
         }
         shot.flushed = uint32_t(n);
     }
@@ -1593,6 +1769,20 @@ class OpenSynth final
         pendN = 0;
         resetStats();
     }
+    // Stop with a New Note Action in use: every part starts its queued note-ons and releases every gated voice (a Continue note whose parked
+    // off did not come cannot hang). Fading voices keep their ramp
+    void releaseAllParts()
+    {
+        for (auto& p : instruments)
+        {
+            if (p)
+            {
+                auto& oi = static_cast<OpenInstrument&>(*p);
+                flushPending(oi);
+                oi.releaseGated();
+            }
+        }
+    }
     OpenInstrument* instrumentAt(int part)
     {
         return part >= 0 && part < int(instruments.size()) && instruments[part] ? &static_cast<OpenInstrument&>(*instruments[part]) : nullptr;
@@ -1606,6 +1796,14 @@ class OpenSynth final
     {
         if (part < 0 || part >= int(instruments.size()) || !instruments[part]) return -1;
         return static_cast<OpenInstrument&>(*instruments[part]).waveRef(param, out, cap);
+    }
+    uint8_t partAuto(int part, float* v)
+    {
+        if (part < 0 || part >= int(instruments.size()) || !instruments[part])
+        {
+            return 0;
+        }
+        return static_cast<OpenInstrument&>(*instruments[part]).partAuto(v);
     }
     bool partIdle(int part)
     {
@@ -1627,7 +1825,7 @@ class OpenSynth final
         pendN = 0;
         for (int i = 0; i < n; i++)
         {
-            q[i].inst->startQueued(q[i].note, q[i].vel, q[i].off, q[i].chord, q[i].id);
+            q[i].inst->startQueued(q[i].note, q[i].vel, q[i].off, q[i].chord, q[i].id, q[i].chan);
         }
         governor.setEnabled(!offline);
         governor.reset();
@@ -1756,6 +1954,7 @@ class OpenSynth final
         if (inst)
         {
             inst->render(l, r, busyKnown);
+            FF_HOST_PART_RENDERED(instrumentId, l, mono ? l : r);   // a mono engine leaves R alone: its R is L
             if (!mono)
             {
                 // mono output: tracker-ce reads the left buffer only
@@ -1816,6 +2015,7 @@ class OpenSynth final
         int16_t chord;  // the MIDI Chord value (and strum) for a paraphonic engine, -1 none
         uint32_t asked; // cycle counter when the note-on came
         uint16_t id;    // the note id of the note-on (open::noteTag), 0 none
+        uint8_t chan;   // the MPE member channel of the note-on (open::mpeNote), 0 none
     };
     Pending pend[kPendingMax];
     int pendN = 0;
@@ -1916,6 +2116,7 @@ void open::resetLoadStats()
     }
 }
 bool open::partIdle(int part) { return gActive && gActive->partIdle(part); }
+uint8_t open::partAuto(int part, float* v) { return gActive ? gActive->partAuto(part, v) : 0; }
 open::ChordParams open::chordParamsOf(const EngineDef* def)
 {
 #ifdef SYNTH_ENGINE_ACD
@@ -1932,10 +2133,10 @@ bool open::waveListName(int, char*, size_t) { return false; }
 bool open::waveFilesAbsent() { return false; }
 bool open::waveListHas(const char*) { return true; }
 #endif
-bool open::partChordPara(int part)
+bool open::partChordPara(int part, uint8_t chord)
 {
     auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
-    return i && i->chordPara();
+    return i && i->chordPara(chord);
 }
 void open::partTape(int part, bool start, uint32_t frames)
 {
@@ -1944,12 +2145,48 @@ void open::partTape(int part, bool start, uint32_t frames)
         i->tape(start, frames);
     }
 }
-void open::noteTag(uint16_t id) { gNoteTag = id; }
+void open::noteTag(uint16_t id, uint8_t endMode)
+{
+    gNoteTag = id;
+    gNoteEnd = endMode;
+}
+void open::mpeNote(uint8_t chan)
+{
+    gMpeChan = chan;
+}
+void open::partMpe(int part, float memberRange, float pressAmount)
+{
+    if (auto* i = gActive ? gActive->instrumentAt(part) : nullptr)
+    {
+        i->setMpe(memberRange, pressAmount);
+    }
+}
+void open::partNoteBend(int part, uint8_t chan, int raw)
+{
+    if (auto* i = gActive ? gActive->instrumentAt(part) : nullptr)
+    {
+        i->noteBend(chan, raw);
+    }
+}
+void open::partNotePress(int part, uint8_t chan, uint8_t press)
+{
+    if (auto* i = gActive ? gActive->instrumentAt(part) : nullptr)
+    {
+        i->notePress(chan, press);
+    }
+}
 void open::partBendRange(int part, float semitones)
 {
     if (auto* i = gActive ? gActive->instrumentAt(part) : nullptr)
     {
         i->setBendRange(semitones);
+    }
+}
+void open::partTable(int part, int semis, float gain)
+{
+    if (auto* i = gActive ? gActive->instrumentAt(part) : nullptr)
+    {
+        i->setTable(float(semis), gain);
     }
 }
 void open::partGain(int part, float gain)
@@ -1958,6 +2195,11 @@ void open::partGain(int part, float gain)
     {
         i->setMorphGain(gain);
     }
+}
+bool open::partActive(int part)
+{
+    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
+    return i && i->active();
 }
 int open::partSounding(int part)
 {
@@ -1980,7 +2222,7 @@ const open::EngineDef* open::partPatch(int part, const float** values, int* coun
 {
     return gActive ? gActive->partPatch(part, values, count) : nullptr;
 }
-#ifdef OPEN_HOST_TEST
+#if defined(OPEN_HOST_TEST) || defined(UI_SHOT_HOST)   // read only test accessors: the host tests and ui_shot
 const ot::audio::SynthParams* open::testParams(int part)
 {
     auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
@@ -2005,6 +2247,13 @@ bool open::testVoice(int part, int slot, bool& gate, int& note, int& id)
     return true;
 }
 #endif
+void open::releaseAllParts()
+{
+    if (gActive)
+    {
+        gActive->releaseAllParts();
+    }
+}
 void open::setOffline(bool offline)
 {
     if (gActive)
@@ -2053,3 +2302,69 @@ int open::voicesSounding() { return gActive ? gActive->sounding() : 0; }
 uint32_t open::governorCuts() { return gActive ? gActive->governor.cuts() : 0; }
 
 } // namespace polysynth
+
+#ifdef UI_SHOT_HOST
+// The simulator's read only views of a part (ui_shot, host_poke.cpp): they read the Voice records of this file
+namespace polysynth::open { int hostVoices(int part, char* buf, unsigned n); }
+// ui_shot only (host_poke.cpp `poke voices`, synth_nna_sim.sh): the voices of part `part` that are on, "cap C n=N [slot:gate:note:id:fade:nnaLeft ...]", -1 for no such part
+int polysynth::open::hostVoices(int part, char* buf, unsigned n)
+{
+    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
+    if (!i)
+        return -1;
+    int at = 0, cnt = 0;
+    char list[200] = {};
+    int k = 0;
+    for (const Voice& v : i->voiceSpan())
+    {
+        if (v.on && at < 170)
+        {
+            at += snprintf(list + at, sizeof(list) - at, " %d:%d:%d:%d:%d:%d", k, int(v.v.gate), int(v.v.note), int(v.id), int(v.v.fading), int(v.fadeLeft));
+            cnt++;
+        }
+        k++;
+    }
+    return snprintf(buf, n, "n=%d [%s ]", cnt, list);
+}
+namespace polysynth::open { int hostPart(int part, float* bend, float* range, int* voiceCount); }
+// ui_shot only (synth_play_sim.sh): the live pitch bend (semitones), the bend range and the Voices of part `part`, -1 for no such part
+int polysynth::open::hostPart(int part, float* bend, float* range, int* voiceCount)
+{
+    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
+    if (!i)
+        return -1;
+    *bend = i->testBend();
+    *range = i->testBendRange();
+    *voiceCount = i->getVoiceCount();
+    return 0;
+}
+namespace polysynth::open { int hostMpeVoices(int part, char* buf, size_t n); }
+// ui_shot only (synth_mpe_sim.sh, "poke mpevoices"): the voices of part `part` that are on as " slot:note:chan:gate:nbend:press:gain" (gain x 1000 of the last block), -1 for no such part
+int polysynth::open::hostMpeVoices(int part, char* buf, size_t n)
+{
+    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
+    if (!i)
+        return -1;
+    return i->testMpe(buf, n);
+}
+namespace polysynth::open { int hostGain(int part, float* gain, float* voiceGain); }
+// ui_shot only (synth_play_sim.sh A/B rows, "poke abstate"): the morph factor of part `part` and the gain of its first voice that is on (-1: none)
+int polysynth::open::hostGain(int part, float* gain, float* voiceGain)
+{
+    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
+    if (!i)
+        return -1;
+    *gain = i->testGain();
+    *voiceGain = i->testVoiceGain();
+    return 0;
+}
+namespace polysynth::open { int hostCapSim(int part, int maxVoices); }
+// ui_shot only (synth_play_sim.sh P14, "poke capsim"): part `part` runs on a copy of its engine definition that declares `maxVoices` voices,
+// what a plugin engine with max_voices 4 is (the real tables are read only), -1 for no such part
+int polysynth::open::hostCapSim(int part, int maxVoices)
+{
+    static EngineDef copy[3];
+    auto* i = gActive ? gActive->instrumentAt(part) : nullptr;
+    return i && part >= 0 && part < 3 && i->testCap(copy[part], maxVoices) ? 0 : -1;
+}
+#endif

@@ -156,6 +156,13 @@ uint8_t cFileTransfer::loadFileToMemory(const char* file,
             {
                 transferStep = 3;
             }
+            else if (mode == fileWholeOnce)
+            {
+                // Everything was asked for in one read, so a shorter result means
+                // the file ends here. Waiting for more would hand the rest of this
+                // transfer to whoever calls next, with a different buffer.
+                transferStep = 3;
+            }
             else
             {
                 return fileTransferInProgress;
@@ -180,8 +187,29 @@ uint8_t cFileTransfer::loadFileToMemory(const char* file,
     return fileTransferError;
 }
 
+// Returns how many of the bytes just read can be stored without passing samplesLeft samples at
+// the destination: as they are, or after the conversion to the destination sample rate.
+static uint32_t limitToDestination(uint32_t bytesRead,
+                                   uint32_t samplesLeft,
+                                   const ConversionConfig* conversion)
+{
+    uint64_t bytesThatFit = (uint64_t)samplesLeft * 2;
+
+    if (conversion != nullptr)
+    {
+        const uint32_t bytesPerFrame =
+          (conversion->sourceBitsPerSample / 8) * conversion->sourceChannelCount;
+        const uint64_t framesThatFit =
+          (uint64_t)samplesLeft * conversion->sourceSampleRate / conversion->destSampleRate;
+        bytesThatFit = framesThatFit * bytesPerFrame;
+    }
+
+    return (bytesThatFit < bytesRead) ? (uint32_t)bytesThatFit : bytesRead;
+}
+
 uint8_t cFileTransfer::loadSampleToMemory(const char* file,
                                           int16_t* memory,
+                                          uint32_t maxSampleCount,
                                           uint32_t& outSampleCount)
 {
     if (transferStep == 0)
@@ -237,10 +265,18 @@ uint8_t cFileTransfer::loadSampleToMemory(const char* file,
 
         if (result >= 0)
         {
+            // The caller sized the destination from the length of the file, as if it held
+            // 16 bit mono samples at 44.1 kHz. A file in a format that grows in the
+            // conversion, or with data behind its data chunk, would be written past it.
+            const uint32_t samplesLeft =
+              (maxSampleCount > convertedDataSize) ? maxSampleCount - convertedDataSize : 0;
+            const uint32_t usableBytes = limitToDestination(
+              result, samplesLeft, conversionEnabled ? &conversionConfig : nullptr);
+
             if (conversionEnabled)
             {
                 conversionConfig.inputData = externalRamFileManagerBuffL;
-                conversionConfig.inputSize = result;
+                conversionConfig.inputSize = usableBytes;
                 conversionConfig.outPtrL = memory + convertedDataSize;
                 conversionConfig.outPtrR = nullptr;
 
@@ -248,8 +284,8 @@ uint8_t cFileTransfer::loadSampleToMemory(const char* file,
             }
             else
             {
-                memcpy(memory + convertedDataSize, externalRamFileManagerBuffL, result);
-                convertedDataSize += result / 2;
+                memcpy(memory + convertedDataSize, externalRamFileManagerBuffL, usableBytes);
+                convertedDataSize += usableBytes / 2;
             }
 
             sourceMemComplited += result;
@@ -645,7 +681,18 @@ uint8_t cFileTransfer::copySample(const char* src,
                 conversionConfig.destSampleRate = 44100;
 
                 convertedDataSize = 0;
-                transferStep = 1;
+
+                // A chunk that is not converted in place is converted to 16 bit mono at
+                // 44.1 kHz behind itself in the same buffer. Below this byte rate the result
+                // of one chunk is longer than the rest of the buffer.
+                const int minBytesPerSec =
+                  (READ_WRITE_BUFOR_SIZE / 16) * (44100 * 2) /
+                  (READ_WRITE_BUFOR_SIZE - 2 * (READ_WRITE_BUFOR_SIZE / 16));
+
+                if (conversionInPlace || bytesPerSec >= minBytesPerSec)
+                {
+                    transferStep = 1;
+                }
             }
         }
     }
@@ -1297,6 +1344,7 @@ uint8_t cFileTransfer::saveMemoryToWav(int16_t* memoryChannelL,
         {
             if (memoryChannelL == memoryChannelR)
             {
+                conversionInPlace = false;
                 sourceMemTotal = samplesCount * 2;
             }
             else
@@ -1304,6 +1352,9 @@ uint8_t cFileTransfer::saveMemoryToWav(int16_t* memoryChannelL,
                 conversionInPlace = true; // combine two buffers into stereo file
                 sourceMemTotal = samplesCount * 4;
             }
+
+            // the header is written last, in front of the data
+            fileSystem->seekFile(sizeof(sampleHead), transferFile);
 
             memStep = READ_WRITE_BUFOR_SIZE;
             sourceMemComplited = 0;
@@ -1323,7 +1374,7 @@ uint8_t cFileTransfer::saveMemoryToWav(int16_t* memoryChannelL,
         if (conversionInPlace)
         {
             uint32_t offset = sourceMemComplited / 4;
-            for (uint32_t sample = 0; sample < memStep / 2; sample++)
+            for (uint32_t sample = 0; sample < memStep / 4; sample++)
             {
                 ((int16_t*)externalRamFileManagerSrcBuff)[2 * sample] =
                   memoryChannelL[sample + offset];
@@ -1550,7 +1601,7 @@ static void findFreeSampleRamScratchStereo(uint32_t channels,
     }
 
     uintptr_t alignedStart = (reinterpret_cast<uintptr_t>(scratchStart) + 511u) & ~uintptr_t(511u);
-    uint8_t* ramEnd = reinterpret_cast<uint8_t*>(externalRamSampleMemory) + SAMPLE_MEMORY_SIZE;
+    uint8_t* ramEnd = reinterpret_cast<uint8_t*>(externalRamSampleMemory) + SAMPLE_POOL_BYTES;
 
     if (channels == 2)
     {

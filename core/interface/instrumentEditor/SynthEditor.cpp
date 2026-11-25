@@ -12,13 +12,17 @@
 #include "util_math.h"
 #include "util_string.h"
 #include "polyrequire.h"
-#ifdef FEATURE_PLUG_HOST
+#if defined(FEATURE_PLUG_HOST) && defined(FEATURE_SYNTH_OPEN)   // synth engine plugins (MK66 bank), not the insert host
 #include "core/interface.h"
 #include "elapsedMillis.h"
 #include "plug_host.h"
 #endif
 #ifdef FEATURE_SYNTH_OPEN
 #include "synth_order.h"
+#else
+#include "../../../synth-open/synth_order.h" // the stock list's order (the IMX core has no synth-open include path)
+#include <memory>
+#include <new>
 #endif
 
 extern uint8_t externalRamScratchBuff[];
@@ -50,7 +54,7 @@ __NOINIT(EXTERNAL_RAM) static char* synthModelListNames[kSynthModelsMax];
 static int synthModelListImage(int ui)
 {
     const polysynth::open::EngineRef& m = polysynth::open::engineAt(ui);
-#ifdef FEATURE_PLUG_HOST
+#if defined(FEATURE_PLUG_HOST) && defined(FEATURE_SYNTH_OPEN)   // synth engine plugins (MK66 bank), not the insert host
     return m.builtin >= 0 ? synthBuiltinListImages[m.builtin] : plug::synthLogoBitmap(m.def, false);
 #else
     return m.builtin >= 0 ? synthBuiltinListImages[m.builtin] : -1;
@@ -82,7 +86,7 @@ static void synthOrderLoad()
         synthEngineNames[i] = polysynth::open::engineAt(i).def->name;
     }
     int len = -1;
-#ifdef FEATURE_PLUG_HOST
+#if defined(FEATURE_PLUG_HOST) && defined(FEATURE_SYNTH_OPEN)   // synth engine plugins (MK66 bank), not the insert host
     len = plug::readText(kSynthOrderPath, synthOrderText, kSynthOrderTextMax);
 #endif
     synthorder::parse(synthOrder, synthOrderText, len);
@@ -128,7 +132,7 @@ static int synthPartPos(int part)
     return ui < 0 ? -1 : synthViewPosOf(ui);
 }
 
-#ifdef FEATURE_PLUG_HOST
+#if defined(FEATURE_PLUG_HOST) && defined(FEATURE_SYNTH_OPEN)   // synth engine plugins (MK66 bank), not the insert host
 // The rows the picker can show around position pos (7 on screen, pos anywhere among them) get their card logo into RAM_G before the list
 // is drawn there: a card read only for an image that is not cached, never while the display list is built. The edit mode shows names.
 static void synthModelLogos(int pos)
@@ -205,14 +209,191 @@ const char* const synthModelNames[Synth::kSynthTypes.size()] = {
     "ACD", "FAT", "VAP", "WTFM", "PERC", "DIRT", "CHIP",
 };
 
-static const int synthModelListImages[Synth::kSynthTypes.size()] = {
+static const int synthBuiltinListImages[Synth::kSynthTypes.size()] = {
     enDisplayBitmaps::kBitmapMiniACD,  enDisplayBitmaps::kBitmapMiniFAT,
     enDisplayBitmaps::kBitmapMiniVAP,  enDisplayBitmaps::kBitmapMiniWTFM,
     enDisplayBitmaps::kBitmapMiniPERC, enDisplayBitmaps::kBitmapMiniDIRT, enDisplayBitmaps::kBitmapMiniCHIP
 };
+// IMX port P7 H6: the stock list is the run time list (core/synth/synth_types.h): a built-in shows its icon, a plugin engine its name
+// (NewList draws the text of an entry without an image)
+// In SDRAM on IMX (user decision 2026-11-20, DTCM had 1,136 B free on Plus after P7 H5), written by fillSynthModelList before the
+// list reads them, no zero fill needed
+#if defined(PLATFORM_IMX)
+__NOINIT(EXTERNAL_RAM) static int synthModelListImages[synthtypes::kMax];
+__NOINIT(EXTERNAL_RAM) static char* synthModelListNames[synthtypes::kMax];
+#else
+static int synthModelListImages[synthtypes::kMax];
+static char* synthModelListNames[synthtypes::kMax];
+#endif
+
+// Order and visibility (synth-open/synth_order.h, the MK66 rules): the engines the user did not hide in /Plugins/synth-order.txt in its
+// order, the hidden ones a part of the open project uses at the top. Positions in this view are "pos", positions in typeList() "ui".
+// The file is read when the list opens, the view stays (.bss, 1 KB), the parsed file is freed. The edit mode (Shift + F1, P12 round 6, the
+// MK66 keys and rules) holds the parsed file on the heap while it is on and writes every change at once.
+constexpr const char* kSynthOrderPath = "/Plugins/synth-order.txt";
+constexpr int kSynthOrderTextMax = 4096;
+static synthorder::View synthView;
+struct SynthOrderBuf
+{
+    synthorder::List order;
+    int16_t entryUi[synthorder::kMaxEntries];
+    char text[kSynthOrderTextMax];
+    char rows[synthtypes::kMax][12]; // the edit mode's row texts (a hidden engine with its "-")
+    int cursor;                      // the edit mode's cursor row
+};
+static SynthOrderBuf* synthOrderEdit; // not null: the edit mode of the list is on (heap, synthListEditBegin / End)
+
+static int synthOrderNames(const char** names, bool* used)
+{
+    const int n = std::min(Synth::synthTypeCount(), synthtypes::kMax);
+    for (int ui = 0; ui < n; ui++)
+    {
+        names[ui] = Synth::typeList().at(ui).name;
+        used[ui] = false;
+    }
+    for (int p = 0; p < kSynthInstrumentsCount; p++)
+    {
+        const int ui = Synth::storedToUi(mtProject.values.synthPart[p].synthType);
+        if (ui >= 0 && ui < n)
+        {
+            used[ui] = true;
+        }
+    }
+    return n;
+}
+
+// the order file into b (an absent or unreadable one is the default order), every engine of the list gets an entry
+static void synthOrderRead(SynthOrderBuf& b, const char* const* names, int n)
+{
+    const int len = instrumentEditor.getSynth()->readCardText(kSynthOrderPath, b.text, kSynthOrderTextMax);
+    synthorder::parse(b.order, b.text, len);
+    synthorder::reconcile(b.order, names, n, b.entryUi);
+}
+
+static void synthViewBuild()
+{
+    const char* names[synthtypes::kMax];
+    bool used[synthtypes::kMax];
+    const int n = synthOrderNames(names, used);
+    if (synthOrderEdit)
+    {   // the edit mode: every engine of the held order, hidden ones too
+        synthorder::buildView(synthOrderEdit->order, synthOrderEdit->entryUi, n, used, true, synthView);
+        return;
+    }
+    std::unique_ptr<SynthOrderBuf> b(new (std::nothrow) SynthOrderBuf);
+    if (!b)
+    {   // no room for the file: the list order
+        synthView.n = 0;
+        for (int ui = 0; ui < n; ui++)
+        {
+            synthView.ui[synthView.n] = int16_t(ui);
+            synthView.entry[synthView.n++] = int16_t(ui);
+        }
+        return;
+    }
+    synthOrderRead(*b, names, n);
+    synthorder::buildView(b->order, b->entryUi, n, used, false, synthView);
+}
+
+static void synthViewEnsure()
+{
+    if (synthView.n == 0)
+    {
+        synthViewBuild();
+    }
+}
+
+// The row of the engine a part plays. -1: the part's engine is not in the list (a Missing number), no row is highlighted
+static int synthPartPos(int part)
+{
+    const int ui = Synth::storedToUi(mtProject.values.synthPart[part].synthType);
+    if (ui < 0)
+    {
+        return -1;
+    }
+    synthViewEnsure();
+    return std::max(synthorder::viewPos(synthView, ui), 0);
+}
+
+// The row the Model list of part shows as the current one, -1 for none (the sim's "poke modelrow", plus_smoke step 12)
+int synthModelRow(int part)
+{
+    return synthPartPos(part);
+}
+
+static int fillSynthModelList()
+{
+    synthViewEnsure();
+    for (int p = 0; p < synthView.n; p++)
+    {
+        const synthtypes::Entry& e = Synth::typeList().at(synthView.ui[p]);
+        if (synthOrderEdit)
+        {   // the edit mode shows names (the MK66 rule): the list centres the text in a clip of synthorder::kRowPx, the "-" stays visible
+            synthorder::fitRow(synthOrderEdit->rows[p], sizeof(synthOrderEdit->rows[p]), e.name,
+                               synthOrderEdit->order.e[synthView.entry[p]].hidden, [](char c) { return int(fonts[0].data[uint8_t(c)]); });
+            synthModelListImages[p] = -1;
+            synthModelListNames[p] = synthOrderEdit->rows[p];
+            continue;
+        }
+#if defined(PLATFORM_IMX) && defined(FEATURE_PLUG_HOST)
+        // a plugin engine shows its card logo (P7, Synth::cardLogoId, a RAM_G cache) or, without one, its name
+        synthModelListImages[p] = e.builtin >= 0 ? synthBuiltinListImages[e.builtin]
+                                                 : instrumentEditor.getSynth()->cardLogoId(synthView.ui[p], false);
+#else
+        synthModelListImages[p] = e.builtin >= 0 ? synthBuiltinListImages[e.builtin] : -1;
+#endif
+        synthModelListNames[p] = const_cast<char*>(e.name);
+    }
+    return synthView.n;
+}
+
+#if defined(PLATFORM_IMX) && defined(FEATURE_PLUG_HOST)
+// The rows the picker can show around position pos (7 on screen) get their card logo into RAM_G before the list is drawn there (the MK66
+// synthModelLogos): a card read only for an image that is not cached, never while the display list is built
+static void synthModelLogos(int pos)
+{
+    if (synthOrderEdit)
+    {
+        return; // the edit mode shows names
+    }
+    synthViewEnsure();
+    pos = std::max(pos, 0); // -1: the list of a Missing part starts at the top
+    constexpr int kAround = 7;
+    int uis[2 * kAround + 1];
+    int m = 0;
+    for (int d = 0; d <= kAround; d++)
+    {   // nearest first
+        if (pos + d < synthView.n)
+        {
+            uis[m++] = synthView.ui[pos + d];
+        }
+        if (d && pos - d >= 0)
+        {
+            uis[m++] = synthView.ui[pos - d];
+        }
+    }
+    instrumentEditor.getSynth()->cardLogoPrefetch(uis, m);
+}
+#else
+static void synthModelLogos(int) {}
+#endif
+
+// A part whose engine is Missing: the patch browser and the patch editor stay closed (no parameters, the files stay as they are)
+static bool synthPartMissing(int part)
+{
+    if (!Synth::storedIsMissing(mtProject.values.synthPart[part].synthType))
+    {
+        return false;
+    }
+    static char text[32];
+    snprintf(text, sizeof(text), "%s not installed", Synth::storedName(mtProject.values.synthPart[part].synthType));
+    mtPopups.show(0, text);
+    return true;
+}
 #endif
 
 static cInstrumentEditor* IE = &instrumentEditor;
+#include "SynthEditor_ff.inc" // feature hooks of this screen (patch slots, Patch FX, NNA)
 
 #ifdef FEATURE_SYNTH_OPEN
 // Heading of the patch panel on the right of the Synth screen: the open patch slot of the part (0..15, the value of the Patch FX) and,
@@ -223,6 +404,24 @@ static const char* synthPatchPanelLabel(int synthPart)
     Synth* const s = IE->getSynth();
     const int to = s->getMorphTarget(synthPart);
     if (to != polysynth::open::kMorphDefault)
+    {
+        snprintf(text, sizeof(text), "Slot %d  Morph %d:", s->getPatchSlot(synthPart), to);
+    }
+    else
+    {
+        snprintf(text, sizeof(text), "Slot %d:", s->getPatchSlot(synthPart));
+    }
+    return text;
+}
+#elif defined(FEATURE_SYNTH_PATCHFX)
+// Tracker+ and Mini (P12): the open patch slot of the part (0..15, the value of the Patch FX), Shift + Up / Down picks it, and when it is
+// not the default the Morph target (Shift + Left / Right), as on the MK66
+static const char* synthPatchPanelLabel(int synthPart)
+{
+    __NOINIT(EXTERNAL_RAM) static char text[24]; // SDRAM, DTCM has about 2 KB left
+    Synth* const s = IE->getSynth();
+    const int to = s->getMorphTarget(synthPart);
+    if (to != Synth::kMorphTarget)
     {
         snprintf(text, sizeof(text), "Slot %d  Morph %d:", s->getPatchSlot(synthPart), to);
     }
@@ -293,7 +492,7 @@ static void synthListLabel(const char* text)
 // The order goes to the card. False: it is not there (no /Plugins folder, a card error), the change stays until the screen is shown again
 static bool synthOrderSave()
 {
-#ifdef FEATURE_PLUG_HOST
+#if defined(FEATURE_PLUG_HOST) && defined(FEATURE_SYNTH_OPEN)   // synth engine plugins (MK66 bank), not the insert host
     const int n = synthorder::format(synthOrder, synthOrderText, kSynthOrderTextMax);
     if (plug::writeText(kSynthOrderPath, synthOrderText, n))
     {
@@ -391,6 +590,157 @@ static bool synthListEditHide(bool hide)
     }
     return true;
 }
+#else
+// ---- Tracker+ and Mini (P12 round 6): the MK66 edit mode of the Model list over the stock list (Shift + F1 on the Model column, again
+// Shift + F1, F1, Left, Right or any other column button, Load or Edit Patch to leave). Every engine in the order of the file as a name,
+// a hidden one with a "-". Nothing is picked: Up / Down (round the ends) and the encoder (stops at the ends) move the cursor, Shift + Up /
+// Down move the engine under it, Delete hides it, Insert shows it. Every change is written to /Plugins/synth-order.txt at once. The parsed
+// file is held on the heap while the edit mode is on (synthOrderEdit), nothing in SDRAM or DTCM but its pointer.
+static void synthListReload(int pos)
+{
+    IE->modelListData.length = fillSynthModelList();
+    IE->modelListData.linesCount = std::min<uint16_t>(IE->modelListData.length, 7);
+    IE->modelListData.rowHeight = 50;
+    IE->modelListData.params = synthModelListNames;
+    IE->modelListData.imageIds = synthModelListImages;
+    IE->modelListData.scrollText = true;
+    IE->modelListData.start = pos;
+    synthModelLogos(pos);
+    display.setControlData(IE->modelListControl, &IE->modelListData);
+    display.setControlValue(IE->modelListControl, pos);
+    display.refreshControl(IE->modelListControl);
+}
+
+static void synthListLabel(const char* text)
+{
+    display.setControlText(IE->label[0], text);
+    display.refreshControl(IE->label[0]);
+}
+
+// The order goes to the card. False: it is not there (no /Plugins folder, a card error), the change stays until the screen is shown again
+static bool synthOrderSave()
+{
+    SynthOrderBuf& b = *synthOrderEdit;
+    const int n = synthorder::format(b.order, b.text, kSynthOrderTextMax);
+    if (n >= 0 && IE->getSynth()->writeCardText(kSynthOrderPath, b.text, n))
+    {
+        return true;
+    }
+    mtPopups.show(0, "Order not saved");
+    return false;
+}
+
+static void synthListEditBegin()
+{
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    SynthOrderBuf* b = new (std::nothrow) SynthOrderBuf;
+    if (!b)
+    {
+        mtPopups.show(0, "No memory for the list");
+        return;
+    }
+    const char* names[synthtypes::kMax];
+    bool used[synthtypes::kMax];
+    const int n = synthOrderNames(names, used);
+    synthOrderRead(*b, names, n);
+    synthOrderEdit = b;
+    synthViewBuild();
+    b->cursor = synthPartPos(part);
+    IE->selectedPlace[mtInstEditModeSynth] = 0;
+    IE->activateLabelsBorder();
+    synthListLabel("Edit list");
+    synthListReload(b->cursor);
+    mtPopups.show(0, "Del hide, Ins show", "Shift+Up/Dn move");
+}
+
+// Ends the edit mode (and frees the held file). redraw false: the screen is being built anew (showSynthScreen)
+static void synthListEditEnd(bool redraw = true)
+{
+    if (!synthOrderEdit)
+    {
+        return;
+    }
+    delete synthOrderEdit;
+    synthOrderEdit = nullptr;
+    if (!redraw)
+    {
+        return;
+    }
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    synthViewBuild();
+    synthListLabel("Model");
+    synthListReload(synthPartPos(part));
+}
+
+// Up (-1) and Down (+1) in the edit mode, true when the key was taken. Shift moves the engine, else the cursor goes round the ends
+static bool synthListEditArrow(int dir)
+{
+    if (!synthOrderEdit)
+    {
+        return false;
+    }
+    SynthOrderBuf& b = *synthOrderEdit;
+    if (IE->buttons->isButtonPressed(interfaceButtonShift))
+    {
+        if (b.cursor < 0)
+        {
+            return true; // a Missing part: no row under the cursor yet, there is nothing to move
+        }
+        if (synthorder::moveEntry(b.order, b.entryUi, synthView.entry[b.cursor], dir))
+        {
+            b.cursor += dir; // the view holds the engines that are there in the order of the file: one place
+            synthViewBuild();
+            synthOrderSave();
+        }
+    }
+    else
+    {
+        b.cursor = synthorder::step(b.cursor, dir, synthView.n, true);
+    }
+    synthListReload(b.cursor);
+    return true;
+}
+
+static bool synthListEditEncoder(int16_t value)
+{
+    if (!synthOrderEdit)
+    {
+        return false;
+    }
+    SynthOrderBuf& b = *synthOrderEdit;
+    b.cursor = synthorder::step(b.cursor, interfaceGlobals.invertValForList ? -value : value, synthView.n, false);
+    synthListReload(b.cursor);
+    return true;
+}
+
+// Delete (hide) and Insert (show) in the edit mode, true when the key was taken
+static bool synthListEditHide(bool hide)
+{
+    if (!synthOrderEdit)
+    {
+        return false;
+    }
+    SynthOrderBuf& b = *synthOrderEdit;
+    if (b.cursor < 0)
+    {
+        return true; // a Missing part: no row under the cursor until an arrow key or the encoder puts it on one, so Delete hides nothing
+    }
+    bool& h = b.order.e[synthView.entry[b.cursor]].hidden;
+    if (h != hide)
+    {
+        h = hide;
+        synthViewBuild();
+        synthOrderSave();
+        synthListReload(b.cursor);
+    }
+    return true;
+}
+
+// The rows of the Model list as the user sees them and the edit flag, for the sim's order trace (host_poke.cpp UISHOT_TRACE_ORDER)
+bool synthListEditOn()
+{
+    return synthOrderEdit != nullptr;
+}
 #endif
 
 void cInstrumentEditor::exitSynthEditor()
@@ -479,6 +829,7 @@ void cInstrumentEditor::changeSynthParamValue(int value, ValueChangeSource sourc
                 changeSynthSlot(value);
             }
             break;
+        case 7: changeSynthNna(value); break;
 #endif
     }
 }
@@ -526,53 +877,51 @@ void cInstrumentEditor::playSynthNoteByPad(uint8_t pad, uint8_t state, uint8_t c
 
 static void functSynthEncoder(int16_t value)
 {
-#ifdef FEATURE_SYNTH_OPEN
     if (synthListEditEncoder(value))
     {
         return;
     }
-#endif
     IE->changeSynthParamValue(value, IE->kEncoder);
 }
 
 static void functSynthUp()
 {
-#ifdef FEATURE_SYNTH_OPEN
     if (synthListEditArrow(-1))
     {
         return;
     }
-#endif
+    if (ffSeShiftSlot(IE, 1))
+    {
+        return;
+    }
     IE->changeSynthParamValue(1);
 }
 
 static void functSynthDown()
 {
-#ifdef FEATURE_SYNTH_OPEN
     if (synthListEditArrow(1))
     {
         return;
     }
-#endif
+    if (ffSeShiftSlot(IE, -1))
+    {
+        return;
+    }
     IE->changeSynthParamValue(-1);
 }
 
 // Insert has no use on the Synth screen but in the edit mode of the Model list (shows the engine)
 static void functSynthInsert()
 {
-#ifdef FEATURE_SYNTH_OPEN
     synthListEditHide(false);
-#endif
 }
 
 static void functSynthDelete()
 {
-#ifdef FEATURE_SYNTH_OPEN
     if (synthListEditHide(true))
     {
         return;
     }
-#endif
     switch (IE->selectedPlace[mtInstEditModeSynth])
     {
         // case 0: IE->setDefaultSynthModel(); break;
@@ -587,9 +936,11 @@ static void functSynthDelete()
 
 static void functSynthLeft()
 {
-#ifdef FEATURE_SYNTH_OPEN
     synthListEditEnd();
-#endif
+    if (ffSeShiftMorph(IE, -1))
+    {
+        return;
+    }
     if (IE->selectedPlace[mtInstEditModeSynth] > 0)
     {
         IE->selectedPlace[mtInstEditModeSynth]--;
@@ -600,9 +951,11 @@ static void functSynthLeft()
 
 static void functSynthRight()
 {
-#ifdef FEATURE_SYNTH_OPEN
     synthListEditEnd();
-#endif
+    if (ffSeShiftMorph(IE, 1))
+    {
+        return;
+    }
     if (IE->selectedPlace[mtInstEditModeSynth] < IE->frameData.placesCount - 1)
     {
         IE->selectedPlace[mtInstEditModeSynth]++;
@@ -650,6 +1003,20 @@ static void functSynthActionButtons(uint8_t button)
             return;
         }
     }
+#else
+    if (button == 0 && !synthListEditOn() && IE->buttons->isButtonPressed(interfaceButtonShift))
+    {
+        synthListEditBegin(); // Shift + F1 (Tracker+ and Mini, the MK66 keys)
+        return;
+    }
+    if (synthListEditOn())
+    {
+        synthListEditEnd(); // F1 again, or another column
+        if (button == 0)
+        {
+            return;
+        }
+    }
 #endif
 
     if (button == 0 && IE->selectedPlace[IE->mode] == 0)
@@ -666,13 +1033,11 @@ static void functSynthActionButtons(uint8_t button)
 
 static void functSynthLoad()
 {
-#ifdef FEATURE_SYNTH_OPEN
     synthListEditEnd();
     if (synthPartMissing(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX))
     {
         return;
     }
-#endif
     IE->browsePatchList();
     IE->showSynthPatchBrowser();
 
@@ -717,18 +1082,14 @@ static void functSynthConfirmLoad()
         }
     }
 
-#ifdef FEATURE_SYNTH_OPEN
-    if (IE->getSynth()->getPatchSlot(syntPartIdx) == 0) // the project stores the name of slot 0 only
-#endif
+    if (ffSeStoresPatchName(IE, syntPartIdx))
     {
         polystrncpy(mtProject.values.synthPart[syntPartIdx].patchName,
                     IE->getSynth()->getPatchName(syntPartIdx).c_str(),
                     sizeof(SynthPartSettings::patchName));
     }
 
-#ifdef FEATURE_SYNTH_OPEN
-    IE->getSynth()->patchNameChanged(syntPartIdx);
-#endif
+    ffSePatchNameChanged(IE, syntPartIdx);
 
     IE->getSynth()->initSynthPartMacrosValues(syntPartIdx, mtProject.values.synthPart[syntPartIdx]);
     engine.refreshSynthInstrumentParams(mtProject.values.synthPart[syntPartIdx], syntPartIdx);
@@ -820,70 +1181,20 @@ static void functSynthLoadMiniMiddle(uint8_t state)
 
 static void functSynthEditPatch()
 {
-#ifdef FEATURE_SYNTH_OPEN
     synthListEditEnd();
     if (synthPartMissing(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX))
     {
         return;
     }
-#endif
     sequencer.stopManualNotes();
-#ifdef FEATURE_SYNTH_OPEN
-    IE->getSynth()->restorePatchFx(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX);
-#endif
+    ffSeRestorePatchFx(IE, mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX);
     IE->mode = mtInstEditModeSynthPatchEdit;
     IE->lightUpPadBoard();
     IE->showSynthPatchEditorScreen();
     IE->setSynthPatchEditorScreenFunct();
 }
 
-#ifdef FEATURE_PLUG_HOST
-// The model list over plugin engines that are not installed: stepping onto one only moves the list, the engine is
-// installed and picked once the list rests there for kModelRestMs (synthModelTick), so scrolling past engines writes no flash.
-namespace
-{
-// One second, not half: every install erases and programs 3 or more 4 KB FlexNVM sectors (rated 10,000 cycles) and can glitch
-// the audio, so a longer rest means fewer installs while scrolling, less flash wear and fewer install glitches.
-// Only this Model-list pick uses it, a project load still installs at once.
-constexpr uint32_t kModelRestMs = 1000;
-struct PendingModel
-{
-    int part = -1;
-    int ui = -1;
-};
-PendingModel s_pendModel;
-bool s_applyModel;     // synthModelTick applies the pending one: no new wait
-bool s_initMsgUp;      // initCurrentPatch raised its message and nothing took it down since
-elapsedMillis s_pendTimer;
-} // namespace
-
-static void synthModelPendClear()
-{
-    s_pendModel = {};
-}
-
-// Main loop (Tracker.cpp, after plug::tick)
-void synthModelTick()
-{
-    if (s_pendModel.ui < 0 || s_pendTimer < kModelRestMs)
-    {
-        return;
-    }
-    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
-    const PendingModel p = s_pendModel;
-    s_pendModel = {};
-    if (part != p.part || IE->mode != mtInstEditModeSynth || !mtInterface.isInstrumentParamsScreenActive())
-    {
-        return; // the screen or the part changed while the list moved: nothing is picked
-    }
-    const int cur = synthPartPos(part);
-    s_applyModel = true;
-    IE->changeSynthModel(int16_t(synthViewPosOf(p.ui) - cur)); // steps are rows of the list
-    s_applyModel = false;
-}
-#elif defined(FEATURE_SYNTH_OPEN)
-static void synthModelPendClear() {}
-#endif
+#include "SynthEditor_modelrest.inc" // the Model list rests before a plugin engine installs (synthModelTick)
 
 void cInstrumentEditor::changeSynthModel(int16_t value)
 {
@@ -891,7 +1202,7 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     assert(syntPartIdx >= 0 && syntPartIdx < kSynthInstrumentsCount);
 
 #ifdef FEATURE_SYNTH_OPEN
-#ifndef FEATURE_PLUG_HOST
+#if !(defined(FEATURE_PLUG_HOST) && defined(FEATURE_SYNTH_OPEN))
     // Without the plugin host there is no rest before a pick, so a stray step would replace the engine at once: the list stays closed
     if (synthPartMissing(syntPartIdx))
     {
@@ -905,7 +1216,8 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     synthViewEnsure();
     const int modelMaxValue = synthView.n - 1; // the rows of the list, not every engine: some may be hidden
 #else
-    int modelMaxValue = (Synth::kSynthTypes.size() - 1);
+    synthViewEnsure();
+    const int modelMaxValue = synthView.n - 1; // the rows of the list: hidden engines are not among them
 #endif
 
     // The project stores the engine's canonical number, the list on screen is the engines of this build
@@ -913,7 +1225,7 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
 #ifdef FEATURE_SYNTH_OPEN
     const int currentUi = Synth::storedToUi(previousSynthType); // -1: a Missing part
     const int currentPos = currentUi < 0 ? -1 : synthViewPosOf(currentUi);
-#ifdef FEATURE_PLUG_HOST
+#if defined(FEATURE_PLUG_HOST) && defined(FEATURE_SYNTH_OPEN)   // synth engine plugins (MK66 bank), not the insert host
     // while the list waits on an engine that is not installed, the next step goes on from there
     const int previousPos =
       !s_applyModel && s_pendModel.part == syntPartIdx && s_pendModel.ui >= 0 ? synthViewPosOf(s_pendModel.ui) : currentPos;
@@ -928,19 +1240,15 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     }
     const int newUi = synthView.ui[newPos];
 #else
-    const int previousUi = std::max(Synth::storedToUi(previousSynthType), 0);
-    int newUi;
-
-    if (IE->rollListOver && previousUi + value > modelMaxValue)
+    // the rows of the ordered list (synth_order.h): a Missing part stands on no row, its first step puts it on one
+    const int newPos = synthorder::step(synthPartPos(syntPartIdx), value, modelMaxValue + 1, IE->rollListOver);
+    if (newPos < 0)
     {
-        newUi = 0;
+        return;
     }
-    else
-    {
-        newUi = clamp<int>(previousUi + value, 0, modelMaxValue);
-    }
+    const int newUi = synthView.ui[newPos];
 #endif
-#ifdef FEATURE_PLUG_HOST
+#if defined(FEATURE_PLUG_HOST) && defined(FEATURE_SYNTH_OPEN)   // synth engine plugins (MK66 bank), not the insert host
     if (!s_applyModel)
     {
         if (newUi != currentUi)
@@ -988,7 +1296,7 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
 #ifdef FEATURE_SYNTH_OPEN
     synth->setInstrumentType(syntPartIdx, Synth::synthTypeAt(newUi));
 #else
-    synth->setInstrumentType(syntPartIdx, Synth::kSynthTypes.at(newUi));
+    synth->setPartEngine(syntPartIdx, Synth::uiToStored(newUi)); // a plugin that is not attached makes the part Missing
 #endif
 
     changeSynthPolyphony(0);
@@ -1007,6 +1315,45 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
 #ifdef FEATURE_SYNTH_OPEN
 // Morph target (Shift + encoder or Shift + up/down on the slot selector): the slot 0..15 a Morph FX of the part blends to when its step
 // has no Patch FX in the other FX column. Saved in the part's names file only when it is not the default (slot 1).
+// New Note Action of the part (right panel, "New note"): what the earlier note of a track does when a new note starts on it
+static const char* const synthNnaNames[] = { "Release", "Continue", "Cut", "Fade" };
+// the values in the order the encoder walks them (SynthNna of mtStructs.h)
+static const uint8_t synthNnaOrder[] = { kNnaRelease, kNnaContinue, kNnaCut, kNnaFade };
+
+void cInstrumentEditor::changeSynthNna(int16_t value)
+{
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    POLY_REQUIRE(part >= 0 && part < kSynthParts);
+    if (synthPartMissing(part))
+    {
+        return;
+    }
+    SynthPartSettings& synthPart = mtProject.values.synthPart[part];
+    const uint8_t was = synthNnaMode(synthPart);
+    int pos = 0;
+    for (int i = 0; i < int(sizeof(synthNnaOrder)); i++)
+    {
+        pos = synthNnaOrder[i] == was ? i : pos;
+    }
+    synthNnaSet(synthPart, synthNnaOrder[clamp<int>(pos + value, 0, int(sizeof(synthNnaOrder)) - 1)]);
+    newFileManager.setProjectStructChanged();
+    showSynthNna(part);
+}
+
+void cInstrumentEditor::showSynthNna(uint8_t syntPartIdx)
+{
+    display.setControlText(nnaLabel, "New note:");
+    display.setControlText2(nnaLabel, synthNnaNames[synthNnaMode(mtProject.values.synthPart[syntPartIdx])]);
+    display.setControlStyle(nnaLabel, controlStyleShow | controlStyleCenterY | controlStyleFont4);
+    display.setControlStyle2(nnaLabel, controlStyleShow | controlStyleCenterY | controlStyleFont2);
+    display.setControlColors(nnaLabel, display.getTheme().activeButtonLabelsColors);
+    display.setControlValue(nnaLabel, 1);
+    display.setControlPosition(nnaLabel, 625, 243);
+    display.setControlSize(nnaLabel, 170, 30);
+    display.setControlShow(nnaLabel);
+    display.refreshControl(nnaLabel);
+}
+
 void cInstrumentEditor::changeSynthMorphTarget(int16_t value)
 {
     const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
@@ -1079,6 +1426,63 @@ void cInstrumentEditor::changeSynthSlot(int16_t value)
     engine.refreshSynthInstrumentParams(mtProject.values.synthPart[syntPartIdx], syntPartIdx);
     newFileManager.setProjectStructChanged();
     showSynthPatchName(syntPartIdx);
+}
+#elif defined(FEATURE_SYNTH_PATCHFX)
+// Tracker+ and Mini (P12): Shift + Up / Down on the Synth screen opens the next / previous patch slot 0..15 of the part. The open slot is
+// saved if it was edited, the slot's file is loaded, a slot without a file starts as a copy of the open one, a slot of another engine is
+// stepped over.
+void cInstrumentEditor::changeSynthSlot(int16_t value)
+{
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    if (part < 0 || part >= kSynthInstrumentsCount || synthPartMissing(part))
+    {
+        return;
+    }
+    const int step = value < 0 ? -1 : 1;
+    const int from = synth->getPatchSlot(part);
+    Synth::SlotSelect result = Synth::SlotSelect::kSame;
+
+    getSynth()->triggerTestNote(part, kSynthPreviewNote1, false);
+    getSynth()->triggerTestNote(part, kSynthPreviewNote2, false);
+
+    for (int target = clamp<int>(from + step, 0, Synth::kPatchSlots - 1); target != from; target += step)
+    {
+        result = synth->selectPatchSlot(part, target);
+        if (result != Synth::SlotSelect::kOtherEngine || target + step < 0 || target + step >= Synth::kPatchSlots)
+        {
+            break;
+        }
+    }
+    switch (result)
+    {
+        case Synth::SlotSelect::kSame: return;
+        case Synth::SlotSelect::kOtherEngine: mtPopups.show(0, "Slot has other engine"); return;
+        case Synth::SlotSelect::kError: mtPopups.show(0, "Error loading slot"); return;
+        case Synth::SlotSelect::kSaveFailed: mtPopups.show(0, "Error saving patch"); return;
+        default: break;
+    }
+    // a loaded patch resets the macro knobs, as every patch load does
+    synth->initSynthPartMacrosValues(part, mtProject.values.synthPart[part]);
+    engine.refreshSynthInstrumentParams(mtProject.values.synthPart[part], part);
+    newFileManager.setProjectStructChanged();
+    showSynthPatchName(part);
+}
+
+// Tracker+ and Mini (P12): Shift + Left / Right on the Synth screen, the slot 0..15 a Morph FX of the part blends to when its step has no
+// Patch FX in the other FX column. Written to the part's <P>.names (m= line) only when it is not the default (slot 1), as on the MK66
+void cInstrumentEditor::changeSynthMorphTarget(int16_t value)
+{
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    if (part < 0 || part >= kSynthInstrumentsCount || synthPartMissing(part))
+    {
+        return;
+    }
+    const int to = clamp<int>(synth->getMorphTarget(part) + (value < 0 ? -1 : 1), 0, Synth::kPatchSlots - 1);
+    synth->setMorphTarget(part, to);
+    __NOINIT(EXTERNAL_RAM) static char text[20]; // SDRAM, DTCM has about 2 KB left
+    snprintf(text, sizeof(text), "Morph target: %d", to);
+    mtPopups.show(0, text);
+    showSynthPatchName(part);
 }
 #endif
 
@@ -1235,11 +1639,7 @@ void cInstrumentEditor::setDefaultSynthDelay()
 
 [[maybe_unused]] void cInstrumentEditor::setDefaultSynthModel()
 {
-#ifdef FEATURE_SYNTH_OPEN
     int modelMaxValue = Synth::synthTypeCount() - 1;
-#else
-    int modelMaxValue = (Synth::kSynthTypes.size() - 1);
-#endif
     changeSynthModel(-modelMaxValue);
 }
 
@@ -1415,24 +1815,18 @@ void cInstrumentEditor::initCurrentPatch(bool backupRestored)
     IE->getSynth()->initSynthPartMacrosValues(syntPartIdx, mtProject.values.synthPart[syntPartIdx]);
     engine.refreshSynthInstrumentParams(mtProject.values.synthPart[syntPartIdx], syntPartIdx);
 
-#ifdef FEATURE_SYNTH_OPEN
-    if (IE->getSynth()->getPatchSlot(syntPartIdx) == 0) // the project stores the name of slot 0 only
-#endif
+    if (ffSeStoresPatchName(IE, syntPartIdx))
     {
         polystrncpy(mtProject.values.synthPart[syntPartIdx].patchName,
                     IE->getSynth()->getPatchName(syntPartIdx).c_str(),
                     sizeof(SynthPartSettings::patchName));
     }
-#ifdef FEATURE_SYNTH_OPEN
-    IE->getSynth()->patchNameChanged(syntPartIdx);
-#endif
+    ffSePatchNameChanged(IE, syntPartIdx);
 
     newFileManager.setProjectStructChanged();
 
     mtPopups.show(0, backupRestored ? "Previous patch restored" : "Init patch loaded");
-#ifdef FEATURE_PLUG_HOST
-    s_initMsgUp = true;
-#endif
+    ffSeInitMsgRaised();
 
     IE->showSynthPatchName(syntPartIdx);
 }
@@ -1443,10 +1837,8 @@ void cInstrumentEditor::initCurrentPatch(bool backupRestored)
 
 void cInstrumentEditor::showSynthParamsScreen()
 {
-#ifdef FEATURE_SYNTH_OPEN
     // a song that ran the Patch FX may have left another slot's values in the part: the editor shows the open slot's own
-    IE->getSynth()->restorePatchFx(mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX);
-#endif
+    ffSeRestorePatchFx(IE, mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX);
     showTitleBar();
     refreshFramePosition();
 
@@ -1494,6 +1886,7 @@ void cInstrumentEditor::showSynthParamsScreen()
     showSynthReverbSend(syntPartIdx);
     showSynthDelaySend(syntPartIdx);
     showSynthPatchName(syntPartIdx);
+    ffSeShowNna(this, syntPartIdx);
 
     display.setControlText(noteLabel, synthPatchPanelLabel(syntPartIdx));
     display.setControlStyle(noteLabel, controlStyleShow | controlStyleCenterY | controlStyleFont4);
@@ -1515,11 +1908,17 @@ void cInstrumentEditor::showSynthParamsScreen()
     modelListData.rowHeight = 50;
     modelListData.params = synthModelListNames;
 #else
-    modelListData.start = std::max(Synth::storedToUi(mtProject.values.synthPart[syntPartIdx].synthType), 0);
-    modelListData.length = Synth::kSynthTypes.size();
-    modelListData.linesCount = std::min<uint16_t>(Synth::kSynthTypes.size(), 7);
+    // the card's plugin engines and the order file are read when the list opens, a Missing part starts on no row (-1), the edit mode
+    // never survives a new visit of the screen (the MK66 rule)
+    synthListEditEnd(false);
+    synth->scanCardEngines();
+    synthView.n = 0;
+    modelListData.start = synthPartPos(syntPartIdx);
+    synthModelLogos(modelListData.start);
+    modelListData.length = fillSynthModelList();
+    modelListData.linesCount = std::min<uint16_t>(modelListData.length, 7);
     modelListData.rowHeight = 50;
-    modelListData.params = nullptr;
+    modelListData.params = synthModelListNames;
 #endif
     modelListData.imageIds = synthModelListImages;
     modelListData.scrollText = true;
@@ -1611,9 +2010,8 @@ void cInstrumentEditor::showSynthModel(uint8_t synthPart)
     synthModelLogos(pos);
     display.setControlValue(modelListControl, pos);
 #else
-    display.setControlValue(
-      modelListControl,
-      std::max(Synth::storedToUi(mtProject.values.synthPart[synthPart].synthType), 0));
+    synthModelLogos(synthPartPos(synthPart));
+    display.setControlValue(modelListControl, synthPartPos(synthPart)); // -1, a Missing part: no row
 #endif
     display.refreshControl(modelListControl);
     titleBar->showCurrentInstrumentOnRightLabel();
@@ -1694,13 +2092,11 @@ void cInstrumentEditor::showSynthPatchName(uint8_t synthPart)
 {
     polystrncpy(
       synthPatchNameText, synth->getPatchName(synthPart).c_str(), sizeof(synthPatchNameText));
-#ifdef FEATURE_SYNTH_OPEN
     if (Synth::storedIsMissing(mtProject.values.synthPart[synthPart].synthType))
     {   // the engine is a plugin that is not installed: say which (the project keeps the part, the patch name stays saved)
         snprintf(synthPatchNameText, sizeof(synthPatchNameText), "Missing: %s",
                  Synth::storedName(mtProject.values.synthPart[synthPart].synthType));
     }
-#endif
     display.setControlText(noteLabel, synthPatchPanelLabel(synthPart));
     display.setControlText2(noteLabel, synthPatchNameText);
     display.setControlShow(noteLabel);
@@ -1753,6 +2149,7 @@ void cInstrumentEditor::showSynthPatchBrowser()
     display.setControlPosition(label[4], (800 / 8) * 5, -1);
 
     display.setControlHide(noteLabel);
+    display.setControlHide(nnaLabel);
     display.setControlHide(blankSpaceCover[0]);
 
     frameData.placesCount = 1;

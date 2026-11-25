@@ -2,7 +2,7 @@
 // Plain C++ with no firmware dependency, so synth-open/tools/parts_format_test.cpp runs this very code on the Mac.
 //
 // A Part names a source pattern per track (0 = track off), a length in steps and a repeat count. The Parts list lives in the project
-// sidecar project.mtff (pat.parts.mode and pat.part.N lines, text codec in synth-open/plug_mtff.h) in the project folder and the
+// sidecar project.mtff (pat.parts.mode and pat.part.N lines, text codec in core/FileManager/mtff_codec.h) in the project folder and the
 // Workspace. project.mt is never touched (1.3.0 rejects a larger file, fileManagerProject.cpp:72-77), so a project without the
 // keys, or a firmware that does not know them, plays the stock playlist. Written only when the list has at least one Part.
 #pragma once

@@ -1,8 +1,6 @@
 #include "WorkspaceProjectSave.h"
 #include "mtFollowChord.h"
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
-#endif
+#include "ff_hooks.h"
 
 #include "fileManager.h"
 #include "fileManagerDefs.h"
@@ -137,14 +135,12 @@ void WorkspaceProjectSave::saveProjectToWorkspaceFinish()
     newFileManager.getSynth()->saveDirtyWorkspacePatches();
 #endif
 #endif
-#ifdef FEATURE_PLUG_HOST
-    if (!plug::projectSave(cWorkspacePath)) // the sidecar of the master insert plugins (removed when no slot is used)
+    if (!ffHookWorkspaceSave(cWorkspacePath)) // the project sidecars (each removed when it holds nothing)
     {
-        mtProject.values.projectNotSavedFlag |= 1; // the Workspace lacks the current plugin settings: as the patches above
+        mtProject.values.projectNotSavedFlag |= 1; // the Workspace lacks the current FF settings: as the patches above
         stopOperationWithError(fmSaveError);
         return;
     }
-#endif
 
     if (newFileManager.getStatus() == fmSavingProjectToProjects) // przejdz do kopiowania projektu
     {
@@ -220,7 +216,9 @@ void WorkspaceProjectSave::stop()
     {
         if (operationStep == WorkspaceProjectSaveStep::saveInstrumentSample)
         {
-            while (operationStep == WorkspaceProjectSaveStep::saveInstrumentSample)
+            // A failed write ends the operation without leaving this step.
+            while (operationStep == WorkspaceProjectSaveStep::saveInstrumentSample &&
+                   newFileManager.getCurrentOperation() == fmSaveWorkspaceProject)
             {
                 update();
             }

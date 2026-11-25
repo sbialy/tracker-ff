@@ -109,7 +109,7 @@ the screenshots of OpenTracker, its own firmware (another UI, another theme, 800
   pattern.png shows 1 px separators there and a 2 px half coverage pair here: the model puts a line at an integer coordinate on a pixel
   boundary and covers two pixels at 50 %, which is how OpenTracker's own notes describe the chip, but it was not verified on a unit).
 
-Titles that look cut ("Synth Automation 3/3 - Slo", "Safe mode: Shift at power o") are the firmware's: the title label is 270 px wide
+Titles that look cut ("Synth Automation 3/4 - Slo", "Safe mode: Shift at power o") are the firmware's: the title label is 270 px wide
 (`core/interface/core/titleBar.cpp`) and clips its text.
 
 Known differences to the chip: edge anti-aliasing (signed distance at the pixel centre instead of the 16 sample pattern), the

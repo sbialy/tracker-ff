@@ -1,0 +1,41 @@
+# P12 round 7 step 2: the A/B mode of the Synth play page on the Tracker Mini, Mini keys only. Menu box 12 (Up then Left from the Pattern
+# box) opens the page on Synth 1 (part A), Right x4 goes to the Synth B column and Up turns part B on (Synth 2), the pair shares the stock
+# pool of 8 voices as 4 + 4. Left x2 goes to Morph and Up steps it from 50 to 55. Middle held plays C4 on both parts, the release ends it,
+# Menu with Right and Up x2 goes to the Pattern box and leaves the page. plus_flows.sh reads the page state afterwards
+# (UISHOT_TRACE_SPLAY): open with B on and 4 voices on each side, a held cell, none after the release, and the last line closed.
+# Replay: plus_flows.sh mini
+title: Synth play A/B on the Mini (P12)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Menu
+wait 400ms
+tap Up
+wait 300ms
+tap Left
+wait 300ms
+release Menu
+wait 1200ms
+expect text "Synth B"
+tap Right x4
+wait 300ms
+tap Up
+wait 600ms
+tap Left x2
+wait 300ms
+tap Up
+wait 600ms
+press Mid
+wait 500ms
+shot ab
+release Mid
+wait 500ms
+press Menu
+wait 400ms
+tap Right
+wait 300ms
+tap Up x2
+wait 300ms
+release Menu
+wait 1200ms

@@ -1,9 +1,7 @@
 #include "fileManagerDefs.h"
 #include "fx34_io.h"
 #include "mtFollowChord.h"
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
-#endif
+#include "ff_hooks.h"
 #include "mtStructs.h"
 
 #include "mtSequencer.h"
@@ -22,16 +20,12 @@ bool cFileManager::createNewProjectInWorkspace()
     clearWorkspace();
     createWorkspaceDirs();
     fx34io::projectClosing(); // a new project has the 4 FX switch off
-#ifdef FEATURE_PLUG_HOST
-    plug::projectClosing(); // and each patch as it always was (no macro depth mode), before the new project's patches are made
-#endif
+    ffHookProjectClosing(); // and each patch as it always was (no macro depth mode), before the new project's patches are made
     followchord::workspaceLoaded(true); // a new project: no track follows, no sidecar
 #ifdef FEATURE_PARTS
     parts::projectLoaded(cWorkspacePath, true); // a new project (and a .it / .mod import, which starts one) has no Parts
 #endif
-#ifdef FEATURE_PLUG_HOST
-    plug::projectLoaded(cWorkspacePath, true); // no sidecar in a new project: both insert slots empty, every project.mtff setting at its default
-#endif
+    ffHookProjectLoaded(cWorkspacePath, true); // no sidecar in a new project: both insert slots empty, every project.mtff setting at its default
 
     report(" crating new project ");
 
@@ -50,9 +44,7 @@ bool cFileManager::createNewProjectInWorkspace()
 
     changesFlags.project = 1;
     saveProjectFileToWorkspace();
-#ifdef FEATURE_PLUG_HOST
-    plug::newProjectSaved(cWorkspacePath); // project.mtff of the new project (Strum ramp 100), stamped with the project.mt just written
-#endif
+    ffHookNewProjectSaved(cWorkspacePath); // project.mtff of the new project (Strum ramp 100), stamped with the project.mt just written
     currentOperationStep = 0;
 
     return true;

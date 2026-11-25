@@ -17,7 +17,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 OUT="${OUT:-$ROOT/build/ui-shot-tempo}"
-BIN="$OUT/ui_shot"
+BIN="${UI_SHOT_BIN:-$OUT/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make (it never made one)
 FX_SET="${FX_SET:?set FX_SET to the folder with sweepgate.plg and dustbed.plg}"
 [ -x "$BIN" ] || { echo "plug_tempo_sim.sh: build $BIN first (make -C synth-open/tools/ui_shot OUT=$OUT, sources of the twins in $OUT/external)" >&2; exit 2; }
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/plug_tempo_sim.XXXXXX")"

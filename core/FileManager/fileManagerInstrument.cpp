@@ -3,6 +3,7 @@
 
 #include "Platform.h"
 #include "VoiceStreamManager.h"
+#include "mtAudioEngine.h"
 #include "fileManager.h"
 #include "fileManagerDefs.h"
 #include "fileTransfer.h"
@@ -33,7 +34,7 @@ bool cFileManager::startNewInstrumentSampleLoad(int idx,
     {
         assert(mtProject.instrument[activeBeforeIdx].sample.address >= externalRamSampleMemory &&
                mtProject.instrument[activeBeforeIdx].sample.address <
-                 externalRamSampleMemory + (SAMPLE_MEMORY_SIZE / 2));
+                 externalRamSampleMemory + (SAMPLE_POOL_BYTES / 2));
 
         uint32_t prevRamFrames =
           mtProject.sampleMemory[activeBeforeIdx].isStreamed
@@ -45,7 +46,7 @@ bool cFileManager::startNewInstrumentSampleLoad(int idx,
         if (isInstrumentStereo(activeBeforeIdx))
         {
             // before is stereo sample
-            assert(prevRamFrames * 2 < SAMPLE_MEMORY_SIZE / 2);
+            assert(prevRamFrames * 2 < SAMPLE_POOL_BYTES / 2);
 
             mtProject.instrument[idx].sample.address =
               mtProject.instrument[activeBeforeIdx].sample.address + prevRamFrames * 2;
@@ -53,7 +54,7 @@ bool cFileManager::startNewInstrumentSampleLoad(int idx,
         else
         {
             // before is mono sample
-            assert(prevRamFrames < SAMPLE_MEMORY_SIZE / 2);
+            assert(prevRamFrames < SAMPLE_POOL_BYTES / 2);
 
             mtProject.instrument[idx].sample.address =
               mtProject.instrument[activeBeforeIdx].sample.address + prevRamFrames;
@@ -147,7 +148,7 @@ bool cFileManager::startNewInstrumentSampleLoad(int idx,
                              ? (mtProject.max_memory - mtProject.used_memory)
                              : 0;
         bool shouldStream = (mtProject.instrument[idx].sample.length > kStreamPreCacheFrames) &&
-                            isPlayModeStreamable(mtProject.instrument[idx].playMode) &&
+                            isInstrumentStreamable(mtProject.instrument[idx]) &&
                             (mtProject.instrument[idx].isStreamPreferred() || totalBytes > freeRam);
         mtProject.instrument[idx].setStreamPreferred(shouldStream);
 
@@ -165,7 +166,7 @@ bool cFileManager::startNewInstrumentSampleLoad(int idx,
             {
                 assert(mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kLeft] +
                          preCache <
-                       externalRamSampleMemory + SAMPLE_MEMORY_SIZE / 2);
+                       externalRamSampleMemory + SAMPLE_POOL_BYTES / 2);
 
                 mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kRight] =
                   mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kLeft] + preCache;
@@ -183,7 +184,7 @@ bool cFileManager::startNewInstrumentSampleLoad(int idx,
             {
                 assert(mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kLeft] +
                          mtProject.instrument[idx].sample.length <
-                       externalRamSampleMemory + SAMPLE_MEMORY_SIZE / 2);
+                       externalRamSampleMemory + SAMPLE_POOL_BYTES / 2);
 
                 mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kRight] =
                   mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kLeft] +
@@ -327,8 +328,10 @@ bool cFileManager::loadSampleData(int idx,
     }
     else if (sampleLoadStep == 2) // old instrument/sample load
     {
-        loadStatus = fileTransfer.loadSampleToMemory(
-          samplePath, mtProject.instrument[idx].sample.address, currentSampleSamplesCount);
+        loadStatus = fileTransfer.loadSampleToMemory(samplePath,
+                                                     mtProject.instrument[idx].sample.address,
+                                                     mtProject.instrument[idx].sample.length,
+                                                     currentSampleSamplesCount);
     }
     else if (sampleLoadStep == 3) // save old sample type to new instrument in workspace
     {
@@ -424,7 +427,7 @@ void cFileManager::setInstrumentSampleAddress(int idx, uint16_t channelCount, ui
     {
         assert(mtProject.instrument[activeBeforeIdx].sample.address >= externalRamSampleMemory &&
                mtProject.instrument[activeBeforeIdx].sample.address <
-                 externalRamSampleMemory + (SAMPLE_MEMORY_SIZE / 2));
+                 externalRamSampleMemory + (SAMPLE_POOL_BYTES / 2));
 
         uint32_t prevRamFrames =
           mtProject.sampleMemory[activeBeforeIdx].isStreamed
@@ -436,7 +439,7 @@ void cFileManager::setInstrumentSampleAddress(int idx, uint16_t channelCount, ui
         if (newFileManager.isInstrumentStereo(activeBeforeIdx))
         {
             // before is stereo sample
-            assert(prevRamFrames * 2 < SAMPLE_MEMORY_SIZE / 2);
+            assert(prevRamFrames * 2 < SAMPLE_POOL_BYTES / 2);
 
             mtProject.instrument[idx].sample.address =
               mtProject.instrument[activeBeforeIdx].sample.address + prevRamFrames * 2;
@@ -444,7 +447,7 @@ void cFileManager::setInstrumentSampleAddress(int idx, uint16_t channelCount, ui
         else
         {
             // before is mono sample
-            assert(prevRamFrames < SAMPLE_MEMORY_SIZE / 2);
+            assert(prevRamFrames < SAMPLE_POOL_BYTES / 2);
 
             mtProject.instrument[idx].sample.address =
               mtProject.instrument[activeBeforeIdx].sample.address + prevRamFrames;
@@ -462,7 +465,7 @@ void cFileManager::setInstrumentSampleAddress(int idx, uint16_t channelCount, ui
     {
         assert(mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kLeft] +
                  mtProject.instrument[idx].sample.length <
-               externalRamSampleMemory + SAMPLE_MEMORY_SIZE / 2);
+               externalRamSampleMemory + SAMPLE_POOL_BYTES / 2);
 
         mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kRight] =
           mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kLeft] +
@@ -575,7 +578,7 @@ bool cFileManager::demoteRamInstrumentToStream(int idx,
 
     bool shouldStream =
       (forceStream ? (fullFrames > kStreamPreCacheFrames) : (totalBytes >= kStreamThresholdBytes)) &&
-      isPlayModeStreamable(mtProject.instrument[idx].playMode);
+      isInstrumentStreamable(mtProject.instrument[idx]);
     if (!shouldStream)
     {
         return false;
@@ -666,7 +669,7 @@ bool cFileManager::demoteRamInstrumentToStream(int idx,
 //-------------------------------------------------------------------------------------------------
 
 // return value: true = success saved, false = fail or skipped
-bool cFileManager::saveInstrumentStructToWorkspace(int idx)
+__attribute__((noinline)) bool cFileManager::saveInstrumentStructToWorkspace(int idx)
 {
     if (idx >= kSampleInstrumentsCount || changesFlags.instrument[idx] == 0)
     {
@@ -703,7 +706,7 @@ bool cFileManager::saveInstrumentStructToWorkspace(int idx)
 }
 
 // na potrzeby innych modułów - modów
-uint8_t cFileManager::saveInstrument(uint8_t idx)
+__attribute__((noinline)) uint8_t cFileManager::saveInstrument(uint8_t idx)
 {
     strInstrumentFile fileManagerInstrumentBuffer;
 
@@ -781,6 +784,10 @@ bool cFileManager::loadInstrumentFormFileStruct(strInstrument* instrument,
 
         versionRecovery.translateinstrument(fileVersion, INSTRUMENT_FILE_VERSION, instrumentFile);
     }
+
+    // The name is copied and printed as a string everywhere, and nothing else makes sure that
+    // the 32 bytes read from the file end in a terminator.
+    instrumentFile->instrumentDataAndHeader.instrument.sample.file_name[SAMPLE_NAME_SIZE] = 0;
 
     instrumentFileDataOffsetOut = validation.dataOffset;
 
@@ -1016,4 +1023,17 @@ void cFileManager::copySampleNameWithoutExtension(char* sampleName, char* fileNa
 bool cFileManager::isFilePtiInstrument(char* file)
 {
     return hasFileExtension(file, "pti");
+}
+
+bool cFileManager::dropInstrumentToMono(int idx)
+{
+    if (idx < 0 || idx >= kSampleInstrumentsCount || !mtProject.sampleMemory[idx].isStereo)
+        return false;
+    AudioNoInterrupts();
+    mtProject.sampleMemory[idx].isStereo = false;
+    mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kRight] =
+      mtProject.sampleMemory[idx].address[strSampleMemory::Channel::kLeft];
+    AudioInterrupts();
+    voiceStreamManager.invalidateInstrumentVoices(idx); // a streamed voice may hold a ring window of the stereo file
+    return true;
 }

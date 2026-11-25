@@ -8,9 +8,7 @@
 #include "AudioVoice.h"
 #include "ExportQueues.h"
 #ifdef FEATURE_SEND_DUCK
-#if !defined(FEATURE_PLUG_HOST) || !defined(FEATURE_SYNTH)
-#error "FEATURE_SEND_DUCK keeps its settings in the plugin sidecar and takes synth parts as sources (PLUG_HOST=1)"
-#endif
+#include "../include/ff_config.h" // refuses FEATURE_SEND_DUCK without PLUG_HOST=1
 #include "effect_duck.h"
 #endif
 #include "MixerAndFxs.h"
@@ -108,6 +106,9 @@ class audioEngine
     void setLimiterRelease(float release);
     void setLimiterThreshold(uint16_t threshold);
     void setLimiterSidechain(uint8_t sidechain);
+    // Linked stereo track pairs (stereoPairs.h): bit k of mask links tracks 2k and 2k+1. Main loop. Every note of the two tracks is cut
+    // when a pair changes. A no-op on the IMX build (every voice has two chains there already)
+    void setStereoPairs(uint8_t mask);
 #ifdef FEATURE_SEND_DUCK
     // Send ducking: a chosen track, line in channel or synth part (the limiter sidechain's numbering, source = list position, 0 off)
     // pulls the delay and reverb returns down. The project keeps it in the plugin sidecar (plug_host.h duck/duckSet).
@@ -124,6 +125,7 @@ class audioEngine
         kPerformance,
         kFx3, // rank 2 (FX4 column), the 4 FX project switch
         kFx4, // rank 3 (FX3 column)
+        kAuto, // part destinations of the synth automation (open_mod.h kPart): additive like kPerformance, after it, own source (audioEngine::updateSynthAuto)
         kSynthValuesSourceCount
     };
 
@@ -157,8 +159,10 @@ class audioEngine
 
     bool isSynthFx(uint8_t fx_id);
     void seqSynthFx(uint8_t fx_id, uint8_t fx_val, uint8_t fx_n, uint8_t synthIdx);
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
     void seqPatchChange(uint8_t slot, uint8_t synthIdx);
+#endif
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
     void seqPatchMorph(int8_t slot, uint8_t amount, uint8_t synthIdx);
 #endif
     void refreshSynthInstrumentParams(SynthPartSettings& synthSettings, int synthIdx);
@@ -231,6 +235,20 @@ class audioEngine
     void refreshSendsInIrq();
 #ifdef FEATURE_SYNTH
     void updateSynthParams();
+#ifdef FEATURE_PART_AUTO
+    // Synth automation on the part's Pan, Gain and sends (open_mod.h kPart): once per block the slot outputs of the part go to the kAuto
+    // source of the 4 params, only the ones that changed, and a destination that lost its slot is cleared (the base value is back).
+    void updateSynthAuto(int synthIdx);
+    uint8_t synthAutoMask[kSynthParts] = {};        // bit n: ModPart n has a value in kAuto
+    float synthAutoLast[kSynthParts][4] = {};       // what kAuto holds (gain: quantised, see updateSynthAuto)
+public:
+    // Project load: every kAuto value goes (the part's patches are new). Main thread or audio interrupt.
+    void resetSynthAuto();
+    // the value a part param has now, every source added (the sims read the part destinations with it)
+    float synthParamNow(int synthIdx, SynthParam param) { return calculateParamValue(synthIdx, param); }
+    uint8_t synthAutoNow(int synthIdx) const { return synthAutoMask[synthIdx]; }   // the mask the audio interrupt took last (sims)
+private:
+#endif
     void updateSynthParam(int synthIdx, SynthParam param);
     void applySynthValue(int synthIdx, SynthParam param, float value);
     float calculateParamValue(int synthIdx, SynthParam param);
@@ -272,7 +290,7 @@ class audioEngine
 
 #ifdef FEATURE_SYNTH
     SynthVoice synthVoice;
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
     Synth* patchBankSynth = nullptr;
 #endif
     std::optional<float> synthParams[kSynthParts][SynthParam::kSynthParamsCount]
@@ -325,6 +343,12 @@ class playerEngine
                    uint8_t fx4_val = 0); // tylko ten note on do nut w sequencerze
     void noteOff(int8_t option = -4);
     void setStepVelocity(int8_t velocity);
+    // Tables (core/source/tables.h): V of the running table row, linear percent of the voice gain (100 = untouched, the note-on resets it)
+    void setTableGain(uint8_t percent)
+    {
+        tableVol = percent;
+        setRefreshBit(VOLUME_MASK);
+    }
     void clean();
 
     void setInterpolationEnable(bool value);
@@ -649,6 +673,16 @@ class playerEngine
     float getRMSValue();
     AudioVoice* getAudioVoice();
 
+    // Linked stereo pair (core/source/stereoPairs.h), MK66 only. The leader (track 1 3 5 7) adopts the chain of the follower (the even track
+    // next to it) as its channel 1: one note, one set of envelopes, chain 0 plays address[0] (L), chain 1 address[1] (R). Main loop, the
+    // transport and the notes of both tracks quiet (audioEngine::setStereoPairs cuts them first).
+    void linkChain(playerEngine* follower);
+    void unlinkChain();
+    bool isPairFollower() const
+    {
+        return pairLeader != nullptr;
+    }
+
   private:
     friend audioEngine;
 
@@ -663,6 +697,11 @@ class playerEngine
     std::vector<AudioFilterStateVariable*> filterPtr;
     std::vector<AudioBitDepth*> bitDepthPtr;
     std::vector<AudioAnalyzeRMS*> rmsPtr;
+    MonoToStereo* monoToStereoRPtr = nullptr; // leader of a pair: the MonoToStereo of the adopted chain (the R chain)
+    playerEngine* pairFollower = nullptr;     // leader of a pair: the engine whose chain it adopted
+    playerEngine* pairLeader = nullptr;       // follower of a pair: its chain is driven by the leader, this engine plays nothing
+
+    void setPairSend(AudioMixer<MixerAndFxs<audioEngine::kVoices>::kSendsInputsCount>* mixer, float gain);
 
     envelopeGenerator* envelopePtr[envMax];
     uint8_t nChannel;
@@ -896,6 +935,7 @@ class playerEngine
 
     float fmap(float x, float in_min, float in_max, float out_min, float out_max);
     int8_t stepVelocity = -1;
+    uint8_t tableVol = 100; // setTableGain: fits in the padding after stepVelocity
 };
 
 extern audioEngine engine;

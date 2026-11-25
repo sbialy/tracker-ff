@@ -20,8 +20,11 @@
 
 #include "projectEditor/projectEditor.h"
 
-__NOINIT(EXTERNAL_RAM) uint8_t externalRamFileManagerSrcBuff[READ_WRITE_BUFOR_SIZE]; // 32768
-__NOINIT(EXTERNAL_RAM) uint8_t externalRamFileManagerBuffL[READ_WRITE_BUFOR_SIZE];   // 32768
+// SD read and write targets: the SD driver (fsl_sd.c SD_ReadBlocks / SD_WriteBlocks) falls back to one 512 B block per command through
+// a bounce buffer when the address is not word aligned, which made the project open 3x slower in the FW_LTO=ui image where the linker
+// happened to place these byte arrays on an odd address. Keep them 32 B aligned (the cache line of bigger parts, free here).
+__NOINIT(EXTERNAL_RAM) __attribute__((aligned(32))) uint8_t externalRamFileManagerSrcBuff[READ_WRITE_BUFOR_SIZE]; // 32768
+__NOINIT(EXTERNAL_RAM) __attribute__((aligned(32))) uint8_t externalRamFileManagerBuffL[READ_WRITE_BUFOR_SIZE];   // 32768
 //__NOINIT(EXTERNAL_RAM) uint8_t externalRamFileManagerBuffR[READ_WRITE_BUFOR_SIZE];   // 32768
 
 __NOINIT(EXTERNAL_RAM) char* cFileManager::projectsList[cFileManager::list_length_max];

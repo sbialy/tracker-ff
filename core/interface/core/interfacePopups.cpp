@@ -1,4 +1,5 @@
 #include "core/interfacePopups.h"
+#include "mtNoteName.h"
 #include "core/interface.h"
 
 #include "core/songTimer.h"
@@ -224,7 +225,7 @@ void InterfacePopups::reloadPadsNotes()
 {
     for (uint8_t i = 0; i < 48; i++)
     {
-        interfaceGlobals.padNamesPointer[i] = (char*)mtNotes[mtPadBoard.getNoteFromPad(i)];
+        interfaceGlobals.padNamesPointer[i] = (char*)padName(i, mtPadBoard.getNoteFromPad(i));
     }
 }
 
@@ -945,11 +946,15 @@ void InterfacePopups::lightUpPads()
 
 void InterfacePopups::showActualInstrument()
 {
-    static char actualInstrName[SAMPLE_NAME_SIZE + 4];
+    static char actualInstrName[SAMPLE_NAME_SIZE + 8];
 
     uint8_t i = mtProject.values.lastUsedInstrument;
 
     sprintf(actualInstrName, "%d.", i + 1);
+#ifndef PLATFORM_IMX
+    if (i < kSampleInstrumentsCount && mtProject.sampleMemory[i].isStereo)
+        strcat(actualInstrName, "ST "); // a stereo sample (linked stereo pairs, stereoPairs.h)
+#endif
 
     strncat(actualInstrName, mtProject.instrument[i].sample.file_name, 25);
 
@@ -985,12 +990,18 @@ int InterfacePopups::listInstruments(enumStepPopups mode)
         for (uint8_t i = 0; i < kSampleInstrumentsCount; i++)
         {
             sprintf(&interfaceGlobals.intrumentsNames[instrIdx][0], "%d. ", i + 1);
+#ifndef PLATFORM_IMX
+            if (mtProject.sampleMemory[i].isStereo)
+                strcat(&interfaceGlobals.intrumentsNames[instrIdx][0], "ST "); // a stereo sample (linked stereo pairs, stereoPairs.h)
+#endif
 
             if (mtProject.instrument[i].isActive)
             {
+                // the row holds SAMPLE_NAME_SIZE + 6 chars with the end mark: the name gives way to the number and the ST mark
+                const size_t room = size_t(SAMPLE_NAME_SIZE + 5) - strlen(&interfaceGlobals.intrumentsNames[instrIdx][0]);
                 strncat(&interfaceGlobals.intrumentsNames[instrIdx][0],
                         mtProject.instrument[i].sample.file_name,
-                        SAMPLE_NAME_SIZE);
+                        room < SAMPLE_NAME_SIZE ? room : SAMPLE_NAME_SIZE);
                 interfaceGlobals.intrumentsNames[instrIdx][SAMPLE_NAME_SIZE + 5] = 0;
             }
 

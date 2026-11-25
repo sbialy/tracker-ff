@@ -1,0 +1,33 @@
+# P12 round 4: the Morph target on the Tracker Mini, Mini keys only. Instr held + Up x3 picks Synth 1, Menu box 1 (Instrument Parameters)
+# opens the Synth screen, Shift held + Right x2 moves the part's Morph target from the default slot 1 to slot 3 (popup "Morph target: 3",
+# the patch panel heading "Slot 0  Morph 3:"). plus_flows.sh reads the target afterwards (UISHOT_TRACE_MORPH): 1, 2, 3 and nothing else.
+# Replay: plus_flows.sh mini
+title: Morph target on the Mini (P12)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Instr
+wait 400ms
+tap Up x3
+wait 300ms
+release Instr
+wait 600ms
+press Menu
+wait 400ms
+tap Right
+wait 300ms
+release Menu
+wait 1200ms
+expect text "Slot 0:"
+press Shift
+wait 300ms
+tap Right
+wait 400ms
+tap Right
+wait 400ms
+release Shift
+wait 600ms
+expect text "Morph target: 3"
+expect text "Slot 0  Morph 3:"
+shot morph-target

@@ -151,7 +151,7 @@ fetch_private() {
     fi
 }
 
-build() { make -s -C "$HERE" -j"$(sysctl -n hw.ncpu)" ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 1; }; }
+build() { make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} >"$BUILD.make.log" 2>&1 || { tail -30 "$BUILD.make.log"; exit 1; }; }
 
 stage_sd() {   # stage_sd DIR
     local sd="$1" plg="${PLG_DIR:-}"

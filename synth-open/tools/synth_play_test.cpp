@@ -14,6 +14,8 @@
 //   R9  setPart releases the old part first, then plays the new one on its own channel
 //   R10 A/B (part B on): notes, offs, bend, mod wheel macro and CC 123 reach both parts, the table stays one entry per key, part B off is the
 //       single part page again, setPartB releases both sides first
+//   R12 Program Change: the page's hook gets (side, program) for the channel of a side (A = part + 1, B = the Synth B number), the Input and Channel
+//       filters apply, another channel and a closed page (no hook) take nothing
 //   R11 the morph: CC 11 sets 0..100 and the gains of the two parts (equal power: cos and sin of the quarter turn, at the middle 0.7071 each,
 //       the sum of squares 1 at every step, B off leaves part A at 1), the table is monotonic, the ends are exact
 #include "synthPlayRouter.h"
@@ -26,6 +28,10 @@
 #include "mtMidi.h"
 
 static std::vector<std::string> g_log;
+static void pcHook(int side, uint8_t program)
+{
+    g_log.push_back("pc side " + std::to_string(side) + " prog " + std::to_string(program));
+}
 static std::string fmt(const char* what, int a, int b, int ch)
 {
     char s[64];
@@ -55,6 +61,31 @@ void synthPlaySetGain(uint8_t part, float gain)
 {
     char s[48];
     snprintf(s, sizeof s, "gain %d %.4f", part, gain);
+    g_log.push_back(s);
+}
+
+// MPE in: what the router tells the part, logged in the same order as the sends
+void synthPlayMpeNote(uint8_t chan)
+{
+    if (chan != 0)
+        g_log.push_back("mpe " + std::to_string(chan));
+}
+void synthPlayMpeBend(uint8_t part, uint8_t chan, int raw)
+{
+    char s[48];
+    snprintf(s, sizeof s, "nbend p%d ch%d %d", part, chan, raw);
+    g_log.push_back(s);
+}
+void synthPlayMpePress(uint8_t part, uint8_t chan, uint8_t press)
+{
+    char s[48];
+    snprintf(s, sizeof s, "npress p%d ch%d %d", part, chan, press);
+    g_log.push_back(s);
+}
+void synthPlayMpeConfig(uint8_t part, int range, int pressPercent)
+{
+    char s[48];
+    snprintf(s, sizeof s, "mpecfg p%d %d %d", part, range, pressPercent);
     g_log.push_back(s);
 }
 
@@ -95,7 +126,7 @@ static void reset()
 {
     sp::releaseAll();
     g_log.clear();
-    const int8_t def[sp::kValues] = { 0, 0, 8, 1, 100, 2, 1, 1, 0, 0, 0, 50, 0, 0 };
+    const int8_t def[sp::kValues] = { 0, 0, 8, 1, 100, 2, 1, 1, 0, 0, 0, 50, 0, 0, 0, 48, 0 };   // the MPE zone is off here: rows R1..R12 are the page before MPE
     for (int i = 0; i < sp::kValues; i++) sp::value[i] = def[i];
     sp::releaseAll();
     g_log.clear();
@@ -411,6 +442,247 @@ int main()
     take();
     sp::applyMorph();
     expect("R11 applyMorph with B off: part A at 1 whatever the morph is", "gain 0 1.0000", take());
+
+    // R12
+    reset();
+    take();
+    sp::setProgramHook(pcHook);
+    expect("R12 part A on channel 1: the hook gets side 0 and the program, the router takes it", "pc side 0 prog 5|1", [&] {
+        const bool took = sp::programChange(sp::kUsb, 1, 5);
+        return take() + "|" + std::to_string(took);
+    }());
+    expect("R12 channel 2 with B off: not a side, nothing happens", "|0", [&] {
+        const bool took = sp::programChange(sp::kDin, 2, 5);
+        return take() + "|" + std::to_string(took);
+    }());
+    sp::value[sp::kPartB] = 3;
+    expect("R12 B on Synth 3: channel 3 is side 1, channel 1 still side 0, channel 2 nothing", "pc side 1 prog 0|pc side 0 prog 127|", [&] {
+        sp::programChange(sp::kUsb, 3, 0);
+        const std::string a = take();
+        sp::programChange(sp::kDin, 1, 127);
+        const std::string b = take();
+        sp::programChange(sp::kUsb, 2, 9);
+        return a + "|" + b + "|" + take();
+    }());
+    sp::value[sp::kPart] = 1;
+    expect("R12 Synth A is part 1: channel 2 is side 0", "pc side 0 prog 4", [&] {
+        sp::programChange(sp::kUsb, 2, 4);
+        return take();
+    }());
+    sp::value[sp::kPart] = 0;
+    sp::value[sp::kPartB] = 0;
+    sp::value[sp::kInput] = 2;
+    sp::programChange(sp::kUsb, 1, 1);
+    sp::programChange(sp::kDin, 1, 2);
+    expect("R12 Input DIN: the USB program is ignored", "pc side 0 prog 2", take());
+    sp::value[sp::kInput] = 0;
+    sp::value[sp::kChannel] = 5;
+    sp::programChange(sp::kUsb, 1, 3);
+    expect("R12 Channel 5 setting: a program on channel 1 is ignored", "", take());
+    sp::value[sp::kChannel] = 0;
+    sp::setProgramHook(nullptr);
+    expect("R12 no hook (page closed): the channel matches and nothing is logged", "|1", [&] {
+        const bool took = sp::programChange(sp::kUsb, 1, 7);
+        return take() + "|" + std::to_string(took);
+    }());
+
+    // R14 releaseSource: the USB cable is pulled, only a plain note off per USB note goes out (no CC 123, no bend reset of a centred wheel)
+    reset();
+    sp::noteOn(sp::kUsb, 1, 60, 100);
+    sp::noteOn(sp::kDin, 1, 64, 100);
+    sp::noteOn(sp::kPad, 0, 67, 100);
+    sp::noteOn(sp::kUsb, 1, 72, 100);
+    take();
+    sp::releaseSource(sp::kUsb);
+    expect("R14 USB notes get their note off, DIN and pad notes stay, nothing else is sent", "off 60 0 ch1, off 72 0 ch1", take());
+    expect("R14 table", "64:1 67:1", table());
+    sp::releaseSource(sp::kUsb);
+    expect("R14 a second pull sends nothing", "", take());
+    reset();
+    sp::noteOn(sp::kUsb, 1, 60, 100);
+    sp::noteOn(sp::kDin, 1, 64, 100);
+    sp::controlChange(sp::kUsb, 1, 64, 127);
+    sp::noteOff(sp::kDin, 1, 64);
+    sp::pitchBend(sp::kUsb, 1, 1000);
+    take();
+    sp::releaseSource(sp::kUsb);
+    expect("R14 a USB pedal: the sustained DIN note goes with it, the bend is centred, the USB note gets its off", "off 64 0 ch1, bend 0 0 ch1, off 60 0 ch1", take());
+    expect("R14 table empty, pedal up", "|0", table() + "|" + std::to_string(sp::pedalDown()));
+    reset();
+    sp::noteOn(sp::kUsb, 1, 60, 100);
+    sp::controlChange(sp::kDin, 1, 64, 127);
+    take();
+    sp::releaseSource(sp::kUsb);
+    expect("R14 a DIN pedal holds the USB note: no note off yet", "", take());
+    expect("R14 it is sustained", "60:2", table());
+    sp::controlChange(sp::kDin, 1, 64, 0);
+    expect("R14 the DIN pedal up releases it", "off 60 0 ch1", take());
+    // R14 the cable pull lets go of the MPE member notes too (mpe-in-p1 with synthplay-usbpull): the note off goes out under the member tag of its note
+    reset();
+    sp::value[sp::kMpeZone] = 15;
+    sp::noteOn(sp::kUsb, 2, 60, 100);
+    sp::noteOn(sp::kUsb, 3, 64, 100);
+    sp::noteOn(sp::kDin, 1, 67, 100);
+    take();
+    sp::releaseSource(sp::kUsb);
+    expect("R14 a USB cable pull ends the member notes on their own voices, a DIN note stays", "mpe 2, off 60 0 ch1, mpe 3, off 64 0 ch1|67:1", take() + "|" + table());
+    sp::releaseAll();
+    take();
+    sp::value[sp::kMpeZone] = 0;
+
+    // R13 MPE in, lower zone (ref/mpe-in-p1.md). reset() leaves the zone off, every row turns it on itself
+    auto zone = [](int n) { sp::value[sp::kMpeZone] = int8_t(n); };
+    reset();
+    zone(15);
+    sp::noteOn(sp::kUsb, 2, 60, 100);
+    expect("R13 a note on member channel 2 is tagged for the part, then sent on the part's channel", "mpe 2, on 60 100 ch1", take());
+    sp::noteOn(sp::kUsb, 3, 60, 90);
+    expect("R13 the same pitch on channel 3 is its own cell (the key is channel and note)", "mpe 3, on 60 90 ch1|60:1 60:1", take() + "|" + table());
+    sp::noteOff(sp::kUsb, 2, 60);
+    expect("R13 the note off of channel 2 ends channel 2's note only", "mpe 2, off 60 0 ch1|60:1", take() + "|" + table());
+    sp::noteOn(sp::kUsb, 3, 62, 90);
+    expect("R13 a new note on a member channel that still holds one ends the old first (one note per channel)", "mpe 3, off 60 0 ch1, mpe 3, on 62 90 ch1|62:1", take() + "|" + table());
+    sp::pitchBend(sp::kUsb, 3, 1000);
+    sp::pitchBend(sp::kDin, 1, -500);
+    expect("R13 a member bend is that note's (raw value), the master channel's is the part's wheel", "nbend p0 ch3 1000, bend -500 0 ch1", take());
+    sp::controlChange(sp::kUsb, 1, 64, 127);
+    sp::noteOff(sp::kUsb, 3, 62);
+    expect("R13 the master channel's pedal holds a member's note off", "|62:2", take() + "|" + table());
+    sp::controlChange(sp::kUsb, 1, 64, 0);
+    expect("R13 pedal up lets it go on its channel", "mpe 3, off 62 0 ch1|", take() + "|" + table());
+    sp::controlChange(sp::kUsb, 4, 64, 127);
+    expect("R13 a member channel's own pedal is not the sustain", "0", std::to_string(sp::pedalDown()));
+    expect("R13 slide (CC 74) of a member goes to the Mod wheel macro (macro 1 = CC 102)", "cc 102 77 ch1|1", [&] {
+        const bool took = sp::controlChange(sp::kUsb, 5, 74, 77);
+        return take() + "|" + std::to_string(took);
+    }());
+    sp::value[sp::kMod] = 3;
+    sp::controlChange(sp::kUsb, 5, 74, 5);
+    expect("R13 Mod wheel set to macro 3: slide follows (CC 104)", "cc 104 5 ch1", take());
+    sp::value[sp::kMod] = 0;
+    expect("R13 Mod wheel off: slide is not taken (the Config CC routes see it)", "|0", [&] {
+        const bool took = sp::controlChange(sp::kUsb, 5, 74, 5);
+        return take() + "|" + std::to_string(took);
+    }());
+    sp::value[sp::kMod] = 1;
+    expect("R13 CC 74 on the master channel is not slide", "|0", [&] {
+        const bool took = sp::controlChange(sp::kUsb, 1, 74, 9);
+        return take() + "|" + std::to_string(took);
+    }());
+    expect("R13 channel pressure of a member is that note's, of the master channel the part's (channel 1 as the page's part)", "npress p0 ch4 50, npress p0 ch1 9|1 1", [&] {
+        const bool a = sp::channelPressure(sp::kUsb, 4, 50);
+        const bool b = sp::channelPressure(sp::kDin, 1, 9);
+        return take() + "|" + std::to_string(a) + " " + std::to_string(b);
+    }());
+    expect("R13 pressure outside the zone is dropped", "|0", [&] {
+        zone(3);   // members are 2..4
+        const bool took = sp::channelPressure(sp::kUsb, 5, 50);
+        zone(15);
+        return take() + "|" + std::to_string(took);
+    }());
+    sp::controlChange(sp::kUsb, 6, 121, 0);
+    expect("R13 CC 121 on a member resets that channel only (bend 0, pressure full), the master wheel and pedal stay", "nbend p0 ch6 0, npress p0 ch6 127", take());
+    sp::controlChange(sp::kUsb, 1, 121, 0);
+    const std::string r121 = take();
+    expect("R13 CC 121 on the master channel resets the master wheel and every member 2..16 (14 more calls)", "1|1|1", std::to_string(r121.rfind("bend 0 0 ch1, nbend p0 ch2 0, npress p0 ch2 127, nbend p0 ch3 0", 0) == 0) + "|" +
+           std::to_string(r121.find("nbend p0 ch16 0, npress p0 ch16 127") != std::string::npos) + "|" + std::to_string(std::count(r121.begin(), r121.end(), 'n') > 40));
+    sp::noteOn(sp::kUsb, 2, 50, 100);
+    sp::noteOn(sp::kUsb, 9, 52, 100);
+    g_log.clear();
+    sp::controlChange(sp::kDin, 1, 123, 0);
+    expect("R13 CC 123 on the master channel lets go of every member note and the part", "mpe 2, off 50 0 ch1, mpe 9, off 52 0 ch1, cc 123 0 ch1, bend 0 0 ch1|", take() + "|" + table());
+
+    // zone Off and the channel filter
+    zone(0);
+    sp::noteOn(sp::kUsb, 2, 60, 100);
+    sp::pitchBend(sp::kUsb, 2, 700);
+    expect("R13 zone Off: channel 2 is a plain note and its bend is the part's wheel, no MPE call", "on 60 100 ch1, bend 700 0 ch1", take());
+    expect("R13 zone Off: pressure and slide are dropped", "|0|0", [&] {
+        const bool a = sp::channelPressure(sp::kUsb, 2, 50);
+        const bool b = sp::controlChange(sp::kUsb, 2, 74, 5);
+        return take() + "|" + std::to_string(a) + "|" + std::to_string(b);
+    }());
+    sp::releaseAll();
+    g_log.clear();
+    zone(2);   // members 2..3
+    sp::value[sp::kChannel] = 1;
+    sp::noteOn(sp::kUsb, 3, 60, 100);
+    sp::noteOn(sp::kUsb, 4, 61, 100);
+    sp::noteOn(sp::kUsb, 1, 62, 100);
+    expect("R13 Channel 1 (the master) takes the whole zone: channel 3 yes, channel 4 outside the zone no, channel 1 plain", "mpe 3, on 60 100 ch1, on 62 100 ch1", take());
+    sp::value[sp::kChannel] = 5;
+    sp::noteOn(sp::kUsb, 2, 64, 100);
+    expect("R13 Channel 5 setting: the zone is not heard", "", take());
+    sp::value[sp::kChannel] = 0;
+    sp::releaseAll();
+    g_log.clear();
+
+    // MPE Configuration Message and RPN 0
+    zone(15);
+    const uint32_t chg0 = sp::mpeChanged;
+    sp::controlChange(sp::kUsb, 1, 101, 0);
+    sp::controlChange(sp::kUsb, 1, 100, 6);
+    sp::noteOn(sp::kUsb, 2, 60, 100);
+    g_log.clear();
+    const bool d1 = sp::controlChange(sp::kUsb, 1, 6, 4);
+    expect("R13 RPN 6 data 4 on channel 1: zone is 4 members, the notes that sounded under the old zone go, the parts get the range again",
+           "4|1|mpe 2, off 60 0 ch1, cc 123 0 ch1, bend 0 0 ch1, mpecfg p0 48 0|1|", std::to_string(sp::value[sp::kMpeZone]) + "|" + std::to_string(d1) + "|" + take() + "|" + std::to_string(sp::mpeChanged - chg0) + "|" + table());
+    sp::controlChange(sp::kUsb, 1, 6, 4);
+    expect("R13 the same message again changes nothing and lets go of nothing", "|1", take() + "|" + std::to_string(sp::mpeChanged - chg0));
+    sp::controlChange(sp::kUsb, 1, 6, 40);
+    expect("R13 more than 15 members is 15", "15", std::to_string(sp::value[sp::kMpeZone]));
+    sp::controlChange(sp::kUsb, 16, 101, 0);
+    sp::controlChange(sp::kUsb, 16, 100, 6);
+    sp::controlChange(sp::kUsb, 16, 6, 3);
+    expect("R13 the upper zone (channel 16) is not supported: zone unchanged", "15", std::to_string(sp::value[sp::kMpeZone]));
+    sp::controlChange(sp::kDin, 1, 101, 0);
+    sp::controlChange(sp::kDin, 1, 100, 6);
+    sp::controlChange(sp::kDin, 1, 6, 0);
+    expect("R13 data 0 switches the zone off (DIN works too)", "0", std::to_string(sp::value[sp::kMpeZone]));
+    sp::controlChange(sp::kUsb, 1, 6, 7);
+    expect("R13 RPN stays selected: another data entry sets it again, then the null RPN deselects", "7|0", [&] {
+        const int z = sp::value[sp::kMpeZone];
+        sp::controlChange(sp::kUsb, 1, 101, 127);
+        sp::controlChange(sp::kUsb, 1, 100, 127);
+        const bool took = sp::controlChange(sp::kUsb, 1, 6, 1);
+        return std::to_string(z) + "|" + std::to_string(took);
+    }());
+    sp::value[sp::kMpeZone] = 7;
+    g_log.clear();
+    sp::controlChange(sp::kUsb, 2, 101, 0);
+    sp::controlChange(sp::kUsb, 2, 100, 0);
+    sp::controlChange(sp::kUsb, 2, 6, 24);
+    expect("R13 RPN 0 on a member channel sets the member bend range", "24|mpecfg p0 24 0", std::to_string(sp::value[sp::kMpeRange]) + "|" + take());
+    sp::controlChange(sp::kUsb, 1, 101, 0);
+    sp::controlChange(sp::kUsb, 1, 100, 0);
+    sp::controlChange(sp::kUsb, 1, 6, 12);
+    expect("R13 RPN 0 on the master channel leaves the page's Bend and the range alone", "2|24|", std::to_string(sp::value[sp::kBend]) + "|" + std::to_string(sp::value[sp::kMpeRange]) + "|" + take());
+    sp::value[sp::kInput] = 2;
+    sp::controlChange(sp::kUsb, 1, 101, 0);
+    sp::controlChange(sp::kUsb, 1, 100, 6);
+    sp::controlChange(sp::kUsb, 1, 6, 3);
+    expect("R13 Input DIN: a zone message over USB is ignored", "7", std::to_string(sp::value[sp::kMpeZone]));
+    sp::value[sp::kInput] = 0;
+    sp::controlChange(sp::kUsb, 1, 101, 0);
+    sp::controlChange(sp::kUsb, 1, 100, 1);
+    expect("R13 another RPN's data entry is not taken (left to the Config CC routes)", "0", std::to_string(sp::controlChange(sp::kUsb, 1, 6, 5)));
+    sp::controlChange(sp::kUsb, 1, 101, 127);
+    sp::controlChange(sp::kUsb, 1, 100, 127);
+
+    // A/B: both parts get the member's notes, bend and pressure
+    sp::value[sp::kPartB] = 2;
+    sp::releaseAll();
+    g_log.clear();
+    sp::noteOn(sp::kUsb, 5, 60, 100);
+    sp::pitchBend(sp::kUsb, 5, 300);
+    sp::channelPressure(sp::kUsb, 5, 20);
+    expect("R13 A/B (part B on Synth 2): the note, bend and pressure go to both parts", "mpe 5, on 60 100 ch1, on 60 100 ch2, nbend p0 ch5 300, nbend p1 ch5 300, npress p0 ch5 20, npress p1 ch5 20", take());
+    sp::applyMpe(false);
+    sp::value[sp::kMpeRange] = 12;
+    sp::value[sp::kMpePress] = 60;
+    g_log.clear();
+    sp::applyMpe(false);
+    expect("R13 applyMpe puts the range and pressure amount on both parts, a range change lets go of nothing", "mpecfg p0 12 60, mpecfg p1 12 60", take());
 
     printf("%s (%d checks, %d failures)\n", g_fail ? "FAILED" : "ok", g_checks, g_fail);
     return g_fail ? 1 : 0;

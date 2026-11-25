@@ -119,6 +119,7 @@ enum class ModKind : uint8_t
 {
     kParam,   // an engine parameter, by index + name + occurrence of the name
     kMacro,   // user macro M1..M6, by number
+    kPart,    // a setting of the part: 0 Pan, 1 Gain, 2 Reverb send, 3 Delay send (field 64 version 2, see open_mod.h modPartWrite)
 };
 
 constexpr int kLfoShapes = 5;            // Rev Saw, Saw, Triangle, Square, Random (the sample page's list)
@@ -166,6 +167,7 @@ size_t encodePatch(const PatchData& p, uint8_t* out, size_t cap);    // bytes wr
 bool modAnyOn(const ModSlot* slots);    // some slot is not Off
 #ifdef OPEN_HOST_TEST
 extern bool gModDecodeOff;              // host test: decode as an image without automation (field 64 stays raw)
+extern int gModMaxVersion;              // host test: the newest field 64 version the decoder reads, 2 = this image, 1 = the 1.4.0 codec (a version 2 block stays raw)
 extern int gPatchTailDropped;           // host test: values and targets that did not fit the PatchTail (the unit logs them)
 #endif
 

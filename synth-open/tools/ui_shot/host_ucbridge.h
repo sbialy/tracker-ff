@@ -40,6 +40,10 @@ constexpr uint32_t kSramL = 0x1FFF0000, kSramLSize = 0x10000;
 constexpr uint32_t kSramU = 0x20000000, kSramUSize = 0x30000;
 constexpr uint32_t kSdram = 0x70000000, kSdramSize = 0x1000000;
 constexpr uint32_t kBridge = 0x60000000, kBridgeSize = 0x400000;   // not a device range: guest heap, shadows, lane stacks
+// The IMX SDRAM (0x80000000 on the RT1050) where plug::imx places the code slots (plug_imx.h simSlots, H8 of the IMX port): unused by
+// the MK66 image, mapped so an IMX load runs the bytes at the address it rebased for. 256 KiB: the code slots at any synth slot size
+// under review (3 x 40 KiB + the insert slot = 132,608 B, IMX port P7) plus the IMX services table copy
+constexpr uint32_t kImxSdram = 0x80000000, kImxSdramSize = 0x40000;
 constexpr uint32_t kMpu = 0x4000D000, kMpuSize = 0x1000;           // the system MPU's CESR page (plain RAM, the image's start() writes it)
 
 enum Lane : int

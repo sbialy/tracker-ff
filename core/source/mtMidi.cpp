@@ -1,4 +1,5 @@
 #include "mtSequencer.h"
+#include "stereoPairs.h"
 
 #include "configEditor/configEditor.h"
 #include "instrumentEditor/instrumentEditor.h"
@@ -11,14 +12,16 @@
 #include "Platform.h"
 #include "TrackerImpl.h"
 #include "core/interface.h"
-#ifdef FEATURE_EXT_HOOKS
+#include "feature_flags.h"
+#ifdef FEATURE_FEATURES
 #include "midiRemote.h"
 #endif
+#include "mtCapture.h"
 #include "util_math.h"
 #include <cmath>
-#ifdef FEATURE_SYNTH_OPEN
-#include "synthPlayRouter.h"
-#endif
+#include "mtMidi_ff.inc"
+#include "ff_hooks.h"
+#include "mtMpeOut.h"
 
 extern cPatternEditor patternEditor;
 
@@ -26,9 +29,48 @@ static cSamplePlayback* SP = &samplePlayback;
 static cSampleRecorder* SR = &sampleRecorder;
 static cSampleEditor* SE = &sampleEditor;
 static cPatternEditor* PTE = &patternEditor;
+
+// Set by the note handlers, which run in the audio interrupt (midiUpdate), cleared by the main loop: the pattern view is
+// redrawn there and never from inside the interrupt, where it could cut into a redraw the main loop is in the middle of
+static volatile bool patternRefreshPending = false;
 static cInstrumentEditor* IE = &instrumentEditor;
 static UartMidi* uartMidi = nullptr;
 static UsbMidi* usbMidi = nullptr;
+
+// MPE out (mtMpeOut.h): the sink of the allocator, the two drivers by Config > MIDI > Notes out. A member channel message is never a synth part message
+// (the virtual port is a part channel, not an MPE zone), the callers below leave toSynth out
+namespace
+{
+struct MpeSink
+{
+    // one message, to the drivers the Notes out setting names (kind 0 off, 1 on, 2 bend, 3 cc, 4 channel pressure)
+    __attribute__((noinline)) static void emit(uint8_t kind, int ch, int a, int b)
+    {
+        const bool usb = mtConfig.midi.notesOutMode == notesOut_mode_usb || mtConfig.midi.notesOutMode == notesOut_mode_usb_and_jack;
+        const bool jack = mtConfig.midi.notesOutMode == notesOut_mode_jack || mtConfig.midi.notesOutMode == notesOut_mode_usb_and_jack;
+        for (int d = 0; d < 2; d++)
+        {
+            Midi* m = d ? static_cast<Midi*>(uartMidi) : static_cast<Midi*>(usbMidi);
+            if (!(d ? jack : usb))
+                continue;
+            const uint8_t c = uint8_t(ch);
+            switch (kind)
+            {
+                case 0: m->sendNoteOff(uint8_t(a), 0, c); break;
+                case 1: m->sendNoteOn(uint8_t(a), uint8_t(b), c); break;
+                case 2: m->sendPitchBend(a, c); break;
+                case 3: m->sendControlChange(uint8_t(a), uint8_t(b), c); break;
+                default: m->sendAfterTouch(uint8_t(a), c); break;
+            }
+        }
+    }
+    void noteOn(int ch, uint8_t n, uint8_t v) { emit(1, ch, n, v); }
+    void noteOff(int ch, uint8_t n) { emit(0, ch, n, 0); }
+    void bend(int ch, int v) { emit(2, ch, v, 0); }
+    void cc(int ch, uint8_t i, uint8_t v) { emit(3, ch, i, v); }
+    void pressure(int ch, uint8_t v) { emit(4, ch, v, 0); }
+};
+}   // namespace
 
 extern void playSongFromSelectedPattern();
 extern void playSongFromSelectedPattern_stop();
@@ -44,7 +86,7 @@ void midiInit(UartMidi* uartMidi, UsbMidi* usbMidi)
     ::usbMidi = usbMidi;
     // jack
 
-    UartMidi::MidiReceiveActions uartMidiReceiveActions;
+    UartMidi::MidiReceiveActions uartMidiReceiveActions = {};   // every field is set below or null (dropped), none is left to chance
     uartMidiReceiveActions.noteOn = handleJackNoteOn;
     uartMidiReceiveActions.noteOff = handleJackNoteOff;
     uartMidiReceiveActions.clock = receiveJackClock;
@@ -54,24 +96,48 @@ void midiInit(UartMidi* uartMidi, UsbMidi* usbMidi)
     uartMidiReceiveActions.continueMessage = receiveJackContinue;
     uartMidiReceiveActions.controlChange = handleJackControlChange;
     uartMidiReceiveActions.pitchBend = handleJackPitchBend;
+    uartMidiReceiveActions.programChange = handleJackProgramChange;
+    uartMidiReceiveActions.channelPressure = handleJackChannelPressure;
     uartMidi->setReceiveActions(&uartMidiReceiveActions);
 
     // usb
-    UsbMidi::MidiReceiveActions usbMidiReceiveActions;
+    UsbMidi::MidiReceiveActions usbMidiReceiveActions = {};
     usbMidiReceiveActions.realTime = receiveUsbRealtime;
     usbMidiReceiveActions.noteOn = handleUsbNoteOn;
     usbMidiReceiveActions.noteOff = handleUsbNoteOff;
     usbMidiReceiveActions.songPosition = handleUsbSongPosition;
     usbMidiReceiveActions.controlChange = handleUSBControlChange;
     usbMidiReceiveActions.pitchBend = handleUsbPitchBend;
+    usbMidiReceiveActions.programChange = handleUsbProgramChange;
+    usbMidiReceiveActions.channelPressure = handleUsbChannelPressure;
 
     usbMidi->setReceiveActions(&usbMidiReceiveActions);
 }
+
+void midiUiUpdate()
+{
+    if (!patternRefreshPending)
+        return;
+    patternRefreshPending = false; // before the redraw: a note that comes during it asks for one more
+    patternEditor.refreshPatternFromOutsideModule();
+}
+
+static void mpeOutPump();
+
+// USB MIDI events handled per audio block (one event = one 4 byte USB MIDI packet entry). Sized from the device flood
+// test of poly-midi-isr-harden (ref in build/poly-midi-isr-harden/REPORT.md)
+static constexpr uint32_t kUsbEventsPerBlock = 32;
+// time spent on USB MIDI events per block before the rest waits (a third of the 2,902 us block)
+static constexpr uint32_t kUsbBudgetUs = 1000;
+// blocks that left events in the queue because of the cap, read from a debugger or a console peek
+volatile uint32_t midiUsbDeferredBlocks = 0;
 
 void midiUpdate()
 {
     if (sequencer.isRenderMode())
         return;
+
+    mpeOutPump();
 
     if (uartMidi != nullptr)
     {
@@ -83,32 +149,31 @@ void midiUpdate()
 
     if (usbMidi != nullptr)
     {
-        while (usbMidi->isReadAvailable())
+        // at most kUsbEventsPerBlock events and about kUsbBudgetUs per audio block: a host that floods the port cannot
+        // stretch one block past its time. The rest stays in the USB receive queue for the next block (the USB hardware
+        // answers NAK when the queue is full, so the host waits and nothing is lost). The time limit is for the events
+        // that cost much more than a parse, a note on that starts a voice can take milliseconds on its own: the events
+        // behind it wait one block. At least one event is always handled.
+        Platform* plat = TrackerImpl::getInstance()->getPlatform();
+        Timer* timer = (plat != nullptr) ? plat->getTimer() : nullptr;
+        const uint32_t startUs = (timer != nullptr) ? timer->micros() : 0;
+        uint32_t handled = 0;
+        while (handled < kUsbEventsPerBlock && usbMidi->isReadAvailable())
         {
+            if (handled != 0 && timer != nullptr && timer->micros() - startUs > kUsbBudgetUs)
+                break;
             usbMidi->read();
+            handled++;
         }
-#ifdef FEATURE_EXT_HOOKS
+        if (usbMidi->isReadAvailable())
+            midiUsbDeferredBlocks = midiUsbDeferredBlocks + 1;
         // after the queue: a note on read above is let go with the rest, no note off follows a pulled cable
-        if (usbMidi->takeBusLost())
-        {
-            midi_remote::releaseSource(midi_remote::kSourceUsb);
-        }
-#endif
+        if (ffHookUsbMidiPolled(usbMidi))
+            mpeOutBusLost();
     }
 }
 
-#ifdef FEATURE_SYNTH_OPEN
-// The Synth play page owns the MIDI in (mtSequencer.h, enMidiInVoiceMode): its own Input and Channel, no Config > MIDI gates, no song transport
-static bool playPage()
-{
-    return sequencer.getMidiInVoiceMode() == Sequencer::midiInVoiceMode_SynthPlay;
-}
-#else
-static constexpr bool playPage()
-{
-    return false;
-}
-#endif
+#include "mtMidi_playpage.inc"
 
 uint8_t isIncomingChannelDesired(uint8_t chan)
 {
@@ -128,6 +193,8 @@ static bool isAnyTrackListeningOn(uint8_t channel)
 
     for (int tr = 0; tr < kSampleTracks; tr++)
     {
+        if (stereopairs::isFollower(tr)) // the second track of a linked stereo pair plays nothing: its channel setting is inert
+            continue;
         if (mtConfig.midi.trackNotesInChannel[tr] == channel)
             return true;
     }
@@ -141,7 +208,7 @@ static int8_t transposeIncomingPitch(uint8_t pitch)
 }
 
 // Returns true if the note was consumed by per-track routing.
-static bool handleTrackMidiNoteOn(uint8_t channel, uint8_t pitch, uint8_t velocity)
+static bool handleTrackMidiNoteOn(uint8_t channel, uint8_t pitch, uint8_t velocity, uint8_t capSource)
 {
     if (!isAnyTrackListeningOn(channel))
         return false;
@@ -152,7 +219,7 @@ static bool handleTrackMidiNoteOn(uint8_t channel, uint8_t pitch, uint8_t veloci
     int8_t target = -1;
     for (int tr = 0; tr < kSampleTracks; tr++)
     {
-        if (mtConfig.midi.trackNotesInChannel[tr] != channel)
+        if (mtConfig.midi.trackNotesInChannel[tr] != channel || stereopairs::isFollower(tr))
             continue;
         if (target < 0)
             target = tr;
@@ -164,11 +231,12 @@ static bool handleTrackMidiNoteOn(uint8_t channel, uint8_t pitch, uint8_t veloci
     }
 
     trackMidiHeldNote[target] = pitch;
+    sequencer.captureTap(pitch, velocity, true, capSrc(capSource, uint8_t(target)));
     sequencer.handleTrackMidiNoteOn(target, pitch, velocity);
     return true;
 }
 
-static bool handleTrackMidiNoteOff(uint8_t channel, uint8_t pitch)
+static bool handleTrackMidiNoteOff(uint8_t channel, uint8_t pitch, uint8_t capSource)
 {
     if (!isAnyTrackListeningOn(channel))
         return false;
@@ -180,6 +248,7 @@ static bool handleTrackMidiNoteOff(uint8_t channel, uint8_t pitch)
         if (mtConfig.midi.trackNotesInChannel[tr] == channel && trackMidiHeldNote[tr] == pitch)
         {
             trackMidiHeldNote[tr] = -1;
+            sequencer.captureTap(pitch, 0, false, capSrc(capSource, uint8_t(tr)));
             sequencer.handleTrackMidiNoteOff(tr);
             break;
         }
@@ -189,17 +258,8 @@ static bool handleTrackMidiNoteOff(uint8_t channel, uint8_t pitch)
 
 void handleJackNoteOn(byte channel, byte pitch, byte velocity)
 {
-#ifdef FEATURE_EXT_HOOKS
-    if (midi_remote::note(channel, pitch, velocity, velocity != 0, midi_remote::kSourceDin))
-        return;
-#endif
-#ifdef FEATURE_SYNTH_OPEN
-    if (playPage())
-    {
-        synthplay::noteOn(synthplay::kDin, channel, pitch, velocity);
-        return;
-    }
-#endif
+    FF_MIDI_REMOTE_OR_RETURN(midi_remote::note(channel, pitch, velocity, velocity != 0, midi_remote::kSourceDin));
+    FF_MIDI_PLAY_NOTE_ON_OR_RETURN(synthplay::kDin, kCapSrcSynthDin, channel, pitch, velocity);
     //	Serial.printf("ON\tch: %d, pitch: %d, velo: %d \r\n", channel, pitch,
     //					velocity);
     //	MIDI.sendNoteOn(pitch, velocity, channel);
@@ -213,7 +273,7 @@ void handleJackNoteOn(byte channel, byte pitch, byte velocity)
     if (mtConfig.midi.notesInMode == notesIn_jack ||
         mtConfig.midi.notesInMode == notesIn_usb_and_jack)
     {
-        if (handleTrackMidiNoteOn(channel, pitch, velocity))
+        if (handleTrackMidiNoteOn(channel, pitch, velocity, kCapSrcTrackDin))
             return;
 
         if (isIncomingChannelDesired(channel))
@@ -221,6 +281,7 @@ void handleJackNoteOn(byte channel, byte pitch, byte velocity)
 
             int8_t transp = 12 * (mtConfig.midi.middleC - 2);
             pitch = clamp(pitch + transp, 0, 127);
+            sequencer.captureTap(pitch, velocity, true, capSrc(kCapSrcDin));
 
             if (sequencer.getMidiInVoiceMode() == sequencer.midiInVoiceMode_sequencer)
             {
@@ -229,7 +290,7 @@ void handleJackNoteOn(byte channel, byte pitch, byte velocity)
                 sequencer.handleNoteOn(
                   Sequencer::GRID_OUTSIDE_PATTERN, pitch, velocity, pitch + 100);
 
-                patternEditor.refreshPatternFromOutsideModule();
+                patternRefreshPending = true; // the pattern view is redrawn by the main loop (midiUiUpdate)
             }
             else if (sequencer.getMidiInVoiceMode() == sequencer.midiInVoiceMode_SamplePlayback)
             {
@@ -248,17 +309,8 @@ void handleJackNoteOn(byte channel, byte pitch, byte velocity)
 }
 void handleUsbNoteOn(byte channel, byte pitch, byte velocity)
 {
-#ifdef FEATURE_EXT_HOOKS
-    if (midi_remote::note(channel, pitch, velocity, velocity != 0))
-        return;
-#endif
-#ifdef FEATURE_SYNTH_OPEN
-    if (playPage())
-    {
-        synthplay::noteOn(synthplay::kUsb, channel, pitch, velocity);
-        return;
-    }
-#endif
+    FF_MIDI_REMOTE_OR_RETURN(midi_remote::note(channel, pitch, velocity, velocity != 0));
+    FF_MIDI_PLAY_NOTE_ON_OR_RETURN(synthplay::kUsb, kCapSrcSynthUsb, channel, pitch, velocity);
     //	Serial.printf("ON\tch: %d, pitch: %d, velo: %d \r\n", channel, pitch,
     //					velocity);
     //	MIDI.sendNoteOn(pitch, velocity, channel);
@@ -272,13 +324,14 @@ void handleUsbNoteOn(byte channel, byte pitch, byte velocity)
     if (mtConfig.midi.notesInMode == notesIn_usb ||
         mtConfig.midi.notesInMode == notesIn_usb_and_jack)
     {
-        if (handleTrackMidiNoteOn(channel, pitch, velocity))
+        if (handleTrackMidiNoteOn(channel, pitch, velocity, kCapSrcTrackUsb))
             return;
 
         if (isIncomingChannelDesired(channel))
         {
             int8_t transp = 12 * (mtConfig.midi.middleC - 2);
             pitch = clamp(pitch + transp, 0, 127);
+            sequencer.captureTap(pitch, velocity, true, capSrc(kCapSrcUsb));
 
             if (sequencer.getMidiInVoiceMode() == sequencer.midiInVoiceMode_sequencer)
             {
@@ -287,7 +340,7 @@ void handleUsbNoteOn(byte channel, byte pitch, byte velocity)
                 sequencer.handleNoteOn(
                   Sequencer::GRID_OUTSIDE_PATTERN, pitch, velocity, pitch + 100);
 
-                patternEditor.refreshPatternFromOutsideModule();
+                patternRefreshPending = true; // the pattern view is redrawn by the main loop (midiUiUpdate)
             }
             else if (sequencer.getMidiInVoiceMode() == sequencer.midiInVoiceMode_SamplePlayback)
             {
@@ -307,17 +360,8 @@ void handleUsbNoteOn(byte channel, byte pitch, byte velocity)
 
 void handleJackNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
 {
-#ifdef FEATURE_EXT_HOOKS
-    if (midi_remote::note(channel, pitch, 0, false, midi_remote::kSourceDin))
-        return;
-#endif
-#ifdef FEATURE_SYNTH_OPEN
-    if (playPage())
-    {
-        synthplay::noteOff(synthplay::kDin, channel, pitch);
-        return;
-    }
-#endif
+    FF_MIDI_REMOTE_OR_RETURN(midi_remote::note(channel, pitch, 0, false, midi_remote::kSourceDin));
+    FF_MIDI_PLAY_NOTE_OFF_OR_RETURN(synthplay::kDin, kCapSrcSynthDin, channel, pitch);
 
     //	Serial.printf("OFF\tch: %d, pitch: %d, velo: %d\r\n", channel, pitch,
     //					velocity);
@@ -325,13 +369,14 @@ void handleJackNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
     if (mtConfig.midi.notesInMode == notesIn_jack ||
         mtConfig.midi.notesInMode == notesIn_usb_and_jack)
     {
-        if (handleTrackMidiNoteOff(channel, pitch))
+        if (handleTrackMidiNoteOff(channel, pitch, kCapSrcTrackDin))
             return;
 
         if (isIncomingChannelDesired(channel))
         {
             int8_t transp = 12 * (mtConfig.midi.middleC - 2);
             pitch = clamp(pitch + transp, 0, 127);
+            sequencer.captureTap(pitch, 0, false, capSrc(kCapSrcDin));
 
             if (sequencer.getMidiInVoiceMode() == sequencer.midiInVoiceMode_sequencer)
             {
@@ -347,7 +392,7 @@ void handleJackNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
                         PTE->moveCursorByStepParallel();
                     }
                 }
-                patternEditor.refreshPatternFromOutsideModule();
+                patternRefreshPending = true; // the pattern view is redrawn by the main loop (midiUiUpdate)
             }
             else if (sequencer.getMidiInVoiceMode() == sequencer.midiInVoiceMode_SamplePlayback)
             {
@@ -367,17 +412,8 @@ void handleJackNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
 
 void handleUsbNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
 {
-#ifdef FEATURE_EXT_HOOKS
-    if (midi_remote::note(channel, pitch, 0, false))
-        return;
-#endif
-#ifdef FEATURE_SYNTH_OPEN
-    if (playPage())
-    {
-        synthplay::noteOff(synthplay::kUsb, channel, pitch);
-        return;
-    }
-#endif
+    FF_MIDI_REMOTE_OR_RETURN(midi_remote::note(channel, pitch, 0, false));
+    FF_MIDI_PLAY_NOTE_OFF_OR_RETURN(synthplay::kUsb, kCapSrcSynthUsb, channel, pitch);
 
     //	Serial.printf("OFF\tch: %d, pitch: %d, velo: %d\r\n", channel, pitch,
     //					velocity);
@@ -385,13 +421,14 @@ void handleUsbNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
     if (mtConfig.midi.notesInMode == notesIn_usb ||
         mtConfig.midi.notesInMode == notesIn_usb_and_jack)
     {
-        if (handleTrackMidiNoteOff(channel, pitch))
+        if (handleTrackMidiNoteOff(channel, pitch, kCapSrcTrackUsb))
             return;
 
         if (isIncomingChannelDesired(channel))
         {
             int8_t transp = 12 * (mtConfig.midi.middleC - 2);
             pitch = clamp(pitch + transp, 0, 127);
+            sequencer.captureTap(pitch, 0, false, capSrc(kCapSrcUsb));
 
             if (sequencer.getMidiInVoiceMode() == sequencer.midiInVoiceMode_sequencer)
             {
@@ -405,7 +442,7 @@ void handleUsbNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
                         PTE->moveCursorByStepParallel();
                     }
                 }
-                patternEditor.refreshPatternFromOutsideModule();
+                patternRefreshPending = true; // the pattern view is redrawn by the main loop (midiUiUpdate)
             }
             else if (sequencer.getMidiInVoiceMode() == sequencer.midiInVoiceMode_SamplePlayback)
             {
@@ -425,14 +462,8 @@ void handleUsbNoteOff(byte channel, byte pitch, [[maybe_unused]] byte velocity)
 
 void handleJackControlChange(byte channel, byte number, byte value)
 {
-#ifdef FEATURE_EXT_HOOKS
-    if (midi_remote::cc(channel, number, value))
-        return;
-#endif
-#ifdef FEATURE_SYNTH_OPEN
-    if (playPage() && synthplay::controlChange(synthplay::kDin, channel, number, value))
-        return;
-#endif
+    FF_MIDI_REMOTE_OR_RETURN(midi_remote::cc(channel, number, value));
+    FF_MIDI_PLAY_CC_OR_RETURN(synthplay::kDin, channel, number, value);
 
     if ((mtConfig.midi.ccInMode == ccIn_None) || (mtConfig.midi.ccInMode == ccIn_usb))
         return;
@@ -451,14 +482,8 @@ void handleJackControlChange(byte channel, byte number, byte value)
 
 void handleUSBControlChange(byte channel, byte number, byte value)
 {
-#ifdef FEATURE_EXT_HOOKS
-    if (midi_remote::cc(channel, number, value))
-        return;
-#endif
-#ifdef FEATURE_SYNTH_OPEN
-    if (playPage() && synthplay::controlChange(synthplay::kUsb, channel, number, value))
-        return;
-#endif
+    FF_MIDI_REMOTE_OR_RETURN(midi_remote::cc(channel, number, value));
+    FF_MIDI_PLAY_CC_OR_RETURN(synthplay::kUsb, channel, number, value);
     if ((mtConfig.midi.ccInMode == ccIn_None) || (mtConfig.midi.ccInMode == ccIn_jack))
         return;
 
@@ -474,21 +499,37 @@ void handleUSBControlChange(byte channel, byte number, byte value)
     }
 }
 
+// Program Change in (Config > MIDI > Program in, programIn.cpp): the hook, a build without the synth engines drops it
+void handleJackProgramChange(uint8_t channel, uint8_t program)
+{
+    ffHookProgramChangeIn(false, channel, program);
+}
+
+void handleUsbProgramChange(uint8_t channel, uint8_t program)
+{
+    ffHookProgramChangeIn(true, channel, program);
+}
+
 // Pitch bend in: only the Synth play page uses it (the part scales it by its live bend range), every other page drops it as before
 void handleJackPitchBend([[maybe_unused]] uint8_t channel, [[maybe_unused]] int bend)
 {
-#ifdef FEATURE_SYNTH_OPEN
-    if (playPage())
-        synthplay::pitchBend(synthplay::kDin, channel, bend);
-#endif
+    FF_MIDI_PLAY_BEND(synthplay::kDin, channel, bend);
 }
 
 void handleUsbPitchBend([[maybe_unused]] uint8_t channel, [[maybe_unused]] int bend)
 {
-#ifdef FEATURE_SYNTH_OPEN
-    if (playPage())
-        synthplay::pitchBend(synthplay::kUsb, channel, bend);
-#endif
+    FF_MIDI_PLAY_BEND(synthplay::kUsb, channel, bend);
+}
+
+// Channel pressure in (0xD0): only the Synth play page uses it (MPE, synthplay::channelPressure), every other page drops it as before
+void handleJackChannelPressure(uint8_t channel, uint8_t pressure)
+{
+    ffHookChannelPressureIn(false, playPage(), channel, pressure);
+}
+
+void handleUsbChannelPressure(uint8_t channel, uint8_t pressure)
+{
+    ffHookChannelPressureIn(true, playPage(), channel, pressure);
 }
 
 static uint32_t s_audioBlockStartUs = 0;
@@ -545,6 +586,11 @@ void sendMidiStop()
 {
     if (sequencer.isRenderMode())
         return;
+    if (mpeout::members)
+    {   // MPE out: Stop lets every member go and centres the bends (the offs of the sequencer went out before, this is the safety net)
+        MpeSink s;
+        mpeout::release(s);
+    }
     if (Platform* platform = TrackerImpl::getInstance()->getPlatform(); platform != nullptr)
     {
         platform->getTimer()->cancelMidiClock();
@@ -707,6 +753,31 @@ void handleJackSongPosition(unsigned int beats)
     }
 }
 
+void mpeOutSet(uint8_t members)
+{
+    MpeSink s;
+    mpeout::setMembers(s, members, uint8_t(mtConfig.midi.notesOutMode));
+}
+
+uint8_t mpeOutMembers()
+{
+    return mpeout::members;
+}
+
+void mpeOutBusLost()
+{
+    mpeout::busLost = true;
+}
+
+// the configuration messages of a new zone, a few at a time: the DIN port carries about 3 of these per audio block
+static void mpeOutPump()
+{
+    if (mpeout::members == 0 || sequencer.isRenderMode())
+        return;
+    MpeSink s;
+    mpeout::pump(s, uint8_t(mtConfig.midi.notesOutMode), 2);
+}
+
 AUDIO_CORE_RAM void sendCC(uint8_t index, uint8_t value, uint8_t channel, bool toSynth)
 {
     if (toSynth)
@@ -720,6 +791,9 @@ AUDIO_CORE_RAM void sendCC(uint8_t index, uint8_t value, uint8_t channel, bool t
 
     if (sequencer.isRenderMode())
         return;
+
+    if (mpeout::members)
+        channel = 1;   // MPE out: an instrument wide message goes to the master channel, a member channel would reach one note only
 
     if (mtConfig.midi.notesOutMode == notesOut_mode_usb ||
         mtConfig.midi.notesOutMode == notesOut_mode_usb_and_jack)
@@ -751,6 +825,9 @@ void sendProgramChange(uint8_t value, uint8_t channel, bool toSynth)
     if (sequencer.isRenderMode())
         return;
 
+    if (mpeout::members)
+        channel = 1;
+
     if (mtConfig.midi.notesOutMode == notesOut_mode_usb ||
         mtConfig.midi.notesOutMode == notesOut_mode_usb_and_jack)
     {
@@ -779,6 +856,9 @@ void sendAfterTouch(uint8_t value, uint8_t channel, bool toSynth)
 
     if (sequencer.isRenderMode())
         return;
+
+    if (mpeout::members)
+        channel = 1;   // channel pressure of the master channel: the whole zone
 
     if (mtConfig.midi.notesOutMode == notesOut_mode_usb ||
         mtConfig.midi.notesOutMode == notesOut_mode_usb_and_jack)
@@ -809,6 +889,13 @@ void sendPolyPressure(uint8_t note, uint8_t value, uint8_t channel, bool toSynth
 
     if (sequencer.isRenderMode())
         return;
+
+    if (mpeout::members)
+    {   // MPE out: the pressure of the member channel that plays the note (nothing when the note does not sound)
+        MpeSink s;
+        mpeout::notePressure(s, note, value, channel);
+        return;
+    }
 
     int8_t transp = 12 * (2 - mtConfig.midi.middleC);
     note = clamp(note + transp, 0, 127);
@@ -842,6 +929,13 @@ void sendPitchbend(int16_t value, int8_t channel, bool toSynth)
     if (sequencer.isRenderMode())
         return;
 
+    if (mpeout::members)
+    {   // MPE out: the M FX moves the notes that sound on the channel, one by one (mtMpeOut.h fxBend)
+        MpeSink s;
+        mpeout::fxBend(s, value, uint8_t(channel));
+        return;
+    }
+
     if (mtConfig.midi.notesOutMode == notesOut_mode_usb ||
         mtConfig.midi.notesOutMode == notesOut_mode_usb_and_jack)
     {
@@ -873,6 +967,13 @@ void sendMidiNoteOn(uint8_t note, uint8_t velo, uint8_t channel, bool toSynth)
     if (sequencer.isRenderMode())
         return;
 
+    if (mpeout::members)
+    {   // MPE out: one member channel per note, the key and the bend of a tuning (mtMpeOut.h)
+        MpeSink s;
+        mpeout::noteOn(s, note, velo, channel, 12 * (2 - mtConfig.midi.middleC), uint8_t(mtConfig.midi.notesOutMode));
+        return;
+    }
+
     int8_t transp = 12 * (2 - mtConfig.midi.middleC);
     note = clamp(note + transp, 0, 127);
 
@@ -903,6 +1004,13 @@ void sendMidiNoteOff(uint8_t note, [[maybe_unused]] uint8_t velo, uint8_t channe
 
     if (sequencer.isRenderMode())
         return;
+
+    if (mpeout::members)
+    {
+        MpeSink s;
+        mpeout::noteOff(s, note, channel);
+        return;
+    }
 
     int8_t transp = 12 * (2 - mtConfig.midi.middleC);
     note = clamp(note + transp, 0, 127);

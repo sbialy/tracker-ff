@@ -748,6 +748,16 @@ void cSampleEditor::showPopupSeqWindow()
     showPopupStopSequencer();
     display.synchronizeRefresh();
 }
+// A stereo sample (a project with linked stereo pairs): the editor works on the left channel, the sample becomes mono
+void cSampleEditor::showPopupStereoToMonoWindow()
+{
+    showStaticPopupCommonWindow();
+    mtPopups.showInfoPopup("Stereo sample: the editor makes it mono.", "Only the left channel is kept.");
+    display.setControlText(label[7], "Ok");
+    display.refreshControl(label[7]);
+    display.synchronizeRefresh();
+}
+
 // Too Long instrument
 void cSampleEditor::showPopupTooLongSample()
 {

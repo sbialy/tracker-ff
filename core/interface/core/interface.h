@@ -70,6 +70,8 @@ class Interface
     void handleFileTransferMode(uint8_t state);
     // Enters or leaves USB storage mode without the UI; returns the resulting state.
     bool setFileTransferMode(bool enable);
+    // The card is lent to the computer (the Capture take file writer waits, mtSequencer_captureFile.cpp)
+    bool isFileTransferMode() const { return specialScreenMode == usbStorageScreenMode; }
 
     void refreshInterfaceControlsColors();
 

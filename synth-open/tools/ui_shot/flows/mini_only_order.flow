@@ -1,0 +1,52 @@
+# P12 round 6: Synth order on the Tracker Mini, Mini keys only (the MK66 edit mode of the Model list, docs/synth_order.md). Instr held + Up x3 picks Synth 1,
+# Menu box 1 (Instrument Parameters) opens the Synth screen, Shift + F1 starts the edit mode ("Edit list"), the cursor starts on WTFM (Synth 1's engine), Down puts it
+# on PERC, Shift + Down moves PERC below DIRT, Up goes to DIRT, Delete hides it, Up goes to WTFM, Delete hides it too, F1 leaves. The card
+# has a /Plugins folder, so every change is written to /Plugins/synth-order.txt. plus_flows.sh reads the list as drawn afterwards
+# (UISHOT_TRACE_ORDER): the edit rows ACD|FAT|VAP|-WTFM|-DIRT|PERC|CHIP, then the Model list WTFM|ACD|FAT|VAP|PERC|CHIP: DIRT is gone,
+# WTFM is hidden but stays at the top because Synth 1 plays it (the MK66 rules, docs/synth_order.md).
+# Replay: plus_flows.sh mini
+title: Synth order on the Mini (P12)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Instr
+wait 400ms
+tap Up x3
+wait 300ms
+release Instr
+wait 600ms
+press Menu
+wait 400ms
+tap Right
+wait 300ms
+release Menu
+wait 1200ms
+press Shift
+wait 300ms
+tap F1
+wait 300ms
+release Shift
+wait 600ms
+expect text "Edit list"
+tap Down
+wait 300ms
+press Shift
+wait 300ms
+tap Down
+wait 300ms
+release Shift
+wait 400ms
+tap Up
+wait 300ms
+tap Delete
+wait 400ms
+tap Up
+wait 300ms
+tap Delete
+wait 600ms
+shot order-edit
+tap F1
+wait 600ms
+expect text "Model"
+shot order-after

@@ -4,7 +4,7 @@ This guide covers five features of tracker-ff 1.3.0 for the original Tracker. Th
 
 - [Macro depth](#1-macro-depth-add-and-scale) decides how far a macro moves a synth parameter.
 - [Paraphony](#2-paraphony-poly-and-para) lets one synth voice play a whole chord.
-- [Chord names](#3-chord-names) shows chords by name and lists the 68 chords the firmware knows.
+- [Chord names](#3-chord-names) shows chords by name and lists the 77 chords the firmware knows.
 - [Chord capture](#4-chord-capture) writes a chord into a step from the pads or a MIDI keyboard.
 - [Record join](#5-record-join) turns notes you play together while recording into one chord step.
 - [Strum](#6-strum-fx) starts the notes of a chord one after another.
@@ -79,10 +79,10 @@ ACD has three new parameters at the end of its Voice section on the Synth Parame
 | Parameter | Range | Default | What it does |
 |---|---|---|---|
 | Chord Mode | Poly or Para | Poly | Switches the part between the two ways of playing a chord. It is saved with the patch. |
-| Chord | 0 to 67, shown as a chord name | 0 (`note`) | The chord that Para plays for every note that does not come from a MIDI Chord step. |
+| Chord | 0 to 76, shown as a chord name | 0 (`note`) | The chord that Para plays for every note that does not come from a MIDI Chord step. |
 | Strum | -63 to 63 | 0 | In Para, the gap between the chord notes in units of 2 ms. Positive starts the base note first, negative starts the top note first, 0 plays them together. |
 
-The Chord list uses the names of the [chord table](#the-68-chords). Patches from 1.2.x load with Chord Mode on Poly and sound as before. While Chord Mode is Poly, the Chord and Strum parameters do nothing.
+The Chord list uses the names of the [chord table](#the-70-chords). Patches from 1.2.x load with Chord Mode on Poly and sound as before. While Chord Mode is Poly, the Chord and Strum parameters do nothing.
 
 ### How a MIDI Chord step plays
 
@@ -101,7 +101,7 @@ A Strum FX next to the MIDI Chord of a step reaches a Para part as the Strum par
 
 ## 3. Chord names
 
-The firmware knows 68 chords. The table is the MIDI Chord FX table. The FX value is the row number from 0 to 67. Each row is a set of notes above the lowest note of the step. The lowest note of the step is always the bass. Values 30 to 67 are inversions. Polyend's own firmware plays only the step note for values above 29, so a project with those values sounds thinner there.
+The firmware knows 77 chords. The table is the MIDI Chord FX table. The FX value is the row number from 0 to 76. Each row is a set of notes above the lowest note of the step. The lowest note of the step is always the bass. Values 30 to 67 are inversions, 68 and 69 are the two add9 chords (minor and major, root position) and 70 to 76 are the 9th chords and the 7b5 (root position). The 9th chords have four notes, the fifth is left out so that every chord fits the four voices of a Poly part. Polyend's own firmware plays only the step note for values above 29, so a project with those values sounds thinner there.
 
 Config > Features > Chord names (State On by default) switches the MIDI Chord cells of the pattern grid between two looks. On shows a short name of three characters such as `m7` and Off shows the interval digits of the stock firmware. It changes the display only. The project and the playback stay the same. The value 0 shows `---` in both looks.
 
@@ -116,7 +116,7 @@ The name of a chord comes in four looks.
 
 A name with a slash says which note is in the bass. `Fmaj7/C` is F major seventh with C as the lowest note. A root position chord has no slash. The major triad is the root alone, so it is `C` and in second inversion `F/C`. When the step has no note the title bar shows the name of the row without a root.
 
-### The 68 chords
+### The 77 chords
 
 All intervals are semitones above the lowest note. The examples have C as the lowest note. In the first table the lowest note is the root.
 
@@ -195,8 +195,19 @@ Inversions. The name says which chord note is lowest. The example shows the chor
 | 65 | `267` | `267` | M7sus4 inv1 | GM7sus4/C | 2 6 7 |
 | 66 | `45A` | `45A` | M7sus4 inv2 | FM7sus4/C | 4 5 10 |
 | 67 | `168` | `168` | M7sus4 inv3 | C#M7sus4/C | 1 6 8 |
+| 68 | `mad` | `37E` | madd9 | Cmadd9 | 3 7 14 |
+| 69 | `ad9` | `47E` | add9 | Cadd9 | 4 7 14 |
+| 70 | `do9` | `4AE` | 9 | C9 | 4 10 14 |
+| 71 | `m9` | `3AE` | m9 | Cm9 | 3 10 14 |
+| 72 | `^9` | `4BE` | maj9 | Cmaj9 | 4 11 14 |
+| 73 | `6/9` | `49E` | 6/9 | C6/9 | 4 9 14 |
+| 74 | `7#9` | `4AF` | 7#9 | C7#9 | 4 10 15 |
+| 75 | `7b9` | `4AD` | 7b9 | C7b9 | 4 10 13 |
+| 76 | `7b5` | `46A` | 7b5 | C7b5 | 4 6 10 |
 
-Digits in the Grid digits column are the semitone numbers written with `A` for 10, `B` for 11, `C` for 12 and `E` for 14. A chord can span up to 14 semitones. The widest rows are `5` (7 and 12) and `5add9` (7 and 14).
+Digits in the Grid digits column are the semitone numbers written with `A` for 10, `B` for 11, `C` for 12, `D` for 13, `E` for 14 and `F` for 15. A chord can span up to 15 semitones. The widest rows are `7#9` (15), the 9th chords (14) and `7b9` (13). The 9th chords leave the fifth out, so a Poly part plays each of them with four voices.
+
+The 9th is written as the 14th semitone, so the capture finds these chords when the 9th is played a full octave above the bass (C E Bb and D one octave up is `C9`). The 7b5 fits inside one octave and is found exactly from C E Gb Bb. The nearest chord search below still only knows the first 68 rows, a close voiced D above C E G Bb keeps reading as a C7 with a dropped note.
 
 ### How the nearest chord is found
 
@@ -276,7 +287,7 @@ The first note is written to its step as always. A later note joins that step wh
 - It starts within 100 ms of the previous note of the group.
 - It starts within 300 ms of the first note.
 - The group has room left. It takes up to 8 notes.
-- The notes so far make a chord of the [table](#the-68-chords).
+- The notes so far make a chord of the [table](#the-70-chords).
 
 The 100 ms window slides with every note that joins. The lowest note becomes the note of the step. The chord goes into the MIDI Chord slot, or into the first empty slot. The joined note sounds while it is held. The note off of the chord is written once, after the last held note of the group is released.
 

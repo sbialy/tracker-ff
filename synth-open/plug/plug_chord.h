@@ -1,9 +1,9 @@
-// Tracker FF chord table: the SDK contract of the 68 chord entries. MIT licence, see synth-open/plug/README.md.
+// Tracker FF chord table: the SDK contract of the 77 chord entries. MIT licence, see synth-open/plug/README.md.
 //
-// The stock "0 - MIDI Chord" step FX stores a value 0..67. Value i means the notes of PLUG_CHORD_MASKS[i] above the step note:
+// The stock "0 - MIDI Chord" step FX stores a value 0..76. Value i means the notes of PLUG_CHORD_MASKS[i] above the step note:
 // bit k set = a note k semitones above it. Bit 0 is set in every entry, so the step note is the LOWEST note (the bass) and the
 // inversion is part of the entry (30..67 are inversions). Entry 0 is the single note. The order is frozen: values 0..29 are
-// upstream (Polyend), 30..67 were added by the community fork (fork picks 233da6a, 86fcc38). New entries may only be appended.
+// upstream (Polyend), 30..67 were added by the community fork (fork picks 233da6a, 86fcc38), 68 and 69 (minor add9, major add9) and 70..76 (9, m9, maj9, 6/9, 7#9, 7b9, 7b5, four notes, no fifth) were appended later. New entries may only be appended.
 //
 // A synth engine that plays chords itself (paraphony, PLUG_EXT_CHORD in plug_abi.h) has one enum parameter with exactly
 // PLUG_CHORD_COUNT values in this order: the host writes a MIDI Chord step's value into it for that one note-on. The names
@@ -17,8 +17,10 @@
 // so a plugin pays for what it uses only.
 #pragma once
 
-#define PLUG_CHORD_COUNT 68
-#define PLUG_CHORD_SPAN 15   // significant bits of a mask: the widest entry spans 14 semitones
+#define PLUG_CHORD_COUNT 77
+#define PLUG_CHORD_COUNT_V1 68   // the table of firmware 1.4.0 and before: an engine built against it still has a Chord enum of 68
+#define PLUG_CHORD_COUNT_V2 70   // plus minor add9 and major add9 (68, 69)
+#define PLUG_CHORD_SPAN 16   // significant bits of a mask: the widest entry (7#9, entry 74) spans 15 semitones
 
 // clang-format off
 #define PLUG_CHORD_MASKS { \
@@ -28,7 +30,8 @@
     0x0109, 0x0221, 0x0211, 0x0121, 0x0231, 0x0123, 0x0129, 0x0225, 0x0149, 0x0229, \
     0x0245, 0x0209, 0x0241, 0x0441, 0x0051, 0x0043, 0x0821, 0x0251, 0x0125, 0x0131, \
     0x0113, 0x0151, 0x0115, 0x0445, 0x0191, 0x0119, 0x0223, 0x00A5, 0x0429, 0x0521, \
-    0x00A9, 0x0215, 0x0621, 0x00B1, 0x010B, 0x00C5, 0x0431, 0x0143 }
+    0x00A9, 0x0215, 0x0621, 0x00B1, 0x010B, 0x00C5, 0x0431, 0x0143, 0x4089, 0x4091, \
+    0x4411, 0x4409, 0x4811, 0x4211, 0x8411, 0x2411, 0x0451 }
 
 // Semitones from the bass (the step note) up to the chord root, per entry
 #define PLUG_CHORD_ROOT { \
@@ -38,7 +41,8 @@
     8, 5, 9, 5, 5, 1, 5, 2, 8, 5, \
     2, 9, 6, 10, 4, 6, 5, 6, 2, 5, \
     1, 8, 4, 2, 8, 4, 1, 7, 5, 10, \
-    5, 2, 10, 5, 1, 7, 5, 1 }
+    5, 2, 10, 5, 1, 7, 5, 1, 0, 0, \
+    0, 0, 0, 0, 0, 0, 0 }
 
 // Name per entry: the quality, then " invN" when the bass is not the root
 #define PLUG_CHORD_NAMES { \
@@ -48,7 +52,8 @@
     "maj inv1", "maj inv2", "m inv1", "m inv2", "maj7 inv2", "maj7 inv3", "m7 inv2", "m7 inv3", "7 inv1", "7 inv2", \
     "7 inv3", "dim inv1", "dim inv2", "sus2#5 inv1", "sus2#5 inv2", "sus#4 inv1", "sus#4 inv2", "m7b5 inv2", "m7b5 inv3", "mM7 inv2", \
     "mM7 inv3", "7#5 inv1", "7#5 inv2", "7#5 inv3", "M7#5 inv1", "M7#5 inv2", "M7#5 inv3", "7sus4 inv1", "7sus4 inv2", "7sus2 inv1", \
-    "7sus2 inv2", "7sus2 inv3", "M7sus2 inv1", "M7sus2 inv2", "M7sus2 inv3", "M7sus4 inv1", "M7sus4 inv2", "M7sus4 inv3" }
+    "7sus2 inv2", "7sus2 inv3", "M7sus2 inv1", "M7sus2 inv2", "M7sus2 inv3", "M7sus4 inv1", "M7sus4 inv2", "M7sus4 inv3", "madd9", "add9", \
+    "9", "m9", "maj9", "6/9", "7#9", "7b9", "7b5" }
 // clang-format on
 
 #ifdef __cplusplus

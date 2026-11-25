@@ -2,7 +2,7 @@
 #include "AudioStream.h"
 #include "dspinst.h"
 #ifdef FEATURE_SAT_SOFTKNEE
-#include "sat_softknee.h"
+#include "../../../synth-open/sat_softknee.h"
 #endif
 
 #define MULTI_UNITYGAIN 65536

@@ -120,7 +120,7 @@ static PtfxEntry* getPluginEntry(uint16_t index)
     return &s_ptfxEntries[index];
 }
 
-void PtfxManager::scanEffects(bool force)
+__attribute__((noinline)) void PtfxManager::scanEffects(bool force)
 {
     if (s_scanned && !force)
         return;

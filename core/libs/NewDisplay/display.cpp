@@ -344,9 +344,9 @@ void cDisplay::begin(DisplayDriver* displayDriver, Timer* timer)
     this->timer = timer;
     // ####################################
 #ifndef TRACKER_MINI
-    decompress(poly_logo_160x172_l8_compressed,
-               sizeof(poly_logo_160x172_l8_compressed) / sizeof(poly_logo_160x172_l8_compressed[0]),
-               poly_logo_160x172_l8);
+    // The boot logo is a deflated array (images/poly_logo_160x172_L8.cpp), a damaged stream leaves the logo blank
+    inflateRaw(poly_logo_160x172_l8_deflated, sizeof(poly_logo_160x172_l8_deflated), poly_logo_160x172_l8,
+               sizeof(poly_logo_160x172_l8), &gInflateScratch);
 #endif
 
 #ifdef FW_TRIM
@@ -1312,6 +1312,7 @@ void cDisplay::controlIdToString(uint8_t id, char* string)
         case controlIdWtProgress: strcpy(string, "progress"); break;
         case controlIdNotesKeyboardLabel: strcpy(string, "notesKeyboard"); break;
         case controlIdPartsTable: strcpy(string, "partsTable"); break;
+        case controlIdTableGrid: strcpy(string, "tableGrid"); break;
         default: strcpy(string, "undefined"); break;
     }
 }

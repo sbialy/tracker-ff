@@ -19,8 +19,9 @@ SAN="${SAN:-}"
 OUT="${OUT:-$ROOT/build/ui-shot-usbmc${SAN:+-san}}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/usb_multich_sim.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
+BIN="${UI_SHOT_BIN:-$OUT/ui_shot}"  # UI_SHOT_BIN: a prebuilt binary of this flavour, no make
 mkdir -p "$OUT"
-make -s -C "$HERE" OUT="$OUT" ${SAN:+SAN=$SAN} -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" >"$OUT.make.log" 2>&1 || { tail -30 "$OUT.make.log"; exit 2; }
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" OUT="$OUT" ${SAN:+SAN=$SAN} -j"$(sh "$HERE/../jobs.sh" n)" >"$OUT.make.log" 2>&1 || { tail -30 "$OUT.make.log"; exit 2; }
 
 fails=0; checks=0
 ok() { checks=$((checks+1)); printf 'ok    %s\n' "$1"; }
@@ -28,7 +29,7 @@ bad() { checks=$((checks+1)); fails=$((fails+1)); printf 'FAIL  %s\n' "$1"; }
 expect() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 run() {   # NAME ENV SCRIPT: the usbmc lines in WORK/NAME.txt
     local sd="$WORK/$1.sd"; rm -rf "$sd"
-    env $2 ASAN_OPTIONS=detect_leaks=0:halt_on_error=0 "$OUT/ui_shot" "$sd" "$3" > "$WORK/$1.txt" 2> "$WORK/$1.err"
+    env $2 ASAN_OPTIONS=detect_leaks=0:halt_on_error=0 "$BIN" "$sd" "$3" > "$WORK/$1.txt" 2> "$WORK/$1.err"
     if grep -E "runtime error|AddressSanitizer" "$WORK/$1.err" | grep -v "mtWavetableEnvelopes.cpp:206" | grep -q .; then
         bad "$1: sanitizer finding: $(grep -E 'runtime error|AddressSanitizer' "$WORK/$1.err" | head -1)"
     fi

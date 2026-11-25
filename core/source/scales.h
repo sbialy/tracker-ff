@@ -7,8 +7,9 @@ const uint8_t MIN_SCALE = 0;
 const uint8_t MAX_SCALE = 38;
 
 uint8_t isInScale(uint8_t note, uint8_t root, uint8_t scale);
+bool inProjectScale(uint8_t note, uint8_t root, uint8_t scale); // a note in the project scale (the root and scale of the project) as the random note FX reads it (degrees of N notes in a tuning)
 
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
 // Scale snap at playback (per track, the project scale and root note of Config > Project Settings). The pattern data is not touched:
 // the sequencer moves the note it sends (mtSequencer.cpp snapStepNote). Mode 0 plays the note as written.
 enum ScaleSnapMode : uint8_t

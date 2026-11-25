@@ -1,5 +1,6 @@
 #include "MidiAdapter.h"
 #include "config.h"
+#include "ff_hooks.h"
 
 #ifdef FEATURE_SYNTH
 
@@ -114,6 +115,7 @@ void MidiAdapter::sendPitchBend(int value, uint8_t channel)
 void MidiAdapter::sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel)
 {
     translateChannel(channel);
+    ffHookSynthNote(channel, note, velocity > 0); // the Synth Automation slots of the part (Tracker+ and Mini)
     using MidiEvent = polysynth::MidiEvent;
     MidiEvent eventOut = { .type = MidiEvent::Type::kNoteOn,
                            .channel = static_cast<uint8_t>(channel % MidiEvent::kChannelsPerPort),
@@ -130,6 +132,7 @@ void MidiAdapter::sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel)
 void MidiAdapter::sendNoteOff(uint8_t note, uint8_t velocity, uint8_t channel)
 {
     translateChannel(channel);
+    ffHookSynthNote(channel, note, false); // the Synth Automation slots of the part (Tracker+ and Mini)
     using MidiEvent = polysynth::MidiEvent;
     MidiEvent eventOut = { .type = MidiEvent::Type::kNoteOff,
                            .channel = static_cast<uint8_t>(channel % MidiEvent::kChannelsPerPort),

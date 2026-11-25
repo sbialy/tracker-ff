@@ -1,0 +1,22 @@
+# P4 (ref/ff-imx-port-plan.md): the Project Settings page on the Tracker+ and Mini sims, which have no plugin host. File screen, F7 opens it: the
+# rows of project.mtff (4 FX Slots, Strum volume, Random seed, Reroll seed, Scale snap), no Stereo pairs row (stereo pairs are MK66 only).
+# Replay: bun replay.ts synth-open/tools/ui_shot/flows/plus_only_project_settings.flow --target sim --model plus --offline --ui <ui_shot> (plus_flows.sh)
+title: Project Settings page on Tracker+ (P4)
+check: texts
+pause: 80ms
+
+tap File
+wait 800ms
+tap F7
+wait 1000ms
+expect text "4 FX Slots"
+shot proj-settings
+expect peek fxslots 2
+tap F8
+wait 600ms
+tap Down
+wait 600ms
+tap F8
+wait 1500ms
+shot proj-4fx-on
+expect peek fxslots 4

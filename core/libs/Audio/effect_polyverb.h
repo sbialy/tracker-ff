@@ -3,6 +3,7 @@
 #include "AudioStream.h"
 
 #include "reverb.h"
+#include "stereo_sends.h"
 #ifdef AUDIO_NULL_IS_SILENCE
 #include "fx_mute_gate.h"
 #endif
@@ -44,6 +45,9 @@ class AudioEffectPolyverb : public AudioStream
 #ifdef AUDIO_NULL_IS_SILENCE
     // Mixer Mute (fx_mute_gate.h): feed is the send mixer, muted the project's reverbMute
     void setMuteFeed(AudioStream* feed) { muteGate.setFeed(feed); }
+#ifdef FW_STEREO_SENDS
+    void setMuteFeed2(AudioStream* feed) { muteGate.setFeed2(feed); }
+#endif
     void setMuted(bool muted) { muteGate.setMuted(muted, this); }
     bool isMuted() const { return muteGate.muted(); }
     void cutMuteRing() { muteGate.cutRing(); }

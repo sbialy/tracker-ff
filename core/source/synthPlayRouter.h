@@ -12,6 +12,11 @@
 
 // The gain of a synth part (open::partGain). The page's file supplies it, the host test of the router supplies a stand-in
 void synthPlaySetGain(uint8_t part, float gain);
+// MPE in (ref/mpe-in-p1.md): the page's file supplies them (open::mpeNote, partNoteBend, partNotePress, partMpe), the host test a stand-in
+void synthPlayMpeNote(uint8_t chan);                              // the note on or off that follows is member channel `chan` (0: a plain note)
+void synthPlayMpeBend(uint8_t part, uint8_t chan, int raw);       // raw -8192..8191 of a member channel on the part
+void synthPlayMpePress(uint8_t part, uint8_t chan, uint8_t press);   // 0..127, chan 1: the master channel's pressure, every voice of the part
+void synthPlayMpeConfig(uint8_t part, int range, int pressPercent);   // the member bend range in semitones and the pressure amount in percent of the part
 
 namespace synthplay
 {
@@ -33,6 +38,9 @@ enum Param : uint8_t
     kMorph,            // 0..100, part A at 0, part B at 100 (equal power)
     kBankA,            // the patch slot (0..15) the page has put on part A, B
     kBankB,
+    kMpeZone,          // MPE lower zone: 0 off, 1..15 the number of member channels (channels 2..N+1, the master channel is 1). Persisted when it is off the default
+    kMpeRange,         // 1..96, semitones of the member bend for a full deflection (the MPE default is 48)
+    kMpePress,         // 0..100 percent, how far the member pressure takes the level of its note down (0: pressure does nothing)
     kValues
 };
 
@@ -60,6 +68,8 @@ struct Cell
     uint8_t vel;      // the velocity sent
     uint8_t state;    // CellState
     uint8_t seq;      // arrival order, wraps (the oldest cell goes first when more than 8 notes are down)
+    uint8_t src;      // Source of the note on (releaseSource: a pulled USB cable lets go of the notes that came over it)
+    uint8_t ch;       // the MPE member channel the note came on (2..16), 0: a plain note (channel 1, zone off, outside the zone)
 };
 
 extern int8_t value[kValues];    // the settings and the session values, edited by the page. kParams of them are loaded and stored (fSynthPlay.cpp)
@@ -70,9 +80,24 @@ void noteOn(uint8_t src, uint8_t channel, uint8_t note, uint8_t velocity);   // 
 void noteOff(uint8_t src, uint8_t channel, uint8_t note);
 void pitchBend(uint8_t src, uint8_t channel, int bend);                      // -8192..8191
 bool controlChange(uint8_t src, uint8_t channel, uint8_t number, uint8_t val);   // true: the page took it (CC 1, 11, 64, 120, 121, 123)
+// Program Change in: the same Input and Channel filters, then the side whose part number is the channel (A: Synth, B: Synth B) gets the program
+// through the hook the page sets (side 0 A, 1 B, program 0..127). True: a side had the channel. Null hook (page closed, host tests): dropped
+bool programChange(uint8_t src, uint8_t channel, uint8_t program);
+void setProgramHook(void (*hook)(int side, uint8_t program));
+
+// MPE in, channel pressure (0xD0). Member channel: that note's pressure, the master channel: every voice. True: the page took it
+bool channelPressure(uint8_t src, uint8_t channel, uint8_t pressure);
+// The MPE zone, range or pressure setting changed (the page after an edit, the router after a Zone Configuration Message): notes sounding go,
+// the parts get the range and the pressure amount again
+void applyMpe(bool release);
+extern uint8_t mpeChanged;   // counts the settings the router itself changed (MPE Configuration Message, RPN 0), the page shows and saves them
 
 // Main loop or interrupt. Every sounding note gets its note off, CC 123 goes to the part, the bend goes back to 0 and the pedal up.
 void releaseAll();
+// One source is gone without a note off (the USB cable was pulled, no note off comes): every note it still holds gets the note off it
+// would have got (the pedal of another source still holds it), a pedal it held goes up and a bend it held goes back to 0. Notes of the
+// other source and the pads stay. Main loop or interrupt.
+void releaseSource(uint8_t src);
 // The part the page plays changes: everything sounding on the old part is released first
 void setPart(uint8_t newPart);
 // The part B of the page changes (0 off): everything sounding is released first

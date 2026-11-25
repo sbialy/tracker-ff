@@ -1,9 +1,17 @@
 #include "interfaceMenuPopup.h"
 #include "core/interface.h"
+#if defined(TRACKER_MINI) && defined(FEATURE_SYNTH_PATCHFX)
+#include "synthPlay/synthPlay.h"
+#endif
 
 InterfaceMenuPopup mtMenuPopup;
 
+#if defined(TRACKER_MINI) && defined(FEATURE_SYNTH_PATCHFX)
+// IMX port P12: box 12 opens the Synth play page (the Mini has no Shift + Perform), the last free box of the 4 x 3 grid
+const uint8_t kMenuModulesCount = 12;
+#else
 const uint8_t kMenuModulesCount = 11;
+#endif
 const char* const kModuleNamesList[kMenuModulesCount] = { "Pattern",
                                                           "Instrument Parameters",
                                                           "Sample Playback",
@@ -14,14 +22,24 @@ const char* const kModuleNamesList[kMenuModulesCount] = { "Pattern",
                                                           "Config",
                                                           "Perform",
                                                           "Sample Editor",
-                                                          "Sample Recorder" };
+                                                          "Sample Recorder",
+#if defined(TRACKER_MINI) && defined(FEATURE_SYNTH_PATCHFX)
+                                                          "Synth Play",
+#endif
+};
 
 #ifdef TRACKER_MINI
 
 uint32_t instrumentParamOptions[2] = { 1, 2 };
 InterfaceMenuPopup::ModuleModes instrumentParamModes = { 2, instrumentParamOptions, { 2, 0 } };
+#ifdef FEATURE_PLUG_HOST
+// mode 4: the Master Inserts page (plug_ui.cpp), the Mini has no Shift + Saturation route on the stock panel layout of the popup
+uint32_t masterOptions[4] = { (1 << 8), (2 << 8), (3 << 8), (4 << 8) };
+InterfaceMenuPopup::ModuleModes masterModes = { 4, masterOptions, { 4, 0 } };
+#else
 uint32_t masterOptions[3] = { (1 << 8), (2 << 8), (3 << 8) };
 InterfaceMenuPopup::ModuleModes masterModes = { 3, masterOptions, { 3, 0 } };
+#endif
 uint32_t performOptions[2] = { 1, 2 };
 InterfaceMenuPopup::ModuleModes performModes = { 2, performOptions, { 2, 0 } };
 
@@ -37,8 +55,25 @@ const InterfaceMenuPopup::ModuleRef InterfaceMenuPopup::modules[kMenuModulesCoun
     { mtInterface.modules[9], interfaceButtonPerformance, 0, &performModes },
     { mtInterface.modules[6], interfaceButtonSampleEdit, 0, nullptr },
     { mtInterface.modules[8], interfaceButtonSampleRec, 0, nullptr },
+#ifdef FEATURE_SYNTH_PATCHFX
+    // the Synth play page, opened by synthPlayBox. It has no key of its own: Game (no other box has it) only tells it apart from the box picked
+    { mtInterface.modules[11], interfaceButtonGame, 0, nullptr },
+#endif
 
 };
+
+#ifdef FEATURE_SYNTH_PATCHFX
+// The Synth play box: the page opens as with Shift + Perform on Tracker+ (Interface::trySynthPlayEntry: the page that is left runs its own
+// checks, a running song asks first). True when the box was the Synth play box (taken or refused, nothing else is switched)
+static bool synthPlayBox(const InterfaceMenuPopup::ModuleRef& ref)
+{
+    if (ref.module != &synthPlay)
+    {
+        return false;
+    }
+    return true;
+}
+#endif
 
 static void functLeftPopup();
 static void functRightPopup();
@@ -182,6 +217,21 @@ void InterfaceMenuPopup::hideModulePopup(ModuleBase* modulePtr)
 
     isVisible = false;
 
+#ifdef FEATURE_SYNTH_PATCHFX
+    if (synthPlayBox(modules[menuFunctions[selectedBox]]))
+    {
+        switchModuleCallback = nullptr;
+        // As Perform on Performance page 2 opens it (Interface::openSynthPlayFrom), except from the two sample pages that finish work of
+        // their own (the pages Shift + Perform skips, Interface::trySynthPlayEntry). A refusal (that, or the page is already open) gives the
+        // page its keys back, as when its own box is picked
+        const bool ownWork = modulePtr == mtInterface.modules[6] || modulePtr == mtInterface.modules[8];
+        if (ownWork || !mtInterface.openSynthPlayFrom(modulePtr))
+        {
+            modulePtr->start(modules[selectedModuleOnShow].defaultOption);
+        }
+        return;
+    }
+#endif
     uint8_t moduleToSwitch = modules[menuFunctions[selectedBox]].button;
     uint32_t startOptions = modules[menuFunctions[selectedBox]].defaultOption;
 
@@ -297,6 +347,12 @@ void InterfaceMenuPopup::setModulePopupValue(int16_t value)
 
 void InterfaceMenuPopup::changeModuleMode()
 {
+#ifdef FEATURE_SYNTH_PATCHFX
+    if (modules[menuFunctions[selectedBox]].module == &synthPlay)
+    {
+        return;   // the Synth play box has no modes, it opens on the Menu release (hideModulePopup)
+    }
+#endif
     ModuleBase* destModule = sourceModule;
     uint32_t options = 0;
     bool srcIsDst = modules[menuFunctions[selectedBox]].module == sourceModule;

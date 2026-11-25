@@ -46,6 +46,11 @@ class VoiceStreamManager
                       float pitchSpeed,
                       uint32_t sliceCachedFrames = 0);
     void notifyNoteOff(int voiceIdx);
+    // Stream misses: samples getSample played as 0 for lack of ring data, per channel (0 = L, 1 = R). A clean run reads 0 on both
+    uint32_t getMissCount(int channel) const;
+    void resetMissCount();
+    // A voice ring changed owner (stereo pair link or unlink): forget what it holds
+    void dropVoiceRing(int voiceIdx);
     void invalidateInstrumentVoices(int instrIdx);
 
     AUDIO_CORE_RAM bool getSlicePreCache(int instrIdx,

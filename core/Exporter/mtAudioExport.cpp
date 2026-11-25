@@ -6,6 +6,7 @@
 #include "fileManager.h"
 #include "mtAudioEngine.h"
 #include "mtSequencer.h"
+#include "stereoPairs.h"
 
 #include "core/songTimer.h"
 #include "patternEditor/patternEditor.h"
@@ -186,6 +187,17 @@ void mtAudioExport::start(const char* path, uint8_t mode)
 
     setExternalSettings();
 
+    // a linked stereo pair (stereoPairs.h) exports as ONE stereo stem "track1+2.wav": the leader's file holds L and R, the follower gets no file
+    pairedStemMask = 0;
+    if (!exportOnlyMaster())
+    {
+        for (int tr = 0; tr < 8; tr++)
+        {
+            if (stereopairs::isFollower(tr))
+                pairedStemMask |= uint16_t(1u << (stem_track_1 + tr));
+        }
+    }
+
     for (uint8_t stemIdx = 0; stemIdx < stem_totalCount; stemIdx++)
     {
         if (!isStemActive(stemIdx))
@@ -218,7 +230,13 @@ void mtAudioExport::start(const char* path, uint8_t mode)
                 break;
 #endif
 
-            default: sprintf(stemsPaths[stemIdx], "%s/track%d.wav", path, stemIdx + 1); break;
+            default:
+                if (stemIdx >= stem_track_1 && stemIdx <= stem_track_8 &&
+                    stereopairs::isLeader(stemIdx - stem_track_1) && !exportOnlyMaster())
+                    sprintf(stemsPaths[stemIdx], "%s/track%d+%d.wav", path, stemIdx + 1, stemIdx + 2);
+                else
+                    sprintf(stemsPaths[stemIdx], "%s/track%d.wav", path, stemIdx + 1);
+                break;
         }
 
         if (EXPORT_DEBUG)
@@ -346,8 +364,14 @@ void mtAudioExport::saveMasterBufferToSD(uint8_t closeFile)
     if (blocksBuffered >= maxBlocksForStem)
         blocksBuffered = maxBlocksForStem;
 
-    [[maybe_unused]] auto [isOpen, fileHandle] = fileSystem->openFile(
-      stemsPaths[stem_master], FileSystem::FileOpenMode::kWriteCreateNew, &wavStemsFile);
+    // Only the first flush may create the file. Creating it again truncates it, and what
+    // the earlier flushes wrote then depends on the card handing out the same clusters.
+    const FileSystem::FileOpenMode openMode = (bytesWrittenInStem[stem_master] == 0)
+                                                ? FileSystem::FileOpenMode::kWriteCreateNew
+                                                : FileSystem::FileOpenMode::kWriteOpen;
+
+    [[maybe_unused]] auto [isOpen, fileHandle] =
+      fileSystem->openFile(stemsPaths[stem_master], openMode, &wavStemsFile);
 
     if (blocksBuffered > 0)
     {
@@ -551,6 +575,8 @@ void mtAudioExport::rawToWavs_update()
         fileSystem->closeFile(wavStemsFile, false);
 
         raw.stemIndex++;
+        while (raw.stemIndex < stem_totalCount && isPairedStem(raw.stemIndex))
+            raw.stemIndex++;   // the follower of a linked pair has no file
         if (raw.stemIndex >= stem_totalCount)
         {
             status = statusRawToWavs_finish;
@@ -605,6 +631,24 @@ void mtAudioExport::handleStem(uint8_t idx)
         const int16_t* srcL = queue[ExportQueues::ExportChannels::kLeft]->readBuffer();
         const int16_t* srcR = queue[ExportQueues::ExportChannels::kRight]->readBuffer();
 
+        // A linked stereo pair (stereoPairs.h) exports as one real L/R stem: the leader's file holds the L chain on the left and the R chain
+        // (the follower's right queue) on the right. The follower's raw slot stays silent and rawToWavs writes no file for it (pairedStemMask). Master and the sums are unchanged
+        bool silentStem = false;
+        if (idx >= stem_track_1 && idx <= stem_track_8)
+        {
+            const int tr = idx - stem_track_1;
+            if (stereopairs::isLeader(tr))
+            {
+                AudioRecordQueue* fq = engine.getExportQueues()->getQueue(
+                  ExportQueues::ExportChannels::kRight, (mtAudioExport::enStem)(idx + 1));
+                srcR = fq->available() ? fq->readBuffer() : nullptr; // the follower frees it in its own turn
+            }
+            else if (stereopairs::isFollower(tr))
+            {
+                silentStem = true;
+            }
+        }
+
         int16_t* writeBuff;
         if (exportOnlyMaster())
             writeBuff =
@@ -614,8 +658,8 @@ void mtAudioExport::handleStem(uint8_t idx)
         //
         for (int a = 0; a < AUDIO_BLOCK_SAMPLES; a++)
         {
-            writeBuff[a * 2] = *(srcL + a);
-            writeBuff[a * 2 + 1] = *(srcR + a);
+            writeBuff[a * 2] = silentStem ? int16_t(0) : *(srcL + a);
+            writeBuff[a * 2 + 1] = (silentStem || srcR == nullptr) ? int16_t(0) : *(srcR + a);
         }
 
         bufferedBlocks[idx]++;
@@ -716,7 +760,7 @@ void mtAudioExport::handleStem(uint8_t idx)
     }
 }
 
-void mtAudioExport::updateRender()
+__attribute__((noinline)) void mtAudioExport::updateRender()
 {
     static constexpr float timeToProcessDuringUpdate_us = 200000;
 
@@ -782,7 +826,10 @@ float mtAudioExport::getRawToWavProgress()
      * raw.stemIndex
      */
 
-    float totalPacketsToSave = multipacketsInRawTotal * stem_totalCount;
+    int filesToWrite = stem_totalCount;
+    for (int st = 0; st < stem_totalCount; st++)
+        filesToWrite -= isPairedStem(st) ? 1 : 0;
+    float totalPacketsToSave = multipacketsInRawTotal * filesToWrite;
 
     return ((float)raw.totalPacketProcessed * 100) / totalPacketsToSave;
 }

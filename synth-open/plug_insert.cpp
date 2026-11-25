@@ -2,6 +2,7 @@
 #ifdef FEATURE_PLUG_HOST
 
 #include "plug_host.h"
+#include "ff_seams.h"
 #include "plug_transport.h"
 #include "interruptsControl.h"
 #include "mtSequencer.h"
@@ -112,9 +113,9 @@ void AudioEffectPlug::update(void)
         Run& r = run_[k];
         if (!r.desc || r.tripped) continue;
         if (!prepared[k]) prepare(r, tr, haveTr);
-        const uint32_t t0 = *reinterpret_cast<volatile uint32_t*>(0xE0001004);   // DWT_CYCCNT
+        const uint32_t t0 = *ffhw::reg(0xE0001004);   // DWT_CYCCNT
         r.desc->process(r.inst, io, 2, AUDIO_BLOCK_SAMPLES);
-        r.last = *reinterpret_cast<volatile uint32_t*>(0xE0001004) - t0;
+        r.last = *ffhw::reg(0xE0001004) - t0;
         if (r.last > r.max) r.max = r.last;
         // watchdog: three blocks in a row over the budget and the slot bypasses itself until the next load
         r.over = r.last > r.budget ? uint8_t(r.over + 1) : 0;

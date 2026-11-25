@@ -146,9 +146,9 @@ AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateLoopBackwardNormal()
                         if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                         {
                             pitchControl += pitchSmoothingControl;
-                            if (pitchControl > notes[MAX_NOTE - 1])
+                            if (pitchControl > notes[keyLimit - 1])
                             {
-                                pitchControl = notes[MAX_NOTE - 1];
+                                pitchControl = notes[keyLimit - 1];
                                 pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                             }
                             else if (pitchControl < notes[MIN_NOTE])
@@ -373,9 +373,9 @@ AUDIO_CORE_RAM audio_block_t* AudioPlayMemory::updateLoopBackwardReverse()
                         if (pitchSmoothingControlCounter <= constrainsInSamples.pitchSmoothing)
                         {
                             pitchControl += pitchSmoothingControl;
-                            if (pitchControl > notes[MAX_NOTE - 1])
+                            if (pitchControl > notes[keyLimit - 1])
                             {
-                                pitchControl = notes[MAX_NOTE - 1];
+                                pitchControl = notes[keyLimit - 1];
                                 pitchSmoothingControlCounter = constrainsInSamples.pitchSmoothing;
                             }
                             else if (pitchControl < notes[MIN_NOTE])

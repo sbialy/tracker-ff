@@ -223,11 +223,23 @@ int serial5_set_cts(uint8_t pin)
 	return 1;
 }
 
+// MIDI out bytes dropped because the TX ring was full while the caller ran in an interrupt below the UART (the audio
+// interrupt). The audio interrupt must never wait for the wire: one byte is 320 us at 31,250 baud, a full 512 byte ring is
+// 164 ms. Read from a debugger or a console peek.
+volatile uint32_t serial5_tx_dropped = 0;
+// A byte of the current message was dropped: its remaining data bytes go too, so the receiver never pairs them with a
+// stale status (running status) and sees a cut message, which it discards at the next status byte.
+static volatile uint8_t tx_skip_message = 0;
+
 void serial5_putchar(uint32_t c)
 {
 	uint32_t head, n, irq_state;
 
 	if (!(SIM_SCGC1 & SIM_SCGC1_UART4)) return;
+	if (tx_skip_message) {
+		if (c < 0x80) { serial5_tx_dropped++; return; }
+		if (c < 0xF8) tx_skip_message = 0; // a new message starts, send it normally
+	}
 	if (transmit_pin) transmit_assert();
 	__asm__ volatile("mrs %0, primask\n\tcpsid i" : "=r"(irq_state)::"memory");
 	head = tx_buffer_head;
@@ -246,6 +258,11 @@ void serial5_putchar(uint32_t c)
 			}
 		} else if (priority >= 256) {
 			yield(); // wait
+		} else {
+			// an interrupt below the UART (the audio render): never spin here, drop the byte and count it
+			serial5_tx_dropped++;
+			if (c < 0xF8) tx_skip_message = 1; // part of a message lost: the data bytes behind it go too (clock bytes stand alone)
+			return;
 		}
 		__asm__ volatile("mrs %0, primask\n\tcpsid i" : "=r"(irq_state)::"memory");
 		head = tx_buffer_head;

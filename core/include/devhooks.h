@@ -21,6 +21,15 @@
 
 #define DEVHOOKS_API 4
 
+// The major above changes only when a hook changes its meaning. A hook added within a major is a capability bit below: a console tests the
+// bits of what it uses (devtools.mk checks the console's DEVTOOLS_NEEDS_CAPS against these), so a newer console builds with an older tree
+// that has every bit it needs, and the two repositories do not have to move in lockstep. Every API 4 tree has the first four.
+#define DEVHOOKS_CAP_BASE 0x01u      // TRACKER_INIT/UPDATE, LOG, KEYS, BUTTONS, ENCODER, DISPLAY, INTERFACE (hook set 1)
+#define DEVHOOKS_CAP_STALL 0x02u     // SITE, SPIN_BEGIN, SPIN_STEP (hook set 2)
+#define DEVHOOKS_CAP_USB_RESET 0x04u // USB_LINE_CODING, USB_SOF (hook set 3)
+#define DEVHOOKS_CAP_TRACE 0x08u     // TRACE (hook set 4)
+#define DEVHOOKS_CAPS 0x0F
+
 #define DEVHOOK_STR_(x) #x
 #define DEVHOOK_STR(x) DEVHOOK_STR_(x)
 

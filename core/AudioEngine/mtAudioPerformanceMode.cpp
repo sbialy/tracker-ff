@@ -199,7 +199,7 @@ void playerEngine::changePointsPerformanceMode(int32_t spValue, int32_t epValue)
         trackControlParameter[(int)controlType::performanceMode][(int)parameterList::startPoint] =
           1;
 
-    if (mtProject.instrument[currentInstrument_idx].playMode != playModeSingleShot)
+    if (!isSingleShotMode(mtProject.instrument[currentInstrument_idx].playMode))
     {
         startPoint += spValue;
         if (startPoint < SAMPLE_POINT_POS_MIN)
@@ -870,8 +870,8 @@ void playerEngine::endPointsPerformanceMode()
     else
         loopPoint2 = mtProject.instrument[currentInstrument_idx].loopPoint2;
 
-    if (trackControlParameter[(int)controlType::sequencerMode][(int)parameterList::loopPoint2] ||
-        trackControlParameter[(int)controlType::sequencerMode2][(int)parameterList::loopPoint2])
+    if (trackControlParameter[(int)controlType::sequencerMode][(int)parameterList::endPoint] ||
+        trackControlParameter[(int)controlType::sequencerMode2][(int)parameterList::endPoint])
         endPoint = currentSeqModValues.endPoint;
     else
         endPoint = mtProject.instrument[currentInstrument_idx].endPoint;

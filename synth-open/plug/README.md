@@ -342,7 +342,7 @@ their previews into one sheet.
 
 ### Paraphony (ABI 1.2, `PLUG_EXT_CHORD`)
 
-An engine with a `Chord Mode` (Poly, Para) and a `Chord` parameter (the 68 entries of `plug_chord.h`, the MIDI Chord FX table, an SDK
+An engine with a `Chord Mode` (Poly, Para) and a `Chord` parameter (the 77 entries of `plug_chord.h`, an engine of an older table of 68 to 76 entries is accepted too, the MIDI Chord FX table, an SDK
 contract) built with `PLUG_SYNTH_PLUGIN_CHORD` answers `query(PLUG_EXT_CHORD)`. The host then sends a MIDI Chord step on a Para patch as
 one note-on with the step's chord in `Chord` for that note-on, the engine latches it in `note_on`. Without the query nothing changes.
 An optional `Strum` parameter (`strum_param`, integer -63..63, 2 ms units, `PLUG_SYNTH_PLUGIN_CHORD_STRUM`) gets a Strum FX the same way.

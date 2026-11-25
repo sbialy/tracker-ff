@@ -61,6 +61,8 @@ void UsbMidiImpl::setReceiveActions(MidiReceiveActions* receiveActions)
     usbMIDI.setHandleSongPosition(receiveActions->songPosition);
     usbMIDI.setHandleControlChange(receiveActions->controlChange);
     usbMIDI.setHandlePitchChange(receiveActions->pitchBend);
+    usbMIDI.setHandleProgramChange(receiveActions->programChange);
+    usbMIDI.setHandleAfterTouchChannel(receiveActions->channelPressure);
 }
 
 bool UsbMidiImpl::takeBusLost()

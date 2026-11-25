@@ -13,9 +13,12 @@
 # DEVTOOLS_DIR defaults to devtools next to this checkout (../devtools). Without it a console build stops here with a
 # message. Default, release and stock builds never read this file's second half and need nothing from the console.
 # The checkout must implement the hook set of core/include/devhooks.h (DEVHOOKS_API): tracker-ff 1.3.0 goes with console tag rel-1.3.0 (DEVHOOKS_API 4).
+# Within a major the console names the capability bits it uses (DEVTOOLS_NEEDS_CAPS), checked against DEVHOOKS_CAPS of this tree.
 
 DEVTOOLS_TREE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 DEVHOOKS_API := $(shell sed -n 's/^\#define DEVHOOKS_API //p' $(DEVTOOLS_TREE)/core/include/devhooks.h)
+# the capability bits of this tree's hook set within the major (core/include/devhooks.h DEVHOOKS_CAPS)
+DEVHOOKS_CAPS := $(shell sed -n 's/^\#define DEVHOOKS_CAPS //p' $(DEVTOOLS_TREE)/core/include/devhooks.h)
 
 ifeq ($(DEVTOOLS_WANT),1)
 DEVTOOLS_DIR ?= $(abspath $(DEVTOOLS_TREE)/../devtools)
@@ -25,5 +28,12 @@ endif
 include $(DEVTOOLS_DIR)/firmware/devtools.mk
 ifneq ($(DEVTOOLS_API),$(DEVHOOKS_API))
 $(error the console at $(DEVTOOLS_DIR) implements hook set $(DEVTOOLS_API), this tree has $(DEVHOOKS_API) (core/include/devhooks.h). Check out the console tag that goes with this release)
+endif
+# A console that names the capabilities it uses (DEVTOOLS_NEEDS_CAPS) builds with any tree of the same major that has them all. A console
+# without the variable is from before the bits and is matched by the major alone, as before.
+ifneq ($(DEVTOOLS_NEEDS_CAPS),)
+ifneq ($(shell echo $$(( ($(DEVHOOKS_CAPS) & $(DEVTOOLS_NEEDS_CAPS)) == $(DEVTOOLS_NEEDS_CAPS) ))),1)
+$(error the console at $(DEVTOOLS_DIR) needs hook capabilities $(DEVTOOLS_NEEDS_CAPS), this tree has $(DEVHOOKS_CAPS) (core/include/devhooks.h DEVHOOKS_CAPS). Check out an older console or a newer tree)
+endif
 endif
 endif

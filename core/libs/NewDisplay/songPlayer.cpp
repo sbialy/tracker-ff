@@ -13,6 +13,12 @@
 #define MAX_BLOCKS_VISIBLE   32
 #define MAX_PATTERNS_VISIBLE 12
 
+// the screen column of a track: the hidden followers of linked stereo pairs take none
+static inline int songCol(uint16_t hidden, int track)
+{
+    return track - __builtin_popcount(hidden & ((1u << track) - 1u));
+}
+
 constexpr uint16_t blockWidth =
   ((TOTAL_BLOCKS_WIDTH - BLOCKS_MARGIN * 2) - ((kAllTracks - 1) * BLOCK_SPACING)) / kAllTracks;
 //--------------------------------------------------------------------------------
@@ -629,6 +635,7 @@ void cSongPlayer::drawTrackNames()
 
     for (int track = 0; track < allTracksCount; track++)
     {
+        if (controlData->hidden & (1u << track)) continue;
         if (track < controlData->normalTracksCount
               ? controlData->normalTracksMute[track]
               : controlData->midiTracksMute[track - controlData->normalTracksCount])
@@ -657,7 +664,7 @@ void cSongPlayer::drawTrackNames()
             API_CMD_SETMATRIX();
 
             uint8_t strPtr = 0;
-            int16_t x = posX + BLOCKS_MARGIN + ((blockWidth + BLOCK_SPACING) * track) +
+            int16_t x = posX + BLOCKS_MARGIN + ((blockWidth + BLOCK_SPACING) * songCol(controlData->hidden, track)) +
                         (blockWidth / 2) - (nameFont->height / 2);
             int16_t y = posY + 42;
             char* text =
@@ -665,6 +672,15 @@ void cSongPlayer::drawTrackNames()
                 ? controlData->normalTracksNames + (track * controlData->normalTracksNamesBuffLen)
                 : controlData->midiTracksNames + ((track - controlData->normalTracksCount) *
                                                   controlData->midiTracksNamesBuffLen);
+            char pairLabel[4];
+            if (track < 8 && (controlData->hidden & (2u << track)))
+            {   // the leader of a linked stereo pair is "1+2" / "3+4" / "5+6" / "7+8"
+                pairLabel[0] = char('1' + track);
+                pairLabel[1] = '+';
+                pairLabel[2] = char('2' + track);
+                pairLabel[3] = 0;
+                text = pairLabel;
+            }
             int16_t txtLen = strlen(text);
 
             API_BITMAP_HANDLE(nameFont->handle);
@@ -736,7 +752,8 @@ void cSongPlayer::fillBlocks()
 
         for (int track = 0; track < allTracksCount; track++)
         {
-            uint16_t localX = posX + BLOCKS_MARGIN + track * (blockWidth + BLOCK_SPACING);
+            if (controlData->hidden & (1u << track)) continue;
+            uint16_t localX = posX + BLOCKS_MARGIN + songCol(controlData->hidden, track) * (blockWidth + BLOCK_SPACING);
 
             if (!(data & (1 << track)))
             {
@@ -786,7 +803,8 @@ void cSongPlayer::fillPartBlocks()
         uint16_t localY = posY + row * (BLOCK_HEIGHT + BLOCK_SPACING) + 64;
         for (int track = 0; track < allTracksCount; track++)
         {
-            uint16_t localX = posX + BLOCKS_MARGIN + track * (blockWidth + BLOCK_SPACING);
+            if (controlData->hidden & (1u << track)) continue;
+            uint16_t localX = posX + BLOCKS_MARGIN + songCol(controlData->hidden, track) * (blockWidth + BLOCK_SPACING);
             const bool muted = track < controlData->normalTracksCount
                                  ? controlData->normalTracksMute[track]
                                  : controlData->midiTracksMute[track - controlData->normalTracksCount];
@@ -806,8 +824,8 @@ void cSongPlayer::fillPartBlocks()
         uint16_t localY = posY + row * (BLOCK_HEIGHT + BLOCK_SPACING) + 64;
         for (int track = 0; track < allTracksCount; track++)
         {
-            if (src[track] == 0) continue;
-            uint16_t localX = posX + BLOCKS_MARGIN + track * (blockWidth + BLOCK_SPACING);
+            if (src[track] == 0 || (controlData->hidden & (1u << track))) continue;
+            uint16_t localX = posX + BLOCKS_MARGIN + songCol(controlData->hidden, track) * (blockWidth + BLOCK_SPACING);
             API_CMD_NUMBER(localX + blockWidth / 2, localY + BLOCK_HEIGHT / 2, fonts[4].handle, OPT_CENTERX | OPT_CENTERY, src[track]);
         }
     }
@@ -845,11 +863,11 @@ void cSongPlayer::drawProgressLine()
 
             uint16_t localX, localY, localWidth;
             localX = posX + BLOCKS_MARGIN;
-            localWidth = (blockWidth + BLOCK_SPACING) * kAllTracks - BLOCK_SPACING;
+            localWidth = (blockWidth + BLOCK_SPACING) * (kAllTracks - __builtin_popcount(controlData->hidden)) - BLOCK_SPACING;
 
             if (controlData->progress.trackPreview < 8)
             {
-                localX += controlData->progress.trackPreview * (blockWidth + BLOCK_SPACING);
+                localX += songCol(controlData->hidden, controlData->progress.trackPreview) * (blockWidth + BLOCK_SPACING);
                 localWidth = blockWidth;
             }
 

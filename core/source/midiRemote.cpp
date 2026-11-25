@@ -1,4 +1,5 @@
-#ifdef FEATURE_EXT_HOOKS
+#include "feature_flags.h"
+#ifdef FEATURE_FEATURES
 
 #include "midiRemote.h"
 

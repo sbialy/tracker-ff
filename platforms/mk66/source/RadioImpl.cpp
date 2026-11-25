@@ -111,3 +111,10 @@ char* RadioImpl::getStationName()
 {
     return radioDriver.rds_data.nazwaStacji;
 }
+
+#ifdef FEATURE_RADIO_STEREO
+void RadioImpl::setStereo(bool stereo)
+{
+    radioDriver.setStereo(stereo);
+}
+#endif

@@ -5,8 +5,14 @@
 #include "mtKeyboardManager.h"
 #include "mtStructs.h"
 
+// the recorder's USB source: always on the Tracker+ (IMX), on the original with FEATURE_USB_AUDIO_IN (poly-stereo-io step 5, the
+// computer plays into the unit over the USB audio function, platforms/mk66/usbaudio)
+#if defined(PLATFORM_IMX) || (defined(FEATURE_USB_AUDIO_IN) && !defined(TRACKER_MINI))
+#define SREC_USB_SOURCE 1
+#endif
+
 #ifndef TRACKER_MINI
-#ifdef PLATFORM_IMX
+#ifdef SREC_USB_SOURCE
 const uint8_t sourceCount = 5;
 const char* const ptrSourcesNamesLabels[5] = {
     (char*)"Line in", (char*)"Radio", (char*)"Mic LG",
@@ -71,7 +77,7 @@ const strRecorderConfig defaultRecorderConfig = { .source = 0,
 
 struct strUndoCrop
 {
-    int16_t* address[SAMPLE_CHANNELS];
+    int16_t* address[kRecorderChannels];
     uint32_t length;
     uint16_t startPoint;
     uint16_t endPoint;
@@ -103,7 +109,7 @@ class cSampleRecorder : public ModuleBase
         //		openedInstrumentIndex = 0;
 
         radioRdsLabel = -1;
-        for (int channel = 0; channel < SAMPLE_CHANNELS; channel++)
+        for (int channel = 0; channel < kRecorderChannels; channel++)
         {
             spectrumControl[channel] = -1;
         }
@@ -144,6 +150,12 @@ class cSampleRecorder : public ModuleBase
     void changeZoom(int16_t value);
     void changeMonitorSelection(int16_t value, bool rollListOver = false);
     void changeSourceSelection(int16_t value, bool rollListOver = false);
+    // the sources this session offers: sourceCount, one less when the USB source (last in the list) is not available. USB audio
+    // in 8+3 mono is not offered by the USB function (the full speed periodic budget is spent by the 11 channel output, the mode
+    // is read at boot), so the recorder would record silence from it
+    static uint8_t availableSourceCount();
+    // a source stored in a project: out of the list now (a build or a mode without it) falls back to the default source
+    static uint8_t sourceFromProject(uint8_t stored);
 
     void activateAudioInputSource(uint8_t source);
 
@@ -211,6 +223,9 @@ class cSampleRecorder : public ModuleBase
     uint16_t calculateEndPointFromRecording();
     void resizeSpectrum();
     bool isChannelShown(int channel);
+#if (defined(FEATURE_STEREO_REC) || defined(FEATURE_RADIO_STEREO)) && !defined(PLATFORM_IMX)
+    bool isStereoTake(); // Line in or Radio, Line in channel Stereo and a stereo sample project (linked pairs)
+#endif
     void calculatePointsAfterRecording();
     bool isModuleSwitchingBlocked();
     void formatTimeSeconds(char* destBuffer, size_t destBufferSize, float value);
@@ -234,7 +249,7 @@ class cSampleRecorder : public ModuleBase
         sourceTypeRadio,
         sourceTypeMicLG, // = tracker mini mic
         sourceTypeMicHG,
-#ifdef PLATFORM_IMX
+#ifdef SREC_USB_SOURCE
         sourceTypeUsb,
 #endif
 #else
@@ -294,7 +309,7 @@ class cSampleRecorder : public ModuleBase
     strFrameData frameData;
 
     //*********************************************
-    hControl spectrumControl[SAMPLE_CHANNELS];
+    hControl spectrumControl[kRecorderChannels];
     hControl label[8];
     hControl frameControl;
     hControl sourceListControl;
@@ -343,11 +358,11 @@ class cSampleRecorder : public ModuleBase
     uint8_t playInProgressFlag = 0;
 
     strZoomParams zoom;
-    strSpectrumParams spectrumParams[SAMPLE_CHANNELS];
+    strSpectrumParams spectrumParams[kRecorderChannels];
 
     char zoomTextValue[7];
 
-    static strTrackerSpectrum spectrum[SAMPLE_CHANNELS];
+    static strTrackerSpectrum spectrum[kRecorderChannels];
     strTrackerPoints points;
 
     strLabelData doubleArrow[2];
@@ -426,7 +441,7 @@ class cSampleRecorder : public ModuleBase
 
     bool isMonitorListVisible()
     {
-#ifdef PLATFORM_IMX
+#ifdef SREC_USB_SOURCE
         return recorderConfig.source != sourceTypeUsb;
 #else
         return true;

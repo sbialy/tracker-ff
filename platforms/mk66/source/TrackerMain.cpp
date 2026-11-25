@@ -49,7 +49,13 @@ void updateInputBuffers(void* data)
 {
     if (trackerInstance != nullptr)
     {
+#ifdef FEATURE_USB_AUDIO_IN
+        // computer -> Tracker (the recorder's USB source): the block the ring holds, nullptr while the recorder does not listen
+        trackerInstance->updateInputAudioBuffers(
+          data, const_cast<int16_t*>(ffUsbAudioInBlock()), kAudioBlockSamples);
+#else
         trackerInstance->updateInputAudioBuffers(data, nullptr, kAudioBlockSamples);
+#endif
     }
 }
 

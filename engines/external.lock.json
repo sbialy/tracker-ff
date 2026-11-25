@@ -6,8 +6,8 @@
    "repo": "sbialy/tracker-engines-os",
    "visibility": "public",
    "kind": "synth",
-   "tag": "v1.4.0",
-   "tag_commit": "b6060d47db8b0b7e2ec52e457b0872ec70dd9440",
+   "tag": "v1.4.1",
+   "tag_commit": "247a034b76d12cebba4e2b00107c4b0b1d6585b3",
    "local_repo": "../poly-engines-os",
    "local_dirs": [
     "../poly-engines-os/build/engines-autof",
@@ -15,10 +15,10 @@
    ],
    "source_root": "src/synth-open/",
    "files": {
-    "ju6.plg": "474cd5b7a5335a5951abad669e73421a0b51d90d60b22dda3bd2c1e4687826d0",
+    "ju6.plg": "f683bf5c2fffdb5c6e52e91c283a92aefc852418f19aaf29038f5c678b2cf41a",
     "ju6.plgi": "d6044c0aec8e9c6cbb3d4a537c2a0c0d006c0ef35940f15615de081f2f4800e2",
-    "ju6.json": "5199f5a4f3bf99685ebac02e334fcfe9375b7430e4120e87f1f9d231e788c9da",
-    "ju6.wasm": "bd6022f42a3ccaae8d7a0c50c732e33c2485186a6a56d7c51edfa157c510d1d4",
+    "ju6.json": "f12dcd07de2c8386047b1f08c16d5267cfb501bd3ecb2674a22c15b326a32a1c",
+    "ju6.wasm": "347affefd813e5b7d52fd15c440e9ae9b8047a63b3254b79338f2f5a0d268c65",
     "fm4.plg": "da376cd8a4c37fd84f4c70be287b846f8066c977b16830a4008bad685838781e",
     "fm4.plgi": "9da7918f310b541a0ee7620459a716e7f3549e2391c0de13b6deda20b9dc0d0e",
     "fm4.json": "a438457ff5f4d75c62ae99c6591e92507f9da93ec4257fc82e2fb4c55a343791",
@@ -70,8 +70,8 @@
    "repo": "sbialy/tracker-engines",
    "visibility": "private",
    "kind": "synth",
-   "tag": "engines-v1.4.3",
-   "tag_commit": "41955dbf3e2d1ef919da9dc564b7761546778b9f",
+   "tag": "engines-v1.4.4",
+   "tag_commit": "21dd2b814d355059fa61ca36368b21c5b563e799",
    "local_repo": "../poly-engines",
    "local_dirs": [
     "../poly-engines/build/engines-autof",
@@ -87,10 +87,10 @@
     "pluck.plgi": "88978e6d1d8f7ef14a8b6c2a091ffb782bd18992aaeb1ae723074d81c650f19d",
     "pluck.json": "c6840a8c9bc67f2309071fb02d1f1ffcfc40616995d86a8dbc7263c8a5c2db5f",
     "pluck.wasm": "f4cfd3ce862016a04d67a956ba32261f5a75b93e003f5b8d0b550141efd4db62",
-    "alco.plg": "a1228a6ad842c0d00e8b4b0853869f2b2215e5898f292a61c372319c6c429d39",
+    "alco.plg": "5cc8c8efd57931a30b879d3144cdb96e9c069a1864b33355b784c89d06e21fcf",
     "alco.plgi": "b63f51b79047f8b33bb87e937126e367ec696022339c5ebabd540729ed1282af",
-    "alco.json": "6c3c085276569cbee46fd5334489343057e3a490fd2be0a9bddda13ed073c4bd",
-    "alco.wasm": "eaa1f2cec245d90ee15171413343a7c6de04fc3c98dacc03bb946be7b2330271"
+    "alco.json": "291b14aeb16d686cbe80052039ea33b46894e7ddcf18ea0165ddc89520adfb60",
+    "alco.wasm": "5e663caf71da2025595d952a680ad2ff66e63af5559f4ceba9931323258edc67"
    },
    "notice_files": {
     "LICENSE.md": "2010abecfc14cdfed96df0e118bb7236903ea1585211ebb55fcfd692ea1f95db",

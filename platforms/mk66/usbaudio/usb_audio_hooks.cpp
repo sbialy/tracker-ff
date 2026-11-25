@@ -9,6 +9,9 @@
 // The hooks usb_dev.c calls from the USB interrupt (FF_USB_AUDIO_TX in usb_desc.h). The transmit buffer
 // holds one packet per BDT (even, odd), both kept armed and refilled in place.
 #include "UsbAudioOut.h"
+#ifdef FEATURE_USB_AUDIO_IN
+#include "UsbAudioIn.h"
+#endif
 
 #include <cstring>
 
@@ -22,6 +25,9 @@
 #ifndef FF_USB_AUDIO_TX
 #error "FEATURE_USB_AUDIO needs the FF_USB_AUDIO_TX descriptor (usb_desc.h, USB_MIDI)"
 #endif
+#if defined(FEATURE_USB_AUDIO_IN) && !defined(FF_USB_AUDIO_RX)
+#error "FEATURE_USB_AUDIO_IN needs the FF_USB_AUDIO_RX descriptor (usb_desc.h)"
+#endif
 
 namespace
 {
@@ -33,6 +39,17 @@ __NOINIT(EXTERNAL_RAM) ff::usbaudio::UsbAudioOut g_out;
 ff::usbaudio::MultiDelay g_delay;
 bool s_delayLive; // g_delay holds the blocks just before this one
 volatile bool s_ready;
+#ifdef FEATURE_USB_AUDIO_IN
+// computer -> Tracker: the ring and the block the audio graph reads, in SDRAM (cleared by ffUsbAudioStart), filled only while the
+// recorder listens (s_inWanted)
+struct InSide
+{
+    ff::usbaudio::UsbAudioIn ring;
+    alignas(4) int16_t block[ff::usbaudio::kInBlockFrames * 2];
+};
+__NOINIT(EXTERNAL_RAM) InSide g_in;
+volatile bool s_inWanted;
+#endif
 bool s_multi; // this session streams 8+3 mono (set with s_ready)
 
 // DWT cycle stamps for the development console (`uac`): the block side (interleaveMulti, or the stereo copy) and the USB packet
@@ -83,6 +100,45 @@ unsigned int usb_audio_transmit_callback(uint16_t* buf)
     if (s_inBlock) s_cbIn += dt;
     return len;
 }
+
+#ifdef FEATURE_USB_AUDIO_IN
+// two BDT buffers (even, odd) of FF_AUDIO_RX_SIZE bytes: 360 B of SRAM
+uint16_t usb_audio_receive_buffer[2 * FF_AUDIO_RX_SIZE / 2] __attribute__((aligned(4)));
+uint8_t usb_audio_receive_setting;
+// the explicit feedback of the OUT endpoint (endpoint 11, 3 bytes 10.14 little endian): internal RAM, the USB controller reads it by
+// DMA, the audio block writes it (UsbAudioIn::feedbackStep). Nominal until the recorder listens.
+volatile uint32_t usb_audio_feedback __attribute__((aligned(4))) = ff::usbaudio::kFbNominal;
+
+// USB interrupt: one packet of stereo frames from the computer (4 B per frame)
+void usb_audio_receive_callback(const int16_t* buf, unsigned int bytes)
+{
+    if (s_ready && s_inWanted) g_in.ring.push(buf, bytes / 4);
+}
+
+void ffUsbAudioInWant(int on)
+{
+    if (!s_ready) return;
+    if (on && !s_inWanted) g_in.ring.restart();
+    s_inWanted = on != 0;
+    if (!on) usb_audio_feedback = ff::usbaudio::kFbNominal; // nobody reads the ring: the host keeps the nominal pace
+}
+
+const int16_t* ffUsbAudioInBlock(void)
+{
+    if (!s_ready || !s_inWanted) return nullptr;
+    return g_in.ring.pullBlock(g_in.block);
+}
+
+void ffUsbAudioInStats(uint32_t* s)
+{
+    s[0] = g_in.ring.fill();
+    s[1] = g_in.ring.packets();
+    s[2] = g_in.ring.overflows();
+    s[3] = g_in.ring.underruns();
+    s[4] = g_in.ring.repeats();
+    s[5] = g_in.ring.skips();
+}
+#endif
 
 int ffUsbAudioBootFlag(void)
 {
@@ -135,6 +191,10 @@ void ffUsbAudioStart(void)
 {
     if (!ff_usb_audio_on) return;
     memset(&g_out, 0, sizeof g_out);
+#ifdef FEATURE_USB_AUDIO_IN
+    memset(&g_in, 0, sizeof g_in);
+    g_in.ring.setFeedbackOut(&usb_audio_feedback);
+#endif
     g_out.setChannels(ff_usb_audio_channels);
     s_multi = ff_usb_audio_channels == FF_AUDIO_MULTI_CH;
     s_ready = true;

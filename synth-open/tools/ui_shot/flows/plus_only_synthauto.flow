@@ -1,0 +1,36 @@
+# IMX round 3: the Synth Automation page on Tracker+ (SynthAutomation.cpp on the stock synth parts, slots in core/AudioEngine/partAuto.h).
+# Instr held + Up x3 picks Synth 1, Params opens Synth Parameters 1/4, Params again Synth Macros 2/4, again Synth Automation 3/4. F3 puts the
+# frame on Type, Down turns slot 1 to an LFO on its first destination (Part Pan), the LFO runs with the audio callback (plus_flows.sh replays with
+# --wav), Delete on Type turns the slot Off again. The column values are drawn as second texts the
+# capture does not hold, the expects read the column labels (Shape and Speed show for an LFO only). Ends on the poke read (UISHOT_TRACE_PARTAUTO): slot 1 went LFO on Pan, the engine took the
+# Pan destination with moving values, and at the end the slot is Off, the store mask is 0 and Synth 1's Pan is back at its base
+title: Synth Automation page on Tracker+ (IMX round 3)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Instr
+wait 400ms
+tap Up x3
+wait 300ms
+release Instr
+wait 600ms
+tap Params
+wait 1200ms
+tap Params
+wait 1200ms
+tap Params
+wait 1500ms
+expect text "Synth Automation 3/4"
+expect text "Destination"
+tap F3
+wait 400ms
+tap Down
+wait 1500ms
+expect text "Shape"
+expect text "Speed"
+shot synthauto-lfo
+tap Delete
+wait 1200ms
+expect no-text "Shape"
+shot synthauto-off

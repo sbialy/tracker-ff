@@ -4,7 +4,7 @@
 // object is what the PLUG_EXT_STRUM host query hands to plugin engines. Plain constant initialisation: no static constructor.
 //
 // 0..100 percent, strum_ramp.h. A project without the setting plays with 0 (compat rule: it sounds as it did before the ramp existed),
-// a new project starts at kDefaultNewProject. Without the plugin host (no project.mtff) nothing can say 0, so such a build keeps the
+// a new project starts at kDefaultNewProject. Without the FF core (no project.mtff) nothing can say 0, so such a build keeps the
 // ramp at 100, as it was before the setting existed.
 #pragma once
 
@@ -14,7 +14,7 @@
 namespace strumramp
 {
 inline constexpr uint32_t kDefaultNewProject = 100;
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
 inline constexpr uint32_t kBootDepth = 0;
 #else
 inline constexpr uint32_t kBootDepth = 100;

@@ -2,8 +2,8 @@
 #define _MTCHORDSDEFS_H_
 
 const uint8_t MIN_CHORD = 0;
-const uint8_t MAX_CHORD = 67;
-const uint8_t CHORD_FOR_MAX = 15; // number of significant bits in chordDef
+const uint8_t MAX_CHORD = 76;
+const uint8_t CHORD_FOR_MAX = 16; // number of significant bits in chordDef
 
 // inline: one copy in the image, whatever number of files include this (mtChord.cpp checks it against plug_chord.h)
 inline constexpr uint16_t chordDef[] = {
@@ -75,6 +75,15 @@ inline constexpr uint16_t chordDef[] = {
     0b0000000011000101, // 65 sus4maj7, 1st inversion
     0b0000010000110001, // 66 sus4maj7, 2nd inversion
     0b0000000101000011, // 67 sus4maj7, 3rd inversion
+    0b0100000010001001, // 68 minor add9 (0 3 7 14)
+    0b0100000010010001, // 69 major add9 (0 4 7 14)
+    0b0100010000010001, // 70 9 (0 4 10 14)
+    0b0100010000001001, // 71 m9 (0 3 10 14)
+    0b0100100000010001, // 72 maj9 (0 4 11 14)
+    0b0100001000010001, // 73 6/9 (0 4 9 14)
+    0b1000010000010001, // 74 7#9 (0 4 10 15)
+    0b0010010000010001, // 75 7b9 (0 4 10 13)
+    0b0000010001010001, // 76 7b5 (0 4 6 10)
 };
 inline constexpr char chordDefName[MAX_CHORD + 1][4] = {
     "---", " 27", " 28", " 36", " 37", " 47", " 48", " 57", " 5A", " 5C", " 67", " 7C",
@@ -82,7 +91,7 @@ inline constexpr char chordDefName[MAX_CHORD + 1][4] = {
     "47B", "489", "48A", "48B", "57A", "57B", " 38", " 59", " 49", " 58", "459", "158",
     "358", "259", "368", "359", "269", " 39", " 69", " 6A", " 46", " 16", " 5B", "469",
     "258", "458", "148", "468", "248", "26A", "478", "348", "159", "257", "35A", "58A",
-    "357", "249", "59A", "457", "138", "267", "45A", "168",
+    "357", "249", "59A", "457", "138", "267", "45A", "168", "37E", "47E", "4AE", "3AE", "4BE", "49E", "4AF", "4AD", "46A",
 };
 
 // Short chord names for the 3 character grid cell (with the 2026-11-12 decisions: sus2 with a capital S,
@@ -94,7 +103,7 @@ inline constexpr char chordShortName[MAX_CHORD + 1][4] = {
     "^7 ", "mM1", "a7 ", "aM7", "7s4", "Ms4", "ma1", "ma2", "mi1", "mi2", "^72", "^73",
     "m72", "m73", "do1", "do2", "do3", "di1", "di2", "S+1", "S+2", "s#1", "s#2", "mb2",
     "mb3", "mM2", "mM3", "a71", "a72", "a73", "aM1", "aM2", "aM3", "257", "35A", "58A",
-    "357", "249", "59A", "457", "138", "267", "45A", "168",
+    "357", "249", "59A", "457", "138", "267", "45A", "168", "mad", "ad9", "do9", "m9 ", "^9 ", "6/9", "7#9", "7b9", "7b5",
 };
 
 #endif

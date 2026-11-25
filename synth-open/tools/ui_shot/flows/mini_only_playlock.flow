@@ -1,0 +1,49 @@
+# P8 / P9: the Play stop lock on the Mini. It has no Config key and no encoder: hold Menu, Right x3 + Down is the Config box (box 7),
+# releasing Menu opens Config, the Features row turns with tap Down. Back on the Pattern screen (Menu box 0) Play starts the pattern,
+# a second Play does NOT stop it, Shift + Play stops it.
+# plus_flows.sh reads the play state afterwards (UISHOT_TRACE_PLAY): the trace must be exactly "playing 1" then "playing 0".
+# Replay: plus_flows.sh mini
+title: Play stop lock on the Mini (P8)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Menu
+wait 400ms
+tap Right x3
+wait 200ms
+tap Down
+wait 300ms
+release Menu
+wait 1000ms
+tap Left x3
+wait 300ms
+tap Up x12
+wait 300ms
+use open-config-group group="Features"
+use seek-row text="Play stop lock"
+tap F8
+wait 500ms
+tap F8
+wait 500ms
+use expect-text text="On: Play does not stop a running song"
+tap Down
+wait 600ms
+tap F8
+wait 1500ms
+press Menu
+wait 400ms
+tap Up
+wait 200ms
+tap Left x3
+wait 300ms
+release Menu
+wait 1000ms
+use play wait=1500ms
+tap Play
+wait 1200ms
+expect no-text "0m:00s"
+shot locked-still-playing
+use shift-tap key=Play wait=1s
+expect text "0m:00s"
+shot stopped

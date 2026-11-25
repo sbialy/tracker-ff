@@ -87,6 +87,9 @@ void resetLoadStats();
 // Offline render (export): the governor is off and the cap is back at the budget.
 void setOffline(bool offline);
 
+// Stop with a New Note Action in use (ref/synth-nna-design.md D11): every synth part releases every gated voice.
+void releaseAllParts();
+
 // Project load: every synth voice is cut and the governor and load meter start fresh (cap back at
 // the budget, no hold-off). Call with audio interrupts disabled. No-op without a Synth.
 void resetOnProjectLoad();
@@ -141,6 +144,11 @@ inline bool waveFileRowHidden(const char* displayName, bool isEnum, float minVal
 // rendering, soft clipping and sending blocks of zeros. False for a part that does not exist.
 bool partIdle(int part);
 
+// Part destinations of the synth automation (open_mod.h ModKind::kPart): audio interrupt, once per block. Fills v[kModParts] (ModPart order:
+// pan, gain, reverb send, delay send) with the offset the slots add to the part's setting, in the audio engine's units (pan points, dB,
+// send percent), and returns the mask of the destinations that have a slot, bit n = ModPart n. 0: no part slot (v is not written).
+uint8_t partAuto(int part, float* v);
+
 // Paraphony (PLUG_EXT_CHORD, plug_abi.h). An engine with a Chord parameter (the MIDI Chord FX table, synth-open/plug/plug_chord.h) and
 // a Chord Mode parameter (0 Poly, 1 Para): the built-in ACD, or a plugin that answers the query (plug_synth.cpp checks the answer
 // at attach). -1 for an engine without them.
@@ -150,37 +158,54 @@ struct ChordParams
     int8_t chord = -1;
     int8_t mode = -1;
     int8_t strum = -1;   // the Strum parameter (signed units of kStrumUnitUs, + up, - down), -1: the engine plays chords unstrummed
+    uint8_t last = 255;  // the last chord value its Chord enum takes (67 for a plugin of the 68 entry table), a higher value is played as plain notes
 };
 ChordParams chordParamsOf(const EngineDef* def);
 ChordParams plugChordParams(const EngineDef* def);   // plug_synth.cpp: an attached plugin engine's answer
 // Sequencer (audio interrupt, or main thread with the same order): true when the part's patch is paraphonic, so a MIDI Chord step is
-// sent as ONE note-on. partNoteChord before that note-on puts the step's chord value (0..67) into the engine's Chord parameter
+// sent as ONE note-on. partNoteChord before that note-on puts the step's chord value (0..76) into the engine's Chord parameter
 // for the next note-on of `note` on the part only, a Strum FX (strum != 0, units of 2 ms, + up, - down) into its Strum
 // parameter when the engine has one. False / no-op without a Synth or for a part that does not exist.
-bool partChordPara(int part);
+bool partChordPara(int part, uint8_t chord = 0);   // false too when chord is past the engine's Chord enum (ChordParams::last)
 void partNoteChord(int part, uint8_t note, uint8_t chord, int8_t strum = 0);
 // Pitch bend range of a part in semitones for a full deflection (+-8192) of the bend message, 0..24, default 1 (the Micro-tune FX
 // reads in cents at 1). The Synth play page sets it while it is open and sets 1 again at exit. Main thread, a plain float store,
 // the audio callback reads it with the next bend message. No-op for a part that does not exist.
 void partBendRange(int part, float semitones);
+// MPE in (Synth play page, lower zone, ref/mpe-in-p1.md). mpeNote(chan) right before the send of a note-on or note-off of a member channel 2..16 and
+// mpeNote(0) right after (the same call chain, like noteTag): the voice remembers the channel, a note-off with a channel releases only that channel's
+// voice. partMpe: the member bend range in semitones for a full deflection (0..96) and the pressure amount 0..1 (0: pressure does nothing). partNoteBend:
+// the raw 14 bit bend -8192..8191 of member channel `chan` (its voices and the next note on it). partNotePress: the pressure 0..127 of a member
+// channel's key that is down, chan 1 (the master) puts it on every voice of the part. A level of 127 is no change, 0 is 1 - amount. Audio callback or
+// main thread (plain stores), no-ops for a part that does not exist.
+void mpeNote(uint8_t chan);
+void partMpe(int part, float memberRange, float pressAmount);
+void partNoteBend(int part, uint8_t chan, int raw);
+void partNotePress(int part, uint8_t chan, uint8_t press);
 // Synth play page, A/B morph: the gain 0..1 of a part's voices (a factor on the voice gain target, so it ramps over the block like every
 // other gain change and the part's sends follow it). The page sets it on both parts and puts 1 back at exit. A plain float store, any
 // thread. No-op for a part that does not exist.
 void partGain(int part, float gain);
 // Voices of the part that sound (on and not fading), for the page's voice line. 0 for a part that does not exist.
 int partSounding(int part);
+// True while a voice of the part is on, a releasing one included (no side effect, unlike partIdle). Tables: a live note's table ends when
+// the part has gone silent. False for a part that does not exist.
+bool partActive(int part);
 // Note ids. The sequencer gives every note it sends a number (1..65535) and calls noteTag(id) right before the send of the note-on and the
 // note-off of that note and noteTag(0) right after it (the same call chain, so the synth parts see the id in onMidi). A voice remembers the id of
 // the note that started it, and a note-off that carries an id releases only the voice with that id and pitch (before: every gated voice of the
 // pitch, so two live notes of one pitch from two tracks ended together). Id 0 is "no id": the pad, MIDI in and the record path send notes
 // that way, their note-offs match by pitch alone and release any voice of the pitch, as before. Same thread as the sends that follow.
-void noteTag(uint16_t id);
+void noteTag(uint16_t id, uint8_t endMode = 0);
 
 // Audio callback (Sequencer::tick, before the synth renders): the Tape Stop (start = false) and Tape Start (start = true) step FX
 // (core/source/tapeFx.h). The part's voices run down to a standstill or spin up from one over `frames` audio frames: pitch and level
 // follow the tape speed. A note-on that comes with the FX (same step, this or the next block) is part of the run, any other note-on
 // puts the speed back to normal. Nothing sounds and no note comes: the request is dropped after three idle blocks. No allocation.
 void partTape(int part, bool start, uint32_t frames);
+// The row of a table (core/source/tables.h) on the part: transpose in semitones on every voice's bend, gain 0..1 on every voice's level.
+// (0, 1) is no table. Audio callback, before the part renders
+void partTable(int part, int semis, float gain);
 
 // Patch slots and the Patch step FX. Per part, 16 slots in the project: slot 0 is <P>.patch (what stock firmware opens),
 // slot n > 0 is <P>-n.patch, both in Workspace/ and in the project folder. The part's live Patch is the slot that is open in

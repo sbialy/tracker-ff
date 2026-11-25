@@ -1,0 +1,37 @@
+# P12 round 7: the Synth play page on the Tracker Mini (no Perform key, no pads). Menu box 12 ("Synth Play", Up then Left from the Pattern box)
+# opens the page the way Shift + Perform does on Tracker+, Middle held plays C4 through the page's router and lets go of it, a second press holds
+# it for the shot, the release ends it. Menu on the page shows the popup on the Synth Play box, Right and Up x2 go to the Pattern box, the
+# release leaves the page. plus_flows.sh reads the page state afterwards (UISHOT_TRACE_SPLAY): open with mode 5 and only part A voiced,
+# a held C4 cell, then none, and the last line closed with the MIDI in mode back.
+# Replay: plus_flows.sh mini
+title: Synth play page on the Mini (P12)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Menu
+wait 400ms
+tap Up
+wait 300ms
+tap Left
+wait 300ms
+shot menubox
+release Menu
+wait 1200ms
+expect text "Synth A"
+expect text "Bank A"
+hold Mid 600ms
+wait 400ms
+press Mid
+wait 500ms
+shot splay
+release Mid
+wait 500ms
+press Menu
+wait 400ms
+tap Right
+wait 300ms
+tap Up x2
+wait 300ms
+release Menu
+wait 1200ms

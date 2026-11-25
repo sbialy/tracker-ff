@@ -20,7 +20,7 @@ bool mtEffectCompresor::startProcess()
 
     length = confirmed[0].selection.length;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         channelParams[channel].srcAddr = confirmed[channel].selection.addr;
         channelParams[channel].dstAddr = processed[channel].selection.addr;
@@ -54,7 +54,7 @@ int32_t mtEffectCompresor::processBlock()
         state = false;
     }
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         for (int idx = 0; idx < processedBlockLength; idx++)
         {
@@ -96,7 +96,7 @@ int32_t mtEffectCompresor::processBlock()
     processedSamples += processedBlockLength;
     if (!state)
     {
-        for (int channel = 0; channel < kChannels; channel++)
+        for (int channel = 0; channel < nChannels(); channel++)
         {
             processed[channel].selection.length = processedSamples; // redundancy
             processed[channel].area.length =

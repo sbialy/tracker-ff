@@ -2,14 +2,17 @@
 #include "Profiler.h"
 #include "TrackerImpl.h"
 #include "devhooks.h"
-#ifdef FEATURE_EXT_HOOKS
+#include "ff_hooks.h"
+#include "feature_flags.h"
+#if defined(FEATURE_FEATURES) && !defined(FEATURE_EXT_HOOKS)
 #include "features.h"
-#include "skipback_ui.h"
 #endif
-#include "synthPlayRec.h"
 #include "mtWavetableEnvelopes.h"
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
+#if defined(PLATFORM_IMX) && (defined(FEATURE_EXT_IMX) || defined(UISHOT_EXT_IMX))
+#include "ext_imx.h"
+#if defined(EXT_IMX)
+#include "ext_abi.h"   // EXT_SLOT_BYTES
+#endif
 #endif
 #include "core/interface.h"
 #include "elapsedMillis.h"
@@ -35,6 +38,24 @@ __attribute__((section(".scratch_memory"), aligned(32), used)) uint8_t externalR
 // clang-format on
 int16_t* externalRamEffectsBuff = externalRamSampleMemory + (EDIT_BUFF_OFFSET / 2);
 int16_t* externalRamSampleMemoryBegin = externalRamSampleMemory;
+
+#if defined(EXT_IMX)
+uint32_t samplePoolBytes = SAMPLE_MEMORY_SIZE;   // mtStructs.h SAMPLE_POOL_BYTES
+
+// Develop mode on Tracker+ / Mini (user decision 2026-11-20): the extension module slot borrows the sample pool's last EXT_SLOT_BYTES
+// for this session only, so the image pays 0 B of static SDRAM for it. Before any project load: the pool limit, the runtime bound of
+// every write into the pool and the edit buffers (which end at the pool end) all move down by the borrowed bytes.
+static uint8_t* borrowExtSlot()
+{
+    const uintptr_t pool = reinterpret_cast<uintptr_t>(externalRamSampleMemory);
+    const uintptr_t slot = (pool + SAMPLE_MEMORY_SIZE - EXT_SLOT_BYTES) & ~uintptr_t(31);   // 32 B aligned (an M7 D-cache line)
+    const uint32_t cut = uint32_t(pool + SAMPLE_MEMORY_SIZE - slot);
+    samplePoolBytes = SAMPLE_MEMORY_SIZE - cut;
+    mtProject.max_memory = samplePoolBytes;
+    externalRamEffectsBuff -= cut / 2;
+    return reinterpret_cast<uint8_t*>(slot);
+}
+#endif
 
 //--------------------------------------------------------------------------------------------------------------
 static TrackerImpl instance;
@@ -121,10 +142,7 @@ void TrackerImpl::init(Platform* platform)
     platform->setPowerButtonCallback(onPowerButtonChange);
     platform->getFileSystem()->setMountEventCallback(onSDCardSlotChange);
 
-#ifdef FEATURE_PLUG_HOST
-    // the synth engine plugins: installed into the FlexNVM bank and added to the engine list before the synth starts
-    plug::synthBoot(platform->getFileSystem());
-#endif
+    ffHookBootBeforeSynth(platform);
 #ifdef FEATURE_SYNTH
     synth.init(platform, [this]() { return sequencer.getCurrentTempo(); });
 
@@ -167,6 +185,9 @@ void TrackerImpl::init(Platform* platform)
     const bool extLoad = interfaceGlobals.devMode && (!features::on(develop) || features::value(develop, 0) != 0);
 #else
     interfaceGlobals.devMode = platform->getFileSystem()->exists("/.develop");
+#ifdef FEATURE_FEATURES
+    features::boot(platform);   // Config > Features on Tracker+ and Mini: MIDI remote, Play stop lock, Chord names (no module, no restart mode)
+#endif
 #endif
     lowPower.initRestartMode();
 #ifdef FEATURE_EXT_HOOKS
@@ -183,14 +204,16 @@ void TrackerImpl::init(Platform* platform)
         }
     }
 #endif
-#ifdef FEATURE_PLUG_HOST
-    plug::boot(platform);
-#endif
+    ffHookBootLate(platform);
 
 #ifdef FEATURE_EXT_HOOKS
     DEVHOOK_TRACKER_INIT(platform, extLoad);
 #else
     DEVHOOK_TRACKER_INIT(platform, interfaceGlobals.devMode);
+#endif
+#if defined(EXT_IMX)
+    // Tracker+ / Mini: the extension module loader (synth-open/ext_imx.cpp), its slot borrowed from the sample pool in develop mode only
+    ext_imx_boot(platform, interfaceGlobals.devMode ? borrowExtSlot() : nullptr);
 #endif
 
 #if defined(PLATFORM_IMX) && defined(ENABLE_DEV_CONSOLE)
@@ -223,18 +246,13 @@ void TrackerImpl::update()
     {
         return; // the shutdown ended in this pass (interrupts off, SDRAM unpowered on the original)
     }
-#ifdef FEATURE_PLUG_HOST
-    plug::tick();
-    synthModelTick(); // SynthEditor.cpp: the model list rested on a plugin engine that is not installed
-    synthViewTick();  // SynthPatchEditor.cpp: the cycle view of a plugin engine (ABI 1.2 plug_ext_synth.view)
-#endif
+    ffHookMainLoopEarly();
+    midiUiUpdate();
     engine.updateSdStream();
     sequencer.update();
-#ifdef FEATURE_EXT_HOOKS
-    features::tick();
-#endif
-#ifdef FEATURE_SKIPBACK
-    skipback::uiTick(); // Skip-back: the next card chunk of a running save
+    ffHookMainLoopLate();
+#if defined(EXT_IMX)
+    ext_imx_update();
 #endif
     DEVHOOK_TRACKER_UPDATE();
 }
@@ -267,20 +285,7 @@ void TrackerImpl::updateAudioBuffers(void* left, void* right, int length)
     engine.update();
 
     engine.updateAudioBuffers(left, right, length);
-#ifdef FEATURE_SKIPBACK
-    // Skip-back: the block the codec gets into the SDRAM ring (returns at the first test while the feature is off)
-    if (length == int(skipback::kBlockFrames))
-    {
-        skipback::block(static_cast<const int16_t*>(left), static_cast<const int16_t*>(right));
-    }
-#endif
-#ifdef FEATURE_SYNTH_REC
-    // Synth play page REC: the same block as a mono take into the free tail of the sample memory (returns at the first test while idle)
-    if (length == int(synthplayrec::kBlockFrames))
-    {
-        synthplayrec::block(static_cast<const int16_t*>(left), static_cast<const int16_t*>(right));
-    }
-#endif
+    ffHookAudioBlockOut(left, right, length);
     Profiler::getInstance()->stopMeasuringAudio();
 }
 

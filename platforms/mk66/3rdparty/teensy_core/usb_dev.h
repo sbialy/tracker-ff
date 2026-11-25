@@ -120,6 +120,16 @@ extern void usb_touchscreen_update_callback(void);
 extern uint16_t usb_audio_transmit_buffer[];
 extern uint8_t usb_audio_transmit_setting;
 extern unsigned int usb_audio_transmit_callback(uint16_t *buf);
+#ifdef FF_USB_AUDIO_RX
+// FEATURE_USB_AUDIO_IN: the OUT endpoint (the computer plays into the Tracker). Two BDT buffers of FF_AUDIO_RX_SIZE B each.
+extern uint16_t usb_audio_receive_buffer[];
+extern uint8_t usb_audio_receive_setting;
+extern void usb_audio_receive_callback(const int16_t *buf, unsigned int bytes);
+// the explicit feedback the IN endpoint FF_AUDIO_FB_ENDPOINT sends (10.14 frames per ms, 3 bytes)
+extern volatile uint32_t usb_audio_feedback;
+// 1 while the OUT interface is served (stereo mode): 8+3 mono leaves it out (the full speed periodic budget, usb_desc.c)
+extern uint8_t ff_usb_audio_in;
+#endif
 // boot-time switch (usb_desc.c): the audio function is described and served only while ff_usb_audio_on is 1
 extern uint8_t ff_usb_audio_on;
 // channels of this session's stream: 2 (stereo) or FF_AUDIO_MULTI_CH (8+3 mono), 0 while off. Bytes per frame = 2 x channels

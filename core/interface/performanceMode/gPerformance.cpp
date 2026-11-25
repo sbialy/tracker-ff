@@ -1,12 +1,15 @@
 #include "mtSequencer.h"
 #include "performanceEngine.h"
 #include "performanceMode.h"
+#include "stereoPairs.h"
 
 static char* getPerfTrackName(uint8_t track)
 {
     if (isSampleTrack(track))
     {
         mtProject.values.TrackNames[track][7] = 0;
+        if (stereopairs::isLeader(track))
+            return (char*)stereopairs::label(track >> 1);   // a linked pair is one button
         return &mtProject.values.TrackNames[track][0];
     }
     else

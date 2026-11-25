@@ -484,6 +484,8 @@ constexpr Theme themeAnniversary=
     .moreButtonColors =                  { active_text,   grey_X32,      active_text,      grey_X32},
 };
 
-Theme themeCustom = themeDefault;
+// Zero filled (.bss), not a copy of themeDefault in .data: it is only written by setCustomTheme and parseThemeJson (which starts from
+// themeDefault) before the display points at it, so the initial value was 1,124 B of flash nobody read
+Theme themeCustom{};
 
 // clang-format on

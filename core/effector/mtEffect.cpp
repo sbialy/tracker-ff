@@ -20,7 +20,7 @@ void mtEffect::switchToThisEffect(mtEffect* lastEffect)
 {
     lastEffect->applyParams.isProcessedData = 0;
     memcpy(&this->processing, &lastEffect->processing, sizeof(this->processing));
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
         memcpy(&this->processed[idx], &lastEffect->processed[idx], sizeof(this->processed[idx]));
         memcpy(&this->confirmed[idx], &lastEffect->confirmed[idx], sizeof(this->confirmed[idx]));
@@ -35,7 +35,7 @@ void mtEffect::switchToThisEffect(mtEffect* lastEffect)
 
 void mtEffect::setBaseSampleLength(uint32_t val)
 {
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
         confirmed[idx].area.length = val;
         confirmed[idx].selection.length = val;
@@ -43,7 +43,8 @@ void mtEffect::setBaseSampleLength(uint32_t val)
 }
 mtEffect::LoadingResult mtEffect::startLoad(uint8_t instr_idx)
 {
-    if (mtProject.instrument[instr_idx].sample.length > EDIT_BUFF_SIZE / 2)
+    selectEditChannels(instr_idx);
+    if (mtProject.instrument[instr_idx].sample.length > maxFrames())
         return LoadingResult::instrumentIsTooLong;
     if (!mtProject.instrument[instr_idx].isActive)
         return LoadingResult::instrumentIsNotActive;
@@ -53,11 +54,10 @@ mtEffect::LoadingResult mtEffect::startLoad(uint8_t instr_idx)
 
     operationType = OperationType::operationTypeLoading;
 
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
-        int16_t* confirmedBuffer = externalRamEffectsBuff + idx * EDIT_BUFF_SIZE;
-        int16_t* processedBuffer =
-          externalRamEffectsBuff + idx * EDIT_BUFF_SIZE + EDIT_BUFF_SIZE / 2;
+        int16_t* confirmedBuffer = confirmedBuf(idx);
+        int16_t* processedBuffer = processedBuf(idx);
 
         uint32_t selectOffset = (confirmed[idx].selection.addr >= confirmed[idx].area.addr)
           ? (uint32_t)(confirmed[idx].selection.addr - confirmed[idx].area.addr)
@@ -76,7 +76,7 @@ mtEffect::LoadingResult mtEffect::startLoad(uint8_t instr_idx)
     loadingParams.processingParams.maxProgressValue = mtProject.instrument[instr_idx].sample.length;
     loadingParams.processingParams.state = 1;
 
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
         confirmed[idx].area.length = mtProject.instrument[instr_idx].sample.length;
         confirmed[idx].selection.length = mtProject.instrument[instr_idx].sample.length;
@@ -84,7 +84,7 @@ mtEffect::LoadingResult mtEffect::startLoad(uint8_t instr_idx)
 
     int16_t* bufferWithoutOverlapWithEditorAreas[kChannels] = {};
 
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
         int16_t* src = mtProject.sampleMemory[instr_idx].address[idx];
         int16_t* dst = confirmed[idx].area.addr;
@@ -116,7 +116,7 @@ mtEffect::LoadingResult mtEffect::startLoad(uint8_t instr_idx)
             if (overlap)
             {
                 bufferWithoutOverlapWithEditorAreas[idx] =
-                  externalRamSampleMemoryBegin + EDIT_BUFF_SIZE * idx;
+                  externalRamSampleMemoryBegin + bufStride() * idx;
 
                 memmove(
                   bufferWithoutOverlapWithEditorAreas[idx],
@@ -138,7 +138,7 @@ void mtEffect::updateLoading()
 
     int32_t blockSize = 0;
 
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
         blockSize = dataCopyier[idx]->update();
     }
@@ -180,11 +180,10 @@ void mtEffect::clearLoadedData()
     processing.isLoadedData = false;
     loadingParams.preloadPoints.a = 0;
     loadingParams.preloadPoints.b = 65535;
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
-        int16_t* confirmedBuffer = externalRamEffectsBuff + idx * EDIT_BUFF_SIZE;
-        int16_t* processedBuffer =
-          externalRamEffectsBuff + idx * EDIT_BUFF_SIZE + EDIT_BUFF_SIZE / 2;
+        int16_t* confirmedBuffer = confirmedBuf(idx);
+        int16_t* processedBuffer = processedBuf(idx);
 
         confirmed[idx].area.addr = confirmedBuffer;
         confirmed[idx].selection.addr = confirmedBuffer;
@@ -203,7 +202,7 @@ void mtEffect::apply()
         return;
     }
 
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
         strMemoryAreaWithSelection tmp = processed[idx];
         processed[idx] = confirmed[idx];
@@ -221,7 +220,7 @@ void mtEffect::undo()
     if (!undoParams.isEnable)
         return;
 
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
         strMemoryAreaWithSelection tmp = processed[idx];
         processed[idx] = confirmed[idx];
@@ -261,11 +260,11 @@ bool mtEffect::processSelection()
     if (expectedSelectLen == 0)
         return false;
 
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
         if (processingWithoutCopying)
         {
-            if (expectedSelectLen > EDIT_BUFF_SIZE / 2)
+            if (expectedSelectLen > maxFrames())
                 return false;
 
             processed[idx].selection.addr = processed[idx].area.addr;
@@ -276,7 +275,7 @@ bool mtEffect::processSelection()
         {
             int32_t dif = expectedSelectLen - confirmed[idx].selection.length;
 
-            if (confirmed[idx].area.length + dif > EDIT_BUFF_SIZE / 2)
+            if (confirmed[idx].area.length + dif > maxFrames())
                 return false;
 
             processed[idx].selection.addr =
@@ -331,7 +330,7 @@ void mtEffect::updateProcessingSelection()
                 }
                 else
                 {
-                    for (uint32_t idx = 0; idx < kChannels; idx++)
+                    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
                     {
                         dataCopyier[idx]->start(
                           confirmed[idx].area.addr,
@@ -358,7 +357,7 @@ void mtEffect::updateProcessingSelection()
                 }
                 else
                 {
-                    for (uint32_t idx = 0; idx < kChannels; idx++)
+                    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
                     {
                         dataCopyier[idx]->start(
                           (int16_t*)(confirmed[idx].selection.addr +
@@ -413,7 +412,7 @@ void mtEffect::updateProcessing()
 void mtEffect::updateCopying()
 {
     int32_t blockSize = 0;
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
         blockSize = dataCopyier[idx]->update();
     }
@@ -455,7 +454,7 @@ uint32_t mtEffect::getExpectedProcessedSampleLength()
 //***********PREVIEW GETTERS
 int16_t* mtEffect::getSampleAddresToPreview(Channel channel)
 {
-    if (channel >= kChannels)
+    if (channel >= nChannels())
     {
         return processed[0].selection.addr;
     }
@@ -470,7 +469,7 @@ uint32_t mtEffect::getSampleLengthToPreview()
 //***********PLAY GETTERS
 int16_t* mtEffect::getAddresToPolyphonicPlay(Channel channel)
 {
-    if (channel >= kChannels)
+    if (channel >= nChannels())
     {
         return confirmed[0].area.addr;
     }
@@ -499,7 +498,7 @@ void mtEffect::changeSelectionRange(uint16_t a, uint16_t b)
     length = (uint32_t)((uint32_t)b * (float)(confirmed[0].area.length) / MAX_16BIT);
     addressShift = (uint32_t)((uint32_t)a * (float)(confirmed[0].area.length) / MAX_16BIT);
 
-    for (uint32_t idx = 0; idx < kChannels; idx++)
+    for (uint32_t idx = 0; idx < (uint32_t)nChannels(); idx++)
     {
         confirmed[idx].selection.addr = confirmed[idx].area.addr + addressShift;
         confirmed[idx].selection.length = length - addressShift;

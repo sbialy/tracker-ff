@@ -51,6 +51,8 @@ class AudioAmplifier : public AudioStream
         previousMultiplier = multiplier;
         multiplier = gain * kUnityGain;
     }
+    // the gain as set, kUnityGain = 1.0 (host tests: the level a voice has after its amplifier)
+    int32_t gainMultiplier() const { return multiplier; }
 
   private:
     int32_t multiplier;

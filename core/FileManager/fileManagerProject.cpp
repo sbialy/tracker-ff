@@ -1,7 +1,5 @@
 #include "fileManagerDefs.h"
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
-#endif
+#include "ff_hooks.h"
 #include "mtStructs.h"
 
 #include "fileManager.h"
@@ -69,6 +67,11 @@ void cFileManager::saveProjectFileToWorkspace()
 bool cFileManager::loadProjectFileFormFileStruct(strMtProject* project, strProjectFile* pFile)
 {
     if (pFile->projectDataAndHeader.projectHeader.type != fileTypeProject)
+        return false;
+
+    // Structure versions start at 1. translateProject() calls one function per version
+    // from a table whose first entry belongs to version 1.
+    if (pFile->projectDataAndHeader.projectHeader.fileStructureVersion[0] == 0)
         return false;
 
     uint16_t projectFileSize = pFile->projectDataAndHeader.projectHeader.size;
@@ -155,9 +158,7 @@ bool cFileManager::loadProjectFileFormFileStruct(strMtProject* project, strProje
         projectPatchfromProjectFile[PATCH_SIZE - PROJECT_NAME_SIZE - 1] = 0;
     }
 
-#ifdef FEATURE_PLUG_HOST
-    plug::projectStamp(storedCRC, projectFileSize); // project.mtff compares it with the stamp it was written with
-#endif
+    ffHookProjectStamp(storedCRC, projectFileSize); // project.mtff compares it with the stamp it was written with
     memcpy(&project->song, &pFile->projectDataAndHeader.project.song, sizeof(strSong));
     memcpy(&project->values, &pFile->projectDataAndHeader.project.values, sizeof(strMtValues));
     //*proj=pFile.projectDataAndHeader.project;
@@ -170,7 +171,10 @@ bool cFileManager::writeProjectFileToFileStruct(strMtProject* project, strProjec
     memcpy(&pFile->projectDataAndHeader.project.song, &project->song, sizeof(strSong));
     memcpy(&pFile->projectDataAndHeader.project.values, &project->values, sizeof(strMtValues));
     strcpy(pFile->projectDataAndHeader.project.projectName, currentProjectName);
-    strcpy(pFile->projectDataAndHeader.project.projectPath, currentProjectPatch);
+    // The path of the open project can be longer than its field in the project file.
+    strncpy(pFile->projectDataAndHeader.project.projectPath,
+            currentProjectPatch,
+            PATCH_SIZE - PROJECT_NAME_SIZE - 1);
     pFile->projectDataAndHeader.project.projectName[PROJECT_NAME_SIZE - 1] = 0;
     pFile->projectDataAndHeader.project.projectPath[PATCH_SIZE - PROJECT_NAME_SIZE - 1] = 0;
 
@@ -193,9 +197,7 @@ bool cFileManager::writeProjectFileToFileStruct(strMtProject* project, strProjec
 
     pFile->crc = crcCalculator->calculate32bitCrc((uint8_t*)&pFile->projectDataAndHeader,
                                                   sizeof(pFile->projectDataAndHeader));
-#ifdef FEATURE_PLUG_HOST
-    plug::projectStamp(pFile->crc, sizeof(strProjectFile)); // the project.mt this buffer becomes (project.mtff stamp)
-#endif
+    ffHookProjectStamp(pFile->crc, sizeof(strProjectFile)); // the project.mt this buffer becomes (project.mtff stamp)
 
     return true;
 }
@@ -220,7 +222,7 @@ void cFileManager::getDefaultProject(struct strMtProject* source)
 {
     source->instruments_count = 0;
     source->patterns_count = 0;
-    source->max_memory = SAMPLE_MEMORY_SIZE;
+    source->max_memory = SAMPLE_POOL_BYTES;
     source->used_memory = 0;
 
     for (uint32_t i = 0; i < kSampleInstrumentsCount; i++)
@@ -429,7 +431,9 @@ void cFileManager::getCurrentProjectPathWithName(char* path, int maxLen)
     }
 }
 
-bool cFileManager::createCurrentProjectFolderTree()
+// noinline on the functions with a 500 B or larger frame: with FW_LTO=ui the optimiser inlined them into callers that then kept the frame
+// while they called the next big one (ProjectSave::saveProjectInit 296 B -> 568 B, main loop +312 B at the stack-margin gate)
+__attribute__((noinline)) bool cFileManager::createCurrentProjectFolderTree()
 {
     char fullProjectPath[PATCH_SIZE];
     getCurrentProjectPathWithName(fullProjectPath, PATCH_SIZE);
@@ -667,7 +671,7 @@ bool cFileManager::validateRecentListFile()
     return correct;
 }
 
-bool cFileManager::openRecentProject(int indexOnRecentList)
+__attribute__((noinline)) bool cFileManager::openRecentProject(int indexOnRecentList)
 {
     assert(indexOnRecentList >= 0 && indexOnRecentList < kRecentProjectListLength);
 

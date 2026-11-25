@@ -2742,6 +2742,7 @@ void playerEngine::clearFxAmpRateLFO()
 
 void playerEngine::syncFxAmpLFO()
 {
+    const uint32_t ampPairSeed = (pairFollower != nullptr) ? (timer->micros() | 1u) : 0u; // one seed for L and R of a linked pair
     for (int channel = 0; channel < (int)playMemPtr.size(); channel++)
     {
         playMemPtr[channel]->envelopeNoteOff();
@@ -2750,6 +2751,7 @@ void playerEngine::syncFxAmpLFO()
           (mtProject.instrument[currentInstrument_idx].envelope[envAmp].loop == 1) &&
           (mtProject.instrument[currentInstrument_idx].lfo[envAmp].shape == lfoShapeRandom);
         playMemPtr[channel]->envelopeSetIsRandom(isAmpRandom);
+        playMemPtr[channel]->envelopeSetPairSeed(isAmpRandom ? ampPairSeed : 0u);
         playMemPtr[channel]->envelopeNoteOn(currentInstrument_idx, currentNote);
     }
 }

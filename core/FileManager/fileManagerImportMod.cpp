@@ -205,7 +205,7 @@ void cFileManager::importModFile_Init()
     modFileData.patternsMax = 1;
 
     modFile_sample_ptr = externalRamSampleMemory;
-    memset(externalRamSampleMemory, 0, SAMPLE_MEMORY_SIZE);
+    memset(externalRamSampleMemory, 0, SAMPLE_POOL_BYTES);
 
     // wew
     char byteBuffer[4];

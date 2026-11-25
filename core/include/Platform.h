@@ -166,6 +166,8 @@ class UsbMidi : public Midi
         void (*songPosition)(uint16_t);
         void (*controlChange)(uint8_t, uint8_t, uint8_t);
         void (*pitchBend)(uint8_t, int);   // channel, -8192..8191, null: dropped as before
+        void (*programChange)(uint8_t, uint8_t);   // channel, program 0..127, null: dropped as before
+        void (*channelPressure)(uint8_t, uint8_t);   // channel, pressure 0..127 (0xD0), null: dropped as before
     };
 
     virtual void setReceiveActions(MidiReceiveActions* receiveActions) = 0;
@@ -187,6 +189,8 @@ class UartMidi : public Midi
         void (*continueMessage)(void);
         void (*controlChange)(uint8_t, uint8_t, uint8_t);
         void (*pitchBend)(uint8_t, int);   // channel, -8192..8191, null: dropped as before
+        void (*programChange)(uint8_t, uint8_t);   // channel, program 0..127, null: dropped as before
+        void (*channelPressure)(uint8_t, uint8_t);   // channel, pressure 0..127 (0xD0), null: dropped as before
     };
     virtual void init() = 0;
     virtual void setReceiveActions(MidiReceiveActions* receiveActions) = 0;
@@ -288,6 +292,9 @@ class Radio
     virtual bool isinitialized() = 0;
     virtual void clearRDS() = 0;
     virtual void setRegion(Region region) = 0;
+#ifdef FEATURE_RADIO_STEREO
+    virtual void setStereo(bool stereo) { (void)stereo; } // Si4703 stereo decode, off = forced mono (the chip default)
+#endif
     virtual bool isRegionChanged() = 0;
     virtual char* getStationName() = 0;
 };

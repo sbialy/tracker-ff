@@ -24,7 +24,7 @@ bool mtEffectChorus::startProcess()
 {
     length = confirmed[0].selection.length;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         channelParams[channel].srcAddr = confirmed[channel].selection.addr;
         channelParams[channel].dstAddr = processed[channel].selection.addr;
@@ -47,7 +47,7 @@ int32_t mtEffectChorus::processBlock()
     uint32_t processedBlockLength = dif > 8192 ? 8192 : dif;
     uint32_t processingNumber = processedBlockLength / 128;
 
-    for (int channel = 0; channel < kChannels; channel++)
+    for (int channel = 0; channel < nChannels(); channel++)
     {
         for (int i = 0; i < (int)processingNumber; i++)
         {
@@ -67,7 +67,7 @@ int32_t mtEffectChorus::processBlock()
 
     if (!state)
     {
-        for (int channel = 0; channel < kChannels; channel++)
+        for (int channel = 0; channel < nChannels(); channel++)
         {
             processed[channel].selection.length = processedSamples; // redundancy
             processed[channel].area.length =

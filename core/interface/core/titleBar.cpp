@@ -169,6 +169,11 @@ void TitleBar::applyCaptureState()
         fill = theme.green;
         line = theme.green;
     }
+    else if (captureState == kCapIndGap)
+    {
+        fill = theme.topBarLabelColors[1]; // past the gap: hollow inside a green outline, the next note starts a new take
+        line = theme.green;
+    }
     captureColors[0] = line;
     captureColors[1] = fill;
     captureColors[2] = line;

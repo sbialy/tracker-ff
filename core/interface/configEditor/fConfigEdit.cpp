@@ -1,5 +1,7 @@
 #include "Platform.h"
-#ifdef FEATURE_EXT_HOOKS
+#include "mtNoteName.h"
+#include "feature_flags.h"
+#ifdef FEATURE_FEATURES
 #include "features.h"
 #endif
 #include "Profiler.h"
@@ -19,7 +21,7 @@
 #include "mtPadBoard.h"
 #include "mtPadsBacklight.h"
 #include "mtSequencer.h"
-#include "mtTest.h"
+#include "mtTestGlue.h"
 #include "patternEditor/patternEditor.h"
 
 cConfigEditor configEditor;
@@ -116,7 +118,7 @@ void cConfigEditor::start(uint32_t options)
     moduleRefresh = 1;
 
     exitOnButtonRelease = 0;
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
     projectPage = options == kOpenProjectSettings;
 #endif
 
@@ -286,7 +288,7 @@ void cConfigEditor::reloadPadScreenDisplayedValue(uint8_t value)
             padScreenDisplayedValue[value] =
               map(mtGrid.pad[gridEditor.getSelectedPad()].note, MIN_NOTE, MAX_NOTE, 0, 100);
             interfaceGlobals.padNamesPointer[gridEditor.getSelectedPad()] =
-              (char*)mtNotes[mtGrid.pad[gridEditor.getSelectedPad()].note];
+              (char*)padName(gridEditor.getSelectedPad(), mtGrid.pad[gridEditor.getSelectedPad()].note);
             break;
         case 1:
             padScreenDisplayedValue[value] = mtGrid.pad[gridEditor.getSelectedPad()].microtune;
@@ -409,7 +411,7 @@ static void functActionButton(uint8_t button, uint8_t state)
                     }
                     else if (!CE->menuGoOut() && CE->projectPage)
                     {
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
                         CE->leaveProjectPage();
 #endif
                         return;
@@ -461,7 +463,7 @@ static void functActionButton(uint8_t button, uint8_t state)
             default: break;
         }
 
-        if (mtTest.runTestByMiniCombinaion(button))
+        if (selftestCombo(button, true) && selftestReady())
         {
             CE->eventFunct(eventActivateTestingProcedure, CE, 0, 0);
         }
@@ -487,7 +489,7 @@ static void functPads(uint8_t pad, uint8_t state, int16_t)
         return;
     }
 
-    if (mtTest.runTestByCombinaion(pad))
+    if (selftestCombo(pad, false) && selftestReady())
     {
         CE->eventFunct(eventActivateTestingProcedure, CE, 0, 0);
     }
@@ -553,7 +555,7 @@ static void functLeft()
         CE->selectedPlace = 1;
         return;
     }
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
     else if (CE->projectPage)
     {
         CE->leaveProjectPage();
@@ -961,9 +963,11 @@ void cConfigEditor::resetTrackerConfig(bool yes)
         checkConfig();
         saveConfigAsap();
         restartConfigAllActions();
-#if defined(FEATURE_EXT_HOOKS) && !defined(PLATFORM_IMX) && !defined(TRACKER_MINI)
+#ifdef FEATURE_FEATURES
         features::resetAll(); // decision D5: the features go back to their defaults too, /Features/<id>.cfg removed
+#ifdef FEATURE_FEATURES_FULL
         usbMenuRefresh();     // USB audio and USB drive are off again: the USB entry leaves the list
+#endif
         createMenuBaseList();
 #endif
     }

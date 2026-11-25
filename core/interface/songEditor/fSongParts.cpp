@@ -37,6 +37,7 @@
 #include "mtPadsBacklight.h"
 #include "mtSequencer.h"
 #include "parts.h"
+#include "stereoPairs.h"
 #include "partsTableControl.h"
 
 #include <cr_section_macros.h>
@@ -161,10 +162,43 @@ void key()
     s_ui.lastKeyMs = now();
 }
 
-// the track a Build F-button stands for: the half the cursor is in
+// The 16 tracks as the grid shows them: the follower of a linked stereo pair has no column (its Part cells stay in the list untouched), the
+// tracks after it move left. A column is 0..ncols()-1, the cursor and the F-row work in columns, every list edit in real tracks
+int colOf(int track)
+{
+    return track - __builtin_popcount(stereopairs::hiddenMask() & ((1u << track) - 1u));
+}
+int ncols()
+{
+    return 16 - __builtin_popcount(stereopairs::hiddenMask());
+}
+// -1 past the last column
+int trackAtCol(int col)
+{
+    const uint16_t h = stereopairs::hiddenMask();
+    for (int t = 0; t < 16; t++)
+        if (!(h & (1u << t)) && col-- == 0) return t;
+    return -1;
+}
+// the half of the grid (8 columns) the cursor is in
+int half()
+{
+    return colOf(s_ui.cursor) >= 8 ? 8 : 0;
+}
+// a link made while the view was away: the cursor and the held buttons leave a hidden follower
+void syncHidden()
+{
+    const uint16_t h = stereopairs::hiddenMask();
+    s_ui.table.hidden = h;
+    s_ui.held &= uint16_t(~h);
+    s_ui.heldUsed &= uint16_t(~h);
+    if (s_ui.cursor < 16 && (h & (1u << s_ui.cursor))) s_ui.cursor = uint8_t(s_ui.cursor - 1);
+}
+
+// the track a Build F-button stands for: the half the cursor is in, -1 where the half has no track (fewer than 8 columns)
 int trackOf(uint8_t button)
 {
-    return (s_ui.cursor >= 8 ? 8 : 0) + (button - interfaceButton0);
+    return trackAtCol(half() + (button - interfaceButton0));
 }
 
 // a track of the pattern on screen that holds at least one note
@@ -352,16 +386,17 @@ void lightPads()
     const parts::Part& p = L().part[s_ui.sel];
     const int base = padBank() * 48;
     const uint16_t tg = targets();
+    const uint16_t hid = stereopairs::hiddenMask();
     for (int t = 0; t < parts::kTracks; t++)
     {
         const int v = p.src[t] - 1 - base;
-        if (p.src[t] == 0 || v < 0 || v >= 48 || (tg & (1u << t))) continue;
+        if (p.src[t] == 0 || v < 0 || v >= 48 || (tg & (1u << t)) || (hid & (1u << t))) continue;
         padsBacklight.setBackLayer(1, mtConfig.values.padsLightBackDim, uint8_t(v));
     }
     for (int t = 0; t < parts::kTracks; t++)
     {
         const int v = p.src[t] - 1 - base;
-        if (p.src[t] == 0 || v < 0 || v >= 48 || !(tg & (1u << t))) continue;
+        if (p.src[t] == 0 || v < 0 || v >= 48 || !(tg & (1u << t)) || (hid & (1u << t))) continue;
         padsBacklight.setBackLayer(1, mtConfig.values.padsLightBack, uint8_t(v));
     }
 }
@@ -376,6 +411,7 @@ void fKey(uint8_t button, uint8_t state)
     if (build())
     {
         const int t = trackOf(button);
+        if (t < 0) return;   // this half has fewer than 8 tracks: the button has none
         const uint16_t bit = uint16_t(1u << t);
         if (state == buttonPress)
         {
@@ -583,17 +619,17 @@ void leftRight(int d)
         SE->partsRefresh();
         return;
     }
-    if (d > 0 && s_ui.cursor == 15)
+    if (d > 0 && colOf(s_ui.cursor) == ncols() - 1)
     {   // past track 16: the Length field
         s_ui.field = 1;
         SE->partsRefresh();
         return;
     }
-    int c = s_ui.cursor + d;
+    int c = colOf(s_ui.cursor) + d;   // in columns, a hidden follower is skipped
     if (c < 0) c = 0;
-    if (c > 15) c = 15;
-    if ((c >= 8) != (s_ui.cursor >= 8)) s_ui.held = 0;   // the F-row flips to the other half
-    s_ui.cursor = uint8_t(c);
+    if (c > ncols() - 1) c = ncols() - 1;
+    if ((c >= 8) != (colOf(s_ui.cursor) >= 8)) s_ui.held = 0;   // the F-row flips to the other half
+    s_ui.cursor = uint8_t(trackAtCol(c));
     s_ui.bank = 0xFF;
     SE->partsRefresh();
 }
@@ -801,6 +837,7 @@ void cSongEditor::partsReadList()
 void cSongEditor::partsRefresh()
 {
     uiInit();
+    syncHidden();
     parts_table_data_t& d = s_ui.table;
     d.count = L().count;
     d.top = s_ui.top;
@@ -885,7 +922,16 @@ void cSongEditor::partsShowLabels()
         display.setControlStyle2(label[7], controlStyleCenterX | controlStyleCenterY | controlStyleFont3);
         for (int i = 0; i < 8; i++)
         {
-            const int t = (s_ui.cursor >= 8 ? 8 : 0) + i;
+            const int t = trackAtCol(half() + i);
+            if (t < 0)
+            {   // fewer than 8 tracks in this half: the button is blank
+                display.setControlText(label[i], "");
+                display.setControlText2(label[i], "");
+                display.setControlColors(label[i], display.getTheme().activeButtonLabelsColors);
+                display.refreshControl(label[i]);
+                continue;
+            }
+            const bool pairLead = t < 8 && stereopairs::isLeader(t);
             char* name = t < kSampleTracks ? &mtProject.values.TrackNames[t][0] : &mtProject.values.midiTrackNames[t - kSampleTracks][0];
             name[7] = 0;
             const int v = selectionValid() ? L().part[s_ui.sel].src[t] : 0;
@@ -893,7 +939,7 @@ void cSongEditor::partsShowLabels()
                 snprintf(s_ui.patt[i], sizeof(s_ui.patt[i]), "Patt: %d", v);
             else
                 snprintf(s_ui.patt[i], sizeof(s_ui.patt[i]), "Off");
-            display.setControlText(label[i], name);
+            display.setControlText(label[i], pairLead ? stereopairs::label(t >> 1) : name);
             display.setControlText2(label[i], s_ui.patt[i]);
             display.setControlColors(label[i], (s_ui.held & (1u << t)) ? display.getTheme().performActiveTrackLabelsColors
                                                                        : display.getTheme().activeButtonLabelsColors);
@@ -951,6 +997,7 @@ void cSongEditor::partsShowLabels()
 void cSongEditor::partsUpdate()
 {
     uiInit();
+    syncHidden();
     parts_table_data_t& d = s_ui.table;
     const int cur = parts::currentPart();
     if (cur >= 0) s_ui.lastPlayed = int16_t(cur);

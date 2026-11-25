@@ -22,11 +22,17 @@ class AudioInput
     AudioAnalyzeRMS* getRecordingRmsUsb(int channel);
     AudioInputStream* getI2sStream();
     AudioInputStream* getUsbStream();
+    // both stream buffers of an audio block in one call (the audio input interrupt: one frame instead of the caller keeping every value across two getter calls)
+    void setInBuffers(void* i2sData, void* usbData);
     AudioAnalyzeRMS* getStreamRmsI2s(InputChannels channel);
     AudioAmplifier* getUsbRecordingAmplifier(InputChannels channel);
 
   private:
-    AudioInputStream i2sStream;
+#ifdef PLATFORM_IMX
+    AudioInputStream i2sStream;   // the IMX input interrupt already copies to its own buffer
+#else
+    AudioInputStream i2sStream{ false, true };   // line in through the block ring (core/libs/Audio/LineInRing.h)
+#endif
     AudioInputStream usbStream{ true }; // no buffer on the original (mtAudioEngine::updateInputAudioBuffers): no blocks
     AudioAmplifier usbRecordingAmplifier[InputChannels::kChannelsCount];
     AudioRecordQueue recordingQueueI2s[InputChannels::kChannelsCount];

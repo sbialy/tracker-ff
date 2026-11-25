@@ -1117,7 +1117,10 @@ static void functShift(uint8_t state)
     {
         // cancelAnotherSelect();
 
-        SI->selectionActive[SI->selectedPlace] = 1;
+        if (SI->selectedPlace < 2) // 2 is the preview volume, it has no selection
+        {
+            SI->selectionActive[SI->selectedPlace] = 1;
+        }
         SI->showAddOrEnter(true);
 
         //		if(SI->currSelectPlace != SI->selectedPlace)
@@ -1152,7 +1155,10 @@ static void functShift(uint8_t state)
     }
     else if (state == buttonRelease)
     {
-        SI->selectionActive[SI->selectedPlace] = 0;
+        if (SI->selectedPlace < 2) // 2 is the preview volume, it has no selection
+        {
+            SI->selectionActive[SI->selectedPlace] = 0;
+        }
         SI->showAddOrEnter(false);
     }
 }

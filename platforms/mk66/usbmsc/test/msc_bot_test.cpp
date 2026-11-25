@@ -256,7 +256,9 @@ TEST(inquiry_works_without_medium) {
     CHECK_EQ(r.data.size(), size_t(36));
     CHECK_EQ(int(r.data[0]), 0x00);   // direct access
     CHECK_EQ(int(r.data[1]), 0x80);   // removable
-    CHECK(std::memcmp(r.data.data() + 8, "OpenTrkr", 8) == 0);
+    CHECK(std::memcmp(r.data.data() + 8, "Polyend ", 8) == 0);
+    CHECK(std::memcmp(r.data.data() + 16, "Tracker SD card ", 16) == 0);
+    CHECK(std::memcmp(r.data.data() + 32, "2.00", 4) == 0);
     CHECK_EQ(r.residue, 0u);
     CHECK(!r.stalledIn);
 }

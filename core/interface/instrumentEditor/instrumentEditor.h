@@ -10,15 +10,22 @@
 #if GUI_HANDLE_SYNTH
 #include "Synth.h"
 #endif
-// Synth Automation page (SynthAutomation.cpp): the open synth only (MK66 SYNTH_OPEN), not the IMX stock synth GUI
-#if GUI_HANDLE_SYNTH && defined(FEATURE_SYNTH_OPEN)
+#include "ff_config.h"
+// Synth Automation page (SynthAutomation.cpp): the open synth of the original Tracker (engine params, macros, part destinations) and the
+// stock synth parts of Tracker+ and Mini (FEATURE_PART_AUTO: the part destinations, core/AudioEngine/partAuto.h)
+#if GUI_HANDLE_SYNTH && (defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_PART_AUTO))
 #define GUI_SYNTH_AUTO 1
-// A part whose engine is not installed (Missing): shows the "<name> not installed" popup and returns true (SynthEditor.cpp)
+// A part whose engine is not installed (Missing): shows the "<name> not installed" popup and returns true (SynthEditor.cpp, the open synth)
 bool synthPartMissingPopup(int part);
 #else
 #define GUI_SYNTH_AUTO 0
 #endif
 #include <map>
+
+// Table page (TablePage.cpp, Table lite core/source/tables.h): GUI_TABLES comes from ff_config.h (the plugin host build only)
+#if GUI_TABLES
+#include "tableGridControl.h"
+#endif
 
 enum mtInstrumentEditorMode
 {
@@ -33,6 +40,9 @@ enum mtInstrumentEditorMode
 #endif
 #if GUI_SYNTH_AUTO
     mtInstEditModeSynthAutomation,
+#endif
+#if GUI_TABLES
+    mtInstEditModeTable, // the last page of sample instruments and synth parts
 #endif
     mtInstEditModeCount,
 };
@@ -166,6 +176,7 @@ class cInstrumentEditor : public ModuleBase
     hControl barControl[8];
     hControl blankSpaceCover[2];
     hControl noteLabel;
+    hControl nnaLabel = -1; // "New note" block of the Synth screen: the New Note Action of the part (right panel, below the slot)
 
     hControl list1Control;
     hControl list2Control;
@@ -265,6 +276,7 @@ class cInstrumentEditor : public ModuleBase
     void showParamsDelaySend();
     void showParamsReverbSend();
     void showParamsOverdrive();
+    void showParamsRepitch();
     void showParamsBitDepth();
 
     static void changeParamsVolume(int16_t value);
@@ -277,6 +289,7 @@ class cInstrumentEditor : public ModuleBase
     static void changeParamsDelaySend(int16_t value);
     static void changeParamsReverbSend(int16_t value);
     static void changeParamsOverdrive(int16_t value);
+    static void changeParamsRepitch(int16_t value);
     static void changeParamsBitDepth(int16_t value);
 
     void setDefaultVolume();
@@ -289,6 +302,7 @@ class cInstrumentEditor : public ModuleBase
     void setDefaultDelaySend();
     void setDefaultReverbSend();
     void setDefaultOverdrive();
+    void setDefaultRepitch();
     void setDefaultBitDepth();
 
     //----------------------------------
@@ -431,6 +445,10 @@ class cInstrumentEditor : public ModuleBase
     void changeSynthPatchListPos(int16_t value);
 #ifdef FEATURE_SYNTH_OPEN
     void changeSynthSlot(int16_t value);
+    void changeSynthNna(int16_t value);
+    void changeSynthMorphTarget(int16_t value);
+#elif defined(FEATURE_SYNTH_PATCHFX)
+    void changeSynthSlot(int16_t value);
     void changeSynthMorphTarget(int16_t value);
 #endif
 
@@ -490,6 +508,7 @@ class cInstrumentEditor : public ModuleBase
 
     void showSynthReverbSend(uint8_t syntPartIdx);
     void showSynthDelaySend(uint8_t syntPartIdx);
+    void showSynthNna(uint8_t syntPartIdx);
     void showSynthMacroValue(uint8_t syntPartIdx, uint8_t macroIdx);
 
 #if GUI_SYNTH_AUTO
@@ -579,6 +598,14 @@ class cInstrumentEditor : public ModuleBase
     void gridChangeSelection(int direction);
     void setSection(int sectionIdx);
 
+#endif
+
+  public:
+#if GUI_TABLES
+    hControl tableGridControl = -1;
+    void showTablePage();
+    void setTablePageFunct();
+    void tablePageTick(uint32_t nowMs); // the live playhead of the Table page, from update()
 #endif
 };
 

@@ -1,5 +1,5 @@
 // Parts: a song built from Parts (source pattern per track, length, repeats), next to the untouched song playlist.
-// Data model: parts_format.h, storage: project.mtff (synth-open/plug_mtff.h). Design: ref/parts-feasibility.md option A, built in ref/parts.md.
+// Data model: parts_format.h, storage: project.mtff (core/FileManager/mtff_codec.h). Design: ref/parts-feasibility.md option A, built in ref/parts.md.
 //
 // Playback: the Part about to play is assembled on the main loop into the sequencer's buffer pattern (one source pattern file per
 // main loop pass, read into songTrackCopy[0]), one Part ahead, and swapped in at the end of the current Part through the same
@@ -36,6 +36,7 @@ const char* note();                                                      // the 
 bool start(int from, bool loop);
 void update();                 // main loop (Sequencer::update): preload, the pattern back after a stop
 bool playing();                // a Part image is the playing pattern (edits are off)
+bool patternTaken(uint8_t pattern); // notes, on screen, in the song or a Part's source (the bake's rule, the Capture spill)
 int currentPart();             // the Part that plays, -1 when none
 int passesLeft();              // passes of the current Part still to play (this one included)
 int queuedPart();              // -1 when none

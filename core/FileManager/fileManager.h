@@ -305,11 +305,9 @@ class cFileManager
 
     bool loadWorkspacePatternNow(uint8_t index);
     bool saveWorkspacePatternNow(uint8_t index);
-#ifdef FEATURE_PARTS
-    // parts.cpp: a Workspace pattern file into any buffer (assembly, bake) and back. Main loop only
+    // parts.cpp, the Capture spill: a Workspace pattern file into any buffer (assembly, bake) and back. Main loop only
     bool readWorkspacePatternTo(uint8_t index, Sequencer::strPattern* dest);
     bool writeWorkspacePatternFrom(uint8_t index, Sequencer::strPattern* src);
-#endif
     bool loadPerformanceTrackToBuffer(uint8_t pattIndex, uint8_t trackIndex);
     bool isPatternLoading();
     bool isPatternPreloaded(uint8_t index);
@@ -452,6 +450,15 @@ class cFileManager
     uint8_t saveInstrument(uint8_t idx);
     void writeInstrumentToFileStruct(strInstrument* instrument, strInstrumentFile* instrumentFile);
 
+    // Linked stereo pairs (stereoPairs.h): a project that holds a pair loads the right channel of its stereo .pti files too. Set before the
+    // instruments of a project load (WorkspaceProjectLoad), never on the IMX build (always stereo there)
+    void setStereoSampleMode(bool on)
+    {
+        stereoSampleMode = on;
+    }
+    // An edit path that works on the left channel only (sample editor, recorder) calls this first: the instrument becomes mono for good,
+    // address[1] = address[0], isStereo off, so L is never edited under a stale R. False when it was mono already
+    bool dropInstrumentToMono(int idx);
     FileManagerOperation::SampleChannelMode getSampleMode()
     {
         return stereoSampleMode ? FileManagerOperation::kLeftAndRight : FileManagerOperation::kLeft;

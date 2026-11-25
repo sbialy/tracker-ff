@@ -15,7 +15,9 @@ zlib version: the committed header is what counts, the proof that it decodes to 
 import os
 import re
 import sys
-import zlib
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from deflate_best import best_deflate  # noqa: E402
 
 # (group id, C++ name suffix, #if guard of display.cpp, arrays in the order of the stream)
 GROUPS = [
@@ -67,9 +69,7 @@ def main(img_dir):
                 sys.exit("array %s not found in %s" % (n, img_dir))
             offs.append((n, len(raw)))
             raw += arrays[n]
-        co = zlib.compressobj(9, zlib.DEFLATED, -15)
-        z = co.compress(raw) + co.flush()
-        assert zlib.decompress(z, -15) == raw
+        z = best_deflate(raw)
         if len(raw) > 22396:
             sys.exit("group %s is %d B, the boot buffer holds 22,396" % (gname, len(raw)))
         rawtot += len(raw)

@@ -1,0 +1,30 @@
+# P9 (ref/ff-imx-port-plan.md): the Play stop lock on the Tracker+ sim. Switched on in Config > Features, then on the Pattern screen Play starts the
+# pattern, a second Play does NOT stop it (the clock keeps running), Shift + Play stops it (the clock is back at 0m:00s). Plus only: the Mini maps Play to
+# another key (Mini keys are P8), its lock is checked by plus_remote_sim.sh mini R2.
+# Replay: plus_flows.sh plus
+title: Play stop lock on Tracker+ (P9)
+check: texts
+pause: 90ms
+
+use boot-to-pattern
+use goto-config
+use open-config-group group="Features"
+use seek-row text="Play stop lock"
+tap F8
+wait 500ms
+tap F8
+wait 500ms
+use expect-text text="On: Play does not stop a running song"
+enc +1
+wait 600ms
+tap F8
+wait 1500ms
+use goto-pattern
+use play wait=1500ms
+tap Play
+wait 1200ms
+expect no-text "0m:00s"
+shot locked-still-playing
+use shift-tap key=Play wait=1s
+expect text "0m:00s"
+shot stopped

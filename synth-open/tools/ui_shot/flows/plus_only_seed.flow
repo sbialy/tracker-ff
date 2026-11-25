@@ -1,0 +1,21 @@
+# IMX round 4: the project random seed. Seed 7 is set, track 1 holds eight steps with Chance 50 %, Play runs twice (stop and start in between). A seeded Play restarts the same random stream (resetChanceState), so the order of the first note ons of the two takes is the same
+# Replay: plus_flows.sh plus  (setup pokes in plus_flows.sh, the poke trace UISHOT_TRACE_FFSTATE is the read, poke_ok in plus_flows.sh)
+title: random seed (Tracker+, IMX round 4)
+check: texts
+pause: 80ms
+
+use boot-to-pattern
+wait 3000ms
+tap Play
+wait 5000ms
+shot seed-playing
+tap Play
+wait 1500ms
+shot seed-stopped
+wait 800ms
+tap Play
+wait 5000ms
+shot seed-playing2
+tap Play
+wait 1500ms
+shot seed-stopped2

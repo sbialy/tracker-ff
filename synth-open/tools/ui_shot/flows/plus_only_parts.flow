@@ -1,0 +1,35 @@
+# P4: Parts on Tracker+ and Mini. Shift + Song opens the Parts view, Rec = Build, Insert adds Part 1 from Pattern 1 and a copy of it, a Part has a
+# length (Shift + pad 13), F3 goes to the start and F2 plays the song: the header names the Part.
+# Rec again leaves Build before F3 / F2 (P8: in Build the F-row is the track buttons, a tap there turned tracks 3 and 2 Off in Part 2 and
+# the closing Play started the playback instead of stopping it). Play stops the song.
+title: Parts arrange and play on Tracker+ (P4)
+check: texts
+pause: 80ms
+
+tap Pattern
+wait 800ms
+press Shift
+wait 200ms
+tap Song
+wait 250ms
+release Shift
+wait 1000ms
+expect text "Parts - ARRANGE"
+shot parts-arrange
+tap Rec
+wait 800ms
+tap Insert
+wait 1000ms
+tap Insert
+wait 1000ms
+shot parts-two
+tap Rec
+wait 800ms
+tap F3
+wait 800ms
+tap F2
+wait 2500ms
+shot parts-play
+tap Play
+wait 600ms
+# ends on the poke read (plus_flows.sh poke_ok, UISHOT_TRACE_PARTS): the Parts view, Build, 2 Parts, Arrange at Part 1, Part 1 played, stopped

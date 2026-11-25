@@ -28,6 +28,10 @@ class FxMuteGate
     };
 
     void setFeed(AudioStream* feed) { feed_ = feed; }
+#ifdef FEATURE_STEREO_SENDS
+    // the side send mixer of the stereo sends (stereo_sends.h) sleeps and wakes with the feed
+    void setFeed2(AudioStream* feed) { feed2_ = feed; }
+#endif
 
     // Mute: step() does the rest. Unmute: the flag first, then the two streams go back into update_all (audioEngine::update calls it in
     // the audio interrupt before update_all, the barrier keeps the order for a caller in the main loop).
@@ -39,6 +43,10 @@ class FxMuteGate
             __asm volatile("" ::: "memory"); // the flag is stored before the streams are active again
             if (feed_ != nullptr)
                 feed_->wakeStream();
+#ifdef FEATURE_STEREO_SENDS
+            if (feed2_ != nullptr)
+                feed2_->wakeStream();
+#endif
             self->wakeStream();
         }
     }
@@ -96,6 +104,10 @@ class FxMuteGate
     {
         if (feed_ != nullptr)
             feed_->sleepStream();
+#ifdef FEATURE_STEREO_SENDS
+        if (feed2_ != nullptr)
+            feed2_->sleepStream();
+#endif
         self->sleepStream();
     }
 
@@ -104,6 +116,9 @@ class FxMuteGate
 
   private:
     AudioStream* feed_ = nullptr;
+#ifdef FEATURE_STEREO_SENDS
+    AudioStream* feed2_ = nullptr;
+#endif
     volatile bool muted_ = false;
     bool asleep_ = false;
     uint16_t blocks_ = 0;

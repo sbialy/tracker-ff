@@ -31,8 +31,9 @@
 #   PROVEN_END  the end of the last image that was run on the unit, default 0xFC2AC. An image that ends past it FAILS the gate (exit 1, before the
 #               simulator). ALLOW_UNPROVEN_END=1 overrides, set it only together with the device row that proved the new end (the release notes
 #               cite it). The same check is a warning in make original (check_ptf.py --warn-proven)
-#   MODIT_PLG  build/modit.plg: when set, the gate checks it against IMAGE (synth-open/plug/check_ext.py), exit 1 on a module of another image.
-#               package_release.sh --modit sets it. Run it after the tail pad (make original builds the module only once the image is final)
+#   EXTRAS_PLG  build/extras.plg (the release card modules, MOD/IT first): when set, the gate checks it against IMAGE (synth-open/plug/check_ext.py
+#               --rel: the image id, and text + data + bss within the release region EXT_REL_BYTES), exit 1 on a module of another image or one too
+#               big. package_release.sh --extras sets it. MODIT_PLG is the old name, still read. Run it after the tail pad (make original builds the module only once the image is final)
 #   SDRAM_MIN   the least SDRAM left free, default 16384 B. SDRAM free = 16 MiB minus the .noinit_RAM4 size of the linked image (make original writes
 #               'sdram free: N' into BUILD.txt next to the .ptf, engine_budget.py). Below it the gate FAILS (exit 1, before the simulator), nothing else watches the
 #               SDRAM (1.4.0 release image: 519,416 B free). A BUILD.txt that is not the image's own (its 'firmware:' line) or has no sdram line = the gate cannot run
@@ -66,9 +67,10 @@ mkdir -p "$(dirname "$LOG")"
 if tailout="$(python3 -I "$HERE/check_ptf.py" --min-tail "$MIN_TAIL" --proven "$PROVEN_END" "$IMAGE" 2>&1)"; then
     echo "release gate: image tail ok ($(basename "$IMAGE"), $(printf '%s\n' "$tailout" | sed -n 's/.*highest address \(0x[0-9A-F]*\).*/ends \1/p' | head -1), last sector needs >= $MIN_TAIL B, end within the device-proven $PROVEN_END)"
     printf '%s\n' "$tailout" | grep 'WARNING' | sed 's/^ */release gate: /'
-    if [ -n "${MODIT_PLG:-}" ]; then
-        if mout="$(python3 -I "$ROOT/synth-open/plug/check_ext.py" "$MODIT_PLG" "$IMAGE" 2>&1)"; then echo "release gate: modit.plg ok ($(printf '%s' "$mout" | sed 's/.*(image id/image id/'))"
-        else echo "release gate: FAIL - modit.plg"; printf '%s\n' "$mout" | sed 's/^/  /'; exit 1; fi
+    EXTRAS_PLG="${EXTRAS_PLG:-${MODIT_PLG:-}}"
+    if [ -n "$EXTRAS_PLG" ]; then
+        if mout="$(python3 -I "$ROOT/synth-open/plug/check_ext.py" --rel "$EXTRAS_PLG" "$IMAGE" 2>&1)"; then echo "release gate: extras.plg ok ($(printf '%s' "$mout" | sed 's/.*(image id/image id/'))"
+        else echo "release gate: FAIL - extras.plg"; printf '%s\n' "$mout" | sed 's/^/  /'; exit 1; fi
     fi
     # SDRAM: 16 MiB minus .noinit_RAM4, from SDRAM_FREE or the BUILD.txt that make original wrote next to this very image
     sdram_free="${SDRAM_FREE:-}"

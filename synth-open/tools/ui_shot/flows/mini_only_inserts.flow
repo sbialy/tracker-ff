@@ -1,0 +1,29 @@
+# P8: the Master Inserts page on the Mini. It has no Master key and no encoder: hold Menu, Right x3 is the Master box, each Mid steps its mode
+# (Master, Mixer, Global Mixer, Inserts: interfaceMenuPopup.cpp masterModes), releasing Menu keeps the page. Down in the Insert 1 list is the picker.
+# plus_flows.sh stages the card (/Plugins/Master/dirt.plg) and reads the slot afterwards: `inserts` must say 1=running:Dirt.
+# Replay: plus_flows.sh mini
+title: Master Inserts on the Mini (P8)
+check: texts
+pause: 80ms
+
+wait 1500ms
+press Menu
+wait 400ms
+tap Right x3
+wait 300ms
+tap Mid
+wait 1200ms
+tap Mid
+wait 800ms
+tap Mid
+wait 800ms
+tap Mid
+wait 1200ms
+release Menu
+wait 1000ms
+expect text "Inserts"
+shot inserts-page
+tap Down
+wait 3000ms
+expect text "Drive"
+shot dirt-picked

@@ -28,9 +28,11 @@ c++ -std=gnu++20 -O1 -include cstdint -w -DCR_SECTION_MACROS_H_INCLUDED "-D__NOI
 sum="$(shasum -a 256 "$T/table.bin" | cut -d' ' -f1)"
 want="$(grep -v '^#' "$HERE/playorder_golden.txt" | head -1)"
 [ "$want" = "5120 $sum" ] || { echo "playorder_test: FAIL (got 5120 $sum, golden $want)"; exit 1; }
-cp "$C/source/playModeTabs.cpp" "$C/source/playModeTabs.h" "$T/"
-python3 -I "$HERE/playorder_deflate.py" "$C/source" > /dev/null || { echo "playorder_test: FAIL (generator)"; exit 1; }
-if ! cmp -s "$C/source/playModeTabs.cpp" "$T/playModeTabs.cpp" || ! cmp -s "$C/source/playModeTabs.h" "$T/playModeTabs.h"; then
-  cp "$T/playModeTabs.cpp" "$T/playModeTabs.h" "$C/source/"; echo "playorder_test: FAIL (playModeTabs.* is not what playorder.txt makes)"; exit 1
+# the generator runs on a copy of its input: the tree's playModeTabs.* keep their bytes and their mtime (a rewrite made every ui_shot build of
+# the tree recompile them, and run_tests' parallel sims relinked a binary other sims were running)
+mkdir -p "$T/gen/names" && cp "$C/source/names/playorder.txt" "$T/gen/names/"
+python3 -I "$HERE/playorder_deflate.py" "$T/gen" > /dev/null || { echo "playorder_test: FAIL (generator)"; exit 1; }
+if ! cmp -s "$C/source/playModeTabs.cpp" "$T/gen/playModeTabs.cpp" || ! cmp -s "$C/source/playModeTabs.h" "$T/gen/playModeTabs.h"; then
+  echo "playorder_test: FAIL (playModeTabs.* is not what playorder.txt makes, python3 -I $HERE/playorder_deflate.py $C/source writes them)"; exit 1
 fi
 echo "playorder_test: PASS (5,120 B, sha256 ${sum:0:12})"

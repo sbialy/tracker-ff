@@ -1,0 +1,33 @@
+# IMX round 2: Table lite on Tracker+, panel keys only. plus_flows.sh loads the setup after the boot project load (poke file "pat" lines):
+# the last used instrument Synth 1 (64), table 1 at tic 4, Loop, 4 rows of transpose 0 +2 -1 +1. Pattern, Rec on, hold Note and let go
+# (the note popup puts the last used note of Synth 1 on the step), hold Fx, Down to "Table" (list position 52 on Tracker+ and Mini), let go:
+# the step gets TBL 1. Rec off, Play runs the step: the table of track 1 starts on Synth 1 and walks its rows, Play again stops it.
+# Ends on the poke read (UISHOT_TRACE_TABLES): track 1 ran table 1 on instrument 64 from row 0 into a later row, and the runner is off at the end
+title: Table lite TBL step FX on Tracker+ (IMX round 2)
+check: texts
+pause: 80ms
+
+wait 1500ms
+tap Pattern
+wait 1000ms
+tap Rec
+wait 600ms
+press Note
+wait 1000ms
+release Note
+wait 800ms
+press Fx
+wait 1200ms
+tap Down x52
+wait 800ms
+shot tables-list
+release Fx
+wait 800ms
+expect text "Y - Table"
+tap Rec
+wait 600ms
+tap Play
+wait 2500ms
+shot tables-play
+tap Play
+wait 800ms

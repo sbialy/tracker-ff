@@ -1,0 +1,28 @@
+# P12 round 7: the Synth play page on Tracker+ (MK66 Shift + Perform, docs ref/synth-page-design.md). From the pattern editor Shift + Perform
+# opens the page (the MIDI in mode goes to the page, Synth 1 is part A and gets the voices, the other parts none), pad 12 held plays its
+# note through the page's router and lets go of it, a second press holds it for the shot, the release ends it, Pattern leaves the page.
+# plus_flows.sh reads the page state afterwards (UISHOT_TRACE_SPLAY, splayLine): open with mode 5 and only part A voiced, a held cell,
+# then none, and the last line closed with the MIDI in mode back.
+# Replay: plus_flows.sh plus
+title: Synth play page on Tracker+ (P12)
+check: texts
+pause: 90ms
+
+wait 1500ms
+press Shift
+wait 300ms
+tap Performance
+wait 300ms
+release Shift
+wait 1200ms
+expect text "Synth A"
+expect text "Bank A"
+pad 12 hold 600ms
+wait 400ms
+pad 12 press
+wait 500ms
+shot splay
+pad 12 release
+wait 500ms
+tap Pattern
+wait 1000ms

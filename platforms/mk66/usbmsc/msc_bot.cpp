@@ -26,12 +26,13 @@ void putBe32(uint8_t* p, uint32_t v) { p[0] = uint8_t(v >> 24); p[1] = uint8_t(v
 void fence() { std::atomic_signal_fence(std::memory_order_seq_cst); }
 
 // SPC-2 standard INQUIRY data (36 bytes): direct-access block device,
-// removable medium. Vendor / product / revision are OpenTracker's own.
+// removable medium. Vendor "Polyend" (8 B, space padded) and product "Tracker SD card" as the host shows the drive,
+// the same vendor upstream's usb_msc.c reports. Revision 2.00, the firmware major line.
 const uint8_t kInquiry[36] = {
     0x00, 0x80, 0x04, 0x02, 31, 0x00, 0x00, 0x00,
-    'O', 'p', 'e', 'n', 'T', 'r', 'k', 'r',
+    'P', 'o', 'l', 'y', 'e', 'n', 'd', ' ',
     'T', 'r', 'a', 'c', 'k', 'e', 'r', ' ', 'S', 'D', ' ', 'c', 'a', 'r', 'd', ' ',
-    '2', '.', '0', ' ',
+    '2', '.', '0', '0',
 };
 }  // namespace
 

@@ -6,8 +6,7 @@
 
 #include "display.h"
 #include "fileManager.h"
-#ifdef FEATURE_PLUG_HOST
-#include "plug_host.h"
+#ifdef FEATURE_FF_CORE
 #include "fx34.h"
 #endif
 
@@ -170,7 +169,7 @@ void cProjectEditor::showDefaultScreen()
     }
 
     display.setControlValue(label[0], 1);
-#ifdef FEATURE_PLUG_HOST
+#ifdef FEATURE_FF_CORE
     display.setControlValue(label[6], 1); // a label draws its second line only with a value > 0, as "New / Project"
     display.setControlText(label[6], "Project");   // F7 opens the Project Settings page (Config editor, kOpenProjectSettings)
     display.setControlText2(label[6], "Settings");

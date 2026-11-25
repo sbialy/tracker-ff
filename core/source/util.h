@@ -7,7 +7,7 @@ template<auto val>
 constexpr void static_print()
 {
 #if !defined(__GNUC__) || defined(__clang__)
-    int static_print_is_implemented_only_for_gcc = 0;
+    [[maybe_unused]] int static_print_is_implemented_only_for_gcc = 0;
 #else
     int unused = 0;
 

@@ -33,6 +33,7 @@ struct parts_table_data_t
     float tempo;                // for the song time
     uint8_t songLoop;           // Loop Song is on (Play Song goes back to Part 1 after the last Part)
     uint16_t words;             // display list words of the last draw (out, the budget test reads it)
+    uint16_t hidden;            // bit t = track t is the hidden follower of a linked stereo pair: no column, the tracks after it move left
     uint8_t dropped;            // 1: repeat cell numbers left out, 2: all cell numbers left out (out)
 };
 

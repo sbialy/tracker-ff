@@ -54,7 +54,7 @@ CACHE="$ROOT/build/fw-eng-mismatch"
 mkdir -p "$CACHE"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/fw_engine_mismatch.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
-NCPU="${NCPU:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+NCPU="${NCPU:-$(sh "$HERE/../jobs.sh" n)}"
 
 PLGN="${PLG_DIR:-$ROOT/build/release-1.3.0-rc/modules}"
 [ -f "$PLGN/ju6.plg" ] || { echo "fw_engine_mismatch_sim.sh: no new plugins (set PLG_DIR to a folder with ju6.plg ...)" >&2; exit 2; }
@@ -263,11 +263,11 @@ bridge_env "$ROOT" || exit 2
 BRIDGE=1   # wsum and seeded_init: the new host attaches every engine of the card
 BNEW="$ROOT/build/ui-shot-bridge"
 echo "     new host: the emulator bridge build (BRIDGE=1), the plugins run their real bytes"
-HNEW="$BNEW/ui_shot"
+HNEW="${UI_SHOT_BIN:-$BNEW/ui_shot}"   # UI_SHOT_BIN: a prebuilt BRIDGE=1 binary of this tree, no make (the old hosts still build in the cache)
 mkdir -p "$BNEW/external"
 TWINS=1
 python3 -I "$ROOT/engines/external.py" source effects-os "$BNEW/external" plug/fx/ot_tape_plug.c plug/fx/ot_lofi_plug.c plug/fx/ot_bbd_plug.c plug/fx/ot_phaser_plug.c plug/fx_dirt_plug.cpp >"$WORK/twin13.log" 2>&1 || { TWINS=0; echo "     no effects-os twin sources for the new host: the insert checks are skipped"; }
-make -s -C "$HERE" -j"$NCPU" "${BRIDGE_ARGS[@]}" OUT="$BNEW" >"$BNEW.make.log" 2>&1 || { tail -30 "$BNEW.make.log"; exit 2; }
+[ -n "${UI_SHOT_BIN:-}" ] || make -s -C "$HERE" -j"$NCPU" "${BRIDGE_ARGS[@]}" OUT="$BNEW" >"$BNEW.make.log" 2>&1 || { tail -30 "$BNEW.make.log"; exit 2; }
 
 # old plugins: rebuilt from the tags of the old lock, then checked against the sha256 of that lock
 SETO="$CACHE/seto"
@@ -377,7 +377,10 @@ sum() { shasum "$@" 2>/dev/null | cut -c1-12 | tr '\n' ' '; }
 # old host wrote for the part's first engine (ACD 1, VAP 4). The plain host never attaches JU6 or PLK, so nothing touches them. With BRIDGE=1 both
 # engines really start and the firmware replaces a patch of another engine with the engine's Init patch (native firmware code, the unit does the
 # same), so the sum leaves those two out and seeded_init checks they now carry the part's engine (JU6 0x81, PLK 0x8A). Not a 1.4.0 finding: a
-# fixture of mismatched files that only an attaching engine sees
+# fixture of mismatched files that only an attaching engine sees. 0.patch is the same fixture once chip.plg is on the card: the part is seeded on CHIP in
+# project.mt only and 0.patch stays the patch of the part's first engine (the default engine of part 1, WTFM: the 1.4.0 host does not write the CHIP patch at an engine change,
+# checked on tracker-ff-v1.4.0), so the checks after chip.plg is on the card (wsum_att) leave it out too and seeded_init chip checks it got CHIP (8). The 1.4.0
+# firmware does the same on its own project (gate on pristine 1.4.0 vs tag 1.4.0), not a 1.4.1 finding. While CHIP is Missing nothing may touch 0.patch (wsum)
 wsum() { if [ "${BRIDGE:-}" = 1 ]; then sum "$1"/Workspace/project.mt "$1"/Workspace/0.patch; else sum "$1"/Workspace/project.mt "$1"/Workspace/?.patch; fi; }
 patch_engine() { python3 -I -c 'import sys
 b = open(sys.argv[1], "rb").read(); v = s = 0; i = 1
@@ -385,7 +388,14 @@ while b[0] == 8:
     v |= (b[i] & 127) << s; s += 7; i += 1
     if b[i - 1] < 128: break
 print(v)' "$1" 2>/dev/null; }
-seeded_init() { [ "${BRIDGE:-}" = 1 ] && expect "BRIDGE: the seeded JU6 and PLK parts (ACD and VAP patch files under them) got their engine's Init patch at start" "129 138" "$(patch_engine "$1"/Workspace/1.patch) $(patch_engine "$1"/Workspace/2.patch)"; return 0; }
+wsum_att() { if [ "${BRIDGE:-}" = 1 ]; then sum "$1"/Workspace/project.mt; else wsum "$1"; fi; }   # chip.plg on the card: the CHIP part attaches and gets its Init patch too
+seeded_init() {   # seeded_init DIR [chip]: chip = chip.plg is on the card, so part 1 (0.patch) got the CHIP Init patch (8) as well
+    if [ "${BRIDGE:-}" = 1 ]; then
+        if [ "${2:-}" = chip ]; then expect "BRIDGE: the seeded CHIP, JU6 and PLK parts (WTFM, ACD and VAP patch files under them) got their engine's Init patch at start" "8 129 138" "$(patch_engine "$1"/Workspace/0.patch) $(patch_engine "$1"/Workspace/1.patch) $(patch_engine "$1"/Workspace/2.patch)"
+        else expect "BRIDGE: the seeded JU6 and PLK parts (ACD and VAP patch files under them) got their engine's Init patch at start" "129 138" "$(patch_engine "$1"/Workspace/1.patch) $(patch_engine "$1"/Workspace/2.patch)"; fi
+    fi
+    return 0
+}
 nfiles() { ls "$1"/*.plg 2>/dev/null | wc -l | tr -d ' '; }
 shot() { [ -n "$PNG_DIR" ] && echo "shot $PNG_DIR/$1.png" || echo "wait 10"; }
 # state of insert slot N from the last "poke inserts" line (running or bypassed: the plugin is loaded, the project's mixer stage is not Inserts here)
@@ -431,8 +441,13 @@ py contract "$ROOT/synth-open/plug/plug_abi.h" >"$WORK/contract_new.txt"
 sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$HERE/abi_contract.txt" >"$WORK/contract_pin.txt"
 expect "ABI: plug_abi.h of this tree is the pinned contract abi_contract.txt (every define, struct layout and enum value)" "" "$(diff "$WORK/contract_pin.txt" "$WORK/contract_new.txt" | grep '^[<>]' | head -6 | tr '\n' '|')"
 expect "ABI: no enum value of $OV changed (kinds, cpus, extension ids, param flags are only added)" "0" "$(grep -c '^DIFF enum' "$WORK/abi.txt")"
-HTOLD="$(sed -n '/^const plug_host s_host = {/,/^};/p' "$BOLD/synth-open/plug_host.cpp" | tr -d ' \r\n')"
-HTNEW="$(sed -n '/^const plug_host s_host = {/,/^};/p' "$ROOT/synth-open/plug_host.cpp" | tr -d ' \r\n')"
+# The Tracker+ and Mini take the codec rate for the sample-rate slot (#ifndef PLATFORM_IMX ... #else imx::kSampleRate ... #endif). The MK66 branch is what
+# this firmware ships, so the table is compared with the IMX branch taken out, the same functions in the same order
+host_table() {   # host_table FILE -> the s_host initialiser on the MK66 branch, blanks removed
+    sed -n '/^const plug_host s_host = {/,/^};/p' "$1" | tr -d '\r' | awk '/^#ifndef PLATFORM_IMX/{next} /^#else/{skip=1;next} /^#endif/{skip=0;next} !skip' | tr -d ' \n'
+}
+HTOLD="$(host_table "$BOLD/synth-open/plug_host.cpp")"
+HTNEW="$(host_table "$ROOT/synth-open/plug_host.cpp")"
 [ -n "$HTNEW" ] && expect "the host service table the plugin gets (plug_host.cpp s_host) is the same list of functions" "$HTOLD" "$HTNEW" || fail "found the service table"
 expect "the synth extension layout constant (kLayout, plug_synth.cpp) is the same" "$(sed -n 's/.*constexpr uint32_t kLayout *= *\([^;]*\);.*/\1/p' "$BOLD/synth-open/plug_synth.cpp" | head -1)" "$(sed -n 's/.*constexpr uint32_t kLayout *= *\([^;]*\);.*/\1/p' "$ROOT/synth-open/plug_synth.cpp" | head -1)"
 py verify "$LOCKO" "$SYNO" "$FXO" >"$WORK/vold.txt"
@@ -482,7 +497,7 @@ echo "### scenario A2: a $OV project (parts on CHIP, JU6, PLK) on $NV with the $
 sd="$WORK/a2"; mkoldproj "$sd"; card "$sd" "$SYNO" "$FXO"
 [ "$OLD_CHIP_PLG" = 1 ] && rm -f "$sd/Plugins/Synth/chip.plg" "$sd/Plugins/Synth/chip.plgi"
 expect "the project was written by the $OV firmware (header stamp)" "$OV" "$(py stamp "$sd/Workspace/project.mt")"
-S0="$(wsum "$sd")"
+S0="$(wsum "$sd")"; S0P="$(wsum_att "$sd")"
 runh "$HNEW" "$sd" "$SYNTH; $(shot a2-chip-missing); poke picker; poke rhs; instr 65; tap Pattern; wait 300; tap Params; wait 1500; poke picker; poke rhs; instr 66; tap Pattern; wait 300; tap Params; wait 1500; poke picker; poke rhs"
 expect "part 1 keeps its stored number 6" "6" "$(part_line 1 0 | sed 's/.* stored \([0-9]*\) engine.*/\1/')"
 expect "part 1 (CHIP) is Missing: CHIP, silent (R7: a flash alone breaks CHIP parts)" "Missing: CHIP" "$(rhs_stored 1)"
@@ -513,7 +528,8 @@ expect "R6: Edit Patch and Load Patch of the Missing CHIP part are refused with 
 cp "$SYNN/chip.plg" "$SYNN/chip.plgi" "$sd/Plugins/Synth/"
 runh "$HNEW" "$sd" "$SYNTH; poke picker; poke rhs"
 case "$(rhs_stored 1)" in Missing*) fail "with chip.plg added the CHIP part is no longer Missing" "$(grep '^rhs' "$WORK/poke.out" | head -1)" ;; *) pass "with chip.plg added the CHIP part is no longer Missing (engine $(grep '^rhs' "$WORK/poke.out" | head -1 | sed 's/^rhs engine\[\([^]]*\)\].*/\1/'))" ;; esac
-expect "and the project is still the one of $OV" "$S0" "$(wsum "$sd")"
+S0A="$(wsum_att "$sd")"; expect "and the project is still the one of $OV" "$S0P" "$S0A"
+seeded_init "$sd" chip
 
 echo "### scenario A3: the header gate of the loader, $OV plugin files with one header field changed (new host and old host)"
 gate() {   # gate HOST NAME SRC FIELD VALUE EXPECT(1 listed, 0 refused)
@@ -653,8 +669,8 @@ STAMPDIFF=""; [ "$ov1" = "$nv1" ] || STAMPDIFF="${STAMPDIFF}4,"; [ "$ov2" = "$nv
 PSZ="$(wc -c <"$sdn/Workspace/project.mt" | tr -d ' ')"
 expect "a default project of $OV and of $NV: same size, only the firmware stamp (bytes ${STAMPDIFF%,}) and the CRC (last 4 bytes) differ" "size $PSZ $PSZ diff ${STAMPDIFF}$((PSZ - 4)),$((PSZ - 3)),$((PSZ - 2)),$((PSZ - 1))" "$(cat "$WORK/pd.txt")"
 expect "the Synth stored numbers of a default project sit at the same offsets and hold the same engines" "$(py stored "$sdn/Workspace/project.mt")" "$(py stored "$sdo/Workspace/project.mt")"
-# The loader is the same code in both firmwares apart from the project.mtff stamp hook (b2ccf89): plug::projectStamp(crc, size) is a void call in an
-# #ifdef FEATURE_PLUG_HOST block that only records the CRC and size of the project.mt just read or written, it decides nothing. So the two files are
+# The loader is the same code in both firmwares apart from the project.mtff stamp hook (b2ccf89): plug::projectStamp(crc, size) (ffHookProjectStamp
+# since the project store core/FileManager/projectSidecar.cpp, no #ifdef) is a void call that only records the CRC and size of the project.mt just read or written, it decides nothing. So the two files are
 # compared with exactly that hook (the include and the one-statement blocks) and the [[maybe_unused]] marks of the warning cleanup taken out. Anything
 # else that differs (a version compare, a refusal, a changed read) still turns the check RED, and so does a projectStamp call used as a value.
 loader_core() {   # loader_core FILE -> the file without the stamp hook, CRs, [[maybe_unused]] marks and the upstream bounds fixes (a missing old file stays empty = different)
@@ -662,7 +678,13 @@ loader_core() {   # loader_core FILE -> the file without the stamp hook, CRs, [[
 import re, sys
 t = open(sys.argv[1], "rb").read().decode("utf-8", "replace").replace("\r", "")
 t = re.sub(r"#ifdef FEATURE_PLUG_HOST\n(?:#include \"plug_host\.h\"\n|[ \t]*plug::projectStamp\([^;\n]*\);[^\n]*\n)#endif\n", "", t)
+# the same hook as an ff_hooks.h call (the project store, 1.4.1 arch): the include and the one-statement line
+t = re.sub(r"#include \"ff_hooks\.h\"\n|[ \t]*ffHookProjectStamp\([^;\n]*\);[^\n]*\n", "", t)
 t = t.replace("[[maybe_unused]] ", "")
+# The FW_LTO=ui stack fix (6c19d61f): noinline on the two functions with a 500 B or larger frame, plus its comment. Codegen only, taken out as exact literals.
+t = t.replace("// noinline on the functions with a 500 B or larger frame: with FW_LTO=ui the optimiser inlined them into callers that then kept the frame\n"
+              "// while they called the next big one (ProjectSave::saveProjectInit 296 B -> 568 B, main loop +312 B at the stack-margin gate)\n", "")
+t = t.replace("__attribute__((noinline)) ", "")
 # The upstream bounds fixes that the ambv merge (2a2a32d0) brought in: 5e30ec63 (stop creating the project folder when mkdir fails) and e9e57dba
 # (bound two path concatenations). Each post-fix hunk is mapped back, as an exact literal, to the text it replaced, so a release with or without the
 # fixes compares the same. Only these literals are accepted: any other change in the same functions still differs. An old side that has the fixes
@@ -676,7 +698,23 @@ FIXES = [
      "        strncat(path, currentProjectName, nameMaxLen);\n"
      "    }\n",
      "    strncat(path, currentProjectName, nameMaxLen);\n"),
+    # a67a1506, writeProjectFileToFileStruct: the project path is copied with the size of its field (a path of 222 characters or more wrote past the
+    # structure, a shorter path is stored as before). Save path only, a project of the old release loads as before.
+    ("    // The path of the open project can be longer than its field in the project file.\n"
+     "    strncpy(pFile->projectDataAndHeader.project.projectPath,\n"
+     "            currentProjectPatch,\n"
+     "            PATCH_SIZE - PROJECT_NAME_SIZE - 1);\n",
+     "    strcpy(pFile->projectDataAndHeader.project.projectPath, currentProjectPatch);\n"),
+    # ff63fecf, loadProjectFileFormFileStruct: structure version 0 is refused like a wrong type or size (the old code called the entry in front of the
+    # function table of translateProject(), a hard fault). Versions 1 and up, which every release writes, never reach the refusal. The other hunk of
+    # ff63fecf (the version 15 name copy in mtFileManagerOldVersionRecovery.cpp) is not in this file.
+    ("    // Structure versions start at 1. translateProject() calls one function per version\n"
+     "    // from a table whose first entry belongs to version 1.\n"
+     "    if (pFile->projectDataAndHeader.projectHeader.fileStructureVersion[0] == 0)\n"
+     "        return false;\n\n", ""),
     # 5e30ec63, createCurrentProjectFolderTree: reports failure and ends when mkdir fails
+    # the IMX port (imx-merge141): the sample pool size is the platform's own constant, SAMPLE_MEMORY_SIZE on the MK66 (same value there, mtStructs.h)
+    ("    source->max_memory = SAMPLE_POOL_BYTES;\n", "    source->max_memory = SAMPLE_MEMORY_SIZE;\n"),
     ("bool cFileManager::createCurrentProjectFolderTree()\n", "void cFileManager::createCurrentProjectFolderTree()\n"),
     ("    // A pass creates the next missing folder of the path, so one pass per character is\n"
      "    // always enough. The limit ends the loop for a path that never comes to exist even\n"
@@ -695,7 +733,9 @@ PY
 }
 LOADER_OLD="$BOLD/core/FileManager/fileManagerProject.cpp"; LOADER_NEW="$ROOT/core/FileManager/fileManagerProject.cpp"
 expect "the project file loader (fileManagerProject.cpp) is the same code in both firmwares apart from the project.mtff stamp hook: no gate on the firmware stamp" "same" "$([ -f "$LOADER_OLD" ] && [ "$(loader_core "$LOADER_OLD" | shasum | cut -c1-40)" = "$(loader_core "$LOADER_NEW" | shasum | cut -c1-40)" ] && echo same || echo different)"
-expect "the stamp hook of $NV only records (plug::projectStamp is void, it is a statement in the loader, never a condition)" "1 2 0" "$(grep -c '^void projectStamp(uint32_t crc, uint32_t size);' "$ROOT/synth-open/plug_host.h") $(grep -c '^[[:space:]]*plug::projectStamp(' "$LOADER_NEW") $(grep -E '(if|while|return|=|&&|\|\|)[^;]*projectStamp' "$LOADER_NEW" | grep -vc '^[[:space:]]*//')"
+# the hook is plug::projectStamp (up to 1.4.1) or ffHookProjectStamp of core/include/ff_hooks.h (the project store): void either way
+STAMP_DECL="$(( $(grep -c '^void projectStamp(uint32_t crc, uint32_t size);' "$ROOT/synth-open/plug_host.h") + $(cat "$ROOT/core/include/ff_hooks.h" 2>/dev/null | grep -c '^FF_HOOK_INLINE void ffHookProjectStamp(uint32_t crc, uint32_t size)$') ))"
+expect "the stamp hook of $NV only records (the stamp hook is void, it is a statement in the loader, never a condition)" "1 2 0" "$STAMP_DECL $(grep -Ec '^[[:space:]]*(plug::projectStamp|ffHookProjectStamp)\(' "$LOADER_NEW") $(grep -E '(if|while|return|=|&&|\|\|)[^;]*(projectStamp|ProjectStamp)' "$LOADER_NEW" | grep -vc '^[[:space:]]*//')"
 
 echo "### scenario B3: a patch that $NV wrote, through the patch codec of $OV (the load and the save path)"
 cat >"$WORK/rt.cpp" <<'EOF'
@@ -819,13 +859,13 @@ done
 echo "### scenario C1: a half upgraded card on $NV ($OV engines + chip.plg of $NV + the newer versions of the changed plugins, Glue with the $OV inserts)"
 sd="$WORK/c1"; mkoldproj "$sd"; card "$sd" "$SYNO" "$FXO"
 cp "$SYNN/chip.plg" "$SYNN/chip.plgi" "$sd/Plugins/Synth/"; cp "$FXN/glue.plg" "$sd/Plugins/Master/"
-S2="$(wsum "$sd")"
+S2="$(wsum_att "$sd")"
 runh "$HNEW" "$sd" "$SYNTH; poke picker; poke rhs"
 C1N="$(nfiles "$sd/Plugins/Synth")"; C1F="$(nfiles "$sd/Plugins/Master")"      # the files on the card: the old ones, plus chip.plg and glue.plg when the old set had neither
 expect "everything is listed, CHIP included" "$C1N $C1N" "$(syn_files "$sd") $(syn_listed "$sd")"
 case "$(rhs_stored 1)" in Missing*) fail "the CHIP part is not Missing" "$(grep '^rhs' "$WORK/poke.out" | head -1)" ;; *) pass "the CHIP part is not Missing" ;; esac
-expect "and nothing of the project or the patches was rewritten" "$S2" "$(wsum "$sd")"
-seeded_init "$sd"
+expect "and nothing of the project or the patches was rewritten" "$S2" "$(wsum_att "$sd")"
+seeded_init "$sd" chip
 expect "the inserts, Glue included, are all listed" "listed $C1F, rejected 0" "$(scan_line "$sd")"
 # C2: two versions of one plugin. The real pair is a synth engine that differs between the two locks (PLK 1.0 and 1.1 for 1.2.0 and 1.3.0). Between two
 # locks that pin the same files the older one is the old file with an older version in its header (the version is the only thing the pick looks at)

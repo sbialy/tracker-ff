@@ -3,6 +3,7 @@
 
 #include "core/interfacePopups.h"
 
+#include "ff_hooks.h"
 #include "fileManager.h"
 #include "fx34_io.h"
 #include "patternEditor/patternEditor.h"
@@ -116,6 +117,7 @@ void cFileManager::storePatternUndoRevision()
     fx34io::copyPattern(&undoPatternBuffer[undo.currentIndex], sequencer.getActualPattern());
     undoPatternBuffer_Indexes[undo.currentIndex] = mtProject.values.actualPattern;
     storePatternSelection(undo.currentIndex);
+    ffHookPatternUndoStored(undo.currentIndex);
 
     undo.redoPossibility = 0;
     if (undo.currentIndex >= (UNDO_CAPACITY - 1))
@@ -261,6 +263,7 @@ void cFileManager::undoPattern()
 
         setActualPatternStructChanged();
         undo.redoPossibility++;
+        if (ffHookPatternUndone(undo.currentIndex)) undo.redoPossibility = 0;
     }
 }
 void cFileManager::redoPattern()

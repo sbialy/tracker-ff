@@ -1,13 +1,21 @@
 # Polyend Tracker Community Edition (CE) - Top-Level Monorepo Makefile
 
 ROOT_DIR      := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+# Toolchain pick when TOOLCHAIN is not given: ./agt/10.3 (the CI second compiler), then arm-none-eabi- on the PATH. Builds of the original
+# (no IMX goal, at least one goal) also look in ./agt/12.3.rel1 (the release compiler, where the README puts it) between the two.
+# make plus, make mini and make all (also the default goal) keep the old pick: the Tracker+ and Mini images link the closed
+# libPolySynth.a that needs GCC 10.3, a 12.3 image of them very likely crashes at synth init. make original-release checks the
+# compiler version itself (RELEASE_GCC below).
+IMX_GOALS     := all plus mini
 ifneq ($(wildcard $(ROOT_DIR)/agt/10.3/bin/arm-none-eabi-gcc),)
   TOOLCHAIN   ?= $(ROOT_DIR)/agt/10.3/bin/arm-none-eabi-
+else ifneq ($(and $(MAKECMDGOALS),$(if $(filter $(IMX_GOALS),$(MAKECMDGOALS)),,y),$(wildcard $(ROOT_DIR)/agt/12.3.rel1/bin/arm-none-eabi-gcc)),)
+  TOOLCHAIN   ?= $(ROOT_DIR)/agt/12.3.rel1/bin/arm-none-eabi-
 else
   TOOLCHAIN   ?= arm-none-eabi-
 endif
 
-NPROC         ?= $(shell nproc 2>/dev/null || echo 4)
+NPROC         ?= $(shell sh "$(ROOT_DIR)/synth-open/tools/jobs.sh" n 2>/dev/null || echo 4)
 CORE_DIR      := $(ROOT_DIR)/core
 MK66_DIR      := $(ROOT_DIR)/platforms/mk66
 IMX_DIR       := $(ROOT_DIR)/platforms/imx
@@ -99,8 +107,8 @@ ORIGINAL_CORE_BUILD := $(CORE_DIR)/build-MK66-ORIGINAL
 endif
 # Platform (MK66) build dir. TRIM=1 compiles the platform at -Os with other defines, so it never shares objects with plain builds
 MK66_BUILD       := $(MK66_DIR)/build$(TRIM_TAG)
-PLUS_POSTFIX     ?= $(EDITION_NAME)_$(PLUS_VER_MAJOR).$(PLUS_VER_MINOR).$(PLUS_VER_PATCH)
-MINI_POSTFIX     ?= $(EDITION_NAME)_$(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_VER_PATCH)
+PLUS_POSTFIX     ?= $(IMX_EDITION_TAG)_$(PLUS_VER_MAJOR).$(PLUS_VER_MINOR).$(PLUS_VER_PATCH)
+MINI_POSTFIX     ?= $(IMX_EDITION_TAG)_$(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_VER_PATCH)
 
 .DEFAULT_GOAL := all
 
@@ -117,15 +125,20 @@ lint-original:
 		$(if $(SYNTH_ENGINES_SEL),SYNTH_ENGINES="$(SYNTH_ENGINES_SEL)") SYNTH_TAG="$(SYNTH_TAG)"
 
 # Quality gates (synth-open/tools/stack_ratchet.py, lint_delta.py). They read the build or the lint output and change nothing in the image.
-# RELEASE_ARGS is the one release recipe (synth-open/README.md, release image recipe): the five built in engines (CHIP is a plugin), the plugin host,
+# RELEASE_ARGS is the one release recipe, defined in config/ff_release.mk (synth-open/README.md, release image recipe): the five built in engines (CHIP is a plugin), the plugin host,
 # USB_AUDIO=1, USB_MSC=1 (the USB drive, Config > USB > Storage, Config > Features > USB drive, off until the user turns it on) and -DFEATURE_EXT_HOOKS (Features page, USB audio, Restart mode, Developer mode: the flags every device round of 1.3.0 used), the public
 # name PolyendTracker_FF_<A.B.C>.ptf. make original-release, the stack ratchet, the lint delta and the README build the same flags, the stack
 # baseline is the frame list of this flavour. -DFEATURE_NO_SKIPBACK leaves Skip-back (skipback.h) out of the 1.4.0 release, the code stays for 1.5. SYNTH_TAG=-rel only names the object dirs (it is not a compiler flag): the flags are new, so the dirs are too.
 # Pass TOOLCHAIN=... as for make original. make does not track flags: wipe core/build-* and platforms/mk66/build-trim between compilers.
-RELEASE_ARGS := SYNTH_OPEN=1 TRIM=1 PLUG_HOST=1 RELEASE=1 SYNTH_TAG=-rel SYNTH_ENGINES="ACD FAT VAP WTFM PERC" \
-	SYNTH_OPT_ENGINES="-O2 -ffp-contract=off" SYNTH_OPT_FAT="-O2 -ffp-contract=off" \
-	SYNTH_OPT_FM4="-O3 -ffp-contract=off" SYNTH_OPT_BTYPE="-O3 -ffp-contract=off" \
-	USB_AUDIO=1 USB_MSC=1 CUSTOM_DEFINES="-DFEATURE_EXT_HOOKS -DFEATURE_NO_SKIPBACK"
+include $(ROOT_DIR)/config/ff_release.mk
+# The image's own build id (ping, the project.mtff build= token, usbtest update "same build" check) is the sha7 plus "d" on a TABLE_DWT=1 image
+# (config/ff_release.mk): a TABLE_DWT image and the release image of one commit are different builds. 8 chars, alphanumeric, the longest
+# build= token (mtff_codec.h kMtffBuildLen). The .ptf name keeps the sha7 (31 chars at most), its TAG (PTF_TAG=TDWT) tells the image apart
+# there. Without TABLE_DWT nothing changes
+ifeq ($(TABLE_DWT),1)
+BUILD_ID_STR := $(BUILD_TAG)d
+endif
+RELEASE_ARGS := $(FF_RELEASE_ARGS)
 STACK_GCC_MAJOR = $(shell $(TOOLCHAIN)gcc -dumpversion 2>/dev/null | cut -d. -f1)
 STACK_BASELINE ?= $(SYNTH_OPEN_DIR)/tools/stack_baseline_gcc$(STACK_GCC_MAJOR).txt
 STACK_LOG ?=
@@ -134,21 +147,34 @@ STACK_RATCHET = python3 -I "$(SYNTH_OPEN_DIR)/tools/stack_ratchet.py" --root "$(
 LINT_BASE ?= origin/main
 
 # MOD import, IT import and IT export (core/FileManager/fileManagerImportMod.cpp, fileManagerImportIt.cpp, fileManagerExportToMod.cpp) are not in the
-# release image: they are /Plugins/Ext/modit.plg, linked against the exact image (synth-open/modit/, core/makefile MODIT_MODULE). On by default for the
-# release recipe (SYNTH_OPEN=1 PLUG_HOST=1 and -DFEATURE_EXT_HOOKS in CUSTOM_DEFINES), MODIT_MODULE=0 builds the three files into the image instead.
-# make original runs modit-module after the image is final, build/modit.plg is the file the package carries (package_release.sh --modit).
+# release image: they are the first tenant of /Plugins/Ext/extras.plg, the bundle of the release card modules, linked against the exact image at its
+# release region s_extRel (synth-open/modit/, core/makefile MODIT_MODULE, ext_abi.h EXT_SUB_*). On by default for the release recipe (SYNTH_OPEN=1
+# PLUG_HOST=1 and -DFEATURE_EXT_HOOKS in CUSTOM_DEFINES), MODIT_MODULE=0 builds the three files into the image instead.
+# make original runs extras-module after the image is final, build/extras.plg is the file the package carries (package_release.sh --extras).
 MODIT_MODULE ?= $(if $(and $(filter 1,$(SYNTH_OPEN)),$(filter 1,$(PLUG_HOST)),$(filter -DFEATURE_EXT_HOOKS,$(CUSTOM_DEFINES))),1,0)
-.PHONY: modit-module
-modit-module:
+.PHONY: extras-module modit-module
+modit-module: extras-module
+extras-module:
 	@test -f "$(MK66_BUILD)/PolyendTracker_$(ORIGINAL_POSTFIX).ptf" || { echo "no image: make original-release first"; exit 1; }
-	TOOLCHAIN="$(TOOLCHAIN)" PTF="$(MK66_BUILD)/PolyendTracker_$(ORIGINAL_POSTFIX).ptf" "$(SYNTH_OPEN_DIR)/modit/build_modit.sh" \
-		"$(MK66_BUILD)" "$(ORIGINAL_CORE_BUILD)/obj/modit" "$(OUT_DIR)/modit-build"
-	@python3 -I "$(SYNTH_OPEN_DIR)/plug/check_ext.py" "$(OUT_DIR)/modit-build/modit.plg" "$(OUT_DIR)/$(SYNTH_PTF)"
-	@cp "$(OUT_DIR)/modit-build/modit.plg" "$(OUT_DIR)/modit.plg"
-	@echo "-> Output: $(OUT_DIR)/modit.plg"
+	TOOLCHAIN="$(TOOLCHAIN)" PTF="$(MK66_BUILD)/PolyendTracker_$(ORIGINAL_POSTFIX).ptf" "$(SYNTH_OPEN_DIR)/modit/build_extras.sh" \
+		"$(MK66_BUILD)" "$(ORIGINAL_CORE_BUILD)/obj/modit" "$(OUT_DIR)/extras-build"
+	@python3 -I "$(SYNTH_OPEN_DIR)/plug/check_ext.py" --rel "$(OUT_DIR)/extras-build/extras.plg" "$(OUT_DIR)/$(SYNTH_PTF)"
+	@cp "$(OUT_DIR)/extras-build/extras.plg" "$(OUT_DIR)/extras.plg"
+	@echo "-> Output: $(OUT_DIR)/extras.plg"
 
 # make original-release: the public release image, build/PolyendTracker_FF_<A.B.C>.ptf (RELEASE=1 is in RELEASE_ARGS)
+# The release image is built and run on the unit only with Arm GNU Toolchain 12.3.rel1 (gcc 12.3.1). A release tag built with it gives the
+# published .ptf byte for byte. Another compiler links an image that was never run on a unit (GitHub issue 3: an outside build hung at the
+# boot logo), so the target stops on it. ANY_GCC=1 builds anyway (second compiler figures), the image is then untested.
+RELEASE_GCC := 12.3.1
 original-release:
+	@have=$$($(TOOLCHAIN)gcc -dumpversion 2>/dev/null); \
+	if [ "$$have" != "$(RELEASE_GCC)" ] && [ "$(ANY_GCC)" != "1" ]; then \
+		echo "make original-release: $(TOOLCHAIN)gcc is gcc $${have:-(not found)}, the release image needs Arm GNU Toolchain 12.3.rel1 (gcc $(RELEASE_GCC))."; \
+		echo "  Unpack it into ./agt/12.3.rel1/ or pass TOOLCHAIN=/path/to/arm-gnu-toolchain-12.3.rel1/bin/arm-none-eabi- (step by step: docs/BUILDING.md)."; \
+		echo "  ANY_GCC=1 builds with this compiler anyway, the image is then untested on a unit and may not boot."; \
+		exit 1; \
+	fi
 	$(MAKE) original $(RELEASE_ARGS)
 
 # Stack ratchet: the -fstack-usage .su files of the last build against the committed baseline. Fails on a new frame of 512 B or more, a
@@ -245,7 +271,7 @@ original:
 ifeq ($(SYNTH_OPEN),1)
 	@# name checked before the long build
 	@"$(SYNTH_OPEN_DIR)/tools/check_ptf_name.sh" $(PTF_NAME_MODE) "$(SYNTH_PTF)"
-	@rm -f "$(OUT_DIR)/$(SYNTH_PTF)" "$(OUT_DIR)/BUILD.txt" "$(OUT_DIR)/modit.plg"
+	@rm -f "$(OUT_DIR)/$(SYNTH_PTF)" "$(OUT_DIR)/BUILD.txt" "$(OUT_DIR)/modit.plg" "$(OUT_DIR)/extras.plg"
 endif
 	$(ORIGINAL_BUILD_STEPS)
 ifeq ($(SYNTH_OPEN),1)
@@ -266,8 +292,8 @@ ifeq ($(SYNTH_OPEN),1)
 	@cp "$(MK66_BUILD)/PolyendTracker_$(ORIGINAL_POSTFIX).ptf" "$(OUT_DIR)/$(SYNTH_PTF)"
 	@echo "-> Output: $(OUT_DIR)/$(SYNTH_PTF)"
 ifeq ($(MODIT_MODULE),1)
-	@# MOD/IT is a card module of this exact image: built after the tail pad settled (the relink changes the image id), packed against the .ptf
-	$(MAKE) --no-print-directory modit-module
+	@# extras.plg (MOD/IT) is a card module of this exact image: built after the tail pad settled (the relink changes the image id), packed against the .ptf
+	$(MAKE) --no-print-directory extras-module
 endif
 	@# Size guard of its own: the one in platforms/mk66/makefile only runs while the image is being linked.
 	@# BUILD.txt next to the .ptf carries the engine list (the file name cannot: the bootloader limit is 31 chars)
@@ -293,7 +319,7 @@ ifneq ($(SYNTH_OPEN),1)
 endif
 	@"$(SYNTH_OPEN_DIR)/tools/check_ptf_name.sh" $(PTF_NAME_MODE) "$(SYNTH_PTF)"
 	@test -f "$(OUT_DIR)/$(SYNTH_PTF)" || { echo "build/$(SYNTH_PTF) is missing, run make original SYNTH_OPEN=1 first"; exit 1; }
-	@"$(SYNTH_OPEN_DIR)/tools/package_release.sh" "$(OUT_DIR)/$(SYNTH_PTF)" "$(OUT_DIR)/release" --zip $(if $(filter 1,$(MODIT_MODULE)),--modit "$(OUT_DIR)/modit.plg")
+	@"$(SYNTH_OPEN_DIR)/tools/package_release.sh" "$(OUT_DIR)/$(SYNTH_PTF)" "$(OUT_DIR)/release" --zip $(if $(filter 1,$(MODIT_MODULE)),--extras "$(OUT_DIR)/extras.plg")
 
 # make release-gate PLG_DIR=<flat folder of the new .plg and .plgi> [OLD_REF=<ref>]: the firmware and engine mismatch simulator against the latest
 # published release tag, fails on a RED check that is not in synth-open/tools/ui_shot/mismatch_known_findings.txt. package_release.sh runs it too.
@@ -328,7 +354,7 @@ synth-engines-run:
 
 plus:
 	@echo "=================================================================="
-	@echo " Building Tracker+ (IMX) - $(EDITION_NAME) $(PLUS_VER_MAJOR).$(PLUS_VER_MINOR).$(PLUS_VER_PATCH) ($(BUILD_TAG))"
+	@echo " Building Tracker+ (IMX) - tracker-ff $(PLUS_VER_MAJOR).$(PLUS_VER_MINOR).$(PLUS_VER_PATCH) ($(BUILD_TAG))"
 	@echo "=================================================================="
 	@rm -f "$(IMX_DIR)/build-PLUS/obj/source/PlatformImpl.o"
 	$(MAKE) -C "$(CORE_DIR)" -j$(NPROC) build \
@@ -350,7 +376,7 @@ plus:
 
 mini:
 	@echo "=================================================================="
-	@echo " Building Tracker Mini (IMX) - $(EDITION_NAME) $(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_VER_PATCH) ($(BUILD_TAG))"
+	@echo " Building Tracker Mini (IMX) - tracker-ff $(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_VER_PATCH) ($(BUILD_TAG))"
 	@echo "=================================================================="
 	@rm -f "$(IMX_DIR)/build-MINI/obj/source/PlatformImpl.o"
 	$(MAKE) -C "$(CORE_DIR)" -j$(NPROC) build \
@@ -397,8 +423,8 @@ clean:
 version:
 	@echo "Edition      : $(EDITION_NAME) (Build $(BUILD_TAG))"
 	@echo "Original (MK66): $(EDITION_NAME) $(ORIGINAL_VER_MAJOR).$(ORIGINAL_VER_MINOR).$(ORIGINAL_VER_PATCH) -> PolyendTracker_$(ORIGINAL_POSTFIX).ptf"
-	@echo "Tracker+ (IMX) : $(EDITION_NAME) $(PLUS_VER_MAJOR).$(PLUS_VER_MINOR).$(PLUS_VER_PATCH) -> TrackerPlus_$(PLUS_POSTFIX).ptf"
-	@echo "Mini     (IMX) : $(EDITION_NAME) $(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_VER_PATCH) -> TrackerMini_$(MINI_POSTFIX).ptf"
+	@echo "Tracker+ (IMX) : tracker-ff $(PLUS_VER_MAJOR).$(PLUS_VER_MINOR).$(PLUS_VER_PATCH) -> TrackerPlus_$(PLUS_POSTFIX).ptf"
+	@echo "Mini     (IMX) : tracker-ff $(MINI_VER_MAJOR).$(MINI_VER_MINOR).$(MINI_VER_PATCH) -> TrackerMini_$(MINI_POSTFIX).ptf"
 
 TARGET ?= all
 
