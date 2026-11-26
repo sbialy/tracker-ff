@@ -82,7 +82,7 @@ Do not rename the `.ptf`. The original's bootloader lists only names that start 
 
 ## Build
 
-Step by step instructions for Linux and macOS, with the expected size and checksum of a 1.4.0 build, are in [`docs/BUILDING.md`](docs/BUILDING.md).
+Step by step instructions for the original Tracker (Linux and macOS), the Tracker+ and the Tracker Mini, with the checks for the result, are in [`docs/BUILDING.md`](docs/BUILDING.md).
 
 You need `git`, `make`, `python3` and the Arm GNU Toolchain 12.3.rel1 (gcc 12.3.1), the release compiler. Download the `arm-none-eabi` archive for your machine from [Arm's toolchain downloads](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads), version 12.3.rel1: `arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-eabi.tar.xz` on a Linux PC, `...-aarch64-...` on a 64 bit Arm Linux, `...-darwin-arm64-...` on an Apple Silicon Mac, `...-darwin-x86_64-...` on an Intel Mac. Unpack it into `./agt/12.3.rel1/` (`make original` and `make original-release` look there, a `./agt/10.3/` next to it is picked first, remove it or pass `TOOLCHAIN=`. `make plus`, `make mini` and `make all` never look there, they need GCC 10.3) or pass `TOOLCHAIN=/path/to/arm-gnu-toolchain-12.3.rel1-.../bin/arm-none-eabi-`. **The 1.4.0 tag and older do not look in `./agt/12.3.rel1/`, pass `TOOLCHAIN=` there.** Use a fresh clone, `make` does not notice a compiler change.
 

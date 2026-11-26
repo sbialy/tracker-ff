@@ -22,6 +22,14 @@
 
 extern "C" void __libc_init_array();
 
+// The project tuning of the image (core/source/mtTuneScale.cpp holds the Scala degrees, tuning::cfg is an inline variable of mtTuning.h,
+// _ZN6tuning3cfgE): the plus sim writes both from the host before the events and the block (host_plusproxy.cpp syncTuning), run.py --tune cfg
+#include "../../../core/source/mtTuning.h"
+namespace tuning
+{
+uint32_t degMc[kMaxN];
+}
+
 namespace
 {
 // GCC 10.3 layout of std::span<T> (dynamic extent): size first. Built as a 12.3 span whose fields hold the swapped values
@@ -64,6 +72,7 @@ extern "C"
 float h_outL[polysynth::kAudioBufferSize];
 float h_outR[polysynth::kAudioBufferSize];
 volatile int h_step;   // the last step reached, for a fault report
+int h_chan;   // the MIDI channel of the one instrument (run.py --chan, written before h_init): a synth part's channel is its part index (Synth.cpp)
 
 // the C runtime: static constructors (the lib has some), once
 int h_boot()
@@ -97,7 +106,7 @@ int h_init(int type, int voices)
     g_instr->assignPatch(g_patch);
     g_instr->connect(*g_keys);
     g_instr->setVoiceCount(voices);
-    g_instr->setMidiChannel(0);
+    g_instr->setMidiChannel(h_chan);
     g_list[0] = g_instr;
     h_step = 16;
     g_synth->setup(span10(g_list.data(), g_list.size()), span10<std::shared_ptr<polysynth::Instrument>>(nullptr, 0), nullptr,
@@ -111,19 +120,19 @@ void h_note(int on, int note, int velocity)
 {
     polysynth::MidiEvent e{};
     e.type = on ? polysynth::MidiEvent::Type::kNoteOn : polysynth::MidiEvent::Type::kNoteOff;
-    e.channel = 0;
+    e.channel = uint8_t(h_chan);
     e.data.note.note = uint8_t(note);
     e.data.note.velocity = uint8_t(velocity);
     g_keys->send(e);
 }
 
 // any MIDI event of the firmware's MidiAdapter as the instrument receives it (the plus sim's synth parts forward theirs, host_plussynth.cpp):
-// type: polysynth::MidiEvent::Type, channel: 0 (the instrument's) or MidiEvent::kChannelOmni, d0/d1: the first two data bytes
+// type: polysynth::MidiEvent::Type, channel: 0 (the instrument's h_chan) or MidiEvent::kChannelOmni, d0/d1: the first two data bytes
 void h_event(int type, int channel, int d0, int d1)
 {
     polysynth::MidiEvent e{};
     e.type = static_cast<polysynth::MidiEvent::Type>(type);
-    e.channel = uint8_t(channel);
+    e.channel = uint8_t(channel == 0 ? h_chan : channel);
     reinterpret_cast<uint8_t*>(&e.data)[0] = uint8_t(d0);
     reinterpret_cast<uint8_t*>(&e.data)[1] = uint8_t(d1);
     g_keys->send(e);
@@ -616,4 +625,14 @@ int h2_plug_attach(int slot, int len)
     return polysynth::plugimx::attach(slot, entry, &g_plugHost);
 }
 void h2_plug_detach(int slot) { polysynth::plugimx::detach(slot); }
+// paraphony (the plus sim's Synth::plugChordPara and plugNoteChord, host_plusproxy.cpp): PlugSynthVoice chordInfo and noteChord.
+// cs: the chord in bits 0-7, the strum (-63..63) in bits 8-15 as int8
+int h2_chord_info(int type) { return polysynth::plugimx::chordInfo(type); }
+void h2_note_tag(int id, int end) { polysynth::plugimx::noteTag(uint16_t(id), uint8_t(end)); }
+int h2_mpe_voice(int i, int f) { return polysynth::plugimx::mpeProbe(i, f); }
+void h2_mpe_note(int chan) { polysynth::plugimx::mpeNote(uint8_t(chan)); }
+void h2_part_mpe(int part, int range, int pressPercent) { polysynth::plugimx::partMpe(part, float(range), float(pressPercent) * 0.01f); }
+void h2_note_bend(int part, int chan, int raw) { polysynth::plugimx::partNoteBend(part, uint8_t(chan), raw); }
+void h2_note_press(int part, int chan, int press) { polysynth::plugimx::partNotePress(part, uint8_t(chan), uint8_t(press)); }
+void h2_note_chord(int part, int note, int cs) { polysynth::plugimx::noteChord(part, uint8_t(note), uint8_t(cs & 0xFF), int8_t(uint8_t(cs >> 8))); }
 }

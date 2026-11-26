@@ -738,6 +738,44 @@ bool Synth::attachCardEngine([[maybe_unused]] int part, int stored)
 #endif
 }
 
+#if defined(PLATFORM_IMX)
+bool Synth::plugChordPara(int part, uint8_t chord)
+{
+    if (part < 0 || part >= kSynthParts || parts[part].missing || !parts[part].patch)
+    {
+        return false;
+    }
+    const int info = polysynth::plugimx::chordInfo(static_cast<int>(parts[part].instrumentTypeId));
+    if (info < 0 || chord > uint8_t(info >> 24))
+    {
+        return false; // no PLUG_EXT_CHORD engine on the part, or a chord past its Chord enum: plain notes (open_synth.cpp chordPara)
+    }
+    const auto mode = parts[part].patch->getParamValue((info >> 8) & 0xFF);
+    return mode && *mode >= 0.5f;
+}
+
+void Synth::plugNoteChord(int part, uint8_t note, uint8_t chord, int8_t strum)
+{
+    polysynth::plugimx::noteChord(part, note, chord, strum);
+}
+
+bool Synth::plugPart(int part) const
+{
+    if (part < 0 || part >= kSynthParts || parts[part].missing)
+    {
+        return false;
+    }
+    for (const SlotUse& u : s_slotUse)
+    {
+        if (u.stored >= 0 && u.type == static_cast<int32_t>(parts[part].instrumentTypeId))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+#endif
+
 int Synth::readCardText(const char* path, char* buf, int cap)
 {
     if (!filesystem || cap <= 0)

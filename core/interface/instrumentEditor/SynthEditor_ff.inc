@@ -68,10 +68,21 @@ FF_SE_HOOK void ffSeRestorePatchFx(cInstrumentEditor* ed, int part)
 #endif
 }
 
+// the last column the cursor can reach on the Synth screen: the New note block of Tracker+ and Mini is the 7th and only a plugin part has it
+FF_SE_HOOK int ffSeLastPlace(cInstrumentEditor* ed)
+{
+#ifdef SE_NNA_IMX
+    const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
+    return part >= 0 && part < kSynthParts && ed->getSynth()->plugPart(part) ? ed->frameData.placesCount - 1 : ed->frameData.placesCount - 2;
+#else
+    return ed->frameData.placesCount - 1;
+#endif
+}
+
 // the NNA column of the Synth screen
 FF_SE_HOOK void ffSeShowNna(cInstrumentEditor* ed, uint8_t part)
 {
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(SE_NNA_IMX)
     ed->showSynthNna(part);
 #else
     (void)ed;

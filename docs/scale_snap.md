@@ -23,16 +23,16 @@ Every track has a snap mode: Off, Nearest, Down or Up. When a track plays a note
 
 Scale snap uses the scale and the root note of the project. These are the same two settings that lay out the pads.
 
-1. Press **Config** and open the **Project Settings** group.
-2. Set **Notes scale**, for example `Major`.
-3. Set **Root note**, for example `C`.
+1. Press **File** and then **F7** (the button reads Project Settings). The scale rows are on this page, the same page as Scale snap in step 3. The old rows of the Config group `Project Settings` moved here, and that Config group now holds one row that opens the page.
+2. Go to **Notes scale** and set it, for example `Major`.
+3. Go to **Root note** and set it, for example `C`.
 
 With the scale on `Chromatic` every note is in the scale, so snap changes nothing. Pick a real scale first.
 
 ## 3. Turn it on for a track
 
-1. Press **File** and then **F7** (the button reads Project Settings). This is the Project Settings page of the project. It is not the Config group of the same name.
-2. Go to the **Scale snap** row. Its value column says `Off` or the number of tracks that snap, for example `2 tracks`.
+1. Stay on the Project Settings page (File, then F7).
+2. Go to the **Scale snap** row, a few rows below Notes layout. Its value column says `Off` or the number of tracks that snap, for example `2 tracks`.
 3. Press **F8** (Enter). The list shows Track 1 to Track 16.
 4. Go to the track, press **F8** and pick Off, Nearest, Down or Up with Up and Down or the encoder. Press **F8** again to set it.
 5. Press **F7** or **Left** to go back, once for the list and once more for the page.

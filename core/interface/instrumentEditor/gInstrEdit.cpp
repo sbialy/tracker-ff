@@ -40,7 +40,9 @@ static const uint16_t framesPlacesCC[2][4] = {
 static const uint16_t framesPlacesSynthSlot[1][4] = {
     { (800 / 8) * 6 + 1, 31, (800 / 8) * 2 - 3, 195 },
 };
-// the "New note" block below it, the 8th place (New Note Action of the part)
+#endif
+#if defined(FEATURE_SYNTH_OPEN) || defined(SE_NNA_IMX)
+// the "New note" block below it, the 8th place on the original Tracker, the 7th on Tracker+ and Mini (New Note Action of the part)
 static const uint16_t framesPlacesSynthNna[1][4] = {
     { (800 / 8) * 6 + 1, 229, (800 / 8) * 2 - 3, 193 },
 };
@@ -358,7 +360,7 @@ void cInstrumentEditor::initDisplayControls()
     prop2.colors = display.getTheme().blankSpaceCoverLabelColors;
     prop2.style = controlStyleFont1;
     noteLabel = display.createControl<cLabel>(&prop2);
-#ifdef FEATURE_SYNTH_OPEN
+#if defined(FEATURE_SYNTH_OPEN) || defined(SE_NNA_IMX)
     nnaLabel = display.createControl<cLabel>(&prop2);
 #endif
 #if GUI_HANDLE_SYNTH && defined(FEATURE_PLUG_HOST)
@@ -1918,6 +1920,8 @@ void cInstrumentEditor::refreshFramePosition()
         {
 #ifdef FEATURE_SYNTH_OPEN
             frameData.placesCount = 8;
+#elif defined(SE_NNA_IMX)
+            frameData.placesCount = 7; // the 7th, New note, only for a part that plays a plugin engine (functSynthRight)
 #else
             frameData.placesCount = 6;
 #endif
@@ -1931,6 +1935,8 @@ void cInstrumentEditor::refreshFramePosition()
 #ifdef FEATURE_SYNTH_OPEN
             frameData.places[6] = &framesPlacesSynthSlot[0][0];
             frameData.places[7] = &framesPlacesSynthNna[0][0];
+#elif defined(SE_NNA_IMX)
+            frameData.places[6] = &framesPlacesSynthNna[0][0];
 #endif
             break;
         }

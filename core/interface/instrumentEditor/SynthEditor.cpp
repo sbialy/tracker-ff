@@ -830,6 +830,8 @@ void cInstrumentEditor::changeSynthParamValue(int value, ValueChangeSource sourc
             }
             break;
         case 7: changeSynthNna(value); break;
+#elif defined(SE_NNA_IMX)
+        case 6: changeSynthNna(value); break;
 #endif
     }
 }
@@ -956,7 +958,7 @@ static void functSynthRight()
     {
         return;
     }
-    if (IE->selectedPlace[mtInstEditModeSynth] < IE->frameData.placesCount - 1)
+    if (IE->selectedPlace[mtInstEditModeSynth] < ffSeLastPlace(IE))
     {
         IE->selectedPlace[mtInstEditModeSynth]++;
     }
@@ -1312,19 +1314,29 @@ void cInstrumentEditor::changeSynthModel(int16_t value)
     newFileManager.setProjectStructChanged();
 }
 
-#ifdef FEATURE_SYNTH_OPEN
-// Morph target (Shift + encoder or Shift + up/down on the slot selector): the slot 0..15 a Morph FX of the part blends to when its step
-// has no Patch FX in the other FX column. Saved in the part's names file only when it is not the default (slot 1).
+#if defined(FEATURE_SYNTH_OPEN) || defined(SE_NNA_IMX)
 // New Note Action of the part (right panel, "New note"): what the earlier note of a track does when a new note starts on it
 static const char* const synthNnaNames[] = { "Release", "Continue", "Cut", "Fade" };
 // the values in the order the encoder walks them (SynthNna of mtStructs.h)
 static const uint8_t synthNnaOrder[] = { kNnaRelease, kNnaContinue, kNnaCut, kNnaFade };
 
+// The block exists for every part on the original Tracker. On Tracker+ and Mini only a part that plays a plugin engine has it: the stock
+// engines of the closed library cannot end a note early, they keep Release (Synth::plugPart), so the row is hidden for them
+static bool synthNnaShown(int part)
+{
+#ifdef SE_NNA_IMX
+    return IE->getSynth()->plugPart(part);
+#else
+    (void)part;
+    return true;
+#endif
+}
+
 void cInstrumentEditor::changeSynthNna(int16_t value)
 {
     const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
     POLY_REQUIRE(part >= 0 && part < kSynthParts);
-    if (synthPartMissing(part))
+    if (synthPartMissing(part) || !synthNnaShown(part))
     {
         return;
     }
@@ -1342,6 +1354,16 @@ void cInstrumentEditor::changeSynthNna(int16_t value)
 
 void cInstrumentEditor::showSynthNna(uint8_t syntPartIdx)
 {
+    if (!synthNnaShown(syntPartIdx))
+    {
+        display.setControlHide(nnaLabel);
+        if (selectedPlace[mtInstEditModeSynth] > 5)
+        {   // the engine changed under the cursor: back to the last column of the stock page
+            selectedPlace[mtInstEditModeSynth] = 5;
+            activateLabelsBorder();
+        }
+        return;
+    }
     display.setControlText(nnaLabel, "New note:");
     display.setControlText2(nnaLabel, synthNnaNames[synthNnaMode(mtProject.values.synthPart[syntPartIdx])]);
     display.setControlStyle(nnaLabel, controlStyleShow | controlStyleCenterY | controlStyleFont4);
@@ -1353,7 +1375,11 @@ void cInstrumentEditor::showSynthNna(uint8_t syntPartIdx)
     display.setControlShow(nnaLabel);
     display.refreshControl(nnaLabel);
 }
+#endif
 
+#ifdef FEATURE_SYNTH_OPEN
+// Morph target (Shift + encoder or Shift + up/down on the slot selector): the slot 0..15 a Morph FX of the part blends to when its step
+// has no Patch FX in the other FX column. Saved in the part's names file only when it is not the default (slot 1).
 void cInstrumentEditor::changeSynthMorphTarget(int16_t value)
 {
     const int part = mtProject.values.lastUsedInstrument - SYNTH_INSTRUMENTS_START_IDX;
@@ -2015,6 +2041,12 @@ void cInstrumentEditor::showSynthModel(uint8_t synthPart)
 #endif
     display.refreshControl(modelListControl);
     titleBar->showCurrentInstrumentOnRightLabel();
+#ifdef SE_NNA_IMX
+    if (mode == mtInstEditModeSynth)
+    {
+        showSynthNna(synthPart); // the engine changed: a plugin part gets the New note row, a stock engine loses it
+    }
+#endif
 }
 
 void cInstrumentEditor::showSynthPolyphony(uint8_t synthPart)

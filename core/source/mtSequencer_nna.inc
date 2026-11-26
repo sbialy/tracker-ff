@@ -1,5 +1,5 @@
 // mtSequencer.cpp, included where this block was: the New Note Action of the open synth (FEATURE_SYNTH_OPEN), parked notes of a track and their release
-#ifdef FEATURE_SYNTH_OPEN
+#if SEQ_NNA
 // Continue: the note the track has open (stepSent, noteId[track]) is parked instead of ended. open: false when the note is not sounding any more
 // (its off went out already): nothing to park. A note without an id (live paths clear it) cannot be told from another note of its pitch: ended as before
 void Sequencer::nnaParkNote(uint8_t track, bool open)
@@ -30,7 +30,7 @@ void Sequencer::nnaParkNote(uint8_t track, bool open)
 
 void Sequencer::nnaRelease(const NnaPark& e)
 {
-    polysynth::open::noteTag(e.id);
+    SEQ_NOTE_TAG(e.id);
     strPlayer::strPlayerTrack::strSendStep step = e.step;
     if (playingChordSlot(&step) >= 0)
     {
@@ -40,7 +40,7 @@ void Sequencer::nnaRelease(const NnaPark& e)
     {
         sendMidiNoteOff(step.note, 0, instrumentIdxToMidiChannel(step.instrument), true);
     }
-    polysynth::open::noteTag(0);
+    SEQ_NOTE_TAG(0);
 }
 
 // The audio callback (tick: the replace sites, the tick net, the MIDI transport Play and Stop) preempts the main loop (Stop, Play and record

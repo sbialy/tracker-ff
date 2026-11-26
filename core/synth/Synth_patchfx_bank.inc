@@ -1,5 +1,6 @@
 // Synth.cpp, included where this block was: the Patch FX slot bank of Tracker+ and Mini (FEATURE_SYNTH_PATCHFX without the open synth, IMX port P12)
 #if defined(FEATURE_SYNTH_PATCHFX) && !defined(FEATURE_SYNTH_OPEN)
+#include "noinit_check.h"
 namespace
 {
 // The Patch FX bank of Tracker+ and Mini (IMX port P12). Row kPatchSlots is the shadow row: the open slot's live values, kept when the
@@ -22,11 +23,31 @@ struct PatchBank
     int8_t applied;         // the slot the Patch FX left in the part, -1: the open slot's own values
     int8_t namesBad;        // <P>.names is there but could not be read: it is not written over with empty names
 };
-// SDRAM (17,160 B for the rows, paid by the IMX sample pool cut ea4599a9, + 540 B a part for names and kinds), written by Synth::init
-// before anything reads it
-__NOINIT(EXTERNAL_RAM) PatchBank s_bank[kSynthParts];
+// SDRAM (17,160 B for the rows, paid by the IMX sample pool cut ea4599a9, + 540 B a part for names and kinds), built by Synth::init
+// (ffSynthPatchFxBoot) before anything reads it. Raw bytes: SlotNames has default member initialisers, so a PatchBank object here
+// was built by a static constructor before main() sets up the SEMC (the 2.0.0 beta 1 Tracker+ and Mini boot hang, same as f563f27)
+alignas(PatchBank) __NOINIT(EXTERNAL_RAM) unsigned char s_bankMem[kSynthParts][sizeof(PatchBank)];
+NOINIT_PLAIN(decltype(s_bankMem));
+// s_bank[part] and range for over the parts, the same use as the array it replaces. Empty and constexpr: no static constructor
+struct PatchBankParts
+{
+    PatchBank& operator[](int part) const
+    {
+        return *std::launder(reinterpret_cast<PatchBank*>(s_bankMem[part]));
+    }
+    PatchBank* begin() const
+    {
+        return &(*this)[0];
+    }
+    PatchBank* end() const
+    {
+        return begin() + kSynthParts;
+    }
+};
+constexpr PatchBankParts s_bank{};
 // the <P>.names file as it is read or written (main thread only), SDRAM like the bank
 __NOINIT(EXTERNAL_RAM) uint8_t s_namesBuf[polysynth::open::kSlotNamesFileMax];
+NOINIT_PLAIN(decltype(s_namesBuf));
 
 // Patch Vary (Synth::varyPatch): the undo row of the last Vary, the generator state and the amount, SDRAM like the bank (editor state, main
 // thread only, nothing of it is saved), written by Synth::init
@@ -40,6 +61,7 @@ struct VaryState
     uint8_t valid;
 };
 __NOINIT(EXTERNAL_RAM) VaryState s_vary;
+NOINIT_PLAIN(VaryState);
 
 // The stock params the MK66 open ports (synth-open/engine_*.cpp ParamDef fmt, open_cold.cpp morphKind) do not blend: kSemi and kInt
 // round to the nearest integer, kRatio, kNote and kBodyWave switch at 50 like the enums. Matched by the stock display name (every param of

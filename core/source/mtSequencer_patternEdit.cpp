@@ -1278,7 +1278,7 @@ void Sequencer::changeSelectionFxType(uint8_t index, int16_t value)
 
                 uint8_t previousType = _fx->type;
 
-                _fx->type = clamp<int>(interfaceGlobals.fxNameToId(name), 0, fx.FX_TYPE_TABLE); // the highest FX id (rel141-tables: R12)
+                _fx->type = clamp<int>(interfaceGlobals.fxNameToId(name), 0, fx.FX_TYPE_NNA); // the highest FX id (nna-fx: R13)
 
                 if (previousType != _fx->type && !isMultiSelection())
                 {
@@ -2121,6 +2121,7 @@ AUDIO_CORE_RAM int16_t Sequencer::getFxMax(uint8_t fxID, bool forRandom)
         case fx.FX_TYPE_TAPE: return tapefx::kValueMax;
         case fx.FX_TYPE_SNAP: return kSnapFxMax;
         case fx.FX_TYPE_TABLE: return tables::kFxValueMax;
+        case fx.FX_TYPE_NNA: return kNnaFxMax;
 #ifdef FEATURE_SYNTH_OPEN
         case fx.FX_TYPE_PATCH_CHANGE: return 15;
         case fx.FX_TYPE_PATCH_MORPH: return 100;
@@ -2177,6 +2178,7 @@ int16_t Sequencer::getFxDefault(uint8_t fxID)
         case fx.FX_TYPE_TAPE: return tapefx::kValueDefault; // one step
         case fx.FX_TYPE_SNAP: return 1; // Nearest
         case fx.FX_TYPE_TABLE: return 1;
+        case fx.FX_TYPE_NNA: return kNnaCut;
 #if defined(FEATURE_SYNTH_OPEN) || defined(FEATURE_SYNTH_PATCHFX)
         case fx.FX_TYPE_PATCH_MORPH: return 50;
 #endif
@@ -2453,6 +2455,14 @@ void Sequencer::makeFxValLabelWithAlgin(char* ptr,
             static const char* const snapCell[kSnapFxMax + 1] = { "off", "nea", "dwn", " up", "trk" };
             const uint8_t v = valueFromFx > kSnapFxMax ? kSnapFxMax : uint8_t(valueFromFx);
             strncpy(ptr, len > 4 ? snapFull[v] : snapCell[v], len);
+            break;
+        }
+        case fx.FX_TYPE_NNA:
+        {   // the names of the New note block of the Synth page, a 3 character cell in the grid
+            static const char* const nnaFull[kNnaFxMax + 1] = { "Release", "Continue", "Cut", "Fade" };
+            static const char* const nnaCell[kNnaFxMax + 1] = { "rel", "con", "cut", "fad" };
+            const uint8_t v = valueFromFx > kNnaFxMax ? kNnaFxMax : uint8_t(valueFromFx);
+            strncpy(ptr, len > 4 ? nnaFull[v] : nnaCell[v], len);
             break;
         }
         case fx.FX_TYPE_TABLE:

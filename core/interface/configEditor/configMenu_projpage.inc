@@ -8,7 +8,17 @@ static const char* const strumVolDesc =
   "How much the notes of a strummed chord fall in volume, in the order they sound. 0 % is an even strum, 100 % the full ramp. "
   "The Strum FX keeps its own speed and direction.";
 const strItemTypeListTextWithAction setupFxSlots{ &projFxSlots, 2, onOffStateTexts, setProjFxSlots };
+// The page, top to bottom: the pattern (4 FX Slots, Pattern divider), the sound of the project (Anti-aliasing, Limiter mode, Sends mode, Extra headroom,
+// Snap to zero), the synth and the takes (Macro depth, Strum volume, Random seed, Reroll seed), then the notes: the pad scale, its root and layout, and
+// next to them what plays the scale (Scale snap, Stereo pairs, Tuning, MPE out). The nine stock rows write the same fields with the same actions as in the
+// Config group they came from (configMenu.cpp, PROJ_ROW_*), so a saved project does not change
 cMenuItem melFxSlots(menuProjectPage, "4 FX Slots", fxSlotsDesc, menuTypeItemListTextWithAction, &setupFxSlots);
+PROJ_ROW_PATTERN_DIV(menuProjectPage);
+PROJ_ROW_ANTIALIASING(menuProjectPage);
+PROJ_ROW_LIMITER(menuProjectPage);
+PROJ_ROW_SENDS(menuProjectPage);
+PROJ_ROW_HEADROOM(menuProjectPage);
+PROJ_ROW_SNAP_TO_ZERO(menuProjectPage);
 #ifdef FEATURE_SYNTH_OPEN
 static const char* const macroModeTexts[3] = { "Per patch", "Add", "Scale" };
 static const char* const macroModeDesc =
@@ -25,12 +35,15 @@ const strItemTypeListValues setupRandomSeed{ &sequencer.randomSeed, 0, 255, 1, 0
 const strItemTypeActionButton setupRerollSeed{ rerollRandomSeedAction, nullptr };
 cMenuItem melRandomSeed(menuProjectPage, "Random seed", randomSeedDesc, menuTypeItemListValues, &setupRandomSeed);
 cMenuItem melRerollSeed(menuProjectPage, "Reroll seed", rerollSeedDesc, menuTypeItemActionButton, &setupRerollSeed);
+PROJ_ROW_PADS_SCALE(menuProjectPage);
+PROJ_ROW_PADS_ROOT(menuProjectPage);
+PROJ_ROW_PADS_LAYOUT(menuProjectPage);
 
-// Scale snap: per track, played notes move to the Notes scale and Root note of Config > Project Settings (the pattern keeps what was written)
+// Scale snap: per track, played notes move to the Notes scale and Root note rows above (the pattern keeps what was written)
 cMenuGroup menuScaleSnap(menuProjectPage, "Scale snap", kScaleSnapTracks);
 static const char* const scaleSnapTexts[kSnapModeCount] = { "Off", "Nearest", "Down", "Up" };
 static const char* const scaleSnapDesc =
-  "Notes of this track are moved to the Notes scale and Root note of Config > Project Settings while they play. "
+  "Notes of this track are moved to the Notes scale and Root note of this page while they play. "
   "Nearest takes the closest scale note (a tie goes down), Down the one at or below, Up the one at or above. "
   "The pattern keeps the notes you wrote. The Chromatic scale changes nothing.";
 const strItemTypeListTextWithAction scaleSnapSetup[kScaleSnapTracks] = {
@@ -163,41 +176,45 @@ const strItemTypeListValues setupMpeOut{ &projMpeOut, 0, 15, 1, 0, setProjMpeOut
 cMenuItem melMpeOut(menuProjectPage, "MPE out", mpeOutDesc, menuTypeItemListValues, &setupMpeOut);
 
 // the value column of the Scale snap, Stereo pairs and Tuning rows: how many tracks snap, how many pairs are linked, the tuning
+// A buffer per row: cMenuGroup::reloadValues keeps the pointer of every row and the list draws them after the last one was asked, so rows that share
+// a buffer all show the text of the row asked last (Scala file picked: "Stereo pairs" read the file name)
 static const char* projectPageRowValue(uint8_t row)
 {
-    static char text[16];
+    static char tuningText[16];
+    static char snapText[16];
     // rows from the end: MPE out, Tuning, then Stereo pairs (MK66 only), then Scale snap
     constexpr uint8_t kSnapRow = projectPageRows - 3 - kPairRows;
     if (row == projectPageRows - 2)
     {   // Tuning
         if (tuning::cfg.file)
         {   // the Scala file: its name without the extension, 15 characters at most
-            snprintf(text, sizeof(text), "%s", tuning::fileName[0] ? tuning::fileName : "Scala");
-            char* dot = strrchr(text, '.');
+            snprintf(tuningText, sizeof(tuningText), "%s", tuning::fileName[0] ? tuning::fileName : "Scala");
+            char* dot = strrchr(tuningText, '.');
             if (dot) *dot = 0;
-            return text;
+            return tuningText;
         }
         if (tuning::isDefault()) return "12 EDO";
-        snprintf(text, sizeof(text), tuning::cfg.periodMc == tuning::kDefPeriodMc ? "%d EDO" : "%d/period", int(tuning::cfg.n));
-        return text;
+        snprintf(tuningText, sizeof(tuningText), tuning::cfg.periodMc == tuning::kDefPeriodMc ? "%d EDO" : "%d/period", int(tuning::cfg.n));
+        return tuningText;
     }
     if (row == kSnapRow && tuning::snapLocked()) return "Off (tuned)";   // Scale snap is locked for a Scala file (a tuning of N notes snaps in N degrees)
 #ifndef PLATFORM_IMX
     if (row == projectPageRows - 3)
     {   // Stereo pairs: how many pairs are linked
+        static char pairsText[16];
         int p = 0;
         for (int k = 0; k < 4; ++k) p += stereopairs::pairLinked(k);
         if (!p) return "Mono";
-        snprintf(text, sizeof(text), "%d linked", p);
-        return text;
+        snprintf(pairsText, sizeof(pairsText), "%d linked", p);
+        return pairsText;
     }
 #endif
     if (row != kSnapRow) return nullptr;
     int n = 0;
     for (uint8_t t = 0; t < kScaleSnapTracks; t++) n += scaleSnapMode[t] != 0;
     if (!n) return "Off";
-    snprintf(text, sizeof(text), "%d tracks", n);
-    return text;
+    snprintf(snapText, sizeof(snapText), "%d tracks", n);
+    return snapText;
 }
 
 // Config start, before the lists are made: Config hides the page (the last group of the base list), the page shows only itself. The base

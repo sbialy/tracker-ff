@@ -8,7 +8,7 @@ wait 800ms
 tap F7
 wait 1000ms
 expect text "4 FX Slots"
-tap Down x4
+tap Down x13
 wait 400ms
 expect text "Scale snap"
 expect peek snap0 0

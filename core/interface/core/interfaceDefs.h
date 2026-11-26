@@ -420,6 +420,7 @@ class InterfaceGlobals
         Sequencer::strFxConsts::enFxType::FX_TYPE_TAPE,
         Sequencer::strFxConsts::enFxType::FX_TYPE_SNAP,
         Sequencer::strFxConsts::enFxType::FX_TYPE_TABLE,
+        Sequencer::strFxConsts::enFxType::FX_TYPE_NNA,
         Sequencer::strFxConsts::enFxType::FX_TYPE_BREAK_PATTERN,
 
     };
@@ -496,6 +497,7 @@ class InterfaceGlobals
         "W - Tape",
         "N - Snap",
         "Y - Table",
+        "Q - NNA",
         "x - Break pattern"
     };
 
@@ -567,6 +569,7 @@ class InterfaceGlobals
         "Tape",
         "Snap",
         "Table",
+        "NNA",
         "Break pattern"
     };
 

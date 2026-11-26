@@ -429,6 +429,49 @@ for i in "${!PROJ_NAMES[@]}"; do
     fi
 done
 
+# ============================================================================================================================================
+# P3: the NNA step FX (FX id 54, nna-fx). It sets the New note action of the note on its step, for that note only, over the setting of the part
+# (poke nna P MODE): value 0 Release, 1 Continue, 2 Cut, 3 Fade. Every row runs on a part whose setting is the OTHER one, so the FX is the only reason
+# for a change. Steps without the FX follow the part. These rows fail on a7505fc1 (FX 54 is no FX there: the part setting decides)
+# ============================================================================================================================================
+NNA=54
+# S-N1 Cut: the S-C1 scenario with the part on Release, the FX on the first note (track 1 step 0) with value 2
+run n1 "$VOICES4; poke nna 0 0; setstep 0 0 60 64 $NNA 2 0 0; setstep 1 0 67 64 0 0 0 0; setstep 2 0 71 64 0 0 0 0; setstep 0 2 64 64 0 0 0 0; setstep 0 8 -4 0 0 0 0 0; audio 1; tap Play; $P; wait 125; wait 125; $P; tap Play"
+expect "S-N1 st0: three held notes" "0:1:60:a 1:1:67:b 2:1:71:c" "$(v n1 0 1)"
+expect "S-N1 Cut FX on a Release part, st2: the replaced voice is gone in one block, the other two held notes stay" "1:1:67:b 2:1:71:c 3:1:64:d" "$(v n1 0 2)"
+# the same FX in the second slot
+run n1s "$VOICES4; poke nna 0 0; setstep 0 0 60 64 0 0 $NNA 2; setstep 1 0 67 64 0 0 0 0; setstep 2 0 71 64 0 0 0 0; setstep 0 2 64 64 0 0 0 0; setstep 0 8 -4 0 0 0 0 0; audio 1; tap Play; wait 125; wait 125; $P; tap Play"
+expect "S-N1 the FX in slot 2 is the same (ids by first poll)" "1:1:67:a 2:1:71:b 3:1:64:c" "$(v n1s 0 1)"
+# S-N2 Fade: the S-F1 scenario with the FX, the part on Release. About 120 ms ramp, 29 ms = 10 blocks apart
+run n2 "$VOICES4; poke nna 0 0; setstep 0 0 60 64 $NNA 3 0 0; setstep 0 2 64 64 0 0 0 0; setstep 0 8 -4 0 0 0 0 0; audio 1; tap Play; $P; wait 125; wait 100; $P; wait 29; $P; wait 29; $P; tap Play"
+expect "S-N2 Fade FX on a Release part, st2: the old voice is released and on the ramp, the new note on" "0:0:60:a~ 1:1:64:b" "$(v n2 0 2)"
+na=$(left n2 2 0); nb=$(left n2 3 0)
+expect "S-N2 the ramp is 1..41 blocks left after the replace (about 120 ms)" "yes" "$([ -n "$na" ] && [ "$na" -ge 1 ] && [ "$na" -le 41 ] && echo yes || echo no)"
+expect "S-N2 29 ms (10 blocks) later the ramp is 10 blocks shorter" "yes" "$([ -n "$nb" ] && [ $((na - nb)) -ge 9 ] && [ $((na - nb)) -le 11 ] && echo yes || echo no)"
+expect "S-N2 the old voice is off once the ramp is over" "1:1:64:b" "$(v n2 0 4)"
+# S-N3 Continue: the S-K1 scenario with the FX on the first two notes, the part on Release: the replaced notes stay gated, parked, the Off step ends all
+N3S="setstep 0 0 60 64 $NNA 1 0 0; setstep 0 2 64 64 $NNA 1 0 0; setstep 0 4 67 64 0 0 0 0; setstep 0 8 -4 0 0 0 0 0"
+run n3 "$VOICES4; poke nna 0 0; $N3S; audio 1; tap Play; $P; wait 125; wait 125; $P; $PK; wait 125; wait 125; $P; $PK; wait 125; wait 125; wait 125; wait 125; $P; $PK; tap Play"
+expect "S-N3 Continue FX st2: the replaced note stays gated, two voices" "0:1:60:a 1:1:64:b" "$(v n3 0 2)"
+expect "S-N3 Continue FX st4: three gated voices, two notes parked" "0:1:60:a 1:1:64:b 2:1:67:c / 2" "$(v n3 0 3) / $(pk n3 2)"
+expect "S-N3 Continue FX: the Off step releases all three, nothing is parked" "0:0:60:a 1:0:64:b 2:0:67:c / 0" "$(v n3 0 4) / $(pk n3 3)"
+# S-N4 Release FX on a part that is on Cut: the note is released, not cut (the FX wins the other way too), Release value 0
+run n4 "$VOICES4; poke nna 0 2; setstep 0 0 60 64 $NNA 0 0 0; setstep 1 0 67 64 0 0 0 0; setstep 0 2 64 64 0 0 0 0; setstep 0 8 -4 0 0 0 0 0; audio 1; tap Play; $P; wait 125; wait 125; $P; tap Play"
+expect "S-N4 Release FX on a Cut part: the replaced voice rings in its release" "0:0:60:a 1:1:67:b 2:1:64:c" "$(v n4 0 2)"
+# S-N5 only that note: the part is on Release, the first note has the Cut FX, the second note has none: the second one is released at step 4 (no ramp, not cut),
+# the third note has the Continue FX and stays gated when the fourth starts
+run n5 "$VOICES4; poke nna 0 0; setstep 0 0 60 64 $NNA 2 0 0; setstep 0 2 64 64 0 0 0 0; setstep 0 4 67 64 $NNA 1 0 0; setstep 0 6 71 64 0 0 0 0; setstep 0 10 -4 0 0 0 0 0; audio 1; tap Play; $P; wait 125; wait 125; $P; wait 125; wait 125; $P; wait 125; wait 125; $P; tap Play"
+expect "S-N5 st0: one voice" "0:1:60:a" "$(v n5 0 1)"
+expect "S-N5 st2: the FX note is cut, the new one is on" "1:1:64:b" "$(v n5 0 2)"
+expect "S-N5 st4: the note without the FX follows the part (Release): it rings in its release, no ramp" "0:1:67:c 1:0:64:b" "$(v n5 0 3)"
+expect "S-N5 st6: the Continue FX note stays gated with the new one, the earlier released one still rings out" "0:1:67:c 1:0:64:b 2:1:71:d" "$(v n5 0 4)"
+# the part setting is not changed by a step with the FX: a part on Release that played an NNA step releases the next note it replaces like before
+run n6 "$VOICES4; poke nna 0 0; setstep 0 0 60 64 $NNA 2 0 0; setstep 0 2 64 64 0 0 0 0; setstep 0 4 67 64 0 0 0 0; setstep 0 10 -4 0 0 0 0 0; audio 1; tap Play; wait 125; wait 125; wait 125; wait 125; wait 80; $P; tap Play"
+expect "S-N6 a part on Release after an NNA step still releases (no ramp, the old note rings)" "0:1:67:a 1:0:64:b" "$(v n6 0 1)"
+# S-N7 a sample step with the FX does nothing (no synth voice is touched, the run ends clean): the FX is a model only FX away from synth parts
+run n7 "$VOICES4; poke nna 0 0; setstep 0 0 60 0 $NNA 2 0 0; setstep 0 2 64 64 0 0 0 0; setstep 0 8 -4 0 0 0 0 0; audio 1; tap Play; wait 125; wait 125; $P; tap Play"
+expect "S-N7 NNA FX on a sample step: the synth note plays as usual" "0:1:64:a" "$(v n7 0 1)"
+
 new=$(cat "$WORK"/*.err 2>/dev/null | grep "SUMMARY" | grep -v "mtWavetableEnvelopes.cpp:206" | sort | uniq -c)
 if [ -n "$new" ]; then fails=$((fails+1)); echo "FAIL  sanitizer report in a run:"; echo "$new"; fi
 echo "$checks checks"

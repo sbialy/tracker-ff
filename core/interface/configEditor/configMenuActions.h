@@ -19,6 +19,7 @@ void setLimiterMode();
 void setSendsMode();
 void setHeadroomMode();
 void setSnapToZeroMode();
+void openProjectPageAction();   // Config > Project Settings > Open the page: the Project Settings page of the File screen (F7)
 void setRandomSeedValue();      // Project Settings > Random seed: the project changed
 void rerollRandomSeedAction();  // Project Settings > Reroll seed
 #ifdef FEATURE_FF_CORE

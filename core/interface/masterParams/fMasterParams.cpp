@@ -497,7 +497,9 @@ static void functEncoder(int16_t value)
         {
             if (MP->trackIsEdited[track])
             {
-                MP->changeTrackVolume(value, track);
+                // both buttons of a linked pair held: the pair moves once, both releases are no mute
+                if (!(stereopairs::isFollower(track) && MP->trackIsEdited[track - 1]))
+                    MP->changeTrackVolume(value, track);
                 MP->ignoreMuteRelease[track] = true;
             }
         }
@@ -1837,8 +1839,8 @@ static void functSoloMuteTrack(uint8_t n, uint8_t state)
         return;
     }
 
-    // a linked pair is one strip and its follower's strip is not on screen: the buttons after it are one slot up, the last ones have no strip
-    n = stereopairs::nthVisible(n);
+    // Track N has its own slot (a linked pair is two slots, L and R, under one label): either button of a pair acts on the pair, the
+    // flags below sit on the leader
     if (n > 7)
     {
         return;
@@ -1858,7 +1860,8 @@ static void functSoloMuteTrack(uint8_t n, uint8_t state)
             return;
         }
 
-        n = (uint8_t)stereopairs::base(n); // a linked pair is one strip: its second button acts on the leader
+        n = (uint8_t)stereopairs::base(n); // either button of a linked pair acts on the leader
+
         if (MP->isSolo)
         {
             if ((uint8_t)MP->soloTrack == n)
@@ -1898,7 +1901,7 @@ static void functSoloMuteTrack(uint8_t n, uint8_t state)
     {
         if (MP->editTrackNameMode)
         {
-            MP->editTrackName(n);
+            MP->editTrackName((uint8_t)stereopairs::base(n));
             return;
         }
         MP->trackIsEdited[n] = true;

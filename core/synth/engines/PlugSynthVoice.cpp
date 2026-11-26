@@ -7,6 +7,8 @@
 #include "PolySynth/sdk/InstrumentVoice.h"
 #include "audio/synth_engine.h"   // synth-open/ot: SynthVoice, SynthParams, SynthNote, SynthSlotScratch (the engines' interface)
 #include "plug_abi.h"
+#include "plug_chord.h"   // PLUG_CHORD_COUNT: the 77 chords of the MIDI Chord FX
+#include "../../source/mtTuning.h"   // the project tuning (Project Settings, Scala): the same note pitch as the MK66 shim
 
 #if !defined(PLUS_SYNTH_HARNESS)
 #include "plug_imx.h"
@@ -39,6 +41,7 @@ struct PartState
     bool valid = false;      // params.start holds a block's values
     ot::audio::SynthSlotScratch scratch;
     ot::audio::SynthParams params;
+    float bend = 0.f;   // the instrument's pitch bend in semitones (kPitchBendChange), every voice of the part plays it
 };
 
 struct SlotEngine
@@ -49,15 +52,75 @@ struct SlotEngine
     void* work = nullptr;
     PartState* states[kStatesPerSlot] = {};
     float tempo = 0.f;
+    // PLUG_EXT_CHORD (paraphony): the engine's Chord, Chord Mode and Strum parameters (-1 none) and the last value of its Chord enum
+    int8_t chord = -1, mode = -1, strum = -1;
+    uint8_t last = 0;
+};
+
+// A MIDI Chord step of a part at Para (noteChord, the sequencer): the part's next note on of `note` carries the chord and the strum.
+// Keyed by the part's MIDI channel, which the lib hands the voice in event.channel (Synth.cpp setMidiChannel(part), probe C0)
+struct PendingChord
+{
+    int16_t note = -1;   // -1: none
+    int16_t chord = 0;   // bits 0-7 the chord, bits 8-14 the strum + 64 (open_synth.cpp noteChord)
+};
+constexpr int kParts = 3;   // kSynthParts: channels 0..2
+
+// The sequencer's note id and end mode of the send in progress (noteTag, open_synth.cpp gNoteTag / gNoteEnd): 0 outside a send.
+// The lib hands the event to the voices inside the send (probe N0), so the voice reads them in onMidiEvent
+struct NoteTag
+{
+    uint16_t id = 0;
+    uint8_t end = 0;   // 0 Release, 2 Cut, 3 Fade (the New Note Action of the replaced note)
+};
+// Fade: 120 ms = 41 blocks of 128 frames at 44.1 kHz, linear in amplitude, Cut is its last block (open_synth.cpp kNnaFadeBlocks)
+constexpr uint8_t kNnaFadeBlocks = 41;
+
+// MPE in of the Synth play page (mpeNote, partMpe, partNoteBend, partNotePress: open_synth.cpp gMpeChan, setMpe, noteBend, notePress).
+// A voice cannot reach the other voices of its part, so the part keeps the last bend and pressure of each member channel and a counter
+// of the notes started on it: the voice of the newest note on a channel follows it (render), an older one is a tail and keeps its values.
+// The master channel's pressure (channel 1) goes to every voice of the part through a counter of its own
+struct MpePart
+{
+    float rangeSt = 48.0f / 8192.0f;   // semitones of a raw step of the member bend (48 st: the MPE default)
+    float pressAmt = 0.0f;             // 0..1, 0: pressure does nothing
+    int16_t bend[17] = {};
+    uint8_t press[17] = { 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127 };
+    uint8_t owner[17] = {};            // bumped by every note on of the channel
+    uint8_t pressSeq[17] = {};         // bumped by every pressure of the channel: a voice takes it once, the master's may come in between
+    uint8_t master = 127, masterSeq = 0;
 };
 
 InstrumentTypeRegistry* g_registry;
+// A full pitch bend is this many semitones, the lib's own range for its engines (synthPlayRouter.cpp kLibBendSemis), so the wheel of the
+// Synth play page and the Table transpose (tables_run.inc kTableLibBendSemis) move a plugin engine as far as a built-in one
+constexpr float kLibBendSemis = 2.0f;
+#if defined(PLUS_SYNTH_HARNESS)
+// harness only (never in an image): a bit per MidiEvent::Type that reached PlugVoice::onMidiEvent, the probe of what the closed lib forwards
+extern "C" uint32_t h_plug_evseen;
+uint32_t h_plug_evseen;
+extern "C" int h_plug_chan;   // the event.channel of the last note on that reached PlugVoice (-1 none), the part's channel probe
+int h_plug_chan = -1;
+// the note-off routing probe: note offs that reached a PlugVoice, the ones that found their voice gated on that pitch, note ons, the
+// note ons that reused a sounding voice
+extern "C" int h_plug_offs, h_plug_offhit, h_plug_ons, h_plug_reused, h_plug_tag;
+int h_plug_tag = -1;   // the note id (noteTag) the last note on saw: the lib delivers inside the send when it is the id set around it
+int h_plug_offs, h_plug_offhit, h_plug_ons, h_plug_reused;
+#endif
 #if defined(PLATFORM_IMX) && !defined(UI_SHOT_HOST)
 // SRAM_OC on IMX (CPU only): its 96 B of initialised .data sat 184 B under the 0x800 boundary that qh_buffer pins .bss to on the Mini,
 // 185 B more would have moved .bss up by 2,048 B (synth-open/tools/imx_sram_cliff.py)
 __attribute__((section(".data.$RAM3"))) SlotEngine g_slots[kSlots];
+__attribute__((section(".data.$RAM3"))) PendingChord g_pending[kParts];   // 12 B, CPU only, with g_slots out of the DTC
+__attribute__((section(".data.$RAM3"))) NoteTag g_tag;
+__attribute__((section(".data.$RAM3"))) MpePart g_mpe[kParts];   // 279 B, CPU only
+__attribute__((section(".data.$RAM3"))) uint8_t g_mpeChan;        // the member channel (2..16) of the note on or off being sent, 0 outside
 #else
 SlotEngine g_slots[kSlots];
+PendingChord g_pending[kParts];
+NoteTag g_tag;
+MpePart g_mpe[kParts];
+uint8_t g_mpeChan;
 #endif
 // R of the engine for the voice being rendered (the lib renders the voices one after the other in the audio interrupt)
 float g_right[kAudioBufferSize];
@@ -85,7 +148,29 @@ PartState* stateFor(SlotEngine& s, const Patch* patch)
 class PlugVoice final : public InstrumentVoice
 {
   public:
-    PlugVoice(int slot, uint32_t gen) : slot(slot), gen(gen) {}
+    PlugVoice(int slot, uint32_t gen) : slot(slot), gen(gen)
+    {
+#if defined(PLUS_SYNTH_HARNESS)
+        for (auto*& r : h_voices)
+            if (!r) { r = this; break; }
+#endif
+    }
+#if defined(PLUS_SYNTH_HARNESS)
+    ~PlugVoice() override
+    {
+        for (auto*& r : h_voices)
+            if (r == this) r = nullptr;
+    }
+    // the MPE probe (h2_mpe_voice): the sounding voices, as open_synth.cpp's mpevoices poke
+    static PlugVoice* h_voices[32];
+    int16_t hBend() const { return nbend; }
+    uint8_t hNote() const { return note; }
+    uint8_t hChan() const { return chan; }
+    bool hGate() const { return v.gate; }
+    uint8_t hPress() const { return press; }
+    bool hOn() const { return on; }
+    uint8_t hPart() const { return part; }
+#endif
 
     void onMidiEvent(const InstrumentVoiceContext& ctx, const MidiEvent& event) override
     {
@@ -93,6 +178,27 @@ class PlugVoice final : public InstrumentVoice
         PartState* st = s ? stateFor(*s, getPatch()) : nullptr;
         if (!st) return;
         tempo(*s, ctx.tempo);
+#if defined(PLUS_SYNTH_HARNESS)
+        h_plug_evseen |= 1u << unsigned(event.type);
+        if (event.type == MidiEvent::Type::kNoteOn) h_plug_chan = event.channel;
+        if (event.type == MidiEvent::Type::kNoteOn) h_plug_tag = g_tag.id;
+        if (event.type == MidiEvent::Type::kNoteOff || (event.type == MidiEvent::Type::kNoteOn && event.data.note.velocity == 0))
+        {
+            h_plug_offs++;
+            h_plug_offhit += on && v.gate && event.data.note.note == note;
+        }
+        else if (event.type == MidiEvent::Type::kNoteOn)
+        {
+            h_plug_ons++;
+            h_plug_reused += on;
+        }
+#endif
+        if (event.type == MidiEvent::Type::kPitchBendChange)
+        {
+            // the lib hands the instrument's bend to its voices: kept per part, so a voice started later plays it too (render takes it)
+            st->bend = float(event.data.pitchBendChange.value) * (kLibBendSemis * (1.0f / 8192.0f));
+            return;
+        }
         if (event.type == MidiEvent::Type::kNoteOn && event.data.note.velocity > 0)
         {
             const bool reused = on;
@@ -104,24 +210,62 @@ class PlugVoice final : public InstrumentVoice
             }
             ot::audio::SynthNote n;
             n.note = event.data.note.note;
-            n.pitch = float(n.note);
+            // The project tuning moves the note's pitch by the key's offset, as the MK66 shim (open_synth.cpp noteOn): PERC and T-Type
+            // (0x85) are kits, the note picks the drum, untuned. CHIP reads only the integer note: its offset goes on the bend
+            const bool kit = s->typeId == int(InstrumentTypeId::kDrumSynth) || s->typeId == 0x85;
+            const float tuneOff = kit ? 0.0f : tuning::synthOffset(n.note);
+            n.pitch = float(n.note) + tuneOff;
+            tuneSt = s->typeId == int(InstrumentTypeId::kChiptuneSynth) ? tuneOff : 0.0f;
             vel = float(event.data.note.velocity) * (1.0f / 127.0f);
             n.velocity = s->ext->volume_param < 0 ? vel : 1.0f;
             n.reused = reused;
             n.overlap = reused && v.gate;
+            // a pending MIDI Chord of the part is for this note on only, any note on of the part clears it (open_synth.cpp noteOn)
+            int chord = -1;
+            if (event.channel < kParts)
+            {
+                PendingChord& pc = g_pending[event.channel];
+                if (pc.note == n.note) chord = pc.chord;
+                pc.note = -1;
+            }
             v.slotScratch = &st->scratch;
+            id = g_tag.id;
+            fadeLeft = 0;
+            // MPE: the note takes its member channel's last bend (not on a kit, the note picks the drum) and pressure, the older note of
+            // the channel becomes a tail (open_synth.cpp noteOn)
+            part = event.channel < kParts ? uint8_t(event.channel) : uint8_t(0);
+            MpePart& m = g_mpe[part];
+            chan = event.channel < kParts && g_mpeChan >= 2 && g_mpeChan <= 16 ? g_mpeChan : uint8_t(0);
+            if (chan) owner = ++m.owner[chan];
+            nbend = chan && !kit ? m.bend[chan] : int16_t(0);
+            press = chan ? m.press[chan] : uint8_t(127);
+            masterSeen = m.masterSeq;
+            pressSeen = m.pressSeq[chan];
+            const float mpeSt = nbend != 0 ? float(nbend) * (m.rangeSt * tuning::tableScale()) : 0.0f;
             v.note = n.note;
             v.gate = true;
             v.fading = false;
+            if (!reused) v.bend = v.bendStart = st->bend + tuneSt + mpeSt;   // a new voice starts on the bend, no ramp (open_synth.cpp noteOn)
             on = true;
             note = n.note;
-            s->ext->note_on(&v, &st->params, &n);
+            if (chord >= 0 && s->chord >= 0 && s->chord < st->params.count)
+                chordNoteOn(*s, *st, n, chord);
+            else
+                s->ext->note_on(&v, &st->params, &n);
         }
         else if ((event.type == MidiEvent::Type::kNoteOff || event.type == MidiEvent::Type::kNoteOn) && on && v.gate &&
-                 event.data.note.note == note)
+                 event.data.note.note == note && (g_tag.id == 0 || id == 0 || id == g_tag.id) && (g_mpeChan == 0 || chan == g_mpeChan))
         {
+            if (chan)
+            {
+                if (followsChan()) g_mpe[part].press[chan] = 127;   // the finger is up: the channel's next note starts at full level
+                chan = 0;   // a tail: it keeps the bend and the level it had
+            }
+            // a note id ends only the voice its note on started (the lib hands a note off to every voice of the pitch, probe N1). A
+            // voice without an id (a live note, a strummed chord note) ends on any note off of its pitch, as before
             v.gate = false;
             s->ext->note_off(&v, &st->params);
+            if ((g_tag.end == 2 || g_tag.end == 3) && s->ext->max_voices > 1) fadeLeft = g_tag.end == 2 ? uint8_t(1) : kNnaFadeBlocks;
         }
     }
 
@@ -176,12 +320,43 @@ class PlugVoice final : public InstrumentVoice
             // g / vLast), as the MK66 shim does (open_synth.cpp renderAudioBuffer: hasVol false, vol 1, velK 1, range 0..1)
             target = std::clamp(1.0f * (1.0f + 1.0f * (vel - 1.0f)), 0.0f, 1.0f);
         }
+        MpePart& m = g_mpe[part];
+        if (m.masterSeq != masterSeen)
+        {
+            masterSeen = m.masterSeq;
+            press = m.master;   // the master channel's pressure: every voice of the part
+        }
+        if (followsChan())
+        {
+            if (!kitEngine(*s)) nbend = m.bend[chan];
+            if (v.gate && m.pressSeq[chan] != pressSeen)
+            {
+                pressSeen = m.pressSeq[chan];
+                press = m.press[chan];   // only a key that is down follows its pressure, a tail keeps its level
+            }
+        }
+        if (m.pressAmt != 0.0f)
+        {
+            target *= 1.0f + m.pressAmt * (float(press) * (1.0f / 127.0f) - 1.0f);   // MPE pressure: full at 127, 1 - amount at 0
+        }
+        const uint8_t nnaLeft = fadeLeft;
+        if (nnaLeft)
+        {
+            // New Note Action Cut / Fade: the gain ramps down block by block, 0 in the last one (Cut is only that block)
+            target *= float(nnaLeft - 1) * (1.0f / float(kNnaFadeBlocks));
+            fadeLeft = uint8_t(nnaLeft - 1);
+        }
         const float g0 = gain;
         const float gInc = (target - g0) * (1.0f / float(kAudioBufferSize));
         gain = target;
         v.bendStart = v.bend;
+        v.bend = st->bend + tuneSt;
+        if (nbend != 0)
+        {
+            v.bend += float(nbend) * (m.rangeSt * tuning::tableScale());   // MPE member bend, kept by a tail
+        }
         std::fill(g_right, g_right + kAudioBufferSize, 0.0f);
-        if (!s->ext->render(&v, &st->params, g0, gInc, l, g_right)) on = false;
+        if (!s->ext->render(&v, &st->params, g0, gInc, l, g_right) || nnaLeft == 1) on = false;
         for (int i = 0; i < kAudioBufferSize; i++) l[i] = 0.5f * (l[i] + g_right[i]);
     }
 
@@ -213,6 +388,25 @@ class PlugVoice final : public InstrumentVoice
 
   private:
     SlotEngine* engine() const { return g_slots[slot].ext && g_slots[slot].gen == gen ? &g_slots[slot] : nullptr; }
+    // A MIDI Chord step's note on (open_synth.cpp chordNoteOn): the step's chord is the engine's Chord parameter for this note on only
+    // (the engine latches it in note_on, PLUG_EXT_CHORD), a Strum FX the engine's Strum parameter when it has one. Put back right after
+    void chordNoteOn(const SlotEngine& s, PartState& st, const ot::audio::SynthNote& n, int chord)
+    {
+        const int strum = (chord >> 8) - 64;
+        const int si = (strum != 0 && s.strum >= 0 && s.strum < st.params.count) ? s.strum : s.chord;
+        float& e = st.params.end[s.chord];
+        float& b = st.params.start[s.chord];
+        float& se = st.params.end[si];
+        float& sb = st.params.start[si];
+        const float e0 = e, b0 = b, se0 = se, sb0 = sb;
+        e = b = float(chord & 0xFF);
+        if (si != s.chord) se = sb = float(strum);
+        s.ext->note_on(&v, &st.params, &n);
+        e = e0;
+        b = b0;
+        se = se0;
+        sb = sb0;
+    }
     float velocityAmount(int volParam) const
     {
         const auto& macros = getPatch()->getMetadata().macros;
@@ -250,7 +444,20 @@ class PlugVoice final : public InstrumentVoice
     bool on = false;
     note_t note = 0;
     float vel = 1.f, gain = 0.f;
+    float tuneSt = 0.f;   // CHIP: the tuning offset of the note, on the bend (the engine reads only the integer note)
+    uint16_t id = 0;       // the sequencer's note id of the note on (noteTag), 0: none
+    uint8_t fadeLeft = 0;  // New Note Action Cut / Fade: blocks of the ramp to 0 that are left (1: the last one), 0: none
+    // MPE in: the part (the note on's MIDI channel), the member channel (0: none or a tail), the channel's note counter at the note on, the
+    // master and member pressure counters last taken, the pressure (127: full) and the raw member bend of the voice
+    uint8_t part = 0, chan = 0, owner = 0, masterSeen = 0, pressSeen = 0, press = 127;
+    int16_t nbend = 0;
+    bool followsChan() const { return chan != 0 && g_mpe[part].owner[chan] == owner; }
+    static bool kitEngine(const SlotEngine& s) { return s.typeId == int(InstrumentTypeId::kDrumSynth) || s.typeId == 0x85; }
 };
+
+#if defined(PLUS_SYNTH_HARNESS)
+PlugVoice* PlugVoice::h_voices[32];
+#endif
 
 class SilentVoice final : public InstrumentVoice
 {
@@ -422,6 +629,32 @@ void makeMetadata(int slot, uint32_t gen, Patch::Metadata& m)
 
 namespace
 {
+// PLUG_EXT_CHORD: the answer of an attached engine, the checks of plug_synth.cpp checkChord (the IMX loader keeps no text or rw bounds
+// of the slot, the pointer is the engine's own): both indices in range and different, Chord an enum or integer from 0 with 68 to 77
+// values, Chord Mode an enum, integer or on/off from 0 with Poly and Para. Anything else: the engine plays chords as separate notes
+bool chordOk(const plug_ext_chord* c, const plug_ext_synth* x)
+{
+    if (!c || c->struct_size < offsetof(plug_ext_chord, strum_param)) return false;
+    const uint32_t np = std::min<uint32_t>(x->param_count, uint32_t(ot::audio::kSynthParamMax));
+    if (c->param_index >= np || c->mode_param >= np || c->param_index == c->mode_param) return false;
+    const plug_synth_param& ch = x->params[c->param_index];
+    const plug_synth_param& md = x->params[c->mode_param];
+    const bool chOk = (ch.fmt == PLUG_FMT_ENUM || ch.fmt == PLUG_FMT_INT) && ch.min == 0.0f &&
+                      ch.max >= float(PLUG_CHORD_COUNT_V1 - 1) && ch.max <= float(PLUG_CHORD_COUNT - 1) && ch.max == float(int(ch.max));
+    const bool mdOk = (md.fmt == PLUG_FMT_ENUM || md.fmt == PLUG_FMT_INT || md.fmt == PLUG_FMT_ON_OFF) && md.min == 0.0f && md.max >= 1.0f;
+    return chOk && mdOk;
+}
+
+// The Strum tail of an answer chordOk passed: an integer parameter from -63 to 63, else none (plug_synth.cpp chordStrum)
+int8_t chordStrum(const plug_ext_chord* c, const plug_ext_synth* x)
+{
+    if (c->struct_size < sizeof(plug_ext_chord) || c->strum_param >= x->param_count || c->strum_param >= uint32_t(ot::audio::kSynthParamMax) ||
+        c->strum_param == c->param_index || c->strum_param == c->mode_param)
+        return -1;
+    const plug_synth_param& st = x->params[c->strum_param];
+    return st.fmt == PLUG_FMT_INT && st.min == -63.0f && st.max == 63.0f ? int8_t(c->strum_param) : int8_t(-1);
+}
+
 void registerSlot(int slot)
 {
     const SlotEngine& s = g_slots[slot];
@@ -454,6 +687,8 @@ void detach(int slot)
     s.ext = nullptr;
     s.typeId = -1;
     s.tempo = 0.f;
+    s.chord = s.mode = s.strum = -1;
+    s.last = 0;
     ::operator delete(s.work);
     s.work = nullptr;
     for (auto*& st : s.states)
@@ -464,6 +699,74 @@ void detach(int slot)
 }
 
 int slotType(int slot) { return slot >= 0 && slot < kSlots ? g_slots[slot].typeId : -1; }
+
+int chordInfo(int typeId)
+{
+    for (const SlotEngine& s : g_slots)
+        if (s.ext && s.typeId == typeId && s.chord >= 0)
+            return int(uint32_t(uint8_t(s.chord)) | uint32_t(uint8_t(s.mode)) << 8 | uint32_t(uint8_t(s.strum)) << 16 | uint32_t(s.last) << 24);
+    return -1;
+}
+
+void noteTag(uint16_t id, uint8_t endMode)
+{
+    g_tag.id = id;
+    g_tag.end = endMode;
+}
+
+void mpeNote(uint8_t chan) { g_mpeChan = chan; }
+
+void partMpe(int part, float memberRange, float pressAmount)
+{
+    if (part < 0 || part >= kParts) return;
+    g_mpe[part].rangeSt = std::clamp(memberRange, 0.0f, 96.0f) * (1.0f / 8192.0f);
+    g_mpe[part].pressAmt = std::clamp(pressAmount, 0.0f, 1.0f);
+}
+
+void partNoteBend(int part, uint8_t chan, int raw)
+{
+    if (part < 0 || part >= kParts || chan < 2 || chan > 16) return;
+    g_mpe[part].bend[chan] = int16_t(std::clamp(raw, -8192, 8191));
+}
+
+void partNotePress(int part, uint8_t chan, uint8_t press)
+{
+    if (part < 0 || part >= kParts || chan < 1 || chan > 16) return;
+    if (chan == 1)
+    {
+        g_mpe[part].master = press;
+        g_mpe[part].masterSeq++;
+        return;
+    }
+    g_mpe[part].press[chan] = press;
+    g_mpe[part].pressSeq[chan]++;
+}
+
+#if defined(PLUS_SYNTH_HARNESS)
+// harness only: voice i of the probe (h2_mpe_voice), field f: 0 on, 1 part, 2 note, 3 member channel, 4 gate, 5 raw member bend, 6 pressure
+int mpeProbe(int i, int f)
+{
+    PlugVoice* p = i >= 0 && i < 32 ? PlugVoice::h_voices[i] : nullptr;
+    if (!p) return f == 0 ? 0 : -1;
+    switch (f)
+    {
+        case 0: return p->hOn();
+        case 1: return p->hPart();
+        case 2: return p->hNote();
+        case 3: return p->hChan();
+        case 4: return p->hGate();
+        case 5: return p->hBend();
+        default: return p->hPress();
+    }
+}
+#endif
+
+void noteChord(int part, uint8_t note, uint8_t chord, int8_t strum)
+{
+    if (part < 0 || part >= kParts) return;
+    g_pending[part].chord = int16_t(chord | ((std::clamp<int>(strum, -63, 63) + 64) << 8));
+    g_pending[part].note = note;
+}
 
 int attach(int slot, uint32_t entryAddr, const plug_host* host)
 {
@@ -490,6 +793,14 @@ int attach(int slot, uint32_t entryAddr, const plug_host* host)
     }
     s.ext = x;
     s.typeId = x->type_id;
+    const auto* c = static_cast<const plug_ext_chord*>(d->query(PLUG_EXT_CHORD));
+    if (chordOk(c, x))
+    {
+        s.chord = int8_t(c->param_index);
+        s.mode = int8_t(c->mode_param);
+        s.strum = chordStrum(c, x);
+        s.last = uint8_t(x->params[c->param_index].max);
+    }
     registerSlot(slot);
     return x->type_id;
 }

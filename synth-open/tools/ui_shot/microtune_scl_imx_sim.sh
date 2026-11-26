@@ -7,6 +7,7 @@
 # on a ui_shot built with PLATFORM=IMX PRODUCT=PLUS or MINI (build/ui-shot-plus, build/ui-shot-mini, made here when missing: only the host simulator, never the
 # firmware targets). The IMX build has sample tracks only (no open synth stack in the plus and mini pins), so the synth and CHIP sims do not apply there.
 # The Mini has no encoder in its lists: LISTKEYS=tap moves a list by Down and Up.
+# SCRIPT=tuning_label_sim.sh runs that scenario file on the same builds (the Project Settings value column).
 # Ends with "RESULT: GREEN" (exit 0) or "RESULT: RED (n failing)".
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -22,4 +23,4 @@ if [ -z "${UI_SHOT_BIN:-}" ]; then
     make -s -C "$HERE" -j"$(sh "$HERE/../jobs.sh" n)" PLATFORM=IMX PRODUCT="$P" >"$OUT.make.log" 2>&1 || { tail -30 "$OUT.make.log"; exit 2; }
 fi
 [ -x "$BIN" ] || { echo "microtune_scl_imx_sim.sh: no ui_shot at $BIN" >&2; exit 99; }
-LISTKEYS="$LK" BIN="$BIN" PLAT="$P" exec bash "$HERE/microtune_scl_sim.sh" "${2:-}"
+LISTKEYS="$LK" BIN="$BIN" PLAT="$P" exec bash "$HERE/${SCRIPT:-microtune_scl_sim.sh}" "${2:-}"

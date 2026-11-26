@@ -1087,13 +1087,23 @@ void cMasterParams::resizeBarControl(displayMode val)
     uint32_t shadow = (display.getTheme().bottomScreenShadow > 0 ? controlStyleBottomShadow : 0);
     uint32_t gradient = (display.getTheme().barShadow > 0 ? controlStyleGradient : 0);
 
-    // the track strips of the Mixer: a linked stereo pair is one strip, the follower's is hidden and the strips after it move up. Every other
-    // page has the strips at their own slots
+    // the track strips: Track N sits in slot N on every page. On the Mixer a linked stereo pair is two strips (L meter in the odd slot, R meter in
+    // the even one) under ONE header and ONE mute label that span both slots, the follower's own header and label are hidden
     for (uint8_t i = 0; i < 8; i++)
     {
-        const int slot = val == displayMode::mixer ? i - __builtin_popcount(stereopairs::hiddenMask() & ((1u << i) - 1u)) : i;
-        display.setControlPosition(trackNameLabel[i], (800 / 8) * slot + (800 / 16), 32);
-        display.setControlPosition(label[i], (800 / 8) * slot + (800 / 16), 424);
+        const bool span = val == displayMode::mixer && stereopairs::isLeader(i);
+        const int centre = span ? (800 / 8) * i + (800 / 8) : (800 / 8) * i + (800 / 16);
+        display.setControlPosition(trackNameLabel[i], centre, 32);
+        display.setControlSize(trackNameLabel[i], span ? 800 / 4 - 4 : 800 / 8 - 4, -1);
+        display.setControlPosition(label[i], centre, 424);
+        if (val == displayMode::mixer)
+            display.setControlSize(label[i], span ? 800 / 4 - 6 : 800 / 8 - 6, -1);
+        else if (val == displayMode::mixerDelayReverb)
+        {
+            // back from a Mixer with a pair: the labels are one slot wide again and the follower's one is there
+            display.setControlSize(label[i], 800 / 8 - 6, -1);
+            display.setControlShow(label[i]);
+        }
     }
 
     if (val == displayMode::masterValues)
@@ -1129,23 +1139,27 @@ void cMasterParams::resizeBarControl(displayMode val)
 
         for (uint8_t i = 0; i < 8; i++)
         {
-            const int slot = i - __builtin_popcount(stereopairs::hiddenMask() & ((1u << i) - 1u));
-            display.setControlPosition(trackVolumeBar[i], (800 / 8) * slot + 2, 64);
+            display.setControlPosition(trackVolumeBar[i], (800 / 8) * i + 2, 64);
             display.setControlSize(trackVolumeBar[i], 800 / 16 - 3, 359);
             display.refreshControl(trackVolumeBar[i]);
 
-            display.setControlPosition(barControl[i], (800 / 8) * slot + 2 + 800 / 16, 64);
+            display.setControlPosition(barControl[i], (800 / 8) * i + 2 + 800 / 16, 64);
             display.setControlSize(barControl[i], 800 / 16 - 3, 359);
             display.refreshControl(barControl[i]);
+
+            // a follower's header and mute label are covered by its leader's, its volume bar shows the pair's volume and its meter the R bus
             if (stereopairs::isFollower(i))
             {
-                display.setControlHide(trackVolumeBar[i]);
-                display.setControlHide(barControl[i]);
                 display.setControlHide(trackNameLabel[i]);
-                display.setControlText(label[i], "");
-                display.setControlText2(label[i], "");
-                display.refreshControl(label[i]);
+                display.setControlHide(label[i]);
             }
+            else
+            {
+                display.setControlShow(trackNameLabel[i]);
+                display.setControlShow(label[i]);
+            }
+            display.refreshControl(trackNameLabel[i]);
+            display.refreshControl(label[i]);
         }
 #ifdef FEATURE_SYNTH
         for (uint8_t i = 8; i < 8 + kSynthParts; i++)
@@ -1495,7 +1509,7 @@ void cMasterParams::showMixerScreen()
     }
 
     display.refreshControl(bgLabel);
-    display.setControlValue(bgLabel, 255);
+    display.setControlValue(bgLabel, 255 & ~stereopairs::hiddenMask()); // no divider inside a pair's label
 
     display.setControlHide(frameControl);
     display.refreshControl(frameControl);
@@ -1731,8 +1745,6 @@ void cMasterParams::showMixerDelayReverbScreen()
 
 void cMasterParams::showLevelBar(uint8_t n, strTrackLevel* level)
 {
-    if (displayType == displayMode::mixer && stereopairs::isFollower(n))
-        return; // a linked pair is one strip, the follower's strip is hidden
     uint32_t one_true_red = display.getTheme().red;
     uint32_t one_true_green = display.getTheme().green;
     constexpr uint8_t RED_COLOR_LEVEL = 95;
@@ -1817,24 +1829,26 @@ void cMasterParams::showLevelBar(uint8_t n, strTrackLevel* level)
 
 void cMasterParams::showTrackVolumeBar(uint8_t n)
 {
-    if (stereopairs::isFollower(n))
-        return;
-    float trackVolumeInDecybels = calcLevelDecybelValue(mtProject.values.trackVolume[n]);
+    // a linked pair has one volume and one mute: both of its strips draw the leader's, the label under them is the leader's too
+    const uint8_t b = (uint8_t)stereopairs::base(n);
+    float trackVolumeInDecybels = calcLevelDecybelValue(mtProject.values.trackVolume[b]);
 
-    sprintf(mixerVolumeLabel[n], "%0.2f dB", trackVolumeInDecybels);
+    sprintf(mixerVolumeLabel[b], "%0.2f dB", trackVolumeInDecybels);
 
     display.setControlShow(trackVolumeBar[n]);
 
-    if (mtProject.values.trackMute[n])
+    if (mtProject.values.trackMute[b])
         display.setControlColors(trackVolumeBar[n], display.getTheme().inactiveBarColors);
     else
         display.setControlColors(trackVolumeBar[n], display.getTheme().activeBarColors);
 
-    display.setControlValue(trackVolumeBar[n], mtProject.values.trackVolume[n]);
+    display.setControlValue(trackVolumeBar[n], mtProject.values.trackVolume[b]);
 
-    display.setControlText(label[n], mixerVolumeLabel[n]);
-
-    display.refreshControl(label[n]);
+    if (n == b)
+    {
+        display.setControlText(label[n], mixerVolumeLabel[n]);
+        display.refreshControl(label[n]);
+    }
     display.refreshControl(trackVolumeBar[n]);
 
     display.synchronizeRefresh();

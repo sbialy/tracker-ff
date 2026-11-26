@@ -12,6 +12,7 @@
 // host_plussynth.cpp writes them, the input of run.py --events (params as the guest's stored values, diffed per block against the last
 // logged ones, the first block against a fresh init patch of the part's type).
 #include <unicorn/unicorn.h>
+#include "../../../core/source/mtTuning.h"
 
 #include "PolySynth/Synth.h"
 #include "PolySynth/Instrument.h"
@@ -57,6 +58,16 @@ struct Guest
     std::map<int, polysynth::FileSystem::FileHandle> files;
     int nextFile = 1;
 
+    // the project tuning into the guest's PlugSynthVoice (tuning::cfg and tuning::degMc of the harness): the guest is its own image, the host's
+    // Project Settings tuning has to cross before every event and block a plugin engine can take a note on
+    void syncTuning()
+    {
+        static_assert(sizeof(tuning::Cfg) == 16, "tuning::Cfg has the M7 layout");
+        auto c = sym.find("_ZN6tuning3cfgE"), d = sym.find("_ZN6tuning5degMcE");
+        if (c == sym.end() || d == sym.end()) return;
+        uc_mem_write(uc, c->second, &tuning::cfg, sizeof tuning::cfg);
+        uc_mem_write(uc, d->second, tuning::degMc, sizeof tuning::degMc);
+    }
     uint32_t at(const char* name)
     {
         auto it = sym.find(name);
@@ -489,6 +500,7 @@ class ProxyInstrument : public polysynth::Instrument
               int w = 0;
               static_assert(sizeof e == 4, "MidiEvent crosses as one word");
               std::memcpy(&w, &e, 4);
+              guest()->syncTuning();
               guest()->call("h2_event", this->id, w, source);
               dumpOpen(this->id);
               Dump& d = g_dump[this->id];
@@ -604,6 +616,7 @@ class ProxySynth : public polysynth::Synth
         const float v = t ? *t : 0.f;
         uc_mem_write(g.uc, g.at("h2_tempo_ok"), &ok, 4);
         uc_mem_write(g.uc, g.at("h2_tempo"), &v, 4);
+        g.syncTuning();
         g.call("h2_update_audio");
     }
     void updateMain() override { guest()->call("h2_update_main"); }
@@ -750,4 +763,22 @@ int polysynth::plugimx::attachFile(int slot, const uint8_t* file, uint32_t len)
     const int r = g.call("h2_plug_attach", slot, int(len));
     if (r < 0) fprintf(stderr, "plusproxy: h2_plug_attach(slot %d, %u B) = %d\n", slot, len, r);
     return r;
+}
+// Paraphony (Synth::plugChordPara and plugNoteChord): the engines' PLUG_EXT_CHORD answers and the pending chord live in the guest
+int polysynth::plugimx::chordInfo(int typeId) { return guest()->call("h2_chord_info", typeId); }
+// Note ids and the New Note Action (the sequencer's SEQ_NOTE_TAG): the tag lives in the guest, read by PlugVoice inside the send
+void polysynth::plugimx::noteTag(uint16_t id, uint8_t endMode) { guest()->call("h2_note_tag", id, endMode); }
+void polysynth::plugimx::mpeNote(uint8_t chan) { guest()->call("h2_mpe_note", chan); }
+// the "plugmpe" poke (host_poke.cpp): field f of the guest's voice i (PlugSynthVoice.cpp mpeProbe)
+int uishotPlugMpeVoice(int i, int f) { return guest()->call("h2_mpe_voice", i, f); }
+// the page hands whole semitones and a pressure percent (fSynthPlay.cpp part::mpeConfig), the guest makes the same floats of them
+void polysynth::plugimx::partMpe(int part, float memberRange, float pressAmount)
+{
+    guest()->call("h2_part_mpe", part, int(lroundf(memberRange)), int(lroundf(pressAmount * 100.0f)));
+}
+void polysynth::plugimx::partNoteBend(int part, uint8_t chan, int raw) { guest()->call("h2_note_bend", part, chan, raw); }
+void polysynth::plugimx::partNotePress(int part, uint8_t chan, uint8_t press) { guest()->call("h2_note_press", part, chan, press); }
+void polysynth::plugimx::noteChord(int part, uint8_t note, uint8_t chord, int8_t strum)
+{
+    guest()->call("h2_note_chord", part, note, int(chord) | int(uint8_t(strum)) << 8);
 }

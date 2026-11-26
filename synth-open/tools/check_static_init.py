@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuse MK66 images whose static initialisation touches the SDRAM (EXTERNAL_RAM, 0x70000000-0x70FFFFFF).
+"""Refuse MK66 and IMX images whose static initialisation touches the SDRAM (EXTERNAL_RAM, 0x70000000-0x70FFFFFF).
 
 The SDRAM only works after main() has run hardware init (platforms/mk66/source/hardware.cpp, externalRAM.init()).
 ResetHandler (teensy_core/mk20dx128.c) runs __libc_init_array() before main(), so a static constructor that writes
@@ -15,18 +15,27 @@ SDRAM address (a literal pool load, movw/movt, mov of an immediate, then mov/add
 Only storing the address itself (a pointer to an SDRAM buffer kept in a RAM object) is fine and not flagged, so are
 float constants with the same bits (vldr into an FP register). The scan is linear per function and calls through
 pointers or vtables are not followed. Exit 1 with the call path for every hit.
-Usage: check_static_init.py [--toolchain <prefix>] <image.axf>
+IMX (Tracker+ and Mini, --imx): the same rule for the SEMC SDRAM 0x80000000-0x83FFFFFF. ResetISR
+(platforms/imx/startup/startup_mimxrt1051.cpp) runs __libc_init_array before main(), main() sets up the SEMC
+(BOARD_InitBootPeripherals), HardFault_Handler spins (semihost_hardfault.c): 2.0.0 beta 1 hung on the bootloader's "100 %"
+(s_bank built by _GLOBAL__sub_I__ZN5SynthC2Ev).
+Usage: check_static_init.py [--toolchain <prefix>] [--imx] <image.axf>
 """
 import re
 import subprocess
 import sys
 
-LO, HI = 0x70000000, 0x71000000
+MK66_SDRAM = (0x70000000, 0x71000000)  # EXTERNAL_RAM of mk66fx1m0.ld
+IMX_SDRAM = (0x80000000, 0x84000000)   # SEMC SDRAM of the RT1052 (platforms/imx/linker), set up in main() by BOARD_InitBootPeripherals
+LO, HI = MK66_SDRAM
 
 HDR = re.compile(r"^([0-9a-f]{8}) <(.+)>:$")
 INS = re.compile(r"^\s*([0-9a-f]+):\s+(?:[0-9a-f]{4} [0-9a-f]{4}|[0-9a-f]{8}|[0-9a-f]{4})\s+(\S+)\s*(.*)$")
 TARGET = re.compile(r"^([0-9a-f]+) <")
-LITREF = re.compile(r";\s*\(?([0-9a-f]+) <")
+# objdump comments: ";" up to binutils 2.3x (10.3), "@" from 2.40 (12.3.rel1). The ";"-only parse missed every literal pool and
+# movw/movt address on 12.3 (the comment stuck to the immediate), so the MK66 gate ran blind (poly-imx-preinit-fix)
+COMMENT = re.compile(r"[;@]")
+LITREF = re.compile(r"[;@]\s*\(?([0-9a-f]+) <")
 REGS = {f"r{i}" for i in range(13)} | {"sb", "sl", "fp", "ip", "sp", "lr", "pc"}
 ALIAS = {"sb": "r9", "sl": "r10", "fp": "r11", "ip": "r12"}
 ARGS = {"r0", "r1", "r2", "r3"}
@@ -49,8 +58,13 @@ def reg(tok):
     return None
 
 
+def code(rest):
+    """The operand text of one instruction without the objdump comment."""
+    return COMMENT.split(rest, 1)[0]
+
+
 def operands(rest):
-    return [t.strip() for t in rest.split(";", 1)[0].split(",")]
+    return [t.strip() for t in code(rest).split(",")]
 
 
 def imm(tok):
@@ -65,7 +79,7 @@ def imm(tok):
 
 def rw(op, rest):
     """(reads, writes) of the core registers of one instruction, approximate."""
-    text = rest.split(";", 1)[0]
+    text = code(rest)
     ops = operands(rest)
     regs = [reg(t) for t in re.split(r"[,\[\]{}\s!]+", text) if reg(t)]
     if NODEST.match(op):
@@ -100,7 +114,7 @@ def entry_live(lines):
                 continue
             cond = it_left > 0
             it_left = max(0, it_left - 1)
-            text = rest.split(";", 1)[0]
+            text = code(rest)
             if (op.startswith("bx") and "lr" in text) or ("pc" in text and (op.startswith(("pop", "ldm")) or (op.startswith("ldr") and text.strip().startswith("pc")))):
                 if not cond:
                     break
@@ -145,27 +159,27 @@ def analyse(lines, words, func_starts, live_of):
             live = live_of(int(t.group(1), 16)) if t else ARGS
             args = sorted(r for r in taint if r in ARGS and r in live)
             if args:
-                hits.append(f"{addr}: {op} {rest.split(';')[0].strip()} with SDRAM address "
+                hits.append(f"{addr}: {op} {code(rest).strip()} with SDRAM address "
                             + ", ".join(f"{r}={taint[r]:#010x}" for r in args) + " in an argument register")
             for r in CLOBBER:
                 taint.pop(r, None)
             continue
         if "[" in rest:
-            inside = rest.split(";", 1)[0].split("[", 1)[1]
+            inside = code(rest).split("[", 1)[1]
             b = reg(inside.split(",")[0].split("]")[0])
             if b in taint:
-                hits.append(f"{addr}: {op} {rest.split(';')[0].strip()} accesses SDRAM {taint[b]:#010x}")
+                hits.append(f"{addr}: {op} {code(rest).strip()} accesses SDRAM {taint[b]:#010x}")
         elif re.match(r"^(?:ldm|stm|vldm|vstm)", op) and ops:
             b = reg(ops[0])
             if b in taint:
-                hits.append(f"{addr}: {op} {rest.split(';')[0].strip()} accesses SDRAM {taint[b]:#010x}")
+                hits.append(f"{addr}: {op} {code(rest).strip()} accesses SDRAM {taint[b]:#010x}")
         if NODEST.match(op) or BRANCH_OPS.match(op):
             continue
         dest = reg(ops[0]) if ops else None
         if dest is None:
             continue
         if base_op.startswith("ldm") or op.startswith("pop") or op.startswith("ldrd"):
-            for t in rest.split(";", 1)[0].replace("{", ",").replace("}", ",").split(","):
+            for t in code(rest).replace("{", ",").replace("}", ",").split(","):
                 r = reg(t)
                 if r and not (base_op.startswith("ldm") and t.strip().endswith("!")):
                     taint.pop(r, None)
@@ -206,9 +220,16 @@ def analyse(lines, words, func_starts, live_of):
 
 
 def main(argv):
+    global LO, HI
+    LO, HI = MK66_SDRAM
     prefix = "arm-none-eabi-"
-    if len(argv) >= 2 and argv[0] == "--toolchain":
-        prefix, argv = argv[1], argv[2:]
+    while argv and argv[0].startswith("--"):
+        if argv[0] == "--toolchain" and len(argv) >= 2:
+            prefix, argv = argv[1], argv[2:]
+        elif argv[0] == "--imx":
+            (LO, HI), argv = IMX_SDRAM, argv[1:]
+        else:
+            sys.exit(__doc__)
     if len(argv) != 1:
         sys.exit(__doc__)
     axf = argv[0]

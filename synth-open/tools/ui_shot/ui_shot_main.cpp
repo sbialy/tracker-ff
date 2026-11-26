@@ -24,6 +24,8 @@
 //   cursor             print the pattern editor cursor: "cursor track T step S param P edit E"
 //   scale ROOT SCALE   set the project Notes scale and Root note (root 24 = C, scale 0 chromatic, 1 minor, 2 major)
 //   midirows           print the rows Config > MIDI lists (linked pairs hide the follower's Track N in channel row)
+//   projrows           print the name and the value text of every row of the Project Settings page, as the screen reads them (the value pointers are all
+//                      taken before any is printed, so a row that shares a buffer with another shows its text), and the stereo pair mask
 //   snapzero 0|1       the project snap to zero crossing setting (stereo_fx_sweep.sh renders with it off)
 //   snap [T M]         print the scale snap mode of every track, or set track T (-1: all) to mode M (0 Off 1 Nearest 2 Down 3 Up)
 //   shot FILE.png      write the screen
@@ -87,6 +89,9 @@
 #include "configEditor/configMenu.h"
 #include "configEditor/configMenuActions.h"
 extern cMenuGroup menuMidi;   // configMenu.cpp, for midirows
+#ifdef FEATURE_FF_CORE
+extern cMenuGroup menuProjectPage;   // configMenu.cpp, for projrows
+#endif
 #if __has_include("RestartMode.h")
 #include "RestartMode.h"
 #endif
@@ -372,6 +377,14 @@ bool command(const std::string& line)
         is >> t >> ch;
         mtConfig.midi.notesInMode = notesIn_usb_and_jack;
         if (t >= 0 && t < kSampleTracks) mtConfig.midi.trackNotesInChannel[t] = uint8_t(ch);
+        return true;
+    }
+    if (c == "ccin")
+    {   // ccin MODE CH: Config > MIDI > CC in (0 off, 1 USB, 2 DIN, 3 both) on channel CH, the stock enum
+        int m = 0, ch = 1;
+        is >> m >> ch;
+        mtConfig.midi.ccInMode = decltype(mtConfig.midi.ccInMode)(m);
+        mtConfig.midi.ccInChannel = uint8_t(ch);
         return true;
     }
     if (c == "notesin")
@@ -1217,8 +1230,17 @@ bool command(const std::string& line)
         fflush(stdout);
         return true;
     }
+    if (c == "projvals")
+    {   // the nine per-project rows of the Project Settings page and the global Performance presets, one line (projset_sim.sh)
+        const auto& v = mtProject.values;
+        printf("projvals div %d aa %d lim %d sends %d head %d s2z %d scale %d root %d lay %d perf %d\n", int(v.patternDiv), int(v.antialiasingEnable), int(v.limiterMode),
+               int(v.sendsMode), int(v.isHeadroomEnabled), int(v.isSnapToZeroEnabled), int(v.padBoardScale), int(v.padBoardRootNote), int(v.padBoardNoteOffset),
+               int(mtConfig.general.performanceSource));
+        fflush(stdout);
+        return true;
+    }
     if (c == "scale")
-    {   // the project's Notes scale and Root note (Config > Project Settings), as the two list items leave them
+    {   // the project's Notes scale and Root note (Project Settings page, File screen F7), as the two list items leave them
         int root = 24, sc = 0;
         is >> root >> sc;
         mtProject.values.padBoardRootNote = uint8_t(root);
@@ -1449,6 +1471,18 @@ bool command(const std::string& line)
         fflush(stdout);
         return true;
     }
+#ifdef FEATURE_FF_CORE
+    if (c == "projrows")
+    {   // projrows: the rows of Project Settings as "[name=value]", values read the way the list draws them (cMenuGroup::getValues, every pointer first)
+        char** values = menuProjectPage.getValues();
+        char** names = menuProjectPage.getNames();
+        printf("projrows %d pairs %d:", int(menuProjectPage.getCount()), int(stereopairs::g_mask));
+        for (int i = 0; i < int(menuProjectPage.getCount()); i++) printf(" [%s=%s]", names[i], values[i]);
+        printf("\n");
+        fflush(stdout);
+        return true;
+    }
+#endif
     if (c == "delayparams")
     {   // delayparams BYTE: audioEngine::setDelayParams (bit 7 ping pong, bit 6 sync, low 6 bits the rate) and FB: the delay feedback percent (stereo_sends_sim.sh)
         int v = 0, fb = -1;

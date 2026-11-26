@@ -333,6 +333,7 @@ exec 3>&1
  job release_gate_tail_test unit 'bash synth-open/tools/release_gate_tail_test.sh | tail -1'
  job package_zip_test unit 'bash synth-open/tools/package_zip_test.sh | tail -1 | grep -q PASS$'
  job tail_pad_test unit 'python3 -I synth-open/tools/tail_pad_test.py | tail -1'
+ job check_static_init_test unit 'python3 -I synth-open/tools/check_static_init_test.py | tail -1'
  job icons_inflate_test unit 'bash synth-open/tools/icons_inflate_test.sh | tail -1'
  job font_inflate_test unit 'bash synth-open/tools/font_inflate_test.sh | tail -1'
  job logo_inflate_test unit 'bash synth-open/tools/logo_inflate_test.sh | tail -1'
@@ -448,6 +449,17 @@ exec 3>&1
  job plus_ttype_vel_sim sim 'CARD="$bc_card" bash synth-open/tools/ui_shot/plus_ttype_vel_sim.sh > "$L/plus_ttype_vel_sim.log" 2>&1; tvrc=$?; tail -3 "$L/plus_ttype_vel_sim.log"; exit $tvrc'
  # the mutant: the harness built from a PlugSynthVoice.cpp without the no-Volume gain must make that test RED (SKIP stays green, as above)
  job plus_ttype_vel_sim_mutant sim 'o=$(TTV_MUTANT=1 CARD="$bc_card" bash synth-open/tools/ui_shot/plus_ttype_vel_sim.sh PLUS || true); echo "$o" | tail -3; echo "$o" | tail -1 | grep -Eq "^plus_ttype_vel_sim: (RED|SKIP)"'
+ # plugin engines on Tracker+ and Mini with the features of the original Tracker: the plus_synth guest rows (bend, tuning, Scala degrees, MIDI Chord
+ # paraphony, note ids, New note action, plus_synth/plug_parity_sim.sh) and the same features through the real UI and sequencer on the plus and the
+ # mini sim (MIDI Chord at Para, New note action and the NNA FX, two tracks on one pitch, MPE in per note, the Scala mirror: plug_parity_ui_sim.sh)
+ job plug_parity_sim sim 'PLG_DIR="$PLUGDIR" PY="$PY" OUT="$out/plug-parity" bash synth-open/tools/plus_synth/plug_parity_sim.sh > "$L/plug_parity_sim.log" 2>&1; pprc=$?; tail -1 "$L/plug_parity_sim.log"; exit $pprc'
+ for p in plus mini; do
+   job plug_parity_ui_$p sim 'PRODUCT='$p' PLG_DIR="$PLUGDIR" PY="$PY" OUT="$out/plug-parity-ui-'$p'" bash synth-open/tools/ui_shot/plug_parity_ui_sim.sh > "$L/plug_parity_ui_'$p'.log" 2>&1; pprc=$?; tail -1 "$L/plug_parity_ui_'$p'.log"; exit $pprc'
+ done
+ # the New note row of the Synth page for plugin engine parts on Tracker+ and Mini (plug_nna_page_sim.sh, the file rows use the plain sim)
+ for p in plus mini; do
+   job plug_nna_page_$p sim 'PRODUCT='$p' PLG_DIR="$PLUGDIR" PY="$PY" OGBIN="$wt/build/ui-shot/ui_shot" OUT="$out/plug-nna-page-'$p'" bash synth-open/tools/ui_shot/plug_nna_page_sim.sh > "$L/plug_nna_page_'$p'.log" 2>&1; pprc=$?; tail -1 "$L/plug_nna_page_'$p'.log"; exit $pprc'
+ done
  # the same part path as Cortex-M4 code in the emulator (the soft clip is a fused multiply-add: the compiler decides the last bit)
  if [ -n "$TOOLCHAIN" ] && "$PY" -c 'import unicorn' 2> /dev/null; then
    job synth_part_arm sim 'PYTHON=$PY sh synth-open/tools/audio_opt/run_synth_part_arm.sh 3000'
@@ -471,6 +483,10 @@ job microtune_scl_sim sim 'UI_SHOT_BIN="$wt/build/ui-shot/ui_shot" bash synth-op
 job microtune_scl_synth_sim sim 'UI_SHOT_BIN="$wt/build/ui-shot/ui_shot" bash synth-open/tools/ui_shot/microtune_scl_synth_sim.sh | tail -3; test "${PIPESTATUS[0]}" = 0'
 job microtune_scl_plus_sim sim 'bash synth-open/tools/ui_shot/microtune_scl_imx_sim.sh PLUS | tail -3; test "${PIPESTATUS[0]}" = 0'
 job microtune_scl_mini_sim sim 'bash synth-open/tools/ui_shot/microtune_scl_imx_sim.sh MINI | tail -3; test "${PIPESTATUS[0]}" = 0'
+job projset_sim sim 'UI_SHOT_BIN="$wt/build/ui-shot/ui_shot" bash synth-open/tools/ui_shot/projset_sim.sh | tail -3; test "${PIPESTATUS[0]}" = 0'
+job tuning_label_sim sim 'UI_SHOT_BIN="$wt/build/ui-shot/ui_shot" bash synth-open/tools/ui_shot/tuning_label_sim.sh | tail -3; test "${PIPESTATUS[0]}" = 0'
+job tuning_label_plus_sim sim 'SCRIPT=tuning_label_sim.sh bash synth-open/tools/ui_shot/microtune_scl_imx_sim.sh PLUS | tail -3; test "${PIPESTATUS[0]}" = 0'
+job tuning_label_mini_sim sim 'SCRIPT=tuning_label_sim.sh bash synth-open/tools/ui_shot/microtune_scl_imx_sim.sh MINI | tail -3; test "${PIPESTATUS[0]}" = 0'
 job microtune_names_sim sim 'UI_SHOT_BIN="$wt/build/ui-shot/ui_shot" bash synth-open/tools/ui_shot/microtune_names_sim.sh | tail -3; test "${PIPESTATUS[0]}" = 0'
 job microtune_names_plus_sim sim 'bash synth-open/tools/ui_shot/microtune_p3_imx_sim.sh PLUS microtune_names_sim.sh | tail -3; test "${PIPESTATUS[0]}" = 0'
 job microtune_names_mini_sim sim 'bash synth-open/tools/ui_shot/microtune_p3_imx_sim.sh MINI microtune_names_sim.sh | tail -3; test "${PIPESTATUS[0]}" = 0'

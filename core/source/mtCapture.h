@@ -60,7 +60,7 @@ enum CaptureIndicator : uint8_t
 {
     kCapIndHidden = 0, // the feature is off, or the take logic (extras.plg) is not loaded
     kCapIndEmpty = 1,  // on, no take (or the long press cleared it): an empty (hollow) square
-    kCapIndStale = 2,  // on, a take that a Capture would not land now (transport stopped, Rec): dim filled
+    kCapIndStale = 2,  // on, a take that a Capture would not land now (Rec is on): dim filled
     kCapIndReady = 3,  // on, a Capture would write the take now: filled in the green of the theme (a press does not use the take up)
     kCapIndGap = 4,    // on, a take older than the gap: the next note starts a new take (decision D9): green outline
 };

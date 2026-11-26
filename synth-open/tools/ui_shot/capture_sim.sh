@@ -10,7 +10,7 @@
 # pass of 3.69 s).
 # Checks: the ring (what is kept, in which screens, the wrap), the step each note lands on in the buffer (the stock live record rules, also
 # cross-checked against the stock record itself), velocity and micro move per record option, chords (matcher, held first note, sample
-# instruments spread over the following sample tracks and the surplus dropped), the window of one pass, the transport stopped, Rec, the
+# instruments spread over the following sample tracks and the surplus dropped), the window of one pass, a press with the transport stopped (section 8b, 2.0.0: it writes, no "needs playback"), Rec, the
 # feature off (the button does nothing, nothing is kept), the pattern untouched until a Paste, the stock Paste of the buffer at several
 # cursor positions, tracks and on another pattern, the buffer kept over a pattern change, one Undo takes a Paste back.
 # Section 12: the title bar indicator (hidden, empty, stale, ready, redrawn only on a state change, on other screens too), the idle time that empties
@@ -277,11 +277,38 @@ expect "note off past the last pattern: the OFF lands on the last step of the la
 
 # 8. where the ring is fed and where the button works: stopped, Rec, red mode, another screen
 out=$(run stopped "capture 1; instr 64; audio 1; tap Play; wait 300; midion 60 100 100; midioff 60 0 200; tap Play; wait 300; tap F4; wait 100; $(psteps 0); capring")
-expect "stopped: the press does nothing (it needs playback), the events stay" "|capring count 2" "$(grep '^step ' <<<"$out" | notes)|$(grep '^capring' <<<"$out")"
+expect "stopped after a run: the press writes the take (a stopped transport is no reason to refuse), the events stay" "0:36:64:0:0:0:0 1:-4:0:0:0:0:0|capring count 2" "$(grep '^step ' <<<"$out" | notes)|$(grep '^capring' <<<"$out")"
 out=$(run notplayed "capture 1; instr 64; audio 1; midion 60 100 100; midioff 60 0 200; capring")
 expect "stopped: notes played while the transport is stopped are kept, flagged" "capring count 2" "$(grep '^capring' <<<"$out")"
 out=$(run notplayed2 "capture 1; instr 64; audio 1; midion 60 100 100; midioff 60 0 200; tap Play; wait 300; tap F4; wait 100; $(psteps 0)")
 expect "stopped notes are part of the take: a press once the transport runs writes them (the first on step 0)" "0:36:64:0:0:0:0 1:-4:0:0:0:0:0" "$(grep '^step ' <<<"$out" | notes)"
+# 8b. a press while the transport is STOPPED (2.0.0 beta: no "needs playback"). There is no running ustep: the first note itself is the step grid
+#     (step 0, micro 0), the others by the time since it at the project tempo (115.4 ms a step at 130 BPM). A stale player.uStep of an earlier run
+#     (the transport ran and was stopped, flags 0 on the events) must not move the grid: the ring's uStep is 0 of the first note, 40 here
+STP="tap Play; wait 700; tap Play; wait 300; midion 60 100 100; midioff 60 0 200; padon 0 100; padoff 0 100"
+out=$(run stoppress "capture 1; instr 64; audio 1; $STP; capring; capind; tap F4; wait 100; capind; capsel; $(psteps 0); $(psteps 1)")
+expect "stopped press: the events are flagged not running" "cap 36 flags 0|cap 72 flags 0" "$(grep '^cap ' <<<"$out" | grep -E ' on ' | grep -oE '^cap [0-9]+|flags [0-9]+' | paste -sd' ' - | sed -E 's/(flags [0-9]+) /\1|/')"
+expect "stopped press (quantised): the first note on step 0, its OFF on 1, the pad note 300 ms later on step 3 (2.6 steps), its OFF on 4, whatever uStep the last run left" "0:36:64:0:0:0:0 1:-4:0:0:0:0:0 3:72:64:0:0:0:0 4:-4:0:0:0:0:0" "$(sed -n 1,32p <<<"$(grep '^step ' <<<"$out")" | notes)"
+expect "stopped press: the indicator is ready (3) before and after, the press does not use the take up" "capind state 3 draws 2 take 1 ring 4 seq 4|capind state 3 draws 2 take 1 ring 4 seq 4" "$(grep '^capind' <<<"$out" | paste -sd'|' -)"
+for ro in 1 3; do
+  out=$(run "stopmic$ro" "recopt $ro; capture 1; instr 64; audio 1; tap Play; wait 700; tap Play; wait 300; midion 60 80 100; midioff 60 0 200; padon 0 100; padoff 0 100; tap F4; wait 100; stepv 0 0; stepv 0 1; stepv 0 2; stepv 0 3; stepv 0 4")
+  case $ro in
+    1) want="stepv 0 0 vol -1 micro 0|stepv 0 1 vol -1 micro -1|stepv 0 2 vol -1 micro 61|stepv 0 3 vol -1 micro 46|stepv 0 4 vol -1 micro -1" ;;
+    3) want="stepv 0 0 vol 49 micro 0|stepv 0 1 vol -1 micro -1|stepv 0 2 vol 79 micro 61|stepv 0 3 vol -1 micro 46|stepv 0 4 vol -1 micro -1" ;;
+  esac
+  expect "stopped press, record option $ro: the first note has micro move 0 (the note itself is the grid), the others the micro move of the time since it" "$want" "$(grep '^stepv' <<<"$out" | sed -E 's/ move / micro /' | paste -sd'|' -)"
+done
+# the whole take stopped, never run: no Play at all, a chord (two notes at once) and a note on the next pattern (a take longer than the pattern spills)
+out=$(run stopspill "capture 1; instr 64; audio 1; midion 60 100 100; midioff 60 0 4300; midion 62 100 100; midioff 62 0 6000; midion 64 100 100; midioff 64 0 100; tap F4; wait 100; fx34popup; songlist; patfile 2 0; patfile 3 0; $(psteps 0)")
+expect "stopped spill: a take of 3 notes over 10.5 s (step 91) with the transport never started fills the pattern and 2 new patterns put into the song after it" "fx34popup 'Captured 3 notes' '3 patterns'|songlist pos 0 1 2 3|patfile 2 0 bits 1:0 len 32 6:38 7:-4|patfile 3 0 bits 1:0 len 32 27:40 28:-4|0:36:64:0:0:0:0 1:-4:0:0:0:0:0" "$(grep -E '^(songlist|patfile|fx34popup)' <<<"$out" | paste -sd'|' -)|$(grep '^step ' <<<"$out" | notes)"
+out=$(run stopnosong "capture 1; instr 64; pattern 4; audio 1; midion 60 100 100; midioff 60 0 4300; midion 62 100 100; midioff 62 0 100; tap F4; wait 100; fx34popup; songlist")
+expect "stopped spill: a pattern with no slot in the song gets no spill (the note past it is left out and counted), as when running" "fx34popup 'Captured 1 note' '1 left out'|songlist pos 0 1" "$(grep -E '^(songlist|fx34popup)' <<<"$out" | paste -sd'|' -)"
+# the square: empty (no take) is state 1, ready (3) as soon as a note was played with the transport stopped, gap (4) after 31 s, the press still
+# writes from the gap state (the take stays), Rec refuses
+out=$(run stopind "capture 1; instr 64; audio 1; wait 300; capind; midion 60 100 100; midioff 60 0 200; wait 300; capind; $(gshot ind-ready-stopped); wait 30900; capind; tap F4; wait 100; capind; $(psteps 0)")
+expect "stopped square: empty (1) with no take, ready (3) after a note, gap (4) after 31 s and a press from the gap state still writes the take" "capind state 1 draws 1 take 0 ring 0 seq 0|capind state 3 draws 2 take 1 ring 2 seq 2|capind state 4 draws 3 take 1 ring 2 seq 2|capind state 4 draws 3 take 1 ring 2 seq 2|0:36:64:0:0:0:0 1:-4:0:0:0:0:0" "$(grep '^capind' <<<"$out" | paste -sd'|' -)|$(grep '^step ' <<<"$out" | notes)"
+out=$(run stoprec "capture 1; instr 64; arm 0; audio 1; midion 60 100 100; midioff 60 0 200; tap Play; wait 100; hold Rec; tap Play; unhold Rec; wait 300; capind; tap F4; wait 100; fx34popup")
+expect "Rec still refused: the square is dim (2) and the press shows 'Stop recording first' (the notes the stopped take held are not written)" "capind state 2 draws 2 take 1 ring 2 seq 2|fx34popup 'Stop recording first'" "$(grep -E '^(capind|fx34popup)' <<<"$out" | paste -sd'|' -)"
 out=$(run rec "capture 1; instr 64; arm 0; audio 1; tap Play; wait 100; hold Rec; tap Play; unhold Rec; wait 300; midion 60 100 100; midioff 60 0 200; capring; tap F4; wait 100; tap Play")
 expect "Rec: the stock record writes the notes and the take keeps them too (decision D4, a Rec toggle never splits a take)" "capring count 2" "$(grep '^capring' <<<"$out")"
 out=$(run red "capture 1; instr 64; tap Rec; midion 60 100 100; midioff 60 0 200; padon 0 100; padoff 0 100; capring")
@@ -303,8 +330,7 @@ out=$(run flag "capture 0; instr 64; audio 1; tap Play; wait 300; midion 60 100 
 expect "feature switched on later: the ring starts then" "capring count 0|capring count 2" "$(grep '^capring' <<<"$out" | paste -sd'|' -)"
 
 # 12. the indicator in the title bar (TitleBar::setCaptureState, polled every 60 ms by Interface::commonThingsUpdate on every screen). States: 0 hidden
-#     (feature off), 1 empty (hollow: no take, or all of it used), 2 stale (a take the Capture would not land now: older than one pass, transport
-#     stopped), 3 ready (a Capture takes notes now), 4 past the gap (green outline: the next note starts a new take). "draws" counts the redraws:
+#     (feature off), 1 empty (hollow: no take, or all of it used), 2 stale (a take the Capture would not land now: Rec is on), 3 ready (a Capture takes notes now), 4 past the gap (green outline: the next note starts a new take). "draws" counts the redraws:
 #     the square is redrawn only when the state changes. "take" is the take id, "ring" the events of the take, "seq" every event ever written
 PHRASE="midion 60 100 100; midioff 60 0 200"   # a note, 100 ms held, then 200 ms of quiet
 out=$(run indoff "instr 64; audio 1; tap Play; wait 300; $PHRASE; wait 300; capind; $(gshot ind-off)")
@@ -313,8 +339,8 @@ out=$(run indempty "capture 1; wait 300; capind; $(gshot ind-empty)")
 expect "indicator: on, no take, hollow square" "capind state 1 draws 1 take 0 ring 0 seq 0" "$(grep '^capind' <<<"$out")"
 out=$(run indready "capture 1; instr 64; audio 1; tap Play; wait 300; $PHRASE; wait 300; capind; $(gshot ind-ready); wait 500; capind")
 expect "indicator: notes played in the running pattern, ready (filled), and no redraw while it stays so" "capind state 3 draws 2 take 1 ring 2 seq 2|capind state 3 draws 2 take 1 ring 2 seq 2" "$(grep '^capind' <<<"$out" | paste -sd'|' -)"
-out=$(run indstale "capture 1; instr 64; audio 1; tap Play; wait 300; $PHRASE; tap Play; wait 400; capind; $(gshot ind-stale)")
-expect "indicator: the transport stopped, the take is kept but a Capture would not take it: stale" "capind state 2 draws 3 take 1 ring 2 seq 2" "$(grep '^capind' <<<"$out")"
+out=$(run indstale "capture 1; instr 64; arm 0; audio 1; tap Play; wait 100; hold Rec; tap Play; unhold Rec; wait 300; $PHRASE; wait 400; capind; $(gshot ind-stale)")
+expect "indicator: Rec is on, the take is kept but a Capture would not take it (Rec is refused): stale" "capind state 2 draws 2 take 1 ring 2 seq 2" "$(grep '^capind' <<<"$out")"
 out=$(run indcap "capture 1; instr 64; audio 1; tap Play; wait 300; $PHRASE; wait 100; capind; tap F4; wait 300; capind; capring")
 expect "indicator: a press does not use the take up, it stays ready (no redraw, the 2 events still in the ring)" "capind state 3 draws 2 take 1 ring 2 seq 2|capind state 3 draws 2 take 1 ring 2 seq 2|capring count 2" "$(grep -E '^capind|^capring' <<<"$out" | paste -sd'|' -)"
 # the long press of button 3 (the first hold event, 333 ms on the unit) ends the take and captures nothing, also not at the release
@@ -363,7 +389,7 @@ expect "gap: a held note (lost note off) keeps the take at 100 s, a note 121 s a
 out=$(run gapcap "capture 1; instr 64; audio 1; tap Play; wait 300; $G1; wait 30900; midion 62 100 100; midioff 62 0 200; tap F4; wait 100; $(psteps 0)")
 expect "gap: a press after the gap writes only the new take (its first note on step 0)" "1:0:0:38" "$(grep '^step ' <<<"$out" | notes | tr ' ' '\n' | grep -c ':38:64:'):$(grep '^step ' <<<"$out" | notes | tr ' ' '\n' | grep -c ':36:64:'):$(grep '^step 0 0 ' <<<"$out" | notes | cut -d: -f1):$(grep '^step 0 0 ' <<<"$out" | notes | cut -d: -f2)"
 
-for g in ind-off ind-empty ind-ready ind-stale ind-cleared ind-after-clear ind-master ind-gap; do golden "$g"; done
+for g in ind-off ind-empty ind-ready ind-stale ind-cleared ind-after-clear ind-master ind-gap ind-ready-stopped; do golden "$g"; done
 fi
 
 if [ "${CAP_SKIP16:-}" != 1 ]; then   # CAP_SKIP16=1: not the take file section (the mutant runs)

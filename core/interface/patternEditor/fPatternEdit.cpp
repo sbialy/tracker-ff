@@ -2966,11 +2966,29 @@ static void applyFxBankToggle()
     PTE->showActualParamOnBar(true);
 }
 
+// Shift + FX1 / FX2 jumps straight to the bank 3/4 of the "4 FX" switch: Shift + FX1 selects FX3 (the left column), Shift + FX2 selects
+// FX4 (the right one). Nothing is toggled, the bank only goes to 3/4 and a second press stays there. The conditions are the ones of the
+// tap flip, so Shift + FX is the plain column select everywhere else (switch off, Mic/Vol view, fill, the 8 track views, Delete or Copy
+// held for a column pick). Shift also keeps the FX list popup closed (setStepButtonState), a held Shift + FX opens no list
+static void selectFxBankOnShift()
+{
+    if (!fx34::enabled() || PTE->fxBank != 0 || !PTE->buttons->isButtonPressed(interfaceButtonShift) || PTE->isMicVolView ||
+        PTE->fillState != 0 || PTE->patternViewMode != 0 || PTE->buttons->isButtonPressed(interfaceButtonPattern) ||
+        PTE->buttons->isButtonPressed(interfaceButtonDelete) || PTE->buttons->isButtonPressed(interfaceButtonCopy) ||
+        mtPopups.isNoteKeyboardPopupActive())
+    {
+        return;
+    }
+    PTE->fxBank = 1;
+    PTE->refreshPattern();
+}
+
 static void functFx1(uint8_t state)
 {
     if (state == buttonPress)
     {
         armFxBankToggle(cPatternEditor::EditFx1);
+        selectFxBankOnShift();
         PTE->setStepButtonState(2, 1);
         PTE->wasNotesEditBefore = 0;
         PTE->previousEditParam = PTE->editParam;
@@ -3029,6 +3047,7 @@ static void functFx2(uint8_t state)
     if (state == buttonPress)
     {
         armFxBankToggle(cPatternEditor::EditFx2);
+        selectFxBankOnShift();
         PTE->setStepButtonState(3, 1);
         //		PTE->wasNotesEditBefore = 0;
         PTE->previousEditParam = PTE->editParam;

@@ -27,7 +27,7 @@ fails=0; checks=0
 expect() { checks=$((checks+1)); if [ "$2" = "$3" ]; then printf 'ok    %s\n' "$1"; else fails=$((fails+1)); printf 'FAIL  %s\n      expected: %s\n      got:      %s\n' "$1" "$2" "$3"; fi; }
 run() {   # run NAME "script": the lines of the script that read back
     mkdir -p "$WORK/$1/Plugins/Master" "$WORK/$1/Plugins/Synth"
-    ASAN_OPTIONS=detect_leaks=0:halt_on_error=0 "$BIN" "$WORK/$1" "wait 500; $2" 2>"$WORK/$1.err" | grep -E '^(step|stepv|fx34|title|ltitle|cursor|lens|setfx) '
+    ASAN_OPTIONS=detect_leaks=0:halt_on_error=0 "$BIN" "$WORK/$1" "wait 500; $2" 2>"$WORK/$1.err" | grep -E '^(step|stepv|fx34|title|ltitle|cursor|lens|setfx|steppopup) '
 }
 shot() { echo "shot $SHOTS/$1.png"; }
 line() { grep -E "^$2 " <<<"$1" | sed -n "${3:-1}p"; }
@@ -47,6 +47,28 @@ out=$(run b_mod "$P; fx34on 1; tap Vol; hold Vol; pad 3; unhold Vol; title")
 expect "B5 hold FX1 + pad is a modifier: it does not flip the bank (still bank 1/2 after the hold)" "title P - Panning" "$(line "$out" title 1)"
 out=$(run b_mv "$P; fx34on 1; tap Note; tap Vol; tap Vol; title; fx34 0 0")
 expect "B6 the Mic/Vol view has no bank (a tap there flips nothing)" "title Micro-move" "$(line "$out" title 1)"
+
+echo "-- S: Shift + FX1 / FX2 select FX3 / FX4 (issue 2)"
+out=$(run s_l "$P; fx34on 1; hold Shift; tap Vol; unhold Shift; title; hold Vol; pad 3; unhold Vol; fx34 0 0")
+expect "S1 Shift + FX1 lands on FX3 (title) and the pad edit writes rank 3 (Panning 31)" "title FX3: - - None|fx34 0 0 r2 0:0 r3 31:50 n 1" "$(line "$out" title 1)|$(line "$out" fx34 1)"
+out=$(run s_r "$P; fx34on 1; hold Shift; tap Fx; unhold Shift; title; hold Fx; pad 5; unhold Fx; fx34 0 0")
+expect "S2 Shift + FX2 lands on FX4 (title) and the pad edit writes rank 2 (Glide 19)" "title FX4: - - None|fx34 0 0 r2 19:0 r3 0:0 n 1" "$(line "$out" title 1)|$(line "$out" fx34 1)"
+out=$(run s_ll "$P; fx34on 1; hold Shift; tap Vol; tap Vol; unhold Shift; title")
+expect "S3 Shift + FX1 again stays on FX3 (it selects, it does not flip)" "title FX3: - - None" "$(line "$out" title 1)"
+out=$(run s_x "$P; fx34on 1; hold Shift; tap Fx; tap Vol; unhold Shift; title; hold Vol; pad 3; unhold Vol; fx34 0 0")
+expect "S4 Shift + FX2 then Shift + FX1: FX3 on the left column, the bank is shared" "title FX3: - - None|fx34 0 0 r2 0:0 r3 31:50 n 1" "$(line "$out" title 1)|$(line "$out" fx34 1)"
+out=$(run s_plain "$P; fx34on 1; tap Vol; title; tap Fx; title; hold Vol; pad 3; unhold Vol; fx34 0 0")
+expect "S5 plain FX1 and FX2 stay on the bank 1/2 (FX1, FX2) and write the stored slot, no extra FX" "title - - None|title - - None|fx34 0 0 r2 0:0 r3 0:0 n 0" "$(line "$out" title 1)|$(line "$out" title 2)|$(line "$out" fx34 1)"
+out=$(run s_back "$P; fx34on 1; hold Shift; tap Vol; unhold Shift; tap Vol; title; tap Vol; title")
+expect "S6 after Shift + FX1 the plain tap on FX1 still flips (back to FX1, then to FX3)" "title - - None|title FX3: - - None" "$(line "$out" title 1)|$(line "$out" title 2)"
+out=$(run s_hold "$P; fx34on 1; hold Vol; wait 400; steppopup; unhold Vol; wait 100; steppopup; title")
+expect "S7 a plain hold opens the FX list (and cancels the flip), releasing closes it, the bank stays 1/2" "steppopup 1|steppopup 0|title - - None" "$(grep -E '^steppopup' <<<"$out" | sed -n 1p | sed 's/steppopup [1-9][0-9]*/steppopup 1/')|$(line "$out" steppopup 2)|$(line "$out" title 1)"
+out=$(run s_shold "$P; fx34on 1; hold Shift; hold Vol; wait 400; steppopup; title; unhold Vol; unhold Shift; wait 100; steppopup; title")
+expect "S7b a held Shift + FX1 opens no list, selects FX3 and the release leaves it there (no late flip)" "steppopup 0|title FX3: - - None|steppopup 0|title FX3: - - None" "$(line "$out" steppopup 1)|$(line "$out" title 1)|$(line "$out" steppopup 2)|$(line "$out" title 2)"
+out=$(run s_off "$P; hold Shift; tap Vol; unhold Shift; title; hold Shift; tap Fx; unhold Shift; title; hold Vol; pad 3; unhold Vol; fx34 0 0; step 0 0")
+expect "S8 switch off: Shift + FX1 and Shift + FX2 are the plain column select (no bank, no extra FX)" "title - - None|title - - None|fx34 0 0 r2 0:0 r3 0:0 n 0" "$(line "$out" title 1)|$(line "$out" title 2)|$(line "$out" fx34 1)"
+out=$(run s_mv "$P; fx34on 1; tap Note; hold Shift; tap Vol; unhold Shift; title; tap Note; tap Note; tap Vol; title")
+expect "S9 Mic/Vol view: Shift + FX1 is the plain select there, no bank 3/4 is left behind for the normal view" "title Micro-move|title - - None" "$(line "$out" title 1)|$(line "$out" title 2)"
 
 echo "-- E: editing FX3 and FX4"
 out=$(run e_type "$P; fx34on 1; tap Vol; tap Vol; hold Vol; pad 3; unhold Vol; fx34 0 0; step 0 0")

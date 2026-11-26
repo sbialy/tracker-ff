@@ -119,6 +119,25 @@ void cPerformanceMode::initDisplayControls()
     }
 }
 
+// A linked stereo pair is two buttons under ONE label that spans both: the follower's label is hidden, the leader's covers both slots. Called
+// after the label texts are set, on every page (the MIDI tracks page has no pairs)
+void cPerformanceMode::layoutTrackButtons()
+{
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        const bool span = !tracksPage && stereopairs::isLeader(i);
+        display.setControlPosition(label[i], span ? (800 / 8) * i + (800 / 8) : (800 / 8) * i + (800 / 16), 424);
+        display.setControlSize(label[i], span ? 800 / 4 - 6 : 800 / 8 - 6, -1);
+        if (!tracksPage && stereopairs::isFollower(i))
+            display.setControlHide(label[i]);
+        else
+            display.setControlShow(label[i]);
+        display.refreshControl(label[i]);
+    }
+    display.setControlValue(bgLabel, tracksPage ? 255 : 255 & ~stereopairs::hiddenMask());   // no divider inside a pair's label
+    display.refreshControl(bgLabel);
+}
+
 void cPerformanceMode::showPerformanceFxes()
 {
     titleBar->show();
@@ -263,6 +282,7 @@ void cPerformanceMode::showTracksState(uint8_t shiftPressed)
         display.refreshControl(label[i]);
     }
 
+    layoutTrackButtons();
     display.synchronizeRefresh();
 }
 
@@ -288,6 +308,7 @@ void cPerformanceMode::showTracksPatterns()
         display.refreshControl(label[i]);
     }
 
+    layoutTrackButtons();
     display.synchronizeRefresh();
 }
 
@@ -338,6 +359,8 @@ void cPerformanceMode::colorTracksLabel(uint8_t button, uint8_t state)
     }
 
     uint8_t track = getTrackForButton(button);
+    if (!tracksPage)
+        button = track; // either button of a linked pair is drawn by the leader's label
     if (state)
     {
         display.setControlColors(label[button], display.getTheme().redBlinkLabelColors);
@@ -392,6 +415,7 @@ void cPerformanceMode::showMuteButtons(uint8_t state)
             display.refreshControl(label[i]);
         }
 
+        layoutTrackButtons();
         display.synchronizeRefresh();
     }
     else

@@ -11,6 +11,20 @@
 #include "util_math.h"
 #include <stdint.h>
 
+// Note ids and the New Note Action in the sequencer: the open synth of the original Tracker (FEATURE_SYNTH_OPEN) and the plugin engines of the
+// Tracker+ and Mini (PlugSynthVoice.cpp through the IMX plugin host, the stock engines there keep Release). SEQ_NOTE_TAG: the note id and end
+// mode of the send that follows (polysynth::open::noteTag on the original Tracker, polysynth::plugimx::noteTag on IMX)
+#if defined(FEATURE_SYNTH_OPEN)
+#define SEQ_NNA 1
+#define SEQ_NOTE_TAG(...) polysynth::open::noteTag(__VA_ARGS__)
+#elif defined(FEATURE_SYNTH) && defined(PLATFORM_IMX)
+#define SEQ_NNA 1
+#define SEQ_NNA_IMX 1
+#define SEQ_NOTE_TAG(...) polysynth::plugimx::noteTag(__VA_ARGS__)
+#else
+#define SEQ_NNA 0
+#endif
+
 namespace fx34
 {
 struct Set;
@@ -203,6 +217,8 @@ class Sequencer
             FX_TYPE_SNAP = FX_TYPE_R11, // tracker-ff: latching scale snap of the track from this step (value 0 Off, 1 Nearest, 2 Down, 3 Up, 4 Track = back to the project setting)
             FX_TYPE_R12, // rel141-tables: id 53, older firmware shows it as no FX
             FX_TYPE_TABLE = FX_TYPE_R12, // tracker-ff: TBL, starts table 1..16 on the track (with the note of the step, or on the sounding note), 0 stops it (core/source/tables_format.h)
+            FX_TYPE_R13, // nna-fx: id 54, 1.4.x firmware shows it as no FX (its FX_MAX is 54)
+            FX_TYPE_NNA = FX_TYPE_R13, // tracker-ff: NNA, the New note action of the note on this step (value 0 Release, 1 Continue, 2 Cut, 3 Fade as the Synth page), see nnaFxMode
 
         };
 
@@ -667,9 +683,9 @@ class Sequencer
     bool isPlay(void);
 
     // Seeded random takes (seqRandom.h): 0 = Off (every take differs, as before), 1..255 = the same decisions on every playback.
-    // The project keeps it in its plugin sidecar (plug_host.cpp), the Config > Project Settings rows change it. A change counts from the
+    // The project keeps it in its plugin sidecar (plug_host.cpp), the rows of the Project Settings page (File screen, F7) change it. A change counts from the
     // next Play.
-    uint8_t randomSeed = 0;           // the Config > Project Settings "Random seed" row edits it in place
+    uint8_t randomSeed = 0;           // the "Random seed" row of the Project Settings page (File screen, F7) edits it in place
     uint8_t rerollRandomSeed(void);   // a new seed 1..255 other than the current one, returned
     bool isRec(void);
 
@@ -1079,7 +1095,7 @@ class Sequencer
                                  enFxValLabelAlign align);
 
     uint8_t getActualPos() { return player.track[0].actual_pos; }
-#ifdef FEATURE_SYNTH_OPEN
+#if SEQ_NNA
     uint8_t nnaParkedCount() const { return nnaParkCount; } // New Note Action Continue: notes parked and not released yet (host tests)
 #if !defined(__arm__)
     void nnaHostPreempt(bool on) { nnaPreemptOn = on; }
@@ -1148,6 +1164,37 @@ class Sequencer
     void nnaPreempt() {}
 #else
     // host sim only (synth_nna_sim.sh S-K10): stands in for the audio callback preempting the main loop, runs the tick net of every track
+    void nnaPreempt();
+    bool nnaPreemptOn = false;
+    uint8_t nnaLockDepth = 0;
+    bool nnaInPreempt = false;
+#endif
+#endif
+
+#if defined(SEQ_NNA_IMX)
+    // Tracker+ / Mini: the same note ids and Continue park list for the plugin engines. Static members, defined in SRAM_OC (CPU only data,
+    // mtSequencer.cpp): the sequencer object sits in the DTC, which has no room to spare (synth-open/tools/imx_sram_cliff.py)
+    static uint16_t noteSerial;
+    static uint16_t noteId[kAllTracks];
+    uint16_t nextNoteId() { return noteSerial = (noteSerial == 0xFFFF) ? uint16_t(1) : uint16_t(noteSerial + 1); }
+    static constexpr int kNnaParkMax = 6;
+    struct NnaPark
+    {
+        uint16_t id;
+        uint8_t track;
+        bool para;
+        strPlayer::strPlayerTrack::strSendStep step;
+    };
+    static NnaPark nnaParked[kNnaParkMax];
+    static uint8_t nnaParkCount;
+    void nnaParkNote(uint8_t track, bool open);
+    void nnaRelease(const NnaPark& e);
+    bool nnaPop(int track, NnaPark& out);
+    void nnaFlushTrack(uint8_t track);
+    void nnaFlushAll();
+#if defined(__arm__)
+    void nnaPreempt() {}
+#else
     void nnaPreempt();
     bool nnaPreemptOn = false;
     uint8_t nnaLockDepth = 0;

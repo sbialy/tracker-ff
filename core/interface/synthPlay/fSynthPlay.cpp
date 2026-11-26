@@ -27,6 +27,8 @@
 #include "mtStructs.h"
 #ifdef FEATURE_SYNTH_OPEN
 #include "open_load.h"
+#else
+#include "engines/PlugSynthVoice.h" // MPE in of the plugin engines (part::mpeNote and the rest)
 #endif
 #include "synthPlayRouter.h"
 #include "synthPlayRec.h"
@@ -66,11 +68,12 @@ inline bool bankHas(int p, int slot) { return polysynth::open::patchBankHas(p, s
 #else
 constexpr int kBankSlots = Synth::kPatchSlots;
 inline void bendRange(int, float) {}
-// MPE in is for the open parts: the stock parts of Tracker+ and Mini have no per note access (ref/mpe-scope.md section 6)
-inline void mpeConfig(int, int, int) {}
-inline void mpeNote(uint8_t) {}
-inline void mpeBend(int, uint8_t, int) {}
-inline void mpePress(int, uint8_t, uint8_t) {}
+// MPE in per note for a part that plays a plugin engine (PlugSynthVoice.cpp keeps the member bends and pressures, its voices follow them).
+// The stock parts of Tracker+ and Mini have no per note access (ref/mpe-scope.md section 6): they ignore it, as before
+inline void mpeConfig(int p, int range, int pressPercent) { polysynth::plugimx::partMpe(p, float(range), float(pressPercent) * 0.01f); }
+inline void mpeNote(uint8_t chan) { polysynth::plugimx::mpeNote(chan); }
+inline void mpeBend(int p, uint8_t chan, int raw) { polysynth::plugimx::partNoteBend(p, chan, raw); }
+inline void mpePress(int p, uint8_t chan, uint8_t press) { polysynth::plugimx::partNotePress(p, chan, press); }
 void gain(int p, float g)
 {
     if (p < 0 || p >= kSynthInstrumentsCount)

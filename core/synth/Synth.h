@@ -149,6 +149,15 @@ class Synth
     // A listed plugin engine that is not attached yet is loaded from the card into a code slot no other part plays and attached
     // (IMX, P7 H5, PlugSynthVoice.h). True when the engine can play (built-ins always), false: it stays Missing. Main loop only.
     bool attachCardEngine(int part, int stored);
+#if defined(PLATFORM_IMX)
+    // Paraphony of a plugin engine (PLUG_EXT_CHORD, PlugSynthVoice.h chordInfo), the IMX twin of open::partChordPara and partNoteChord:
+    // true when the part plays an engine that answers the query, its patch is at Para and chord is inside the engine's Chord enum.
+    // plugNoteChord then gives the part's next note on of `note` the chord and strum. Sequencer (audio thread), no allocation.
+    bool plugChordPara(int part, uint8_t chord);
+    void plugNoteChord(int part, uint8_t note, uint8_t chord, int8_t strum);
+    // The part plays an attached plugin engine (PlugSynthVoice.cpp): New Note Action and note ids apply (the stock engines keep Release)
+    bool plugPart(int part) const;
+#endif
     // A text file of the card into buf (cap - 1 bytes at most, terminated), the bytes read or -1 (the synth order file of the list)
     int readCardText(const char* path, char* buf, int cap);
     // text (n bytes) as the whole file path on the card, false when it cannot be written (no folder, a card error): the synth order

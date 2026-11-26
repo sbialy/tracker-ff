@@ -64,12 +64,13 @@ golden fx-slots-on "$S/fx-slots-on.png"
 golden fx-slots-off "$S/fx-slots-off.png"
 sd="$WORK/s1c"; fresh "$sd"
 run "$sd" "wait 500; tap File; wait 800; tap F7; wait 800; \
-tap Down; $(sh row-macro-depth); tap F8; wait 300; $(sh macro-depth-editor); enc 1; $(sh macro-depth-editor-add); tap F8; wait 300; $(sh macro-depth-add); poke macromode; \
+tap Down 7; $(sh row-macro-depth); tap F8; wait 300; $(sh macro-depth-editor); enc 1; $(sh macro-depth-editor-add); tap F8; wait 300; $(sh macro-depth-add); poke macromode; \
 tap F8; wait 300; enc 1; tap F8; wait 300; $(sh macro-depth-scale); poke macromode; \
 tap F8; wait 300; enc -2; tap F8; wait 300; $(sh macro-depth-per-patch); poke macromode; \
 tap Down; $(sh row-strum-volume); tap F8; wait 300; $(sh strum-volume-editor); enc -3; tap F8; wait 300; $(sh strum-volume-70); poke strumdepth; \
 tap Down; $(sh row-random-seed); tap F8; wait 300; $(sh random-seed-editor); enc 3; enc 2; tap F8; wait 300; $(sh random-seed-5); seed; \
 tap Down; $(sh row-reroll-seed); \
+tap Down; $(sh row-notes-scale); tap Down; $(sh row-root-note); tap Down; $(sh row-notes-layout); \
 tap Down; $(sh row-scale-snap); tap F8; wait 300; $(sh scale-snap-list); tap Down 2; tap F8; wait 300; $(sh scale-snap-editor); enc 1; tap F8; wait 300; $(sh scale-snap-track3); snap; \
 tap F7; wait 300; $(sh scale-snap-back); tap F7; wait 800; $(sh file-after-back)"
 check "macro depth list: Add, Scale, Per patch" "macromode 1|macromode 2|macromode 0" "$(grep '^macromode ' "$WORK/poke.out" | paste -sd'|' -)"
@@ -78,17 +79,17 @@ check "random seed list: five steps from Off is seed 5" "seed 5" "$(grep '^seed 
 check "scale snap: track 3 is Nearest" "snap 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0" "$(grep '^snap' "$WORK/out.txt" | head -1)"
 for n in file row-fx-slots row-macro-depth macro-depth-editor macro-depth-editor-add macro-depth-add \
          macro-depth-scale macro-depth-per-patch row-strum-volume strum-volume-editor strum-volume-70 row-random-seed random-seed-editor random-seed-5 \
-         row-reroll-seed row-scale-snap scale-snap-list scale-snap-editor scale-snap-track3 scale-snap-back file-after-back; do
+         row-reroll-seed row-notes-scale row-root-note row-notes-layout row-scale-snap scale-snap-list scale-snap-editor scale-snap-track3 scale-snap-back file-after-back; do
     golden "$n" "$S/$n.png"
 done
 check "the Back of the page (F7) returns to the File screen" "same" "$(cmp -s "$S/file.png" "$S/file-after-back.png" && echo same || echo changed)"
 
 echo "### 2: the rows act (and the Reroll row)"
 sd="$WORK/s2"; fresh "$sd"
-run "$sd" "wait 500; $PAGE; tap Down 4; tap F8; wait 300; seed; tap F8; wait 300; seed"
+run "$sd" "wait 500; $PAGE; tap Down 10; tap F8; wait 300; seed; tap F8; wait 300; seed"
 r1="$(grep '^seed ' "$WORK/out.txt" | sed -n 1p | cut -d' ' -f2)"; r2="$(grep '^seed ' "$WORK/out.txt" | sed -n 2p | cut -d' ' -f2)"
 check "Reroll seed gives a seed 1..255 on each press" "yes" "$([ -n "$r1" ] && [ -n "$r2" ] && [ "$r1" -ge 1 ] && [ "$r2" -le 255 ] && echo yes || echo "no ($r1 $r2)")"
-run "$sd" "wait 500; tap File; wait 800; tap F7; wait 800; tap Down 5; tap F8; wait 300; tap F7; wait 300; tap F7; wait 800; poke strumdepth"
+run "$sd" "wait 500; tap File; wait 800; tap F7; wait 800; tap Down 14; tap F8; wait 300; tap F7; wait 300; tap F7; wait 800; poke strumdepth"
 check "the Scale snap list opens and Back returns to the page and then to the File screen" "strumdepth 100" "$(grep '^strumdepth ' "$WORK/poke.out")"
 
 echo "### 3: the Config screen"
@@ -105,15 +106,15 @@ echo "### 4: project.mtff macro.mode"
 sd="$WORK/s4"; fresh "$sd"
 run "$sd" "wait 500; poke macromode; dirty; wait 15000"
 check "a new project: Per patch, no key written" "0|" "$(mode)|$(keyline "$sd")"
-run "$sd" "wait 500; $PAGE; tap Down; tap F8; enc 1; tap F8; wait 300; poke macromode; wait 15000"
+run "$sd" "wait 500; $PAGE; tap Down 7; tap F8; enc 1; tap F8; wait 300; poke macromode; wait 15000"
 check "Add: the page sets it and the Workspace save writes macro.mode 0" "1|macro.mode 0" "$(mode)|$(keyline "$sd")"
 run "$sd" "wait 500; poke macromode"
 check "a power up (Workspace load) restores Add" "1" "$(mode)"
-run "$sd" "wait 500; $PAGE; tap Down; tap F8; enc 1; tap F8; wait 300; poke macromode; wait 15000"
+run "$sd" "wait 500; $PAGE; tap Down 7; tap F8; enc 1; tap F8; wait 300; poke macromode; wait 15000"
 check "Scale: macro.mode 1" "2|macro.mode 1" "$(mode)|$(keyline "$sd")"
 run "$sd" "wait 500; poke macromode"
 check "a power up restores Scale" "2" "$(mode)"
-run "$sd" "wait 500; $PAGE; tap Down; tap F8; enc -2; tap F8; wait 300; poke macromode; wait 15000"
+run "$sd" "wait 500; $PAGE; tap Down 7; tap F8; enc -2; tap F8; wait 300; poke macromode; wait 15000"
 check "Per patch again: the key is gone" "0|" "$(mode)|$(keyline "$sd")"
 HDRL="$(head -1 "$sd/Workspace/project.mtff")"
 for bad in 'macro.mode 7' 'macro.mode x' 'macro.mode' 'macro.mode 1 2' 'macro.mode -1'; do
@@ -122,14 +123,14 @@ for bad in 'macro.mode 7' 'macro.mode x' 'macro.mode' 'macro.mode 1 2' 'macro.mo
     check "\"$bad\" reads as no key" "0" "$(mode)"
 done
 printf 'tffproj 1\nmacro.mode 1\nx.keep me\n' >"$sd/Workspace/project.mtff"
-run "$sd" "wait 500; poke macromode; $PAGE; tap Down 2; tap F8; enc -1; tap F8; wait 15000"
+run "$sd" "wait 500; poke macromode; $PAGE; tap Down 8; tap F8; enc -1; tap F8; wait 15000"
 check "a bare header with the key applies, and an unknown line survives a save" "2|macro.mode 1|x.keep me" "$(mode)|$(keyline "$sd")|$(grep '^x.keep' "$sd/Workspace/project.mtff")"
 printf 'tffproj 1\nmt 12345678 2324\nmacro.mode 0\nx.future 5\n' >"$sd/Workspace/project.mtff"
 run "$sd" "wait 500; poke macromode"
 check "a stale stamp: the project-wide key still applies" "1" "$(mode)"
 printf 'tffproj 2 ff=1.5.0 build=cafe123 cap=40000\nmacro.mode 1\n' >"$sd/Workspace/project.mtff"
 cp "$sd/Workspace/project.mtff" "$WORK/newer.keep"
-run "$sd" "wait 500; poke macromode; $PAGE; tap Down; tap F8; enc 1; tap F8; wait 15000"
+run "$sd" "wait 500; poke macromode; $PAGE; tap Down 7; tap F8; enc 1; tap F8; wait 15000"
 check "a newer format: nothing applied (Per patch at load), the file stays byte for byte" "same" "$(cmp -s "$sd/Workspace/project.mtff" "$WORK/newer.keep" && echo same || echo changed)"
 check "a newer format: the mode read at the load was Per patch" "0" "$(grep '^macromode ' "$WORK/poke.out" | head -1 | awk '{print $2}')"
 
@@ -156,7 +157,7 @@ run "$sd" "wait 500; poke macromode 1; poke synthlib engine 0 1; poke synthlib e
 check "changing the project setting leaves the patches already in the project as they are" "add add add add add add" "$(pmodes)"
 # the page row does the same as the poke
 card5 e
-run "$sd" "wait 500; poke macromode 0; poke synthlib engine 0 1; $PAGE; tap Down; tap F8; enc 1; tap F8; wait 300; poke patchmode 0; poke synthlib engine 1 1; poke patchmode 1; poke macromode"
+run "$sd" "wait 500; poke macromode 0; poke synthlib engine 0 1; $PAGE; tap Down 7; tap F8; enc 1; tap F8; wait 300; poke patchmode 0; poke synthlib engine 1 1; poke patchmode 1; poke macromode"
 check "the Macro depth row on the page: the patch there before keeps its mode, a patch added after it takes Add" "scale add 1" "$(pmodes) $(mode)"
 # a library load while a part holds a patch: the part's own project patch is replaced by the loaded one, which takes the project mode
 card5 f
@@ -171,5 +172,47 @@ check "save, open and new project: Alpha Add, Beta Scale, Gamma Per patch, Alpha
 echo "$(for p in Alpha Beta Gamma; do grep '^macro.mode' "$sd/Projects/$p/project.mtff" 2>/dev/null | tr '\n' ' '; echo -n '|'; done)" >"$WORK/keys.txt"
 check "Projects/Alpha has macro.mode 0, Beta macro.mode 1, Gamma no key" "macro.mode 0 |macro.mode 1 ||" "$(cat "$WORK/keys.txt")"
 
+echo "### 7: the nine rows that came from the Config group Project Settings"
+# EDITS: name, row in the old Config group (0 Performance presets, 1 Pattern divider ... 9 Snap to zero), row on the page, encoder turns
+EDITS=("div 1 1 2" "aa 5 2 -1" "lim 6 3 1" "sends 7 4 -1" "head 8 5 -1" "s2z 9 6 -1" "scale 2 11 3" "root 3 12 2" "lay 4 13 -2")
+gen() {   # $1 old: Config, the group Project Settings. new: the page (File F7). The script of the edits, then the values and a Save As
+    local which="$1" pos=0 out="wait 500; projvals; " spec n o p e t
+    if [ "$which" = old ]; then out+="tap Config; wait 800; tap Right; wait 300; "; else out+="$PAGE; "; fi
+    for spec in "${EDITS[@]}"; do
+        read -r n o p e <<<"$spec"
+        if [ "$which" = old ]; then t=$o; else t=$p; fi
+        if [ "$t" -gt "$pos" ]; then out+="tap Down $((t-pos)); "; elif [ "$t" -lt "$pos" ]; then out+="tap Up $((pos-t)); "; fi
+        pos=$t
+        out+="tap F8; wait 300; enc $e; tap F8; wait 300; "
+    done
+    echo "${out}projvals; projsave Projects Alpha; wait 500"
+}
+sd="$WORK/s7new"; fresh "$sd"
+run "$sd" "$(gen new)"
+vals_new="$(grep '^projvals' "$WORK/out.txt" | tail -1)"
+check "the page: the nine rows write the same fields (divider, anti-aliasing, limiter, sends, headroom, snap to zero, scale, root, layout)" "projvals div 5 aa 0 lim 1 sends 0 head 0 s2z 0 scale 3 root 26 lay 9 perf 0" "$vals_new"
+(cd "$sd/Projects/Alpha" && find . -type f | LC_ALL=C sort | while read f; do printf '%s %s\n' "$(shasum -a 256 < "$f" | cut -c1-16)" "$f"; done) >"$WORK/new.sums"
+# the saved project of the old path (Config, the group Project Settings of the 1.4.0 and stock UI) was taken once on the tree before this change
+# (1df35083): goldens/projset/oldpath.sums. PROJSET_OLD_BIN=the ui_shot of that tree runs the old path now and compares live
+if [ -n "${PROJSET_OLD_BIN:-}" ] && [ -x "$PROJSET_OLD_BIN" ]; then
+    sdo="$WORK/s7old"; fresh "$sdo"
+    ASAN_OPTIONS=detect_leaks=0 UISHOT_POKE="$WORK/poke" "$PROJSET_OLD_BIN" "$sdo" "$(gen old)" >"$WORK/out_old.txt" 2>/dev/null
+    check "the old path (Config) leaves the same values" "$vals_new" "$(grep '^projvals' "$WORK/out_old.txt" | tail -1)"
+    (cd "$sdo/Projects/Alpha" && find . -type f | LC_ALL=C sort | while read f; do printf '%s %s\n' "$(shasum -a 256 < "$f" | cut -c1-16)" "$f"; done) >"$WORK/old.sums"
+    [ -z "${PROJSET_UPDATE:-}" ] || cp "$WORK/old.sums" "$GOLD/oldpath.sums"
+    check "live: the project saved through the new page is byte identical to the one saved through the old Config path" "$(cat "$WORK/old.sums")" "$(cat "$WORK/new.sums")"
+fi
+check "the project saved through the new page is byte identical to the old Config path (goldens/projset/oldpath.sums)" "$(cat "$GOLD/oldpath.sums" 2>/dev/null)" "$(cat "$WORK/new.sums")"
+check "the project files were saved" "yes" "$([ "$(wc -l <"$WORK/new.sums")" -ge 3 ] && echo yes || echo no)"
+# Performance presets is a Config value now (General, the last row), not a project value: it does not touch the project
+sd="$WORK/s7p"; fresh "$sd"
+run "$sd" "wait 500; tap Config; wait 800; tap Down; wait 200; tap Right; wait 300; tap Down 14; wait 200; $(sh perf-presets-row); tap F8; wait 300; enc 1; tap F8; wait 300; projvals"
+check "Performance presets: the last row of Config > General writes mtConfig.general.performanceSource" "perf 1" "$(grep '^projvals' "$WORK/out.txt" | tail -1 | grep -o 'perf [0-9]*')"
+golden perf-presets-row "$S/perf-presets-row.png"
+# the Config group Project Settings is one row that opens the page, which has Back to the Config screen
+sd="$WORK/s7c"; fresh "$sd"
+run "$sd" "wait 500; tap Config; wait 800; tap Right; wait 300; $(sh config-pointer-row); tap F8; wait 800; $(sh pointer-opened-page); tap Down 3; wait 200; tap F7; wait 800; $(sh pointer-back)"
+for n in config-pointer-row pointer-opened-page pointer-back; do golden "$n" "$S/$n.png"; done
+check "the pointer row opens the page (same screen as File F7)" "same" "$(cmp -s "$S/pointer-opened-page.png" "$S/row-fx-slots.png" && echo same || echo changed)"
 echo
 if [ "$fails" -eq 0 ]; then echo "RESULT: GREEN ($checks checks)"; exit 0; else echo "RESULT: RED ($fails failing of $checks)"; exit 1; fi

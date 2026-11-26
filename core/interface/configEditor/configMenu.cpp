@@ -32,20 +32,16 @@
 
 #ifdef TRACKER_MINI
 constexpr uint8_t baseMenuGroupCount = 8 + snapGroupCount + featuresGroupCount;
-constexpr uint8_t projectMenuGroupCount = 10;
-constexpr uint8_t generalMenuGroupCount = 11;
+constexpr uint8_t generalMenuGroupCount = 11 + ffGeneralRows;
 #elif defined(PLATFORM_IMX)
 constexpr uint8_t baseMenuGroupCount = 7 + snapGroupCount + featuresGroupCount;
-constexpr uint8_t projectMenuGroupCount = 10;
-constexpr uint8_t generalMenuGroupCount = 14;
+constexpr uint8_t generalMenuGroupCount = 14 + ffGeneralRows;
 #elif defined(FEATURE_EXT_HOOKS)
 constexpr uint8_t baseMenuGroupCount = 8 + snapGroupCount; // + USB (hidden while USB audio and USB drive are off) + Features
-constexpr uint8_t projectMenuGroupCount = 10;
-constexpr uint8_t generalMenuGroupCount = 14;
+constexpr uint8_t generalMenuGroupCount = 14 + ffGeneralRows;
 #else
 constexpr uint8_t baseMenuGroupCount = 6 + snapGroupCount;
-constexpr uint8_t projectMenuGroupCount = 10;
-constexpr uint8_t generalMenuGroupCount = 14;
+constexpr uint8_t generalMenuGroupCount = 14 + ffGeneralRows;
 #endif
 
 // baza baz
@@ -58,6 +54,7 @@ cMenuGroup menuBase(menuBase, 0, baseMenuGroupCount);
 
 // grupy glowne
 
+// stock CE: the group with its ten rows. FF: one row that opens the Project Settings page (File F7), where the nine per-project rows are
 cMenuGroup menuProject(menuBase, "Project Settings", projectMenuGroupCount);
 cMenuGroup menuGeneral(menuBase, "General", generalMenuGroupCount);
 cMenuGroup menuMidi(menuBase, "MIDI", 11 + kSampleTracks + kFfMidiMenuRows);   // + Program in, the last row (a row past the count is not shown)
@@ -100,16 +97,19 @@ const strItemTypeListTextWithAction setupSendsMode{ &mtProject.values.sendsMode,
 const strItemTypeListTextWithAction setupHeadroomMode{ &mtProject.values.isHeadroomEnabled, 2, onOffStateTexts, setHeadroomMode };
 const strItemTypeListTextWithAction setupSnapToZeroMode{ &mtProject.values.isSnapToZeroEnabled, 2, onOffStateTexts, setSnapToZeroMode };
 
-cMenuItem melPerformanceSource(menuProject, "Performance presets", perfPresDesc, menuTypeItemListText, &setupPerfSource);
-cMenuItem melPatternDiv(menuProject, "Pattern divider", pattDivDesc, menuTypeItemListValues, &setupPatternDiv);
-cMenuItem melPadsScale(menuProject, "Notes scale", scaleDesc,  menuTypeItemListTextWithAction, &setupPadsScale);
-cMenuItem melPadsRootNote(menuProject,  "Root note", rootNoteDesc, menuTypeItemListTextWithAction,  &setupPadsRootNote);
-cMenuItem melPadsLayout(menuProject, "Notes layout", padLayDesc, menuTypeItemListTextWithAction, &setupPadsLayout);
-cMenuItem melAntialiasingEnable(menuProject, "Anti-aliasing", antialDesc, menuTypeItemListTextWithAction, &setupAntialiasing);
-cMenuItem melLimiterMode(menuProject, "Limiter mode", limiterDesc, menuTypeItemListTextWithAction, &setupLimiterMode);
-cMenuItem melSendsMode(menuProject, "Sends mode", sendsDesc,  menuTypeItemListTextWithAction, &setupSendsMode);
-cMenuItem melHeadroomMode(menuProject, "Extra headroom", headroomDesc,  menuTypeItemListTextWithAction, &setupHeadroomMode);
-cMenuItem melSnapToZeroMode(menuProject, "Snap to zero", snapToZeroDesc,  menuTypeItemListTextWithAction, &setupSnapToZeroMode);
+// The nine per-project rows: one macro each, so the stock group (menuProject, stock CE) and the Project Settings page (FF, configMenu_projpage.inc,
+// in the order of the page) build the very same row: same name, same help, same field, same action callback
+#define PROJ_ROW_PATTERN_DIV(g) cMenuItem melPatternDiv(g, "Pattern divider", pattDivDesc, menuTypeItemListValues, &setupPatternDiv)
+#define PROJ_ROW_PADS_SCALE(g) cMenuItem melPadsScale(g, "Notes scale", scaleDesc, menuTypeItemListTextWithAction, &setupPadsScale)
+#define PROJ_ROW_PADS_ROOT(g) cMenuItem melPadsRootNote(g, "Root note", rootNoteDesc, menuTypeItemListTextWithAction, &setupPadsRootNote)
+#define PROJ_ROW_PADS_LAYOUT(g) cMenuItem melPadsLayout(g, "Notes layout", padLayDesc, menuTypeItemListTextWithAction, &setupPadsLayout)
+#define PROJ_ROW_ANTIALIASING(g) cMenuItem melAntialiasingEnable(g, "Anti-aliasing", antialDesc, menuTypeItemListTextWithAction, &setupAntialiasing)
+#define PROJ_ROW_LIMITER(g) cMenuItem melLimiterMode(g, "Limiter mode", limiterDesc, menuTypeItemListTextWithAction, &setupLimiterMode)
+#define PROJ_ROW_SENDS(g) cMenuItem melSendsMode(g, "Sends mode", sendsDesc, menuTypeItemListTextWithAction, &setupSendsMode)
+#define PROJ_ROW_HEADROOM(g) cMenuItem melHeadroomMode(g, "Extra headroom", headroomDesc, menuTypeItemListTextWithAction, &setupHeadroomMode)
+#define PROJ_ROW_SNAP_TO_ZERO(g) cMenuItem melSnapToZeroMode(g, "Snap to zero", snapToZeroDesc, menuTypeItemListTextWithAction, &setupSnapToZeroMode)
+#define PROJ_ROW_PERF_PRESETS(g) cMenuItem melPerformanceSource(g, "Performance presets", perfPresDesc, menuTypeItemListText, &setupPerfSource)
+FF_CFG_PROJECT_GROUP_ROWS() // FF: the one row that opens the page. Stock CE: the ten rows
 // general
 const strItemTypeListTextWithAction setupRadioRegion{ &mtConfig.general.radioRegion, 4, radioRegion, setRadioRegion };
 const strItemTypeListTextWithAction setupDispBrightness{ &mtConfig.general.dispBrightness, 3, brightness, setDisplayBrightness };
@@ -210,6 +210,7 @@ cMenuItem melLinInOutType(menuGeneral,
                           lineInChannelDesc,
                           menuTypeItemListTextWithAction,
                           &setupLineInOutType);
+FF_CFG_GENERAL_PERF_PRESETS() // FF: Performance presets lives in the config (mtConfig.general), not in the project: it left the Project Settings group with the rest of that group
 
 //==================================================================================================================================================================
 // Metroneome

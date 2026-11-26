@@ -70,8 +70,8 @@ class cPerformanceMode : public ModuleBase
 
     uint8_t getTrackForButton(uint8_t button) const
     {
-        // a linked stereo pair is one button: the follower's button is not there and the buttons after it move up
-        return tracksPage ? button + kSampleTracks : stereopairs::nthVisible(button);
+        // Track N has button N: a linked stereo pair is two buttons under one label, either of them acts on the leader
+        return tracksPage ? button + kSampleTracks : stereopairs::base(button);
     }
 
     bool isButtonActiveOnCurrentPage(uint8_t button) const
@@ -82,6 +82,7 @@ class cPerformanceMode : public ModuleBase
     //----------------------------------
     void setDefaultScreenFunct();
     void showMuteButtons(uint8_t state);
+    void layoutTrackButtons();
 
     void setPerformanceFxes();
     void lightUpPadBoard();

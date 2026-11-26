@@ -148,13 +148,13 @@ const uint8_t SYNTH_INSTRUMENTS_START_IDX = MIDI_INSTRUMENTS_START_IDX + kMidiIn
 const uint8_t PATTERN_INDEX_MIN = 1;
 const uint8_t PATTERN_INDEX_MAX = 255;
 
-const uint8_t FX_MAX = 55; // list positions, kept above the last FX of the list (features-140: Morph, Chance FX, Tape, rel140-snapfx: Snap, rel141-tables: TBL)
+const uint8_t FX_MAX = 56; // list positions, kept above the last FX of the list (features-140: Morph, Chance FX, Tape, rel140-snapfx: Snap, rel141-tables: TBL, nna-fx: NNA)
 #ifdef FEATURE_SYNTH_OPEN
-const uint8_t FX_COUNT = 53; // + "Patch" (FX_TYPE_PATCH_CHANGE) and "Morph" (FX_TYPE_PATCH_MORPH), SYNTH_OPEN only, + "Strum" (FX_TYPE_STRUM), + "Chance FX" (FX_TYPE_COND), + "Tape" (Stop and Start), + "Snap", + "Table"
+const uint8_t FX_COUNT = 54; // + "NNA", + "Patch" (FX_TYPE_PATCH_CHANGE) and "Morph" (FX_TYPE_PATCH_MORPH), SYNTH_OPEN only, + "Strum" (FX_TYPE_STRUM), + "Chance FX" (FX_TYPE_COND), + "Tape" (Stop and Start), + "Snap", + "Table"
 #elif defined(FEATURE_SYNTH_PATCHFX)
-const uint8_t FX_COUNT = 53; // Tracker+ and Mini (IMX port P12): + "Patch" (FX_TYPE_PATCH_CHANGE) and "Morph" (FX_TYPE_PATCH_MORPH), + "Strum", + "Chance FX", + "Tape", + "Snap", + "Table" (Table lite, ff_config.h FEATURE_TABLES)
+const uint8_t FX_COUNT = 54; // + "NNA", Tracker+ and Mini (IMX port P12): + "Patch" (FX_TYPE_PATCH_CHANGE) and "Morph" (FX_TYPE_PATCH_MORPH), + "Strum", + "Chance FX", + "Tape", + "Snap", + "Table" (Table lite, ff_config.h FEATURE_TABLES)
 #else
-const uint8_t FX_COUNT = 51; // + "Strum" (FX_TYPE_STRUM), + "Chance FX" (FX_TYPE_COND), + "Tape" (Stop and Start), + "Snap", + "Table"
+const uint8_t FX_COUNT = 52; // + "NNA", + "Strum" (FX_TYPE_STRUM), + "Chance FX" (FX_TYPE_COND), + "Tape" (Stop and Start), + "Snap", + "Table"
 #endif
 const uint8_t FX_COUNT_HIDDEN_FXes = 1; // ile fxów na końcu listy jest ukrytych
 
@@ -946,6 +946,12 @@ constexpr uint8_t kNnaCheckXor = 0xA5;
 inline uint8_t synthNnaMode(const SynthPartSettings& s)
 {
     return (s.nnaCheck == uint8_t(s.nna ^ kNnaCheckXor) && s.nna <= kNnaFade) ? s.nna : uint8_t(kNnaRelease);
+}
+// The NNA step FX (FX_TYPE_NNA) value is the mode itself, in the order of the New note block of the Synth page: 0 Release, 1 Continue, 2 Cut, 3 Fade
+constexpr uint8_t kNnaFxMax = kNnaFade;
+inline uint8_t nnaFxMode(uint8_t value)
+{
+    return value > kNnaFxMax ? uint8_t(kNnaFxMax) : value;
 }
 // Release writes 0 0 (the padding of an old project), the others the pair with its check byte
 inline void synthNnaSet(SynthPartSettings& s, uint8_t mode)

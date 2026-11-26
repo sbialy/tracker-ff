@@ -413,6 +413,8 @@ static bool changeInstantlyTracksOnSelected(int8_t delta)
         if (PM->buttons->isButtonPressed(button))
         {
             uint8_t track = PM->getTrackForButton(button);
+            if (button != track && !PM->getCurrentModeIdx() && PM->buttons->isButtonPressed(track))
+                continue; // both buttons of a linked pair held: the leader's turn moves the pattern once
             PM->trackPatternChange[track] = 0;
 
             mtProject.perfTracksPatterns[track] =
@@ -441,6 +443,8 @@ static bool changeSequentiallyTracksOnSelected(int8_t delta)
         }
 
         uint8_t track = PM->getTrackForButton(button);
+        if (button != track && !PM->getCurrentModeIdx() && PM->buttons->isButtonPressed(track))
+            continue; // both buttons of a linked pair held: the leader's turn moves the pattern once
         if ((PM->trackPatternChange[track] == 1 || PM->trackPatternChange[track] == 2) &&
             PM->buttons->isButtonPressed(button))
         {

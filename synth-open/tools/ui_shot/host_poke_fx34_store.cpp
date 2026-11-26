@@ -55,6 +55,12 @@ bool hostFx34StoreCommand(const std::string& line, bool* ok)
         fflush(stdout);
         return true;
     }
+    if (c == "steppopup")
+    {   // the step popup (Note, Instrument or FX list) a held step button opens: 0 = none
+        printf("steppopup %d\n", int(mtPopups.getStepPopupState()));
+        fflush(stdout);
+        return true;
+    }
     if (c == "fx34state")
     {
         const fx34::Set* s = fx34::setOf(sequencer.getPatternToUI());

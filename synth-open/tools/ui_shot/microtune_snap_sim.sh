@@ -16,9 +16,9 @@ NAME=microtune_snap_sim
 . "$(cd "$(dirname "$0")" && pwd)/microtune_p3_lib.sh"
 EVID="${1:-}"; [ -n "$EVID" ] && mkdir -p "$EVID"
 TUN="$ROOT/releases/tunings"
-# the Scale snap group is row 5 of the Project Settings page (before Stereo pairs and Tuning): its Track 1 row takes M steps (Off Nearest Down Up)
+# the Scale snap group is row 14 of the Project Settings page (after the nine rows of the old Config group, before Stereo pairs and Tuning): its Track 1 row takes M steps (Off Nearest Down Up)
 snapmode() {   # M
-    local t="tap File; wait 800; tap F7; wait 800; tap Up 20; tap Down 5; tap F8; wait 300; tap F8; wait 200;" m=$1
+    local t="tap File; wait 800; tap F7; wait 800; tap Up 20; tap Down 14; tap F8; wait 300; tap F8; wait 200;" m=$1
     while [ "$m" -gt 0 ]; do if [ "${LISTKEYS:-enc}" = tap ]; then t="$t tap Down; wait 50;"; else t="$t enc 1;"; fi; m=$((m-1)); done
     echo "$t tap F8; wait 200;"; }
 # play RELS (key offsets from the 1/1 key ROOT) on track 1 after UI commands X, SCALE index, snap mode M: the MIDI notes sent minus 24 minus ROOT, in order

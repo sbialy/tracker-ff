@@ -171,6 +171,11 @@ void rerollRandomSeedAction()
 }
 
 #ifdef FEATURE_FF_CORE
+void openProjectPageAction()
+{
+    configEditor.openProjectPage();
+}
+
 // The Project Settings page (the File screen entry opens it): the three rows that are not a plain variable keep a copy here, read back
 // from the project every time the page opens and after every change (a refused change shows what the project holds)
 uint8_t projFxSlots;      // 0 Off, 1 On

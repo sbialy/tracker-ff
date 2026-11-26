@@ -94,7 +94,7 @@ out=$(run sample "instr 0; scale 24 2; snap 0 1; setstep 0 0 49 0 0 0 0 0; $(PLA
 expect "sample track: the pattern keeps the written note" "step 0 0 note 49 instr 0 fx0 0:0 fx1 0:0" "$(grep '^step' <<<"$out")"
 
 # 9. Project Settings page (File, F7) > Scale snap on the real menu: down to Scale snap, F8, down to Track 3, F8, one detent (Nearest), F8 Apply
-out=$(run ui "tap File; wait 800; tap F7; wait 800; tap Down 5; tap F8; wait 200; $(shot snap-group); tap Down 2; tap F8; wait 100; enc 1; wait 100; $(shot snap-pick); snap; tap F8; wait 300; snap; tap Down 1; tap F8; wait 100; enc 3; wait 100; tap F8; wait 300; snap")
+out=$(run ui "tap File; wait 800; tap F7; wait 800; tap Down 14; tap F8; wait 200; $(shot snap-group); tap Down 2; tap F8; wait 100; enc 1; wait 100; $(shot snap-pick); snap; tap F8; wait 300; snap; tap Down 1; tap F8; wait 100; enc 3; wait 100; tap F8; wait 300; snap")
 expect "ui: the pick is not applied before Apply" "snap 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" "$(grep '^snap' <<<"$out" | sed -n 1p)"
 expect "ui: Apply sets track 3 to Nearest" "snap 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0" "$(grep '^snap' <<<"$out" | sed -n 2p)"
 expect "ui: track 4 to Up (three detents) with track 3 kept" "snap 0 0 1 3 0 0 0 0 0 0 0 0 0 0 0 0" "$(grep '^snap' <<<"$out" | sed -n 3p)"

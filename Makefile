@@ -370,6 +370,9 @@ plus:
 		PRODUCT=PLUS \
 		TARGET_POSTFIX="$(PLUS_POSTFIX)" \
 		BUILD_ID_STR="$(BUILD_ID_STR)"
+	@# No static constructor may touch the SDRAM: main() sets up the SEMC after them (2.0.0 beta 1 hung at "100 %", same as f563f27)
+	python3 -I "$(SYNTH_OPEN_DIR)/tools/check_static_init.py" --toolchain "$(TOOLCHAIN)" --imx "$(IMX_DIR)/build-PLUS/TrackerPlus.axf" \
+		|| { rm -f "$(IMX_DIR)/build-PLUS/TrackerPlus_$(PLUS_POSTFIX).ptf" "$(OUT_DIR)/TrackerPlus_$(PLUS_POSTFIX).ptf"; exit 1; }
 	@mkdir -p "$(OUT_DIR)"
 	@cp "$(IMX_DIR)/build-PLUS/TrackerPlus_$(PLUS_POSTFIX).ptf" "$(OUT_DIR)/"
 	@echo "-> Output: $(OUT_DIR)/TrackerPlus_$(PLUS_POSTFIX).ptf"
@@ -392,6 +395,9 @@ mini:
 		PRODUCT=MINI \
 		TARGET_POSTFIX="$(MINI_POSTFIX)" \
 		BUILD_ID_STR="$(BUILD_ID_STR)"
+	@# No static constructor may touch the SDRAM: main() sets up the SEMC after them (2.0.0 beta 1 hung at "100 %", same as f563f27)
+	python3 -I "$(SYNTH_OPEN_DIR)/tools/check_static_init.py" --toolchain "$(TOOLCHAIN)" --imx "$(IMX_DIR)/build-MINI/TrackerMini.axf" \
+		|| { rm -f "$(IMX_DIR)/build-MINI/TrackerMini_$(MINI_POSTFIX).ptf" "$(OUT_DIR)/TrackerMini_$(MINI_POSTFIX).ptf"; exit 1; }
 	@mkdir -p "$(OUT_DIR)"
 	@cp "$(IMX_DIR)/build-MINI/TrackerMini_$(MINI_POSTFIX).ptf" "$(OUT_DIR)/"
 	@echo "-> Output: $(OUT_DIR)/TrackerMini_$(MINI_POSTFIX).ptf"

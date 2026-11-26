@@ -37,6 +37,18 @@
     }
 // every Play starts a fresh audio load reading of the synth (its governor and admission counters)
 #define FF_SEQ_PLAY_RESET_LOAD() polysynth::open::resetLoadStats()
+#elif defined(SEQ_NNA_IMX)
+// Tracker+ / Mini (plugin engines, PlugSynthVoice.cpp): the parked notes end as on the original Tracker. Stop needs no voice sweep: every
+// parked note gets its note-off from the flush and a plugin voice that started without an id ends on any note-off of its pitch
+#define FF_SEQ_NNA_NOTE_ENDED(row, playerRow)                          \
+    if (nnaParkCount && !(playerRow).noteOpen && !(playerRow).recOpen) \
+    {                                                                  \
+        nnaFlushTrack(row);                                            \
+    }
+#define FF_SEQ_NNA_FLUSH_TRACK(row) nnaFlushTrack(row)
+#define FF_SEQ_NNA_FLUSH_ALL() nnaFlushAll()
+#define FF_SEQ_NNA_STOP()
+#define FF_SEQ_PLAY_RESET_LOAD() ((void)0)
 #else
 #define FF_SEQ_NNA_NOTE_ENDED(row, playerRow)
 #define FF_SEQ_NNA_FLUSH_TRACK(row) ((void)0)

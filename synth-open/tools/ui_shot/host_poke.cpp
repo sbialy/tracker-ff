@@ -184,6 +184,9 @@ extern cMasterParams masterParams;
 #include "core/interface.h"
 #include "performanceMode/performanceMode.h"
 
+#ifdef UISHOT_PLUS_SYNTH_DEFAULT
+int uishotPlugMpeVoice(int i, int f);   // host_plusproxy.cpp, the plugmpe poke
+#endif
 // The plus pin (PLATFORM=IMX BRIDGE=1, the plus sim on the stock synth stack, no FEATURE_SYNTH_OPEN): the FF only Synth members, the Synth Play page and the
 // open patch bank do not exist there. Their commands print "n/a", the shared ones use these stand-ins
 #ifdef FEATURE_SYNTH_OPEN
@@ -1335,7 +1338,7 @@ void run(const char* line)
             out("nna %d mode %d raw %d %d", p, int(synthNnaMode(sp)), int(sp.nna), int(sp.nnaCheck));
         }
     }
-#ifdef FEATURE_SYNTH_OPEN // the park list is the open synth's (the Tracker+ sim compiles without it)
+#if SEQ_NNA // the park list of the open synth and of the Tracker+ / Mini plugin engines
     else if (!strcmp(cmd, "nnapark"))
     {   // nnapark: how many Continue notes the sequencer holds parked: "nnapark N" (S-K rows of synth_nna_sim.sh)
         out("nnapark %d", int(sequencer.nnaParkedCount()));
@@ -1400,6 +1403,18 @@ void run(const char* line)
             if (k >= synthplay::kMpeZone)   // the MPE rows reach the parts as the page's encoder does (the zone lets go of what sounds)
                 synthplay::applyMpe(k == synthplay::kMpeZone);
         }
+    }
+#endif
+#ifdef UISHOT_PLUS_SYNTH_DEFAULT
+    else if (!strcmp(cmd, "plugmpe"))
+    {   // plugmpe PART: the plugin engine voices of the part that are on, " note:chan:gate:nbend:press" (plug_parity_ui_sim.sh), as mpevoices
+        char b[320] = "";
+        size_t n = 0;
+        for (int i = 0; i < 32 && n < sizeof b - 32; i++)
+            if (uishotPlugMpeVoice(i, 0) && uishotPlugMpeVoice(i, 1) == atoi(a))
+                n += size_t(snprintf(b + n, sizeof b - n, " %d:%d:%d:%d:%d", uishotPlugMpeVoice(i, 2), uishotPlugMpeVoice(i, 3), uishotPlugMpeVoice(i, 4),
+                                     uishotPlugMpeVoice(i, 5), uishotPlugMpeVoice(i, 6)));
+        out("plugmpe %d%s", atoi(a), b);
     }
 #endif
 #ifdef FEATURE_SYNTH_OPEN

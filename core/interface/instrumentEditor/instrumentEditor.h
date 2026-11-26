@@ -7,6 +7,12 @@
 
 #include "mtSequencer.h"
 
+// The New note block of the Synth screen: the open synth of the original Tracker (every engine), and on Tracker+ and Mini (SE_NNA_IMX) the
+// parts that play a plugin engine. The value is the part's own SynthPartSettings nna pair on both, so a project moves between the trackers.
+#if defined(FEATURE_SYNTH) && defined(PLATFORM_IMX) && !defined(FEATURE_SYNTH_OPEN)
+#define SE_NNA_IMX 1
+#endif
+
 #if GUI_HANDLE_SYNTH
 #include "Synth.h"
 #endif
@@ -443,9 +449,11 @@ class cInstrumentEditor : public ModuleBase
     void changeSynthReverbSend(int16_t value);
     void changeSynthDelaySend(int16_t value);
     void changeSynthPatchListPos(int16_t value);
+#if defined(FEATURE_SYNTH_OPEN) || defined(SE_NNA_IMX)
+    void changeSynthNna(int16_t value);
+#endif
 #ifdef FEATURE_SYNTH_OPEN
     void changeSynthSlot(int16_t value);
-    void changeSynthNna(int16_t value);
     void changeSynthMorphTarget(int16_t value);
 #elif defined(FEATURE_SYNTH_PATCHFX)
     void changeSynthSlot(int16_t value);

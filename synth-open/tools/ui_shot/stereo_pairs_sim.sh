@@ -14,7 +14,7 @@
 #   8  round 2: a STREAMED stereo .pti on a pair plays L and R from the follower's idle ring (read past the 32,768 frame pre-cache, stream miss counter 0),
 #      an unlinked streamed track is byte identical to the base tip, a streamed stereo sample on a track outside a linked pair plays left only
 #   9  the amp LFO (random shape) of a pair: the L and R chain draw the same values
-#   10 the Mixer (Master screen taps): Mute, Solo and Volume of either button of a pair act on the pair, both buses
+#   10 the Mixer (Master screen taps): Mute, Solo, Volume and CC 71-78 of either slot of a pair act on the pair, both buses, the L meter in the odd slot and the R meter in the even one
 #   11 the sample editor on a stereo instrument drops it to mono (isStereo off, address[1] = address[0]) after the Ok of the notice
 #   12 Song Stems of a linked pair: one real L/R stem track1+2.wav, no file for the follower (round 3: no silent track2.wav), an unlinked song's stems equal the base tip
 #   13 USB audio 8+3 on a linked pair: the follower's channel carries the R chain, every channel checked bit exact against its tap
@@ -199,7 +199,7 @@ PY
 check "pair 1 mono sample with the amp random LFO: the L and R buses are identical (same draws)" "$([ "${res%% *}" = True ] && echo ok || echo "L != R ($res)")"
 check "the LFO really modulates the amplitude (10 ms peaks vary by more than 500)" "$([ "${res##* }" -gt 500 ] && echo ok || echo "spread ${res##* }")"
 
-echo "### 10: Mixer Mute, Solo and Volume act on the pair (Master screen, F1..F8 are the strips, a linked pair is one strip and the follower has none)"
+echo "### 10: Mixer Mute, Solo, Volume and CC act on the pair (Master screen, F1..F8 are the slots, Track N sits in slot N, a linked pair is two slots under one label)"
 MXH="wait 500; samplestereo 0 441 882 8000; instr 0; setstep 0 0 60 0 0 0 0 0; audio 1; tap Master; wait 400; tap Master; wait 400;"
 mx() {   # SETUP MIXERTAPS -> "rmsL rmsR zcL zcR"
     rm -rf "$WORK/sd_mx"
@@ -208,16 +208,35 @@ mx() {   # SETUP MIXERTAPS -> "rmsL rmsR zcL zcR"
 }
 expect_lr "Mixer, pair 1 untouched: L 441 Hz, R 882 Hz" "$(mx "pair 1; ")" "20000 24000 20000 24000 2.6 5.1"
 expect_lr "Mixer Mute on the leader's button F1: both buses silent" "$(mx "pair 1; tap F1")" "0 5 0 5 0 0"
-expect_lr "Mixer: the follower has no strip and no button, F2 is the strip of track 3 (Mute on it leaves the pair playing)" "$(mx "pair 1; tap F2")" "20000 24000 20000 24000 2.6 5.1"
-expect_lr "Mixer Mute twice on the leader's button F1: the pair plays again" "$(mx "pair 1; tap F1; tap F1")" "20000 24000 20000 24000 2.6 5.1"
-expect_lr "Mixer: with one pair linked there are 7 strips, F8 has none (Mute on F8 leaves the pair playing)" "$(mx "pair 1; tap F8")" "20000 24000 20000 24000 2.6 5.1"
-expect_lr "Mixer Volume on F2 (the strip of track 3, hold F2, encoder -30) leaves the pair alone" "$(mx "pair 1; hold F2; enc -30; unhold F2")" "20000 24000 20000 24000 2.6 5.1"
+expect_lr "Mixer Mute on the follower's button F2 (the R slot of pair 1): the pair is muted, both buses silent" "$(mx "pair 1; tap F2")" "0 5 0 5 0 0"
+expect_lr "Mixer Mute twice on F2 then F1: the pair plays again (one mute for the pair)" "$(mx "pair 1; tap F2; tap F1")" "20000 24000 20000 24000 2.6 5.1"
+expect_lr "Mixer Mute on F3 (Track 3, its own slot again) leaves the pair playing" "$(mx "pair 1; tap F3")" "20000 24000 20000 24000 2.6 5.1"
+expect_lr "Mixer: Track 8 sits in slot 8 (Mute on F8 leaves the pair playing)" "$(mx "pair 1; tap F8")" "20000 24000 20000 24000 2.6 5.1"
+expect_lr "Mixer Volume on F2 (hold the R slot of the pair, encoder -30) moves the pair" "$(mx "pair 1; hold F2; enc -30; unhold F2")" "8000 12000 8000 12000 2.6 5.1"
+expect_lr "Mixer Volume on F3 (Track 3) leaves the pair alone" "$(mx "pair 1; hold F3; enc -30; unhold F3")" "20000 24000 20000 24000 2.6 5.1"
 expect_lr "Mixer Volume on the leader's button gives the same level" "$(mx "pair 1; hold F1; enc -30; unhold F1")" "8000 12000 8000 12000 2.6 5.1"
+expect_lr "Mixer Volume holding both halves F1 + F2 moves the pair once (not twice)" "$(mx "pair 1; hold F1; hold F2; enc -30; unhold F2; unhold F1")" "8000 12000 8000 12000 2.6 5.1"
+expect_lr "Mixer CC 71 (slot 1) 0: the pair is silent" "$(mx "pair 1; ccin 1 1; midicc 1 71 0")" "0 5 0 5 0 0"
+expect_lr "Mixer CC 72 (slot 2, the R slot) 0: the pair is silent too" "$(mx "pair 1; ccin 1 1; midicc 1 72 0")" "0 5 0 5 0 0"
+expect_lr "Mixer CC 73 (slot 3, Track 3) 0 leaves the pair playing" "$(mx "pair 1; ccin 1 1; midicc 1 73 0")" "20000 24000 20000 24000 2.6 5.1"
 MXS="wait 500; pair 3; samplestereo 0 441 882 8000; sampletonehz 1 300 8000; instr 0; setstep 0 0 60 0 0 0 0 0; setstep 2 0 60 1 0 0 0 0; audio 1; tap Master; wait 400; tap Master; wait 400;"
 mxs() { rm -rf "$WORK/sd_mx"; ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_mx" "$MXS $1; wait 300; audiostat 1; tap Play; wait 1500; tap Play; audiostat 0; audiostat lrdump" 2>/dev/null | grep '^lr ' |
         awk 'NR>20&&NR<80{l+=$4;r+=$6;zl+=$8;zr+=$10;n++}END{printf "%.0f %.0f %.1f %.1f\n",l/n,r/n,zl/n,zr/n}'; }
 expect_lr "Mixer Solo on F1 (Shift + F1): only pair 1 sounds (L 441 Hz, R 882 Hz)" "$(mxs "hold Shift; tap F1; unhold Shift")" "20000 24000 20000 24000 2.6 5.1"
-expect_lr "Mixer Solo on F2 (Shift + F2, the strip of pair 2 because the follower of pair 1 has none): only pair 2 sounds (its mono sample, 300 Hz on both buses)" "$(mxs "hold Shift; tap F2; unhold Shift")" "20000 24000 20000 24000 1.8 1.8"
+expect_lr "Mixer Solo on F2 (Shift + F2, the R slot of pair 1): only pair 1 sounds" "$(mxs "hold Shift; tap F2; unhold Shift")" "20000 24000 20000 24000 2.6 5.1"
+expect_lr "Mixer Solo on F3 (Shift + F3, the L slot of pair 2): only pair 2 sounds (its mono sample, 300 Hz on both buses)" "$(mxs "hold Shift; tap F3; unhold Shift")" "20000 24000 20000 24000 1.8 1.8"
+# the meters: the L bus in the odd slot, the R bus in the even slot (a stereo sample whose R is a quarter of its L), read off the Mixer screenshot
+mtop() {   # PNG X -> the first row from the top (y 64..423) of the level bar column at X whose pixel is lit
+    magick "$1" -crop "1x360+$2+64" +repage -depth 8 txt:- 2>/dev/null | awk -F'[,:() ]+' 'NR>1{ if ($3+$4+$5 > 200) { print $2; exit } }'
+}
+rm -rf "$WORK/sd_mt"
+ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_mt" "wait 500; audio 1; samplestereo 0 441 882 8000 ampr=2000; instr 0; setstep 0 0 60 0 0 0 0 0; pair 1; tap Master; wait 400; tap Master; wait 400; tap Play; wait 300; wait 300; wait 300; shot $WORK/mt_pair.png; tap Play; tap Play" >/dev/null 2>&1
+if command -v magick >/dev/null 2>&1; then
+    LT=$(mtop "$WORK/mt_pair.png" 75); RT=$(mtop "$WORK/mt_pair.png" 175)
+    check "Mixer meters, pair 1: the L meter (slot 1) is higher than the R meter (slot 2, lit above the idle floor) for a sample whose R is a quarter of its L" "$([ -n "$LT" ] && [ -n "$RT" ] && [ "$RT" -lt 300 ] && [ "$LT" -lt "$RT" ] && echo ok || echo "L top $LT R top $RT")"
+else
+    echo "skip  Mixer meters (no magick on this machine)"
+fi
 
 SEF=$(ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_flag" "editflags" 2>/dev/null | sed -n 's/^editflags stereoedit //p')
 if [ "$SEF" = 1 ]; then
@@ -356,7 +375,7 @@ check "Song screen Delete over tracks 1-3 (a range): the leaders 1 and 3 are cle
 
 echo "### 20: round 3: Config > MIDI does not list the follower's Track N in channel row, unlinking lists it again"
 midirows() { rm -rf "$WORK/sd_mr"; ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_mr" "wait 500; $1" 2>/dev/null | grep '^midirows'; }
-LINK2='tap File; wait 800; tap F7; wait 800; tap Down 6; tap F8; wait 300; tap Down 1; tap F8; wait 300; enc 1; tap F8; wait 1600;'   # Project Settings > Stereo pairs: Tracks 3+4 = Stereo
+LINK2='tap File; wait 800; tap F7; wait 800; tap Down 15; tap F8; wait 300; tap Down 1; tap F8; wait 300; enc 1; tap F8; wait 1600;'   # Project Settings > Stereo pairs: Tracks 3+4 = Stereo
 mr=$(midirows "midirows")
 check "Config > MIDI unlinked: 20 rows, Track 1 to 8 in channel all listed" "$([ "$(echo "$mr" | grep -o 'Track . in channel' | wc -l | tr -d ' ')" = 8 ] && echo "$mr" | grep -q '^midirows 20:' && echo ok || echo "$mr")"
 mr=$(midirows "$LINK2 midirows")
@@ -398,17 +417,24 @@ golden() {   # NAME
     else check "golden $1" "differs from goldens/stereopairs/$1.png (STEREOPAIRS_UPDATE=1 rewrites it)"; fi
 }
 rm -rf "$WORK/sd_ui"; rm -f "$WORK/poke.out"
-UISHOT_POKE="$WORK/poke" ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui" "wait 500; tap File; wait 800; tap F7; wait 800; tap Down 6; shot $SH/pairs-row.png; tap F8; wait 300; shot $SH/pairs-list.png; tap Down 1; tap F8; wait 300; shot $SH/pairs-editor.png; enc 1; tap F8; wait 500; shot $SH/pairs-linked.png; poke pairs" >/dev/null 2>&1
+UISHOT_POKE="$WORK/poke" ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui" "wait 500; tap File; wait 800; tap F7; wait 800; tap Down 15; shot $SH/pairs-row.png; tap F8; wait 300; shot $SH/pairs-list.png; tap Down 1; tap F8; wait 300; shot $SH/pairs-editor.png; enc 1; tap F8; wait 500; shot $SH/pairs-linked.png; poke pairs" >/dev/null 2>&1
 check "Project Settings > Stereo pairs: Tracks 3+4 set to Stereo links pair 2 (mask 2) and the sample mode" "$(grep -q '^pairs 2 stereo 1' "$WORK/poke.out" && echo ok || cat "$WORK/poke.out")"
 for n in pairs-row pairs-list pairs-editor pairs-linked; do golden $n; done
 # linking pair 2 while the follower track 4 holds a note: the sample reload popup runs first, then "Track 4 has notes" (once, after the popup is gone)
 rm -rf "$WORK/sd_ui2"
-ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui2" "wait 500; instr 0; setstep 3 0 62 0 0 0 0 0; tap File; wait 800; tap F7; wait 800; tap Down 6; tap F8; wait 300; tap Down 1; tap F8; wait 300; enc 1; tap F8; wait 1600; shot $SH/pairs-notice.png" >/dev/null 2>&1
+ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui2" "wait 500; instr 0; setstep 3 0 62 0 0 0 0 0; tap File; wait 800; tap F7; wait 800; tap Down 15; tap F8; wait 300; tap Down 1; tap F8; wait 300; enc 1; tap F8; wait 1600; shot $SH/pairs-notice.png" >/dev/null 2>&1
 golden pairs-notice
 ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui" "wait 500; pair 3; instr 0; setstep 0 0 60 0 0 0 0 0; setstep 1 0 62 0 0 0 0 0; tap SampleEdit; wait 300; tap Pattern; wait 600; shot $SH/pattern-linked.png; pair 0; tap SampleEdit; wait 300; tap Pattern; wait 600; shot $SH/pattern-unlinked.png; pair 3; samplestereo 0 441 882 8000; hold Instr; wait 400; shot $SH/instr-list-st.png; unhold Instr" >/dev/null 2>&1
 for n in pattern-linked pattern-unlinked instr-list-st; do golden $n; done
-# the Mixer (page 2/3) and Performance with the pairs 1+2 and 3+4 linked, and the Mixer unlinked: the followers' strips and buttons are gone, the rest moves up
+# the Mixer (page 2/3) and Performance with the pairs 1+2 and 3+4 linked, and the Mixer unlinked: a pair is two slots (L, R) under one label, Track N keeps slot N
 ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui" "wait 500; pair 3; tap Master; wait 400; tap Master; wait 400; shot $SH/mixer-linked.png; pair 0; tap Master; wait 400; tap Master; wait 400; tap Master; wait 400; shot $SH/mixer-unlinked.png; pair 3; tap Performance; wait 500; shot $SH/performance-linked.png" >/dev/null 2>&1
+# the Mixer in the 2.0.0 layout (Track N in slot N, a pair = L and R strips under one label): one pair with the pair muted (F2, the R half) and a neighbour (F4), 7+8 with the pair (F7) and a neighbour (F5) muted, and Performance with 7+8 muted. No Play: flat meters, stable pixels
+for sc in "mixer-pair1:1:" "mixer-pair1-mute:1:tap F2; tap F4;" "mixer-pair78:8:" "mixer-pair78-mute:8:tap F7; tap F5;"; do
+    IFS=: read -r nm pm taps <<<"$sc"
+    ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui" "wait 500; pair $pm; tap Master; wait 400; tap Master; wait 400; $taps wait 300; shot $SH/$nm.png" >/dev/null 2>&1
+done
+ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui" "wait 500; pair 8; tap Performance; wait 500; hold Shift; wait 200; tap F8; wait 300; shot $SH/performance-pair78-mute.png; unhold Shift" >/dev/null 2>&1
+for n in mixer-pair1 mixer-pair1-mute mixer-pair78 mixer-pair78-mute performance-pair78-mute; do golden $n; done
 ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui" "wait 500; pair 3; tap SampleEdit; wait 300; tap Pattern; wait 400; hold Shift; wait 300; tap F2; wait 300; shot $SH/pattern-mute-linked.png; unhold Shift" >/dev/null 2>&1
 ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui" "wait 500; sampletonehz 0 441 8000; instr 0; setstep 0 0 60 0 0 0 0 0; setstep 1 0 62 0 0 0 0 0; setstep 2 0 64 0 0 0 0 0; setstep 3 0 65 0 0 0 0 0; setstep 4 0 67 0 0 0 0 0; pair 3; $PB shot $SH/parts-build-linked.png; pair 0; tap Rec; wait 100; tap Rec; wait 200; shot $SH/parts-build-unlinked.png" >/dev/null 2>&1
 ASAN_OPTIONS=detect_leaks=0 "$BIN" "$WORK/sd_ui" "wait 500; sampletonehz 0 441 8000; instr 0; setstep 0 0 60 0 0 0 0 0; setstep 2 0 64 0 0 0 0 0; setstep 1 0 62 0 0 0 0 0; dirty; pair 3; tap Song; wait 500; tap Rec; wait 100; tap Left; wait 100; tap Left 15; wait 200; shot $SH/song-linked.png; pair 0; tap Pattern; wait 300; tap Song; wait 500; shot $SH/song-unlinked.png" >/dev/null 2>&1

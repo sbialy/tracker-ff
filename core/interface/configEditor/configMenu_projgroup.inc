@@ -10,10 +10,13 @@ constexpr uint8_t kPairRows = 0;
 #else
 constexpr uint8_t kPairRows = 1;
 #endif
+// 9 rows that were the Config group Project Settings (Pattern divider, Anti-aliasing, Limiter mode, Sends mode, Extra headroom, Snap to zero, Notes scale,
+// Root note, Notes layout), then the rows of the page. Scale snap, Stereo pairs, Tuning and MPE out stay the last four (projectPageRowValue counts from the end)
+constexpr uint8_t kStockProjectRows = 9;
 #ifdef FEATURE_SYNTH_OPEN
-constexpr uint8_t projectPageRows = 8 + kPairRows;
+constexpr uint8_t projectPageRows = 8 + kPairRows + kStockProjectRows;
 #else
-constexpr uint8_t projectPageRows = 7 + kPairRows;
+constexpr uint8_t projectPageRows = 7 + kPairRows + kStockProjectRows;
 #endif
 cMenuGroup menuProjectPage(menuBase, "Project Settings", projectPageRows);
 #endif

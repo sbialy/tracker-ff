@@ -380,6 +380,12 @@ const char* const fxDescriptions[FX_COUNT] = {
     "\n"
     "\n"
     "1-16: the table, 0: stop the table of the track. Synth tracks take the transpose, the volume and the Panning, Send and CC A-F FX of a row.",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_NNA,
+    "Destination: Synth \n\nNew note action of the note on this step: what happens to this note when the next note starts on the track, instead of the"
+    " New note setting of the part (Synth page). Only this note, the other steps keep the setting of the part."
+    "\n"
+    "\n"
+    "0: Release, 1: Continue (the note keeps sounding until the newest note of the track ends), 2: Cut, 3: Fade. Does nothing on sample and MIDI tracks.",
     // Sequencer::strFxConsts::enFxType::FX_TYPE_BREAK_PATTERN,
     "Destination: Pattern \n\n"
     "Breaks current pattern playback and jumps to the next pattern.",
@@ -693,6 +699,12 @@ const char* const fxDescriptions[FX_COUNT] = {
     "\n"
     "\n"
     "1-16: the table, 0: stop the table of the track.",
+    // Sequencer::strFxConsts::enFxType::FX_TYPE_NNA,
+    "Destination: Synth \n\nNew note action of the note on this step: what happens to this note when the next note starts on the track, instead of the"
+    " New note setting of the part (Synth page). Only this note, the other steps keep the setting of the part."
+    "\n"
+    "\n"
+    "0: Release, 1: Continue (the note keeps sounding until the newest note of the track ends), 2: Cut, 3: Fade. Does nothing on sample and MIDI tracks.",
     // Sequencer::strFxConsts::enFxType::FX_TYPE_BREAK_PATTERN,
     "Destination: Pattern \n\n"
     "Breaks current pattern playback and jumps to the next pattern.",

@@ -159,7 +159,7 @@ bool Sequencer::captureWindow(int& track)
     return track >= 0 && track < kAllTracks;
 }
 
-// Every 60 ms. Empty: no take. Gap: no note held for the gap, the next note starts a new take. Ready: transport running, not recording, a
+// Every 60 ms. Empty: no take. Gap: no note held for the gap, the next note starts a new take. Ready: not recording (running or stopped), a
 // take that a press would write. Stale otherwise (a take is never used up by a press, it stays until the next take starts).
 uint8_t Sequencer::captureTakeTick()
 {
@@ -172,7 +172,7 @@ uint8_t Sequencer::captureTakeTick()
         return kCapIndGap;
     }
     int track;
-    return (!isPlay() || isRec() || player.preRecMetronomeActive || !captureWindow(track)) ? kCapIndStale : kCapIndReady;
+    return (isRec() || player.preRecMetronomeActive || !captureWindow(track)) ? kCapIndStale : kCapIndReady;
 }
 
 // The button: the take is written into the destination track of the pattern on screen. Main loop.
@@ -183,9 +183,9 @@ void Sequencer::captureCommitTake()
         mtPopups.show(0, "Stop recording first");
         return;
     }
-    if (!isPlay() || player.preRecMetronomeActive)
+    if (player.preRecMetronomeActive)
     {
-        mtPopups.show(0, "Capture needs playback", "start the pattern first");
+        mtPopups.show(0, "Stop recording first"); // the count-in of a Rec: the Rec has begun, its notes belong to the stock record
         return;
     }
     const uint32_t head = s_take.cons;
@@ -247,7 +247,8 @@ void Sequencer::captureCommitTake()
     // goes to the next one), or the step it was played in with the micro move of the 48 sub steps. Counted from step 0 of the take, any length
     const float period = getStepPeriodMs() * 1000.0f;
     const CaptureEvent& f = ev(first);
-    const float u0 = float(f.uStep ? f.uStep : 1);
+    // a first note played with the transport stopped has no step grid (player.uStep is the stale one of the last run): the note itself is the grid
+    const float u0 = float((f.flags & kCapFlagRunning) && f.uStep ? f.uStep : 1);
     const auto stepOf = [&](const CaptureEvent& e, int8_t* micro) -> int
     {
         float x = float(int32_t(e.tUs - f.tUs)) / period + (u0 - 1.0f) / 48.0f - ((quant && u0 > 24.0f) ? 1.0f : 0.0f);

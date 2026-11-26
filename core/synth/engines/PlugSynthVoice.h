@@ -40,6 +40,27 @@ void detach(int slot);
 // The type id the slot plays, -1 for none
 int slotType(int slot);
 
+// Paraphony (PLUG_EXT_CHORD, plug_abi.h) of the attached engine of type typeId: bits 0-7 its Chord parameter, 8-15 Chord Mode, 16-23
+// Strum (0xFF none), 24-31 the last value of its Chord enum. -1: no attached engine of that type answers the query
+int chordInfo(int typeId);
+// The part's next note on of `note` carries chord (0..76) to the engine's Chord parameter and strum (2 ms units, + up, - down, 0 none) to
+// its Strum parameter, for that note on only (open::partNoteChord). Sequencer, before the note on. A part is its MIDI channel (0..2)
+void noteChord(int part, uint8_t note, uint8_t chord, int8_t strum);
+// The sequencer's note id and end mode (0 Release, 2 Cut, 3 Fade) of the note on or off it sends next, 0 0 after it (open::noteTag): a
+// note off with an id ends only the voice that note on started, Cut and Fade ramp the voice out (New Note Action)
+void noteTag(uint16_t id, uint8_t endMode = 0);
+// MPE in of the Synth play page for the plugin engines (open::mpeNote, partMpe, partNoteBend, partNotePress): the member channel (2..16) of
+// the note on or off sent next, 0 after it; the part's member bend range (semitones for a full raw bend) and pressure amount (0..1); the raw
+// bend of a member channel (the voice of its newest note follows it, the next note on it starts there); the pressure of a member channel (its
+// held note) or of the master channel 1 (every voice of the part). A part is its MIDI channel (0..2)
+void mpeNote(uint8_t chan);
+void partMpe(int part, float memberRange, float pressAmount);
+void partNoteBend(int part, uint8_t chan, int raw);
+void partNotePress(int part, uint8_t chan, uint8_t press);
+#if defined(PLUS_SYNTH_HARNESS)
+int mpeProbe(int i, int f);   // harness only: field f of voice i (PlugSynthVoice.cpp)
+#endif
+
 #if !defined(PLUS_SYNTH_HARNESS)
 // The image: loads file[0..len) (a whole .plg) into the IMX code slot (plug_imx.h load) and attaches it. Same returns as attach,
 // a loader error is -100 - plug::Err

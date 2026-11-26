@@ -55,6 +55,7 @@ class cConfigEditor : public ModuleBase
 #ifdef FEATURE_FF_CORE
     void projectPageSetup();
     void leaveProjectPage() { eventFunct(eventSwitchToPreviousModule, this, 0, 0); }
+    void openProjectPage() { start(kOpenProjectSettings); }   // Config > Project Settings > Open the page: the same start as File F7 gives (Back leaves to the screen before Config, as from F7)
 #endif
     bool projectPage = false; // opened by the File screen (kOpenProjectSettings): the Project Settings page, not the Config groups
     void hideConfigMenu();

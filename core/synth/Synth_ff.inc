@@ -12,8 +12,9 @@ FF_SYN_HOOK void ffSynthPatchFxBoot()
     s_vary.count = 0;
     s_vary.percent = 10; // the MK66 default
     s_vary.valid = 0;
-    for (PatchBank& b : s_bank) // .noinit SDRAM: no rows, slot 0 open
+    for (auto& mem : s_bankMem) // .noinit SDRAM, the SEMC is up now: built here, no rows, slot 0 open
     {
+        PatchBank& b = *new (mem) PatchBank;
         b.live = nullptr;
         b.filled = 0;
         b.params = 0;

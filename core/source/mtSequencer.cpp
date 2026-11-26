@@ -7,6 +7,8 @@
 #include "Synth.h"
 #ifdef FEATURE_SYNTH_OPEN
 #include "open_load.h"
+#elif defined(PLATFORM_IMX)
+#include "engines/PlugSynthVoice.h" // note ids and end modes of the plugin engines (SEQ_NOTE_TAG)
 #endif
 #endif
 #include "fileManager.h"
@@ -44,6 +46,18 @@
 #include "noinit_check.h"
 
 Sequencer sequencer;
+#if defined(SEQ_NNA_IMX)
+// the note id and Continue state of the Tracker+ / Mini (mtSequencer.h): SRAM_OC on the unit, CPU only data, out of the DTC
+#if defined(UI_SHOT_HOST)
+#define SEQ_NNA_RAM
+#else
+#define SEQ_NNA_RAM __attribute__((section(".data.$RAM3")))
+#endif
+SEQ_NNA_RAM uint16_t Sequencer::noteSerial = 0;
+SEQ_NNA_RAM uint16_t Sequencer::noteId[kAllTracks] = {};
+SEQ_NNA_RAM Sequencer::NnaPark Sequencer::nnaParked[Sequencer::kNnaParkMax] = {};
+SEQ_NNA_RAM uint8_t Sequencer::nnaParkCount = 0;
+#endif
 
 __NOINIT(EXTERNAL_RAM)
 Sequencer::strPattern seq[2];
@@ -1000,7 +1014,7 @@ AUDIO_CORE_RAM void Sequencer::play_microStep(int row)
                 isSynthInstrument(playerRow.stepSent.instrument))
             {
                 const uint8_t nna = nnaReplaceMode(playerRow.stepSent, stepToSend);
-#ifdef FEATURE_SYNTH_OPEN
+#if SEQ_NNA
                 if (nna == kNnaContinue && playerRow.noteOpen)
                 {
                     nnaParkNote(row, true); // the old note keeps sounding, it is released with the track's newest note
@@ -1142,7 +1156,7 @@ AUDIO_CORE_RAM void Sequencer::play_microStep(int row)
         if (player.track[row].noteOpen && !player.track[row].recOpen && stepToSend.note >= 0)
         {
             const uint8_t nna = nnaReplaceMode(playerRow.stepSent, stepToSend);
-#ifdef FEATURE_SYNTH_OPEN
+#if SEQ_NNA
             if (nna == kNnaContinue)
             {
                 nnaParkNote(row, true);
@@ -2814,6 +2828,21 @@ AUDIO_CORE_RAM void Sequencer::sendMidiChordOn(uint8_t track,
             chordBitmask = 0x0001;
         }
     }
+#elif defined(FEATURE_SYNTH) && defined(PLATFORM_IMX)
+    // Paraphony of a plugin engine on Tracker+ / Mini (PLUG_EXT_CHORD, JU6 and ALCO): as above, through the IMX plugin host
+    const uint32_t trackBit = track < 32 ? (1u << track) : 0u;
+    chordParaTracks &= ~trackBit;
+    if (isSynthInstrument(step->instrument) && trackBit)
+    {
+        const int part = instrumentIdxToMidiChannel(step->instrument) - 1;
+        Synth& synth = TrackerImpl::getInstance()->getSynth();
+        if (synth.plugChordPara(part, chordNumber) && step->note >= STEP_NOTE_MIN)
+        {
+            chordParaTracks |= trackBit;
+            synth.plugNoteChord(part, uint8_t(step->note), chordNumber > MAX_CHORD ? MIN_CHORD : chordNumber, stepStrum(step));
+            chordBitmask = 0x0001;
+        }
+    }
 #endif
 
     // Strum FX in the other slot: the notes start one after another (bottom up, or top down for a negative strum)
@@ -2896,6 +2925,15 @@ void Sequencer::sendMidiChordOff(uint8_t track,
         chordBitmask = para ? int16_t(0x0001) : chordBitmask; // a parked note: its own flag
     }
     else if (track < 32 && (chordParaTracks & (1u << track)))
+    {
+        chordParaTracks &= ~(1u << track);
+        chordBitmask = 0x0001;
+    }
+#endif
+#if defined(FEATURE_SYNTH) && defined(PLATFORM_IMX) && !defined(FEATURE_SYNTH_OPEN)
+    // a plugin engine's paraphonic note on (Tracker+ / Mini, sendMidiChordOn): only the step note is sounding. No parked notes here
+    (void)para;
+    if (track < 32 && (chordParaTracks & (1u << track)))
     {
         chordParaTracks &= ~(1u << track);
         chordBitmask = 0x0001;
@@ -3029,11 +3067,11 @@ AUDIO_CORE_RAM void Sequencer::sendNoteOn(uint8_t track,
 
     if (toMidi || toSynth)
     {
-#ifdef FEATURE_SYNTH_OPEN
+#if SEQ_NNA
         if (toSynth)
         {
             noteId[track] = nextNoteId();
-            polysynth::open::noteTag(noteId[track]); // the synth part reads it in the sends below, cleared at the end of this block
+            SEQ_NOTE_TAG(noteId[track]); // the synth part reads it in the sends below, cleared at the end of this block
         }
 #endif
         if (playingChordSlot(step) >= 0)
@@ -3060,10 +3098,10 @@ AUDIO_CORE_RAM void Sequencer::sendNoteOn(uint8_t track,
             sendMidiNoteOn(
               step->note, velocity, instrumentIdxToMidiChannel(step->instrument), toSynth);
         }
-#ifdef FEATURE_SYNTH_OPEN
+#if SEQ_NNA
         if (toSynth)
         {
-            polysynth::open::noteTag(0);
+            SEQ_NOTE_TAG(0);
         }
 #endif
     }
@@ -3091,8 +3129,37 @@ uint8_t Sequencer::nnaReplaceMode(const strPlayer::strPlayerTrack::strSendStep& 
     {
         return kNnaRelease;
     }
+#if !defined(SEQ_NNA_IMX)
+    // the NNA step FX on the replaced note's step wins over the setting of its part, for this note only
+    for (const auto& f : old.fx)
+    {
+        if (f.type == fx.FX_TYPE_NNA)
+        {
+            return nnaFxMode(f.value);
+        }
+    }
+#endif
     const int part = instrumentIdxToSynthIdx(old.instrument);
+#if defined(SEQ_NNA_IMX)
+    // Tracker+ / Mini: only a part that plays a plugin engine (PlugSynthVoice.cpp) has the New Note Action, the stock engines keep Release.
+    // A mono part releases as on the original Tracker (open_synth.cpp noteOff: no second voice to ramp out on)
+    if (part < 0 || part >= kSynthParts || !TrackerImpl::getInstance()->getSynth().plugPart(part))
+    {
+        return kNnaRelease;
+    }
+    for (const auto& f : old.fx)
+    {
+        if (f.type == fx.FX_TYPE_NNA)
+        {
+            const uint8_t m = nnaFxMode(f.value);
+            return (m == kNnaCut || m == kNnaFade) && mtProject.values.synthPart[part].voiceCount <= 1 ? uint8_t(kNnaRelease) : m;
+        }
+    }
+    const uint8_t m = synthNnaMode(mtProject.values.synthPart[part]);
+    return (m == kNnaCut || m == kNnaFade) && mtProject.values.synthPart[part].voiceCount <= 1 ? uint8_t(kNnaRelease) : m;
+#else
     return part >= 0 && part < kSynthParts ? synthNnaMode(mtProject.values.synthPart[part]) : uint8_t(kNnaRelease);
+#endif
 }
 
 AUDIO_CORE_RAM void Sequencer::sendNoteOff(uint8_t track,
@@ -3108,11 +3175,11 @@ AUDIO_CORE_RAM void Sequencer::sendNoteOff(uint8_t track,
     bool isSynth = isSynthInstrument(instrument);
     if (isMidi || isSynth)
     {
-#ifdef FEATURE_SYNTH_OPEN
+#if SEQ_NNA
         if (isSynth)
         {
             // only the voice of the track's latest note-on ends (0: none, by pitch). endMode: Cut or Fade of the New Note Action
-            polysynth::open::noteTag(noteId[track], endMode);
+            SEQ_NOTE_TAG(noteId[track], endMode);
         }
 #endif
         if (playingChordSlot(step) >= 0)
@@ -3124,10 +3191,10 @@ AUDIO_CORE_RAM void Sequencer::sendNoteOff(uint8_t track,
 
             sendMidiNoteOff(step->note, 0, instrumentIdxToMidiChannel(instrument), isSynth);
         }
-#ifdef FEATURE_SYNTH_OPEN
+#if SEQ_NNA
         if (isSynth)
         {
-            polysynth::open::noteTag(0);
+            SEQ_NOTE_TAG(0);
         }
 #endif
     }
@@ -3455,7 +3522,7 @@ AUDIO_CORE_FLASH void Sequencer::handleNoteOn(
                     }
                 }
 
-#ifdef FEATURE_SYNTH_OPEN
+#if SEQ_NNA
                 noteId[tr] = 0; // a live note owns the track now: its off (Stop, release) goes out without an id, by pitch
 #endif
                 player.track[tr].stepSent.note = note;
@@ -3524,7 +3591,7 @@ AUDIO_CORE_FLASH void Sequencer::handleNoteOn(
                 player.track[trackIdx].recOpen = true;
                 player.track[trackIdx].noteSource = source;
 
-#ifdef FEATURE_SYNTH_OPEN
+#if SEQ_NNA
                 noteId[trackIdx] = 0; // a live note owns the track now: its off (Stop, release) goes out without an id, by pitch
 #endif
                 player.track[trackIdx].stepSent.note = note;

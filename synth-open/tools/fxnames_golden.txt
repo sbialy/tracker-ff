@@ -1,5 +1,5 @@
 ### flags: none
-FX_COUNT 51
+FX_COUNT 52
 0|Random Fx|Random Fx
 1|- - None|None
 2|! - Off|Off
@@ -51,7 +51,8 @@ FX_COUNT 51
 48|W - Tape|Tape
 49|N - Snap|Snap
 50|Y - Table|Table
-51|x - Break pattern|Break pattern
+51|Q - NNA|NNA
+52|x - Break pattern|Break pattern
 t0|- - None|None
 t1|! - Off|Off
 t2|V - Volume/Velocity|Volume
@@ -102,9 +103,10 @@ t46|K - Chance FX|Chance FX
 t47|W - Tape|Tape
 t48|N - Snap|Snap
 t49|Y - Table|Table
-t50|x - Break pattern|Break pattern
+t50|Q - NNA|NNA
+t51|x - Break pattern|Break pattern
 ### flags: -DFEATURE_SYNTH
-FX_COUNT 51
+FX_COUNT 52
 0|Random Fx|Random Fx
 1|- - None|None
 2|! - Off|Off
@@ -156,7 +158,8 @@ FX_COUNT 51
 48|W - Tape|Tape
 49|N - Snap|Snap
 50|Y - Table|Table
-51|x - Break pattern|Break pattern
+51|Q - NNA|NNA
+52|x - Break pattern|Break pattern
 t0|- - None|None
 t1|! - Off|Off
 t2|V - Volume/Velocity|Volume
@@ -207,9 +210,10 @@ t46|K - Chance FX|Chance FX
 t47|W - Tape|Tape
 t48|N - Snap|Snap
 t49|Y - Table|Table
-t50|x - Break pattern|Break pattern
+t50|Q - NNA|NNA
+t51|x - Break pattern|Break pattern
 ### flags: -DFEATURE_SYNTH -DFEATURE_SYNTH_OPEN
-FX_COUNT 53
+FX_COUNT 54
 0|Random Fx|Random Fx
 1|- - None|None
 2|! - Off|Off
@@ -263,7 +267,8 @@ FX_COUNT 53
 50|W - Tape|Tape
 51|N - Snap|Snap
 52|Y - Table|Table
-53|x - Break pattern|Break pattern
+53|Q - NNA|NNA
+54|x - Break pattern|Break pattern
 t0|- - None|None
 t1|! - Off|Off
 t2|V - Volume/Velocity|Volume
@@ -316,9 +321,10 @@ t48|K - Chance FX|Chance FX
 t49|W - Tape|Tape
 t50|N - Snap|Snap
 t51|Y - Table|Table
-t52|x - Break pattern|Break pattern
+t52|Q - NNA|NNA
+t53|x - Break pattern|Break pattern
 ### flags: -DFEATURE_SYNTH -DPLATFORM_IMX -DFEATURE_SYNTH_PATCHFX
-FX_COUNT 53
+FX_COUNT 54
 0|Random Fx|Random Fx
 1|- - None|None
 2|! - Off|Off
@@ -372,7 +378,8 @@ FX_COUNT 53
 50|W - Tape|Tape
 51|N - Snap|Snap
 52|Y - Table|Table
-53|x - Break pattern|Break pattern
+53|Q - NNA|NNA
+54|x - Break pattern|Break pattern
 t0|- - None|None
 t1|! - Off|Off
 t2|V - Volume/Velocity|Volume
@@ -425,4 +432,5 @@ t48|K - Chance FX|Chance FX
 t49|W - Tape|Tape
 t50|N - Snap|Snap
 t51|Y - Table|Table
-t52|x - Break pattern|Break pattern
+t52|Q - NNA|NNA
+t53|x - Break pattern|Break pattern

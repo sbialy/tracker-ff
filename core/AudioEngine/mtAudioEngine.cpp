@@ -2863,7 +2863,9 @@ AUDIO_CORE_FLASH float playerEngine::getRMSValue()
 {
     float localVal = -1.0f;
     bool isAvailable = true;
-    for (int channel = 0; channel < (int)rmsPtr.size(); channel++)
+    // a linked pair leader reports its own chain only (the L bus): the R chain is the follower's own RMS, the Mixer draws it in the second slot
+    const int channels = pairFollower != nullptr ? 1 : (int)rmsPtr.size();
+    for (int channel = 0; channel < channels; channel++)
     {
         isAvailable &= rmsPtr[channel]->available();
     }
@@ -2871,12 +2873,12 @@ AUDIO_CORE_FLASH float playerEngine::getRMSValue()
     if (isAvailable)
     {
         localVal = 0.0f;
-        for (int channel = 0; channel < (int)rmsPtr.size(); channel++)
+        for (int channel = 0; channel < channels; channel++)
         {
             localVal += rmsPtr[channel]->read();
         }
 
-        localVal /= (float)rmsPtr.size();
+        localVal /= (float)channels;
     }
 
     return localVal;
